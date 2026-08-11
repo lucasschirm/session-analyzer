@@ -1,154 +1,30 @@
-```
-# Dependencies
-node_modules/
+```yaml
+name: Test CI
 
-# Build artifacts
-dist/
-build/
-target/
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
-# Logs
-*.log
-
-# Environment variables
-.env
-.env.local
-.env.*
-
-# IDE and editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Coverage reports
-coverage/
-htmlcov/
-
-# Database files
-*.db
-*.sqlite
-
-# Compressed archives
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
-
-# TypeScript/JavaScript specific
-*.tsbuildinfo
-.next/
-.nuxt/
-.output/
-.vercel/
-
-# Python specific
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-htmlcov/
-.pytest_cache/
-.hypothesis/
-
-# Java specific
-*.class
-*.jar
-*.war
-*.ear
-*.nar
-hs_err_pid*
-replay_pid*
-
-# C/C++ specific
-*.o
-*.a
-*.so
-*.dll
-*.dylib
-*.exe
-*.out
-
-# Go specific
-*.exe
-*.test
-*.prof
-*.syso
-
-# Ruby specific
-*.gem
-*.rbc
-.bundle/
-.jruby_cache/
-
-# Rust specific
-Cargo.lock
-*.rlib
-*.so
-*.dylib
-*.dll
-
-# .NET specific
-*.dll
-*.exe
-*.pdb
-*.nupkg
-packages/
-bin/
-obj/
-
-# Elixir specific
-.erlang.cookie
-.eex.swp
-mix.lock
-
-# Dart specific
-.dart_tool/
-.build/
-.pub/
-.packages
-
-# Zig specific
-zig-cache/
-zig-out/
-
-# Julia specific
-.julia/
-
-# Vite specific
-.vite/
-
-# Vitest specific
-.vite/vitest/
-
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run tests
+      run: |
+        python -m pytest tests/
 ```
