@@ -1,72 +1,62 @@
+```
 # Dependencies
 node_modules/
+
+# Environment variables
+.env
+.env.local
+.env.*
 
 # Build artifacts
 dist/
 build/
 target/
 
-# Temporary files
-*.tmp
-*.swp
-
-# Logs
-*.log
-
-# Environment
-.env
-.env.local
-.env.*
-
-# Editors
-.vscode/
-.idea/
-
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.py.class
+*.py.obj
+*.py.out
+*.py.o
 
-# Java
-*.class
-*.jar
-*.war
-*.ear
-*.nar
-*.hprof
-hs_err_pid*
+# Virtual environments
+venv/
+.venv/
+env/
+.ENV
 
-# C/C++
-*.o
-*.obj
-*.so
-*.a
-*.lib
-*.dll
-*.dylib
-*.exe
-*.out
+# Logs
+*.log
 
-# Go
-*.exe
-*.test
-*.prof
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
 
-# Node.js
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# OS generated files
+.DS_Store
+Thumbs.db
 
-# Ruby
-*.gem
-*.rbc
-*.sassc
-.cache
-.rake_tasks~
-project_packages/
+# IDE
+.vscode/
+.idea/
 
-# Compression
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# MyPy
+.mypy_cache/
+
+# PyTest
+.pytest_cache/
+
+# Compressed files
 *.zip
 *.gz
 *.tar
@@ -90,37 +80,6 @@ project_packages/
 *.tar.xz
 *.tar.zst
 
-# OS generated
-.DS_Store
-Thumbs.db
-ehthumbs.db
-Icon?
-*.DS_Store
-._*
-
-# IDE
-.vs/
-*.swp
-*.swo
-
-# Testing
-coverage/
-htmlcov/
-.coverage
-.nyc_output/
-istanbul/
-.mocha*
-.jest/
-
-# Package managers
-.sass-cache/
-.npm/
-.bower-cache/
-.bower-registry/
-.bower-packages/
-.nuget/
-packages/
-node_modules/
-jspm_packages/
-jam/
-web_modules/
+# Husky (if present in project)
+.husky/
+```
