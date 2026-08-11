@@ -112,21 +112,68 @@ This project is a fully offline, privacy-first web application designed to help 
 *   **Framework/Components:** [Lit (LitJS)](https://lit.dev/) - A simple, fast, and lightweight library for building native Web Components.
 *   **Routing:** [`@lit-labs/router`](https://lit.dev/docs/libraries/router/) - For client-side routing within the Lit ecosystem, enabling seamless navigation between projects, upload interfaces, and dashboards.
 *   **Package Manager:** [pnpm](https://pnpm.io/) - Fast, disk-space-efficient package manager used for dependency management.
+*   **Build Tool:** [Vite](https://vitejs.dev/) - Next generation frontend tooling for fast development and optimized builds.
 
 ### Storage & Data Management
 *   **Database:** SQLite via WebAssembly (WASM) - Provides a full SQL database running completely in the browser for local, offline data persistence.
 *   **Data Export:** Built-in capability to export the local SQLite database file, giving users full control and portability over their data.
 
+### Testing
+*   **Unit Tests:** [Vitest](https://vitest.dev/) - Fast unit testing framework for Lit components, routing logic, and Web Worker session parsing utilities.
+*   **E2E Tests:** [Playwright](https://playwright.dev/) - End-to-end testing covering complete user journeys, targeting Chrome browser on macOS.
+
+### CI/CD
+*   **GitHub Actions:**
+    - `test.yml`: Runs on PRs. Installs via pnpm, builds, and runs Vitest/Playwright on self-hosted runner with S3 service (MinIO) for caching.
+    - `deploy.yml`: Runs on merges to `main`. Deploys static output to GitHub Pages.
+
 ### Supported Agentic Session Integrations
-The application is designed to ingest, parse, and generate statistics for session files from the following AI coding assistants:
-*   Claude
-*   Antigravity
-*   Codex OpenCode
-*   Agentic Pi
+The application ingests, parses, and generates statistics for session files from the following AI coding assistants:
+
+| Format | Identification | Key Features Parsed |
+|--------|---------------|---------------------|
+| **Claude Code** | `.jsonl` with `message_start` events | Token usage, tool executions (`read_file`, etc.) |
+| **Agentic Pi** | JSONL with `{"type":"session","version":3}` | Exact tokens, cost from `usage_snapshot`, tool executions |
+| **Antigravity** | JSON array with sandbox events | `context_compaction`, `tool_exec`, `file_write` events |
+| **OpenCode/Codex** | JSON logs with CLI formatters | CLI commands (prettier), `/undo` tracking |
+| **MCP** | JSON-RPC trace logs | `CallToolRequest`, `CallToolResult` messages |
+| **Local Runner** | Server request logs (Ollama/vLLM) | Model names, prompt eval counts, generation speeds, VRAM warnings |
 
 ## Architecture Notes
 *   **Offline-First & Privacy-Focused:** No backend server is required for data processing. All parsing, analytics, and storage run locally in the user's browser.
+*   **Web Worker Parsing:** Session file parsing runs in a Web Worker to avoid blocking the main thread during large file processing.
 *   **Project Organization:** Users can create distinct projects and upload sessions into them, utilizing Lit components to render isolated views for each project.
 *   **Reactive UI:** The dashboard utilizes Lit's reactive properties to efficiently update statistics and charts as new sessions are parsed and added to the SQLite-WASM database.
+*   **Drill-Down Views:** Event tables provide granular visibility into session activities, showing timestamps, event types, and metadata.
+
+## Project Structure
+```
+/workspace
+├── src/
+│   ├── components/       # Lit web components (metrics-card, session-list, events-table)
+│   ├── db/               # SQLite WASM database manager
+│   ├── pages/            # Main app component with routing
+│   ├── types/            # TypeScript type definitions
+│   └── workers/          # Web Worker for session parsing
+├── tests/
+│   ├── unit/             # Vitest unit tests
+│   └── e2e/              # Playwright E2E tests
+├── .github/workflows/    # GitHub Actions CI/CD
+├── index.html            # Entry HTML file
+├── package.json          # Dependencies and scripts
+├── tsconfig.json         # TypeScript configuration
+├── vite.config.ts        # Vite build configuration
+├── vitest.config.ts      # Vitest test configuration
+└── playwright.config.ts  # Playwright E2E configuration
+```
+
+## Scripts
+```bash
+pnpm dev          # Start development server
+pnpm build        # Build for production
+pnpm preview      # Preview production build
+pnpm test         # Run unit tests
+pnpm test:e2e     # Run E2E tests
+```
 AGENTS.md
 Displaying AGENTS.md.
