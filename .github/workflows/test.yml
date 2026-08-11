@@ -7,19 +7,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    services:
-      s3:
-        image: minio/minio:latest
-        ports:
-          - 9000:9000
-        env:
-          MINIO_ROOT_USER: testuser
-          MINIO_ROOT_PASSWORD: testpassword
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
       - name: Checkout repository
@@ -35,7 +22,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
+
+      - name: Cache pnpm modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -55,9 +49,6 @@ jobs:
         run: pnpm test:e2e
         env:
           CI: true
-          S3_ENDPOINT: http://localhost:9000
-          S3_ACCESS_KEY: testuser
-          S3_SECRET_KEY: testpassword
 
       - name: Upload test results
         if: always()
