@@ -1,157 +1,250 @@
-import { test, expect } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
- * E2E Tests for Agentic Session Dashboard
- * Target: Chrome browser on macOS
+ * E2E tests covering the complete user journey:
+ * project CRUD -> session upload (picker + drag & drop) -> parsing ->
+ * session dashboard metrics -> indicator drill-down -> transcript ->
+ * search -> SQLite export -> OPFS persistence across reloads.
  */
 
-test.describe('Session Analyzer - User Journey', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-  });
+const FIXTURES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
-  test('should load the homepage successfully', async ({ page }) => {
+function fixture(name: string): string {
+  return path.join(FIXTURES_DIR, name);
+}
+
+async function createProject(page: Page, name: string, description = ''): Promise<void> {
+  await page.goto('/');
+  await page.getByRole('button', { name: '+ New Project' }).click();
+  await page.locator('#project-name-input').fill(name);
+  if (description) {
+    await page.locator('#project-description-input').fill(description);
+  }
+  await page.getByRole('button', { name: 'Create Project' }).click();
+  await expect(page.locator('.project-card', { hasText: name })).toBeVisible();
+}
+
+async function openProject(page: Page, name: string): Promise<void> {
+  await page.goto('/');
+  await page.locator('.project-card', { hasText: name }).click();
+  await expect(page.getByRole('heading', { name })).toBeVisible();
+}
+
+async function uploadFile(page: Page, fileName: string): Promise<void> {
+  await page.locator('input[type="file"]').setInputFiles(fixture(fileName));
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.goto('/');
+});
+
+test.describe('Home page', () => {
+  test('renders the dashboard shell with an empty project state', async ({ page }) => {
     await expect(page).toHaveTitle(/Session Analyzer/);
-    await expect(page.getByText('Welcome to Session Analyzer')).toBeVisible();
-  });
-
-  test('should navigate between pages', async ({ page }) => {
-    // Navigate to Projects
-    await page.getByRole('link', { name: 'Projects' }).click();
     await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
-
-    // Navigate to Upload
-    await page.getByRole('link', { name: 'Upload' }).click();
-    await expect(page.getByRole('heading', { name: 'Upload Session' })).toBeVisible();
-
-    // Navigate back to Home
-    await page.getByRole('link', { name: 'Home' }).click();
-    await expect(page.getByText('Welcome to Session Analyzer')).toBeVisible();
+    await expect(page.getByRole('button', { name: '+ New Project' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Export Database' })).toBeVisible();
+    await expect(page.getByText('No projects yet')).toBeVisible();
   });
 
-  test('should create a new project', async ({ page }) => {
-    await page.getByRole('link', { name: 'Projects' }).click();
-    
-    // Click New Project button
-    // Note: getByButton is not a standard Playwright method, using getByRole instead
-    const newProjectButton = page.getByRole('button', { name: '+ New Project' });
-    await expect(newProjectButton).toBeEnabled();
+  test('creates a project through the modal', async ({ page }) => {
+    await createProject(page, 'Modal Project', 'Created via modal');
+
+    const card = page.locator('.project-card', { hasText: 'Modal Project' });
+    await expect(card).toContainText('Created via modal');
+    await expect(card).toContainText('0 sessions');
   });
 
-  test('should display project cards when projects exist', async ({ page }) => {
-    await page.getByRole('link', { name: 'Projects' }).click();
-    
-    // Initially no projects message should be shown
-    const noProjectsText = page.getByText('No projects found');
-    await expect(noProjectsText).toBeVisible();
-  });
-
-  test('should upload a session file', async ({ page }) => {
-    await page.getByRole('link', { name: 'Upload' }).click();
-    
-    // Verify file input exists
-    const fileInput = page.locator('input[type="file"]');
-    await expect(fileInput).toBeVisible();
-    
-    // Verify accept attribute for JSON files
-    await expect(fileInput).toHaveAttribute('accept', '.json,.jsonl');
-  });
-
-  test('should show metrics cards on project detail page', async ({ page }) => {
-    // This test assumes a project exists - would need setup
-    // For now, verify the navigation works
-    await page.getByRole('link', { name: 'Projects' }).click();
-    await expect(page.url()).toContain('/projects');
-  });
-
-  test('should export database', async ({ page }) => {
-    await page.getByRole('link', { name: 'Projects' }).click();
-    
-    // Export button should exist on project detail pages
-    // Note: getByButton is not a standard Playwright method
-    // This test verifies the structure exists
-  });
-
-  test('should handle session drill-down view', async ({ page }) => {
-    // Navigate to a session detail (would need existing session)
-    // For now, verify URL routing works
-    await page.goto('/sessions/test-session-id');
-    // Should show session details or "not found"
-  });
-
-  test('should display events table for sessions', async ({ page }) => {
-    // Events table component should render with proper structure
-    // This test would verify the table headers exist
-    await page.goto('/');
-    // Would need a session with events to fully test
-  });
-
-  test('should handle file drag and drop', async ({ page }) => {
-    await page.getByRole('link', { name: 'Upload' }).click();
-    
-    const dropZone = page.locator('label[for="fileInput"]');
-    await expect(dropZone).toBeVisible();
-    
-    // Verify drop zone text
-    await expect(page.getByText('Click to select file or drag and drop')).toBeVisible();
-  });
-
-  test('should show loading state during initialization', async ({ page }) => {
-    // Reload to potentially see loading state
-    await page.reload();
-    // Loading state may appear briefly
-  });
-
-  test('should handle error states gracefully', async ({ page }) => {
-    // Error container should exist in the DOM
-    const errorContainer = page.locator('.error');
-    // Should not be visible initially
-    await expect(errorContainer).not.toBeVisible();
-  });
-
-  test('should display session statistics correctly', async ({ page }) => {
-    // Navigate to project detail to see metrics
-    await page.getByRole('link', { name: 'Projects' }).click();
-    
-    // Metrics cards should have proper labels
-    const metricLabels = ['Total Sessions', 'Total Tokens', 'Tool Executions', 'Est. Cost'];
-    // Would verify these appear when data exists
-  });
-
-  test('should support multiple session formats', async ({ page }) => {
-    await page.getByRole('link', { name: 'Upload' }).click();
-    
-    // Help text should mention supported formats
-    const helpText = page.getByText(/Claude|Agentic Pi|Antigravity|OpenCode|MCP/i);
-    await expect(helpText).toBeVisible();
+  test('requires a name before creating a project', async ({ page }) => {
+    await page.getByRole('button', { name: '+ New Project' }).click();
+    const submit = page.getByRole('button', { name: 'Create Project' });
+    await expect(submit).toBeDisabled();
   });
 });
 
-// Separate describe block for routing tests
-test.describe('Routing Tests', () => {
-  test('should handle root route', async ({ page }) => {
+test.describe('Full user journey', () => {
+  test('create project -> upload -> dashboard -> indicator drill-down -> transcript', async ({ page }) => {
+    await createProject(page, 'Demo Project', 'E2E demo project');
+    await openProject(page, 'Demo Project');
+
+    // The preview server sends COOP/COEP headers, so the SQLite OPFS backend
+    // must be active (not the in-memory fallback).
+    await expect(page.getByText('OPFS')).toBeVisible();
+
+    // Upload zone is at the top of the project view.
+    await expect(page.locator('upload-zone')).toBeVisible();
+    await expect(page.getByText('Drag & drop session files here')).toBeVisible();
+
+    await uploadFile(page, 'claude-session.jsonl');
+    const sessionRow = page.locator('.session-item', { hasText: 'claude-session.jsonl' });
+    await expect(sessionRow).toBeVisible();
+
+    // Open the session dashboard.
+    await sessionRow.click();
+    await expect(page.getByRole('heading', { name: 'claude-session.jsonl' })).toBeVisible();
+
+    // Metric cards: 120+80 input, 15+45+5 output -> 265 total tokens.
+    const metricsGrid = page.locator('.metrics-grid');
+    await expect(metricsGrid).toContainText('265');
+    await expect(metricsGrid).toContainText('↑ 200 in • ↓ 65 out');
+    await expect(metricsGrid).toContainText('most used');
+
+    // Clicking a metric card routes to the Indicator Details page.
+    await page.locator('metrics-card', { hasText: 'Files Written' }).click();
+    await expect(page.getByRole('heading', { name: 'Files Written' })).toBeVisible();
+    await expect(page.locator('events-table')).toContainText('src/app.fixed.ts');
+    await expect(page.locator('events-table')).not.toContainText('src/app.ts');
+
+    // Back to the dashboard, open the transcript.
+    await page.getByRole('link', { name: '← Back to Session' }).click();
+    await page.getByRole('button', { name: 'View Session Transcript' }).click();
+
+    const transcript = page.locator('session-transcript');
+    await expect(transcript).toContainText('I fixed the bug');
+    // Markdown was rendered ...
+    await expect(transcript.locator('strong')).toHaveText('app.ts');
+    // ... and DOMPurify stripped the injected event handler.
+    expect(await page.content()).not.toContain('onerror');
+  });
+
+  test('uploads every supported format', async ({ page }) => {
+    await createProject(page, 'Formats Project');
+    await openProject(page, 'Formats Project');
+
+    await page.locator('input[type="file"]').setInputFiles([
+      fixture('antigravity-session.json'),
+      fixture('opencode-session.jsonl'),
+      fixture('mcp-session.jsonl'),
+      fixture('local-runner-session.jsonl'),
+      fixture('agentic-pi-session.jsonl'),
+    ]);
+
+    await expect(page.locator('.session-item')).toHaveCount(5);
+    const listText = await page.locator('session-list').textContent();
+    for (const source of ['antigravity', 'opencode codex', 'mcp', 'local runner', 'agentic pi']) {
+      expect(listText?.toLowerCase()).toContain(source);
+    }
+  });
+});
+
+test.describe('Search', () => {
+  test('filters sessions by title and by message content', async ({ page }) => {
+    await createProject(page, 'Search Project');
+    await openProject(page, 'Search Project');
+
+    await uploadFile(page, 'claude-session.jsonl');
+    await expect(page.locator('.session-item')).toHaveCount(1);
+    await uploadFile(page, 'agentic-pi-session.jsonl');
+    await expect(page.locator('.session-item')).toHaveCount(2);
+
+    // Filter by title.
+    await page.getByLabel('Search sessions').fill('agentic');
+    await expect(page.locator('.session-item')).toHaveCount(1);
+    await expect(page.locator('.session-item')).toContainText('agentic-pi-session.jsonl');
+
+    // Filter by transcript message content ("Add a restful API route").
+    await page.getByLabel('Search sessions').fill('restful');
+    await expect(page.locator('.session-item')).toHaveCount(1);
+    await expect(page.locator('.session-item')).toContainText('agentic-pi-session.jsonl');
+
+    // Clearing restores the full list.
+    await page.getByLabel('Search sessions').fill('');
+    await expect(page.locator('.session-item')).toHaveCount(2);
+  });
+});
+
+test.describe('Drag & drop upload', () => {
+  test('accepts a dropped session file', async ({ page }) => {
+    await createProject(page, 'Drop Project');
+    await openProject(page, 'Drop Project');
+
+    const content = fs.readFileSync(fixture('claude-session.jsonl'), 'utf8');
+    const dataTransfer = await page.evaluateHandle((fileContent) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([fileContent], 'dropped-session.jsonl', { type: 'application/json' }));
+      return dt;
+    }, content);
+
+    await page.locator('upload-zone div.upload-zone').dispatchEvent('drop', { dataTransfer });
+
+    await expect(
+      page.locator('.session-item', { hasText: 'dropped-session.jsonl' })
+    ).toBeVisible();
+  });
+});
+
+test.describe('Persistence (OPFS)', () => {
+  test('projects and sessions survive a page reload', async ({ page }) => {
+    await createProject(page, 'Persist Project');
+    await openProject(page, 'Persist Project');
+    await uploadFile(page, 'claude-session.jsonl');
+    await expect(
+      page.locator('.session-item', { hasText: 'claude-session.jsonl' })
+    ).toBeVisible();
+
+    await page.reload();
+
+    await expect(page.locator('.project-card', { hasText: 'Persist Project' })).toBeVisible();
+    await openProject(page, 'Persist Project');
+    await expect(
+      page.locator('.session-item', { hasText: 'claude-session.jsonl' })
+    ).toBeVisible();
+  });
+});
+
+test.describe('Database export', () => {
+  test('downloads the SQLite database file', async ({ page }) => {
+    await createProject(page, 'Export Project');
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('button', { name: 'Export Database' }).click(),
+    ]);
+
+    expect(download.suggestedFilename()).toMatch(/session-analyzer-.*\.sqlite$/);
+
+    const stream = await download.createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.from(chunk));
+      if (Buffer.concat(chunks).length > 16) break;
+    }
+    const header = Buffer.concat(chunks).subarray(0, 15).toString('utf8');
+    expect(header).toBe('SQLite format 3');
+  });
+});
+
+test.describe('Project deletion', () => {
+  test('deleting a project cascades to its sessions', async ({ page }) => {
+    page.on('dialog', (dialog) => dialog.accept());
+
+    await createProject(page, 'Doomed Project');
+    await openProject(page, 'Doomed Project');
+    await uploadFile(page, 'claude-session.jsonl');
+    await expect(page.locator('.session-item')).toHaveCount(1);
+
     await page.goto('/');
-    // Note: baseURL is a Playwright config property, not on page object
-    await expect(page.url()).toMatch(/\/$/);
+    await page
+      .locator('.project-card', { hasText: 'Doomed Project' })
+      .getByRole('button', { name: 'Delete Project' })
+      .click();
+
+    await expect(page.locator('.project-card')).toHaveCount(0);
+    await expect(page.getByText('No projects yet')).toBeVisible();
+  });
+});
+
+test.describe('Routing', () => {
+  test('unknown hash routes render the fallback page', async ({ page }) => {
+    await page.goto('/#/definitely-missing');
+    await expect(page.getByText('Page not found')).toBeVisible();
   });
 
-  test('should handle /projects route', async ({ page }) => {
-    await page.goto('/projects');
-    await expect(page.url()).toContain('/projects');
-  });
-
-  test('should handle /upload route', async ({ page }) => {
-    await page.goto('/upload');
-    await expect(page.url()).toContain('/upload');
-  });
-
-  test('should handle dynamic project route', async ({ page }) => {
-    await page.goto('/projects/test-project-123');
-    await expect(page.url()).toContain('/projects/test-project-123');
-  });
-
-  test('should handle dynamic session route', async ({ page }) => {
-    await page.goto('/sessions/test-session-456');
-    await expect(page.url()).toContain('/sessions/test-session-456');
+  test('session dashboard shows a notice for unknown sessions', async ({ page }) => {
+    await page.goto('/#/sessions/does-not-exist');
+    await expect(page.getByText(/Session not found/)).toBeVisible();
   });
 });

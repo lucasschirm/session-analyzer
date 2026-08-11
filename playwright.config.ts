@@ -1,8 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Playwright Configuration for E2E Tests
- * Target: Chrome browser on macOS
+ * Playwright configuration for E2E tests.
+ *
+ * Targets the Chrome/Chromium engine on Linux (the GitHub Actions
+ * environment). The suite runs against the production build served by
+ * `vite preview`, which also sends the COOP/COEP headers required for the
+ * SQLite OPFS backend.
  */
 export default defineConfig({
   testDir: './tests/e2e',
@@ -20,14 +24,6 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-    },
-    // macOS Chrome configuration
-    {
-      name: 'chrome-macos',
-      use: { 
-        ...devices['Desktop Chrome'],
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
     },
   ],
   webServer: {

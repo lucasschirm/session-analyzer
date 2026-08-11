@@ -1,64 +1,53 @@
 # Pending Items - Agentic Sessions Dashboard
 
 ## COMPLETED ✓
-1. Project structure with TypeScript
-2. Types defined in src/types/index.ts
-3. Web Worker session parser (src/workers/session-parser.worker.ts)
-   - Format detection for all 6 formats
-   - Parsers for Claude, Agentic Pi, Antigravity, OpenCode/Codex, MCP, Local Runners
-4. SQLite database manager (src/db/database.ts)
-5. Lit components (src/components/dashboard-components.ts)
-   - metrics-card, session-list, events-table, project-selector
-6. Main app component with routing (src/pages/app-root.ts)
-7. Unit tests for parser (tests/unit/parser.test.ts)
-8. E2E tests (tests/e2e/app.spec.ts)
-9. GitHub Actions workflows (test.yml, deploy.yml)
-10. Configuration files (tsconfig.json, vite.config.ts, vitest.config.ts, playwright.config.ts)
-11. .gitignore with node_modules
-12. Dependencies: dompurify, marked added
 
-## PENDING ITEMS
+### Core application
+1. Project structure with TypeScript (strict mode)
+2. Types defined in `src/types/index.ts` (sessions, projects, transcript, indicators)
+3. Web Worker session parser with schema-based detection for all 6 formats
+   (Claude, Agentic Pi, Antigravity, OpenCode/Codex, MCP, Local Runners)
+4. SQLite WASM database manager with parameterized queries (`src/db/database.ts`)
+5. Database Web Worker with OPFS persistence + in-memory fallback (`src/db/db-worker.ts`)
+6. Main-thread DB client proxy with promise correlation (`src/db/db-client.ts`)
+7. Hash-based routing built on `@lit-labs/router` Routes (`src/router.ts`)
+8. Lit components, one per file (metrics-card, session-list, events-table,
+   project-selector, project-modal, upload-zone, session-transcript)
+9. Pages: app-root shell, home-page (project CRUD + export), project-view
+   (upload + search), session-dashboard (metric cards + transcript),
+   indicator-details (drill-down tables)
+10. Dark-mode-first UI theme
+11. Markdown transcript rendering with DOMPurify sanitization
+12. SQLite database export as a real `.sqlite` file
 
-### 1. Web Worker Integration (CRITICAL)
-- [ ] Fix `getParserFunctions()` in app-root.ts - currently throws error
-- [ ] Implement proper Web Worker instantiation
-- [ ] Move parser logic to run in actual Web Worker thread
+### Features from the original plan
+- [x] Web Worker integration (parsing + all DB transactions off-thread)
+- [x] Parameterized SQL (no injection vulnerabilities)
+- [x] OPFS persistent storage (COOP/COEP headers via Vite + coi-sw.js on Pages)
+- [x] `.sqlite` file export (was JSON before)
+- [x] Markdown rendering in transcript view
+- [x] Chat-like timeline view with per-role styling
+- [x] Drag-and-drop file upload (+ picker accepting .json/.jsonl/.log)
+- [x] Search bar filtering sessions by title or message content
+- [x] Delete project with cascade
+- [x] New-project modal with name + description
+- [x] Metric cards routing to Indicator Details pages
+- [x] Full metric set: tokens, compactions, turns, tools (+most used),
+      files read/written, agents/skills
 
-### 2. Database Improvements
-- [ ] Fix SQL injection vulnerabilities (use parameterized queries)
-- [ ] Implement OPFS (Origin Private File System) for persistent storage
-- [ ] Add proper database export as .sqlite file (currently exports JSON)
+### Tests & CI
+- [x] Unit tests for parsers (all formats + detection + helpers)
+- [x] Unit tests for the database manager (real SQLite WASM, in-memory)
+- [x] Unit tests for db-client / parser-client (worker doubles)
+- [x] Unit tests for all components and pages
+- [x] Unit tests for the hash router (URLPattern shim in setup)
+- [x] Coverage threshold enforced at 60% (statements/branches/functions/lines)
+- [x] E2E tests for the full user journey incl. OPFS persistence + export
+- [x] GitHub Actions: test.yml (ubuntu-latest, actions/cache, coverage) and
+      deploy.yml (GitHub Pages on push to main)
 
-### 3. Missing Features
-- [ ] Markdown rendering with DOMPurify sanitization in session transcript view
-- [ ] Chat-like timeline view for session messages
-- [ ] Drag and drop file upload functionality
-- [ ] Search bar for filtering sessions
-- [ ] Delete project functionality
-- [ ] Proper modal for creating projects (currently uses prompt)
-
-### 4. Test Coverage
-- [ ] Add unit tests for database operations
-- [ ] Add unit tests for Lit components
-- [ ] Add unit tests for routing logic
-- [ ] Verify 60% test coverage requirement
-- [ ] Add more comprehensive E2E tests
-
-### 5. Build & Runtime Verification
-- [ ] Run `pnpm build` to verify no compilation errors
-- [ ] Run `pnpm test` to verify all unit tests pass
-- [ ] Run `pnpm test:e2e` to verify E2E tests pass
-- [ ] Verify Web Worker builds correctly
-
-### 6. Code Quality
-- [ ] Remove empty directories (src/routes/, public/)
-- [ ] Add proper TypeScript types for SQLite WASM
-- [ ] Add error handling throughout
-- [ ] Add loading states for async operations
-
-## NEXT STEPS
-1. Fix Web Worker integration in app-root.ts
-2. Add markdown rendering with DOMPurify
-3. Implement chat-like transcript view
-4. Add comprehensive unit tests for components and database
-5. Run build and tests to verify everything works
+## NEXT STEPS (future enhancements, not required by the current plan)
+- Session import (restore an exported `.sqlite` file)
+- Project edit/rename
+- Charts for token usage over time
+- Session deletion from the UI (DB layer already supports it)

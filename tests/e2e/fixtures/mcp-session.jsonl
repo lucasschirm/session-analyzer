@@ -1,0 +1,4 @@
+{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "serve_rest_api_tool", "arguments": {"framework": "NestJS"}}}
+{"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": "Route created successfully."}]}}
+{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "read_file_tool", "arguments": {"path": "src/main.ts"}}}
+{"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "export {}"}]}}

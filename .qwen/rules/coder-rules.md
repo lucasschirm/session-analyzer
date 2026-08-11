@@ -58,3 +58,11 @@ When adding new session format parsers:
   - Key fields mapped
   - Known limitations
 - Update this file when adding new formats or changing core architecture.
+
+## Tests
+
+- Always create unit tests for any code changes.
+- Unit tests must cover all parser branches, detection logic, and normalization functions.
+- E2E tests must cover full user journey: file upload → parsing → dashboard display → drill-down view.
+- Browser target: Chrome on Linux (GitHub Actions environment).
+

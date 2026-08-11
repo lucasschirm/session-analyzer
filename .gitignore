@@ -1,4 +1,3 @@
-```
 # Build artifacts
 dist/
 build/
@@ -38,6 +37,8 @@ coverage/
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+playwright-report/
+test-results/
 
 # Package managers
 .sass-cache/
@@ -46,7 +47,6 @@ htmlcov/
 .bower-registry/
 .bower-packages/
 .nuget/
-node_modules/
 jspm_packages/
 jam/
 web_modules/

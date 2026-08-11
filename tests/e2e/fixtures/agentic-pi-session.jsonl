@@ -1,0 +1,6 @@
+{"type": "session", "version": 3, "id": "pi_789", "cwd": "/workspace"}
+{"type": "message_update", "role": "user", "content": "Add a restful API route"}
+{"type": "tool_execution_start", "tool": "file_write", "target": "api.controller.ts"}
+{"type": "tool_execution_start", "tool": "read_file", "target": "main.module.ts"}
+{"type": "message_update", "role": "assistant", "content": "Created the controller with the new route."}
+{"type": "usage_snapshot", "tokens": {"input": 4500, "output": 1200}, "cost_usd": 0.045}
