@@ -4,6 +4,7 @@
   "description": "Offline Agentic Session Dashboard - Visualize and manage AI coding sessions",
   "type": "module",
   "scripts": {
+    "preinstall": "npx only-allow pnpm",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
