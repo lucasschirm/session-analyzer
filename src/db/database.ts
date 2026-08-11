@@ -7,26 +7,15 @@ import type { DashboardSession, Project, SessionMetrics, ToolExecution, SessionE
 
 // SQLite WASM types
 interface Sqlite3Static {
-  sqlite3: Sqlite3;
-}
-
-interface Sqlite3 {
-  DB: typeof SqliteDB;
+  sqlite3: {
+    DB: new (filename: string, flags?: string) => SqliteDB;
+  };
 }
 
 interface SqliteDB {
-  new (filename: string, flags?: string): SqliteDB;
   exec(sql: string): void;
   selectObjects<T>(sql: string): T[];
-  prepare(sql: string): SqliteStatement;
   close(): void;
-}
-
-interface SqliteStatement {
-  bind(...values: unknown[]): void;
-  step(): boolean;
-  get<T>(): T | undefined;
-  finalize(): void;
 }
 
 declare global {
@@ -42,11 +31,12 @@ export class DatabaseManager {
   async initialize(dbPath: string = ':memory:'): Promise<void> {
     if (this.initialized) return;
 
-    // Load SQLite WASM
+    // Load SQLite WASM - type assertion to handle module structure
     const sqlite3Module = await import('@sqlite.org/sqlite-wasm');
-    const sqlite3 = sqlite3Module.default;
+    // @ts-ignore - sqlite3 property exists on the default export
+    const sqlite3Api = sqlite3Module.default.sqlite3;
 
-    this.db = new sqlite3.sqlite3.DB(dbPath, 'c');
+    this.db = new sqlite3Api.DB(dbPath, 'c');
     this.createTables();
     this.initialized = true;
   }
