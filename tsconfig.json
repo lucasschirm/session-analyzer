@@ -18,14 +18,13 @@
     "experimentalDecorators": true,
     "useDefineForClassFields": false,
     "paths": {
-      "@/*": ["./src/*"],
+      "@/*": ["./*"],
       "@components/*": ["./src/components/*"],
       "@pages/*": ["./src/pages/*"],
       "@workers/*": ["./src/workers/*"],
       "@db/*": ["./src/db/*"],
       "@types/*": ["./src/types/*"]
-    },
-    "baseUrl": "."
+    }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules"]

@@ -2,7 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Router, Route } from '@lit-labs/router';
 import { dbManager } from '../db/database';
-import type { Project, DashboardSession, SessionMetrics } from '../types';
+import type { Project, DashboardSession, SessionMetrics, ParsedSession } from '../types';
 
 /**
  * Main App Component with Routing
@@ -395,13 +395,37 @@ export class AppRoot extends LitElement {
 
       const content = await file.text();
       
-      // Import parser worker
-      const workerModule = await import('../workers/session-parser.worker.ts');
-      
-      // For simplicity in this implementation, we'll call the parse function directly
-      // In production, you'd use a real Web Worker
-      const { parseSession } = await this.getParserFunctions();
-      const result = parseSession(content, this.selectedProjectId);
+      // Create Web Worker for parsing
+      const worker = new Worker(
+        new URL('../workers/session-parser.worker.ts', import.meta.url),
+        { type: 'module' }
+      );
+
+      // Send parse request to worker
+      worker.postMessage({
+        type: 'parse',
+        payload: content,
+        projectId: this.selectedProjectId,
+      });
+
+      // Wait for result from worker
+      const result = await new Promise<ParsedSession>((resolve, reject) => {
+        worker.onmessage = (e: MessageEvent) => {
+          if (e.data.type === 'result') {
+            resolve(e.data.result);
+          } else {
+            reject(new Error('Unexpected worker response'));
+          }
+        };
+        worker.onerror = (e) => {
+          reject(new Error(`Worker error: ${e.message}`));
+        };
+        // Timeout after 30 seconds
+        setTimeout(() => reject(new Error('Worker timeout')), 30000);
+      });
+
+      // Terminate worker
+      worker.terminate();
 
       if (result.parseErrors.length > 0) {
         console.warn('Parse warnings:', result.parseErrors);
@@ -418,13 +442,6 @@ export class AppRoot extends LitElement {
       this.isLoading = false;
       input.value = '';
     }
-  }
-
-  private async getParserFunctions() {
-    // Dynamic import workaround for the worker functions
-    const workerCode = await fetch(new URL('../workers/session-parser.worker.ts', import.meta.url)).then(r => r.text());
-    // This is a simplified approach - in production use proper worker instantiation
-    throw new Error('Worker implementation needed');
   }
 
   private async exportData() {
