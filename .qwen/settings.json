@@ -1,4 +1,11 @@
 {
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "discoveryTimeoutMs": 60000
+    }
+  },
   "hooks": {
     "PreToolUse": [
       {
