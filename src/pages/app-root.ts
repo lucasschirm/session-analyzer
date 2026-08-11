@@ -1,6 +1,7 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { Router, Route } from '@lit-labs/router';
+import { Router } from '@lit-labs/router';
+import type { RouteConfig } from '@lit-labs/router';
 import { dbManager } from '../db/database';
 import type { Project, DashboardSession, SessionMetrics, ParsedSession } from '../types';
 
@@ -10,12 +11,12 @@ import type { Project, DashboardSession, SessionMetrics, ParsedSession } from '.
 @customElement('app-root')
 export class AppRoot extends LitElement {
   private router = new Router(this, [
-    new Route('/', () => this.renderHome()),
-    new Route('/projects', () => this.renderProjects()),
-    new Route('/projects/:id', (params: Record<string, string>) => this.renderProjectDetail(params.id)),
-    new Route('/sessions/:id', (params: Record<string, string>) => this.renderSessionDetail(params.id)),
-    new Route('/upload', () => this.renderUpload()),
-  ]);
+    { path: '/', render: () => this.renderHome() },
+    { path: '/projects', render: () => this.renderProjects() },
+    { path: '/projects/:id', render: (params: Record<string, string>) => this.renderProjectDetail(params.id) },
+    { path: '/sessions/:id', render: (params: Record<string, string>) => this.renderSessionDetail(params.id) },
+    { path: '/upload', render: () => this.renderUpload() },
+  ] as RouteConfig[]);
 
   @state() private projects: Project[] = [];
   @state() private selectedProjectId = '';
@@ -23,6 +24,7 @@ export class AppRoot extends LitElement {
   @state() private metrics: SessionMetrics | null = null;
   @state() private isLoading = false;
   @state() private error: string | null = null;
+  @state() private currentPath = '/';
 
   static styles = css`
     :host {
@@ -114,6 +116,17 @@ export class AppRoot extends LitElement {
 
   async firstUpdated() {
     await this.initializeDatabase();
+    // Track current path for active link styling
+    this.currentPath = window.location.pathname;
+    window.addEventListener('popstate', () => {
+      this.currentPath = window.location.pathname;
+    });
+  }
+
+  private navigate(path: string) {
+    window.history.pushState({}, '', path);
+    this.currentPath = path;
+    this.router.goto(path);
   }
 
   private async initializeDatabase() {
@@ -141,15 +154,15 @@ export class AppRoot extends LitElement {
       <header>
         <a href="/" class="logo">Session Analyzer</a>
         <nav>
-          <a href="/" class=${this.router.path === '/' ? 'active' : ''}>Home</a>
-          <a href="/projects" class=${this.router.path.startsWith('/projects') ? 'active' : ''}>Projects</a>
-          <a href="/upload" class=${this.router.path === '/upload' ? 'active' : ''}>Upload</a>
+          <a href="/" class=${this.currentPath === '/' ? 'active' : ''}>Home</a>
+          <a href="/projects" class=${this.currentPath.startsWith('/projects') ? 'active' : ''}>Projects</a>
+          <a href="/upload" class=${this.currentPath === '/upload' ? 'active' : ''}>Upload</a>
         </nav>
       </header>
 
       <main>
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
-        ${this.isLoading ? html`<div class="loading">Loading...</div>` : this.router.outlet}
+        ${this.isLoading ? html`<div class="loading">Loading...</div>` : this.router.outlet()}
       </main>
     `;
   }
@@ -160,8 +173,8 @@ export class AppRoot extends LitElement {
       <p>Visualize and manage your agentic coding sessions offline.</p>
       
       <div style="margin-top: 24px;">
-        <button @click=${() => this.router.go('/projects')}>View Projects</button>
-        <button class="secondary" style="margin-left: 8px;" @click=${() => this.router.go('/upload')}>
+        <button @click=${() => this.navigate('/projects')}>View Projects</button>
+        <button class="secondary" style="margin-left: 8px;" @click=${() => this.navigate('/upload')}>
           Upload Session
         </button>
       </div>
@@ -174,7 +187,7 @@ export class AppRoot extends LitElement {
           @project-change=${(e: CustomEvent) => {
             this.selectedProjectId = e.detail.projectId;
             if (e.detail.projectId) {
-              this.router.go(`/projects/${e.detail.projectId}`);
+              this.navigate(`/projects/${e.detail.projectId}`);
             }
           }}
         ></project-selector>
@@ -198,7 +211,7 @@ export class AppRoot extends LitElement {
             ${this.projects.map(project => html`
               <div 
                 style="padding: 16px; background: white; border: 1px solid #e0e0e0; border-radius: 8px; cursor: pointer;"
-                @click=${() => this.router.go(`/projects/${project.id}`)}
+                @click=${() => this.navigate(`/projects/${project.id}`)}
               >
                 <h3 style="margin: 0 0 8px 0;">${project.name}</h3>
                 <p style="margin: 0; color: #666; font-size: 14px;">
@@ -274,12 +287,12 @@ export class AppRoot extends LitElement {
         <session-list 
           .sessions=${sessions}
           @session-click=${(e: CustomEvent) => {
-            this.router.go(`/sessions/${e.detail.sessionId}`);
+            this.navigate(`/sessions/${e.detail.sessionId}`);
           }}
         ></session-list>
 
         <div style="margin-top: 24px;">
-          <button @click=${() => this.router.go('/upload')}>Upload Session</button>
+          <button @click=${() => this.navigate('/upload')}>Upload Session</button>
           <button class="secondary" style="margin-left: 8px;" @click=${() => this.exportData()}>
             Export Data
           </button>
@@ -435,7 +448,7 @@ export class AppRoot extends LitElement {
       await this.loadProjects();
       
       alert('Session uploaded successfully!');
-      this.router.go(`/projects/${this.selectedProjectId}`);
+      this.navigate(`/projects/${this.selectedProjectId}`);
     } catch (e) {
       this.error = `Failed to upload session: ${(e as Error).message}`;
     } finally {

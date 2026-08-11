@@ -174,7 +174,7 @@ function parseClaudeCode(content: string, projectId: string): ParsedSession {
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     total_tokens: inputTokens + outputTokens,
-    tool_executions,
+    tool_executions: toolExecutions,
     events,
   };
   
@@ -251,7 +251,7 @@ function parseAgenticPi(content: string, projectId: string): ParsedSession {
     output_tokens: outputTokens,
     total_tokens: inputTokens + outputTokens,
     cost_usd: costUsd,
-    tool_executions,
+    tool_executions: toolExecutions,
     events,
   };
   
@@ -351,7 +351,7 @@ function parseAntigravity(content: string, projectId: string): ParsedSession {
     input_tokens: 0,
     output_tokens: 0,
     total_tokens: 0,
-    tool_executions,
+    tool_executions: toolExecutions,
     events,
   };
   
@@ -426,7 +426,7 @@ function parseOpenCodeCodex(content: string, projectId: string): ParsedSession {
     input_tokens: 0,
     output_tokens: 0,
     total_tokens: 0,
-    tool_executions,
+    tool_executions: toolExecutions,
     events,
   };
   
@@ -508,7 +508,7 @@ function parseMCP(content: string, projectId: string): ParsedSession {
     input_tokens: 0,
     output_tokens: 0,
     total_tokens: 0,
-    tool_executions,
+    tool_executions: toolExecutions,
     events,
   };
   
