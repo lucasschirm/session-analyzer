@@ -178,14 +178,20 @@ export class HomePage extends LitElement {
     void this.loadProjects();
   }
 
+  private loadingLock = false;
+
   private async loadProjects(): Promise<void> {
+    if (this.loadingLock) return;
+    this.loadingLock = true;
     this.isLoading = true;
     try {
+      await dbClient.ensureReady();
       this.projects = await dbClient.getProjects();
       this.error = null;
     } catch (error) {
       this.error = `Failed to load projects: ${(error as Error).message}`;
     } finally {
+      this.loadingLock = false;
       this.isLoading = false;
     }
   }

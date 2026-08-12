@@ -119,15 +119,28 @@ export class ProjectView extends LitElement {
 
   @state() private error: string | null = null;
 
-  willUpdate(changed: Map<string, unknown>): void {
-    if (changed.has('projectId') && this.projectId) {
+  private loadingLock = false;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    if (this.projectId) {
+      void this.loadData();
+    }
+  }
+
+  updated(changedProperties: Map<string, unknown>): void {
+    super.updated(changedProperties);
+    if (changedProperties.has('projectId') && this.projectId && !this.loadingLock) {
       void this.loadData();
     }
   }
 
   private async loadData(): Promise<void> {
+    if (this.loadingLock) return;
+    this.loadingLock = true;
     this.isLoading = true;
     try {
+      await dbClient.ensureReady();
       const [project, sessions, metrics] = await Promise.all([
         dbClient.getProject(this.projectId),
         dbClient.getSessionsByProject(this.projectId),
@@ -141,6 +154,7 @@ export class ProjectView extends LitElement {
     } catch (error) {
       this.error = `Failed to load project: ${(error as Error).message}`;
     } finally {
+      this.loadingLock = false;
       this.isLoading = false;
     }
   }
