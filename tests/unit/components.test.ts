@@ -12,6 +12,7 @@ import type { EventsTable } from '../../src/components/events-table';
 import type { ProjectSelector } from '../../src/components/project-selector';
 import type { ProjectModal } from '../../src/components/project-modal';
 import type { UploadZone } from '../../src/components/upload-zone';
+import type { UploadedFile } from '../../src/lib/subagents';
 import type { DashboardSession, Project } from '../../src/types';
 
 async function mount<T extends LitElement>(element: T): Promise<T> {
@@ -39,7 +40,10 @@ function sessionFixture(overrides: Partial<DashboardSession> = {}): DashboardSes
     ended_at: 1_700_000_600_000,
     input_tokens: 100,
     output_tokens: 50,
+    cache_creation_tokens: 0,
+    cache_read_tokens: 0,
     total_tokens: 150,
+    models: [],
     context_compactions: 0,
     total_turns: 1,
     files_read: 0,
@@ -48,6 +52,8 @@ function sessionFixture(overrides: Partial<DashboardSession> = {}): DashboardSes
     tool_executions: [],
     events: [],
     messages: [],
+    tasks: [],
+    subagents: [],
     ...overrides,
   };
 }
@@ -175,6 +181,32 @@ describe('events-table', () => {
     expect(root.textContent).toContain('Metadata');
     expect(root.textContent).toContain('input_tokens');
   });
+
+  it('shows a full-content tooltip and expands the metadata cell inline on click', async () => {
+    const metadata = { usage: { input_tokens: 5, output_tokens: 500_000 } };
+    const table = await mount(Object.assign(document.createElement('events-table'), {
+      showMetadata: true,
+      events: [{ id: 'e1', timestamp: 1_700_000_000_000, event_type: 'assistant_turn', description: 'x', metadata }],
+    }) as EventsTable);
+    const root = shadow(table);
+    const fullJson = JSON.stringify(metadata, null, 2);
+
+    const cell = root.querySelector('.metadata-cell') as HTMLElement;
+    expect(cell.title).toBe(fullJson);
+    expect(cell.querySelector('.metadata-full')).toBeNull();
+    expect(cell.querySelector('.metadata-preview')).not.toBeNull();
+
+    cell.click();
+    await table.updateComplete;
+
+    expect(cell.querySelector('.metadata-full')?.textContent).toBe(fullJson);
+    expect(cell.querySelector('.metadata-preview')).toBeNull();
+
+    cell.click();
+    await table.updateComplete;
+
+    expect(cell.querySelector('.metadata-full')).toBeNull();
+  });
 });
 
 describe('project-selector', () => {
@@ -290,9 +322,9 @@ describe('upload-zone', () => {
     const root = shadow(zone);
     const input = root.querySelector('input[type="file"]') as HTMLInputElement;
 
-    let selected: File[] = [];
+    let selected: UploadedFile[] = [];
     zone.addEventListener('files-selected', (event) => {
-      selected = (event as CustomEvent<{ files: File[] }>).detail.files;
+      selected = (event as CustomEvent<{ files: UploadedFile[] }>).detail.files;
     });
 
     Object.defineProperty(input, 'files', {
@@ -301,7 +333,8 @@ describe('upload-zone', () => {
     });
     input.dispatchEvent(new Event('change'));
 
-    expect(selected.map((file) => file.name)).toEqual(['session.jsonl', 'data.log']);
+    expect(selected.map((upload) => upload.file.name)).toEqual(['session.jsonl', 'data.log']);
+    expect(selected.map((upload) => upload.relativePath)).toEqual(['session.jsonl', 'data.log']);
     expect(input.value).toBe('');
   });
 
@@ -310,9 +343,9 @@ describe('upload-zone', () => {
     const root = shadow(zone);
     const dropArea = root.querySelector('.upload-zone') as HTMLDivElement;
 
-    let selected: File[] = [];
+    let selected: UploadedFile[] = [];
     zone.addEventListener('files-selected', (event) => {
-      selected = (event as CustomEvent<{ files: File[] }>).detail.files;
+      selected = (event as CustomEvent<{ files: UploadedFile[] }>).detail.files;
     });
 
     const dropEvent = new Event('drop', { cancelable: true });
@@ -320,8 +353,9 @@ describe('upload-zone', () => {
       value: { files: [fileLike('claude.json')] },
     });
     dropArea.dispatchEvent(dropEvent);
+    await zone.updateComplete;
 
-    expect(selected.map((file) => file.name)).toEqual(['claude.json']);
+    expect(selected.map((upload) => upload.file.name)).toEqual(['claude.json']);
   });
 
   it('ignores drops without supported files', async () => {
@@ -334,8 +368,62 @@ describe('upload-zone', () => {
     const dropEvent = new Event('drop', { cancelable: true });
     Object.defineProperty(dropEvent, 'dataTransfer', { value: { files: [fileLike('image.png')] } });
     dropArea.dispatchEvent(dropEvent);
+    await zone.updateComplete;
 
     expect(called).toBe(0);
+  });
+
+  it('recursively reads a dropped folder via the File and Directory Entries API', async () => {
+    const zone = await mount(document.createElement('upload-zone') as UploadZone);
+    const dropArea = shadow(zone).querySelector('.upload-zone') as HTMLDivElement;
+
+    let selected: UploadedFile[] = [];
+    zone.addEventListener('files-selected', (event) => {
+      selected = (event as CustomEvent<{ files: UploadedFile[] }>).detail.files;
+    });
+
+    const mainFile = fileLike('agent-abc.jsonl');
+    const metaFile = fileLike('agent-abc.meta.json');
+    const fileEntry = (file: File, name: string) => ({
+      isFile: true,
+      isDirectory: false,
+      name,
+      file: (resolve: (file: File) => void) => resolve(file),
+    });
+    const subagentsDirEntry = {
+      isFile: false,
+      isDirectory: true,
+      name: 'subagents',
+      createReader: () => {
+        let read = false;
+        return {
+          readEntries: (callback: (entries: unknown[]) => void) => {
+            if (read) {
+              callback([]);
+            } else {
+              read = true;
+              callback([fileEntry(mainFile, 'agent-abc.jsonl'), fileEntry(metaFile, 'agent-abc.meta.json')]);
+            }
+          },
+        };
+      },
+    };
+
+    const dropEvent = new Event('drop', { cancelable: true });
+    Object.defineProperty(dropEvent, 'dataTransfer', {
+      value: {
+        items: [{ webkitGetAsEntry: () => subagentsDirEntry }],
+        files: [],
+      },
+    });
+    dropArea.dispatchEvent(dropEvent);
+    await zone.updateComplete;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(selected.map((upload) => upload.relativePath).sort()).toEqual([
+      'subagents/agent-abc.jsonl',
+      'subagents/agent-abc.meta.json',
+    ]);
   });
 
   it('toggles the dragging style on dragenter/dragleave', async () => {

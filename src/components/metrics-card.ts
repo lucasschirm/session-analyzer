@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { ifDefined } from 'lit/directives/if-defined.js';
 
 /**
  * Dashboard metrics card.
@@ -89,6 +90,9 @@ export class MetricsCard extends LitElement {
 
   @property({ type: String }) value = '';
 
+  /** Full/exact value shown as a hover tooltip - for compactly-formatted numbers (e.g. "1.4M"). */
+  @property({ type: String }) valueTitle = '';
+
   @property({ type: String }) icon = '';
 
   @property({ type: String }) sub = '';
@@ -109,7 +113,7 @@ export class MetricsCard extends LitElement {
     return html`
       <div class="icon" aria-hidden="true">${this.icon}</div>
       <div class="content">
-        <div class="value">${this.value}</div>
+        <div class="value" title=${ifDefined(this.valueTitle || undefined)}>${this.value}</div>
         <div class="label">${this.label}</div>
         ${this.sub ? html`<div class="sub">${this.sub}</div>` : ''}
       </div>

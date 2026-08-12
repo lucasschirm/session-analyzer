@@ -35,7 +35,12 @@ function makeSession(projectId: string, overrides: Partial<DashboardSession> = {
     ended_at: 1_700_000_060_000,
     input_tokens: 100,
     output_tokens: 50,
-    total_tokens: 150,
+    cache_creation_tokens: 20,
+    cache_read_tokens: 10,
+    total_tokens: 180,
+    models: [
+      { model: 'claude-sonnet-5', input_tokens: 100, output_tokens: 50, cache_creation_tokens: 20, cache_read_tokens: 10 },
+    ],
     context_compactions: 0,
     total_turns: 2,
     files_read: 1,
@@ -50,6 +55,8 @@ function makeSession(projectId: string, overrides: Partial<DashboardSession> = {
         tool_type: 'tool_use',
         target: 'src/app.ts',
         success: true,
+        parameters: { file_path: 'src/app.ts' },
+        result: 'export function app() {}',
       },
     ],
     events: [
@@ -69,6 +76,35 @@ function makeSession(projectId: string, overrides: Partial<DashboardSession> = {
         role: 'user',
         content: "Please fix the bug in app.ts; it's broken",
         timestamp: 1_700_000_005_000,
+        uuid: 'u1',
+        parent_uuid: undefined,
+      },
+    ],
+    tasks: [
+      {
+        id: '1',
+        subject: 'Fix the bug',
+        description: 'Track down and fix the reported bug in app.ts',
+        status: 'completed',
+        first_seen_at: 1_700_000_000_000,
+        completed_at: 1_700_000_030_000,
+      },
+    ],
+    external_id: 'ext-session-id',
+    subagents: [
+      {
+        agent_id: 'agent-1',
+        agent_type: 'general-purpose',
+        description: 'Update AGENTS.md',
+        model: 'claude-haiku-4-5',
+        input_tokens: 5,
+        output_tokens: 10,
+        cache_creation_tokens: 2,
+        cache_read_tokens: 1,
+        total_tokens: 18,
+        tool_call_count: 3,
+        started_at: 1_700_000_000_000,
+        ended_at: 1_700_000_010_000,
       },
     ],
     ...overrides,
@@ -150,11 +186,47 @@ describe('DatabaseManager', () => {
       const loaded = manager.getSession(session.id);
       expect(loaded).not.toBeNull();
       expect(loaded?.title).toBe('session.jsonl');
-      expect(loaded?.total_tokens).toBe(150);
+      expect(loaded?.total_tokens).toBe(180);
+      expect(loaded?.cache_creation_tokens).toBe(20);
+      expect(loaded?.cache_read_tokens).toBe(10);
+      expect(loaded?.models).toEqual([
+        { model: 'claude-sonnet-5', input_tokens: 100, output_tokens: 50, cache_creation_tokens: 20, cache_read_tokens: 10 },
+      ]);
       expect(loaded?.tool_executions.length).toBe(1);
       expect(loaded?.tool_executions[0].target).toBe('src/app.ts');
+      expect(loaded?.tool_executions[0].parameters).toEqual({ file_path: 'src/app.ts' });
+      expect(loaded?.tool_executions[0].result).toBe('export function app() {}');
       expect(loaded?.events[0].metadata).toEqual({ type: 'message_start' });
       expect(loaded?.messages[0].content).toContain("it's broken");
+      expect(loaded?.messages[0].uuid).toBe('u1');
+      expect(loaded?.messages[0].parent_uuid).toBeUndefined();
+      expect(loaded?.tasks).toEqual([
+        {
+          id: '1',
+          subject: 'Fix the bug',
+          description: 'Track down and fix the reported bug in app.ts',
+          status: 'completed',
+          first_seen_at: 1_700_000_000_000,
+          completed_at: 1_700_000_030_000,
+        },
+      ]);
+      expect(loaded?.external_id).toBe('ext-session-id');
+      expect(loaded?.subagents).toEqual([
+        {
+          agent_id: 'agent-1',
+          agent_type: 'general-purpose',
+          description: 'Update AGENTS.md',
+          model: 'claude-haiku-4-5',
+          input_tokens: 5,
+          output_tokens: 10,
+          cache_creation_tokens: 2,
+          cache_read_tokens: 1,
+          total_tokens: 18,
+          tool_call_count: 3,
+          started_at: 1_700_000_000_000,
+          ended_at: 1_700_000_010_000,
+        },
+      ]);
       expect(manager.getProject(project.id)?.session_count).toBe(1);
     });
 
@@ -202,6 +274,91 @@ describe('DatabaseManager', () => {
       manager.deleteSession(session.id);
 
       expect(manager.getProject(project.id)?.session_count).toBe(0);
+    });
+  });
+
+  describe('re-upload dedup (external_id)', () => {
+    it('finds a session by its external_id within a project', () => {
+      const project = makeProject();
+      manager.createProject(project);
+      const session = makeSession(project.id, { external_id: 'claude-ext-1' });
+      manager.saveSession(session);
+
+      expect(manager.findSessionByExternalId(project.id, 'claude-ext-1')?.id).toBe(session.id);
+      expect(manager.findSessionByExternalId(project.id, 'no-such-id')).toBeNull();
+    });
+
+    it('does not match an external_id from a different project', () => {
+      const projectA = makeProject({ id: 'a' });
+      const projectB = makeProject({ id: 'b' });
+      manager.createProject(projectA);
+      manager.createProject(projectB);
+      manager.saveSession(makeSession('a', { external_id: 'shared-ext-id' }));
+
+      expect(manager.findSessionByExternalId('b', 'shared-ext-id')).toBeNull();
+    });
+
+    it('inserts a new session when no existing external_id matches', () => {
+      const project = makeProject();
+      manager.createProject(project);
+      const session = makeSession(project.id, { external_id: 'ext-1' });
+
+      const id = manager.upsertSessionByExternalId(session);
+
+      expect(id).toBe(session.id);
+      expect(manager.getSessionsByProject(project.id).length).toBe(1);
+      expect(manager.getProject(project.id)?.session_count).toBe(1);
+    });
+
+    it('updates the existing session in place on a re-upload with the same external_id, keeping its id', () => {
+      const project = makeProject();
+      manager.createProject(project);
+      const first = makeSession(project.id, { external_id: 'ext-1', total_tokens: 100, title: 'first-pass.jsonl' });
+      const firstId = manager.upsertSessionByExternalId(first);
+
+      const second = makeSession(project.id, {
+        id: 'different-generated-id',
+        external_id: 'ext-1',
+        total_tokens: 999,
+        title: 'second-pass.jsonl',
+      });
+      const secondId = manager.upsertSessionByExternalId(second);
+
+      expect(secondId).toBe(firstId); // reused the original id, not the freshly generated one
+      expect(manager.getSessionsByProject(project.id).length).toBe(1); // no duplicate row
+      expect(manager.getProject(project.id)?.session_count).toBe(1); // not double-counted
+
+      const loaded = manager.getSession(firstId);
+      expect(loaded?.title).toBe('second-pass.jsonl');
+      expect(loaded?.total_tokens).toBe(999);
+    });
+
+    it('replaceSession swaps child rows (no stale tool_executions from the previous version)', () => {
+      const project = makeProject();
+      manager.createProject(project);
+      const session = makeSession(project.id, { external_id: 'ext-1' });
+      manager.saveSession(session);
+
+      const updated = makeSession(project.id, {
+        id: session.id,
+        external_id: 'ext-1',
+        tool_executions: [
+          {
+            id: 'new-tool',
+            session_id: session.id,
+            timestamp: 1,
+            tool_name: 'Write',
+            tool_type: 'tool_use',
+            target: 'new-file.ts',
+            success: true,
+          },
+        ],
+      });
+      manager.replaceSession(updated);
+
+      const loaded = manager.getSession(session.id);
+      expect(loaded?.tool_executions.length).toBe(1);
+      expect(loaded?.tool_executions[0].tool_name).toBe('Write');
     });
   });
 
@@ -269,6 +426,9 @@ describe('DatabaseManager', () => {
       expect(metrics.total_sessions).toBe(2);
       expect(metrics.total_input_tokens).toBe(300);
       expect(metrics.total_output_tokens).toBe(150);
+      expect(metrics.total_cache_creation_tokens).toBe(40);
+      expect(metrics.total_cache_read_tokens).toBe(20);
+      expect(metrics.total_tokens).toBe(450);
       expect(metrics.total_cost_usd).toBeCloseTo(0.01);
       expect(metrics.total_tool_executions).toBe(2);
       expect(metrics.avg_session_duration_ms).toBe(45_000);

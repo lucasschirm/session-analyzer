@@ -1,5 +1,5 @@
 import { LitElement, html, css } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 export interface EventTableRow {
@@ -78,14 +78,30 @@ export class EventsTable extends LitElement {
       word-break: break-word;
     }
 
+    .metadata-cell {
+      max-width: 320px;
+      cursor: pointer;
+    }
+
     .metadata-preview {
-      max-width: 260px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      display: block;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+    }
+
+    .metadata-full {
+      margin: 0;
+      max-height: 320px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
     .empty {
@@ -99,8 +115,21 @@ export class EventsTable extends LitElement {
 
   @property({ type: Boolean }) showMetadata = false;
 
+  @state() private expandedIds = new Set<string>();
+
   private formatTimestamp(timestamp: number): string {
     return new Date(timestamp).toLocaleString();
+  }
+
+  private toggleMetadata(id: string): void {
+    const next = new Set(this.expandedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.expandedIds = next;
+  }
+
+  private metadataFull(metadata: Record<string, unknown> | undefined): string {
+    return metadata ? JSON.stringify(metadata, null, 2) : '';
   }
 
   private metadataPreview(metadata: Record<string, unknown> | undefined): string {
@@ -135,7 +164,17 @@ export class EventsTable extends LitElement {
                   <td class="event-type">${event.event_type}</td>
                   <td class="description">${event.description}</td>
                   ${this.showMetadata
-                    ? html`<td class="metadata-preview">${this.metadataPreview(event.metadata)}</td>`
+                    ? html`
+                      <td
+                        class="metadata-cell"
+                        title=${this.metadataFull(event.metadata) || 'No metadata'}
+                        @click=${() => event.metadata && this.toggleMetadata(event.id)}
+                      >
+                        ${event.metadata && this.expandedIds.has(event.id)
+                          ? html`<pre class="metadata-full">${this.metadataFull(event.metadata)}</pre>`
+                          : html`<span class="metadata-preview">${this.metadataPreview(event.metadata)}</span>`}
+                      </td>
+                    `
                     : ''}
                 </tr>
               `

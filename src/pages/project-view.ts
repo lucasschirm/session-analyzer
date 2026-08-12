@@ -4,6 +4,13 @@ import { dbClient } from '../db/db-client';
 import { navigateTo } from '../router';
 import { parseInWorker } from '../workers/parser-client';
 import type { DashboardSession, Project } from '../types';
+import { formatCompactNumber, formatFullNumber } from '../lib/format';
+import {
+  classifyUploadedFiles,
+  mergeSubagentIntoSession,
+  parseSubagentMeta,
+  type UploadedFile,
+} from '../lib/subagents';
 import '../components/metrics-card';
 import '../components/session-list';
 import '../components/upload-zone';
@@ -148,7 +155,7 @@ export class ProjectView extends LitElement {
       ]);
       this.project = project;
       this.sessions = sessions;
-      this.totalTokens = metrics.total_input_tokens + metrics.total_output_tokens;
+      this.totalTokens = metrics.total_tokens;
       this.totalToolExecutions = metrics.total_tool_executions;
       this.error = null;
     } catch (error) {
@@ -159,28 +166,65 @@ export class ProjectView extends LitElement {
     }
   }
 
-  private async handleFilesSelected(event: CustomEvent<{ files: File[] }>): Promise<void> {
-    const { files } = event.detail;
+  /**
+   * Handles a batch of uploaded/dropped files, which may mix top-level
+   * session transcripts with a session's supplementary data folder
+   * (`subagents/agent-<id>.jsonl` + `.meta.json`, dropped either alongside
+   * the transcript or on its own to attach to an already-uploaded session).
+   *
+   * Main transcripts are parsed and upserted by their embedded `sessionId`
+   * (`external_id`) first - so re-uploading the same session updates it in
+   * place - then subagent groups are parsed and folded into whichever
+   * session (just-uploaded in this batch, or already in the project) shares
+   * their `external_id`.
+   */
+  private async handleFilesSelected(event: CustomEvent<{ files: UploadedFile[] }>): Promise<void> {
+    const { mainFiles, subagentGroups } = classifyUploadedFiles(event.detail.files);
     this.isUploading = true;
     this.error = null;
 
     try {
-      for (const file of files) {
-        const content = await file.text();
+      const sessionIdByExternalId = new Map<string, string>();
+
+      for (const upload of mainFiles) {
+        const content = await upload.file.text();
         const parsed = await parseInWorker(content, {
           projectId: this.projectId,
-          title: file.name,
+          title: upload.file.name,
         });
 
         if (parsed.parseErrors.length > 0 && parsed.session.total_tokens === 0 &&
             parsed.session.tool_executions.length === 0 && parsed.session.events.length === 0) {
           throw new Error(
-            `Could not parse "${file.name}": ${parsed.parseErrors[0]?.message ?? 'unknown format'}`
+            `Could not parse "${upload.file.name}": ${parsed.parseErrors[0]?.message ?? 'unknown format'}`
           );
         }
 
-        await dbClient.saveSession(parsed.session);
+        const sessionId = await dbClient.upsertSessionByExternalId(parsed.session);
+        if (parsed.session.external_id) sessionIdByExternalId.set(parsed.session.external_id, sessionId);
       }
+
+      for (const group of subagentGroups) {
+        if (!group.jsonl) continue;
+
+        const content = await group.jsonl.file.text();
+        const parsedSub = await parseInWorker(content, { projectId: this.projectId });
+        if (!parsedSub.session.external_id) continue;
+
+        const knownId = sessionIdByExternalId.get(parsedSub.session.external_id);
+        const session = knownId
+          ? await dbClient.getSession(knownId)
+          : await dbClient.findSessionByExternalId(this.projectId, parsedSub.session.external_id);
+        if (!session) {
+          console.warn(`No session found for subagent data (agent ${group.agentId}) - skipping.`);
+          continue;
+        }
+
+        const meta = group.meta ? parseSubagentMeta(await group.meta.file.text()) : {};
+        mergeSubagentIntoSession(session, group.agentId, parsedSub.session, meta);
+        await dbClient.replaceSession(session);
+      }
+
       await this.loadData();
     } catch (error) {
       this.error = `Upload failed: ${(error as Error).message}`;
@@ -243,7 +287,8 @@ export class ProjectView extends LitElement {
           ></metrics-card>
           <metrics-card
             label="Total Tokens"
-            value="${this.totalTokens.toLocaleString()}"
+            value="${formatCompactNumber(this.totalTokens)}"
+            valueTitle="${formatFullNumber(this.totalTokens)}"
             icon="🔤"
           ></metrics-card>
           <metrics-card

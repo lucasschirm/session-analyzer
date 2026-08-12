@@ -30,7 +30,7 @@ The application ingests, parses, and generates statistics for session files from
 
 | Format | Identification | Key Features Parsed |
 |--------|---------------|---------------------|
-| **Claude Code** | `.jsonl` with `message_start` events | Token usage, tool executions (`read_file`, etc.), text deltas -> transcript |
+| **Claude Code** | Real CLI format from `~/.claude/projects/*.jsonl` with `message_start`, `ai-title`, cache/token events | Per-model token usage, cache_creation/cache_read tokens, tool executions with parameters, nested transcript messages (uuid/parent_uuid), cache-miss diagnostics, session title from ai-title event |
 | **Agentic Pi** | JSONL with `{"type":"session","version":3}` | Exact tokens, cost from `usage_snapshot`, tool executions, transcript messages |
 | **Antigravity** | JSON array with sandbox events | `context_compaction`, `tool_exec`, `file_write`, `request-review` overrides |
 | **OpenCode/Codex** | JSON logs with `action` fields | CLI formatters (prettier), `/undo` tracking, user commands |

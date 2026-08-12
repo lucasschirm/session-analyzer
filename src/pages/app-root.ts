@@ -6,6 +6,7 @@ import './home-page';
 import './project-view';
 import './session-dashboard';
 import './indicator-details';
+import './session-transcript-page';
 
 /**
  * Root application shell: header, hash-based routing outlet and database
@@ -15,6 +16,7 @@ import './indicator-details';
  * - `#/projects/:projectId`                -> Project View (upload + sessions)
  * - `#/sessions/:sessionId`                -> Session Dashboard (metrics)
  * - `#/sessions/:sessionId/indicator/:key` -> Indicator Details (drill-down)
+ * - `#/sessions/:sessionId/transcript`     -> Session Transcript (+ subagents)
  */
 @customElement('app-root')
 export class AppRoot extends LitElement {
@@ -125,6 +127,13 @@ export class AppRoot extends LitElement {
             session-id=${params.sessionId ?? ''}
             indicator=${params.indicator ?? ''}
           ></indicator-details>`,
+      },
+      {
+        path: '/sessions/:sessionId/transcript',
+        render: (params) =>
+          html`<session-transcript-page
+            session-id=${params.sessionId ?? ''}
+          ></session-transcript-page>`,
       },
     ],
     {

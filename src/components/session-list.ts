@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import type { DashboardSession } from '../types';
+import { formatCompactNumber, formatFullNumber } from '../lib/format';
 
 /**
  * Session list.
@@ -136,7 +137,9 @@ export class SessionList extends LitElement {
                 </div>
               </div>
               <div class="session-tokens">
-                <div class="token-count">${session.total_tokens.toLocaleString()}</div>
+                <div class="token-count" title=${formatFullNumber(session.total_tokens)}>
+                  ${formatCompactNumber(session.total_tokens)}
+                </div>
                 <div class="token-label">tokens</div>
               </div>
             </button>

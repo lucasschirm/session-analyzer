@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/sync-agents-symlinks.sh",
+            "timeout": 15,
+            "statusMessage": "Syncing .agents/ symlinks"
+          }
+        ]
+      }
+    ]
+  }
+}

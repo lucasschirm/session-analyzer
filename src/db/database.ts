@@ -11,9 +11,12 @@ import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import type { Database } from '@sqlite.org/sqlite-wasm';
 import type {
   DashboardSession,
+  ModelTokenUsage,
   Project,
   SessionEvent,
   SessionMetrics,
+  SessionTask,
+  SubagentUsage,
   ToolExecution,
   TranscriptMessage,
 } from '../types';
@@ -29,9 +32,15 @@ interface SessionRow {
   ended_at: number;
   input_tokens: number;
   output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
   total_tokens: number;
   cost_usd: number | null;
   model: string | null;
+  model_usage: string | null;
+  tasks: string | null;
+  external_id: string | null;
+  subagents: string | null;
   context_compactions: number;
   total_turns: number;
   files_read: number;
@@ -46,6 +55,29 @@ interface EventRow {
   event_type: string;
   description: string | null;
   metadata: string | null;
+}
+
+interface MessageRow {
+  id: string;
+  session_id: string;
+  role: string;
+  content: string;
+  timestamp: number;
+  uuid: string | null;
+  parent_uuid: string | null;
+}
+
+interface ToolExecutionRow {
+  id: string;
+  session_id: string;
+  timestamp: number;
+  tool_name: string;
+  tool_type: string;
+  target: string | null;
+  success: number;
+  duration_ms: number | null;
+  parameters: string | null;
+  result: string | null;
 }
 
 export class DatabaseManager {
@@ -74,10 +106,44 @@ export class DatabaseManager {
 
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.createTables();
-    // TEMP DEBUG
-    console.log('[db-debug] storage:', this.storage, 'requested file:', filename, 'db.filename:', this.db.filename);
-    console.log('[db-debug] projects at init:', this.db.selectValue('SELECT count(*) FROM projects'));
+    this.migrate();
     return this.storage;
+  }
+
+  /**
+   * Lightweight schema migration for columns added after a database file was
+   * first created. `CREATE TABLE IF NOT EXISTS` is a no-op on an existing
+   * table, so new columns must be added explicitly; SQLite has no
+   * `ADD COLUMN IF NOT EXISTS`, so "duplicate column" failures (a fresh
+   * database that already has the column from `createTables`) are expected
+   * and swallowed - any other error is a real problem and is rethrown.
+   */
+  private migrate(): void {
+    const db = this.requireDb();
+    const alterations = [
+      'ALTER TABLE sessions ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE sessions ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE sessions ADD COLUMN model_usage TEXT',
+      'ALTER TABLE sessions ADD COLUMN tasks TEXT',
+      'ALTER TABLE sessions ADD COLUMN external_id TEXT',
+      'ALTER TABLE sessions ADD COLUMN subagents TEXT',
+      'ALTER TABLE tool_executions ADD COLUMN parameters TEXT',
+      'ALTER TABLE tool_executions ADD COLUMN result TEXT',
+      'ALTER TABLE session_messages ADD COLUMN uuid TEXT',
+      'ALTER TABLE session_messages ADD COLUMN parent_uuid TEXT',
+    ];
+    for (const sql of alterations) {
+      try {
+        db.exec(sql);
+      } catch (error) {
+        if (!/duplicate column name/i.test((error as Error).message)) throw error;
+      }
+    }
+
+    // Run after the alterations above so `external_id` is guaranteed to
+    // exist on both fresh databases (added in createTables) and databases
+    // upgraded by this migration.
+    db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(project_id, external_id)');
   }
 
   private createTables(): void {
@@ -100,9 +166,15 @@ export class DatabaseManager {
         ended_at INTEGER NOT NULL,
         input_tokens INTEGER NOT NULL DEFAULT 0,
         output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
         total_tokens INTEGER NOT NULL DEFAULT 0,
         cost_usd REAL,
         model TEXT,
+        model_usage TEXT,
+        tasks TEXT,
+        external_id TEXT,
+        subagents TEXT,
         context_compactions INTEGER NOT NULL DEFAULT 0,
         total_turns INTEGER NOT NULL DEFAULT 0,
         files_read INTEGER NOT NULL DEFAULT 0,
@@ -120,6 +192,8 @@ export class DatabaseManager {
         target TEXT,
         success INTEGER NOT NULL DEFAULT 1,
         duration_ms INTEGER,
+        parameters TEXT,
+        result TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
 
@@ -139,6 +213,8 @@ export class DatabaseManager {
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         timestamp INTEGER NOT NULL,
+        uuid TEXT,
+        parent_uuid TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
 
@@ -217,82 +293,163 @@ export class DatabaseManager {
 
   // ==================== Session operations ====================
 
+  /** Inserts a brand new session row and bumps the project's session count. */
   saveSession(session: DashboardSession): void {
     const db = this.requireDb();
     db.transaction(() => {
-      db.exec({
-        sql: `INSERT INTO sessions (
-                id, project_id, source, title, started_at, ended_at,
-                input_tokens, output_tokens, total_tokens, cost_usd, model,
-                context_compactions, total_turns, files_read, files_written, agent_invocations
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        bind: [
-          session.id,
-          session.project_id,
-          session.source,
-          session.title ?? '',
-          session.started_at,
-          session.ended_at,
-          session.input_tokens,
-          session.output_tokens,
-          session.total_tokens,
-          session.cost_usd ?? null,
-          session.model ?? null,
-          session.context_compactions ?? 0,
-          session.total_turns ?? 0,
-          session.files_read ?? 0,
-          session.files_written ?? 0,
-          session.agent_invocations ?? 0,
-        ],
-      });
-
-      for (const tool of session.tool_executions) {
-        db.exec({
-          sql: `INSERT INTO tool_executions
-                (id, session_id, timestamp, tool_name, tool_type, target, success, duration_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          bind: [
-            tool.id,
-            tool.session_id,
-            tool.timestamp,
-            tool.tool_name,
-            tool.tool_type,
-            tool.target ?? null,
-            tool.success ? 1 : 0,
-            tool.duration_ms ?? null,
-          ],
-        });
-      }
-
-      for (const event of session.events) {
-        db.exec({
-          sql: `INSERT INTO session_events
-                (id, session_id, timestamp, event_type, description, metadata)
-                VALUES (?, ?, ?, ?, ?, ?)`,
-          bind: [
-            event.id,
-            event.session_id,
-            event.timestamp,
-            event.event_type,
-            event.description ?? null,
-            event.metadata ? JSON.stringify(event.metadata) : null,
-          ],
-        });
-      }
-
-      for (const message of session.messages ?? []) {
-        db.exec({
-          sql: `INSERT INTO session_messages (id, session_id, role, content, timestamp)
-                VALUES (?, ?, ?, ?, ?)`,
-          bind: [message.id, message.session_id, message.role, message.content, message.timestamp],
-        });
-      }
-
+      this.insertSessionRow(session);
+      this.writeChildRows(session);
       db.exec({
         sql: 'UPDATE projects SET session_count = session_count + 1, updated_at = ? WHERE id = ?',
         bind: [Date.now(), session.project_id],
       });
     });
+  }
+
+  /**
+   * Replaces an existing session's row and child rows in place (same `id`,
+   * so URLs/links to it keep working), without touching the project's
+   * session count. Used both for re-uploads of the same external session
+   * (matched by `external_id`) and for folding in subagent data.
+   */
+  replaceSession(session: DashboardSession): void {
+    const db = this.requireDb();
+    db.transaction(() => {
+      this.deleteSessionRows(session.id);
+      db.exec({ sql: 'DELETE FROM sessions WHERE id = ?', bind: [session.id] });
+      this.insertSessionRow(session);
+      this.writeChildRows(session);
+      this.touchProject(session.project_id);
+    });
+  }
+
+  /**
+   * Inserts `session` if its `external_id` isn't already present in this
+   * project, otherwise replaces the existing row in place (reusing its
+   * `id`) - so re-uploading the same session updates it instead of creating
+   * a duplicate. Returns the effective session id (the existing one on
+   * update, or `session.id` on insert).
+   */
+  upsertSessionByExternalId(session: DashboardSession): string {
+    const existing = session.external_id
+      ? this.findSessionByExternalId(session.project_id, session.external_id)
+      : null;
+
+    if (!existing) {
+      this.saveSession(session);
+      return session.id;
+    }
+
+    // Reuse the existing row's id (so links to it keep working), which
+    // means every child row's `session_id` foreign key must be remapped too
+    // - they were generated against `session.id`, not `existing.id`.
+    this.replaceSession({
+      ...session,
+      id: existing.id,
+      tool_executions: session.tool_executions.map((tool) => ({ ...tool, session_id: existing.id })),
+      events: session.events.map((event) => ({ ...event, session_id: existing.id })),
+      messages: session.messages.map((message) => ({ ...message, session_id: existing.id })),
+    });
+    return existing.id;
+  }
+
+  findSessionByExternalId(projectId: string, externalId: string): DashboardSession | null {
+    const row = this.requireDb().selectObject(
+      'SELECT * FROM sessions WHERE project_id = ? AND external_id = ?',
+      [projectId, externalId]
+    ) as unknown as SessionRow | undefined;
+    return row ? this.hydrateSession(row) : null;
+  }
+
+  private insertSessionRow(session: DashboardSession): void {
+    this.requireDb().exec({
+      sql: `INSERT INTO sessions (
+              id, project_id, source, title, started_at, ended_at,
+              input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
+              total_tokens, cost_usd, model, model_usage, tasks, external_id, subagents,
+              context_compactions, total_turns, files_read, files_written, agent_invocations
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      bind: [
+        session.id,
+        session.project_id,
+        session.source,
+        session.title ?? '',
+        session.started_at,
+        session.ended_at,
+        session.input_tokens,
+        session.output_tokens,
+        session.cache_creation_tokens ?? 0,
+        session.cache_read_tokens ?? 0,
+        session.total_tokens,
+        session.cost_usd ?? null,
+        session.model ?? null,
+        session.models && session.models.length > 0 ? JSON.stringify(session.models) : null,
+        session.tasks && session.tasks.length > 0 ? JSON.stringify(session.tasks) : null,
+        session.external_id ?? null,
+        session.subagents && session.subagents.length > 0 ? JSON.stringify(session.subagents) : null,
+        session.context_compactions ?? 0,
+        session.total_turns ?? 0,
+        session.files_read ?? 0,
+        session.files_written ?? 0,
+        session.agent_invocations ?? 0,
+      ],
+    });
+  }
+
+  private writeChildRows(session: DashboardSession): void {
+    const db = this.requireDb();
+
+    for (const tool of session.tool_executions) {
+      db.exec({
+        sql: `INSERT INTO tool_executions
+              (id, session_id, timestamp, tool_name, tool_type, target, success, duration_ms, parameters, result)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        bind: [
+          tool.id,
+          tool.session_id,
+          tool.timestamp,
+          tool.tool_name,
+          tool.tool_type,
+          tool.target ?? null,
+          tool.success ? 1 : 0,
+          tool.duration_ms ?? null,
+          tool.parameters ? JSON.stringify(tool.parameters) : null,
+          tool.result ?? null,
+        ],
+      });
+    }
+
+    for (const event of session.events) {
+      db.exec({
+        sql: `INSERT INTO session_events
+              (id, session_id, timestamp, event_type, description, metadata)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        bind: [
+          event.id,
+          event.session_id,
+          event.timestamp,
+          event.event_type,
+          event.description ?? null,
+          event.metadata ? JSON.stringify(event.metadata) : null,
+        ],
+      });
+    }
+
+    for (const message of session.messages ?? []) {
+      db.exec({
+        sql: `INSERT INTO session_messages (id, session_id, role, content, timestamp, uuid, parent_uuid)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        bind: [
+          message.id,
+          message.session_id,
+          message.role,
+          message.content,
+          message.timestamp,
+          message.uuid ?? null,
+          message.parent_uuid ?? null,
+        ],
+      });
+    }
   }
 
   getSessionsByProject(projectId: string): DashboardSession[] {
@@ -353,14 +510,21 @@ export class DatabaseManager {
   }
 
   private hydrateSession(row: SessionRow): DashboardSession {
+    const { model_usage, tasks, subagents, ...rest } = row;
     return {
-      ...row,
-      cost_usd: row.cost_usd ?? undefined,
-      model: row.model ?? undefined,
-      source: row.source as DashboardSession['source'],
-      tool_executions: this.getToolExecutionsForSession(row.id),
-      events: this.getSessionEventsForSession(row.id),
-      messages: this.getMessagesForSession(row.id),
+      ...rest,
+      cache_creation_tokens: rest.cache_creation_tokens ?? 0,
+      cache_read_tokens: rest.cache_read_tokens ?? 0,
+      cost_usd: rest.cost_usd ?? undefined,
+      model: rest.model ?? undefined,
+      external_id: rest.external_id ?? undefined,
+      models: model_usage ? safeJsonParseArray<ModelTokenUsage>(model_usage) : [],
+      source: rest.source as DashboardSession['source'],
+      tool_executions: this.getToolExecutionsForSession(rest.id),
+      events: this.getSessionEventsForSession(rest.id),
+      messages: this.getMessagesForSession(rest.id),
+      tasks: tasks ? safeJsonParseArray<SessionTask>(tasks) : [],
+      subagents: subagents ? safeJsonParseArray<SubagentUsage>(subagents) : [],
     };
   }
 
@@ -368,10 +532,14 @@ export class DatabaseManager {
     const rows = this.requireDb().selectObjects(
       'SELECT * FROM tool_executions WHERE session_id = ? ORDER BY timestamp ASC',
       [sessionId]
-    );
+    ) as unknown as ToolExecutionRow[];
     return rows.map((row) => ({
-      ...(row as unknown as Omit<ToolExecution, 'success'>),
+      ...row,
       success: Boolean(row.success),
+      target: row.target ?? undefined,
+      duration_ms: row.duration_ms ?? undefined,
+      parameters: row.parameters ? safeJsonParse(row.parameters) : undefined,
+      result: row.result ?? undefined,
     }));
   }
 
@@ -394,9 +562,12 @@ export class DatabaseManager {
     const rows = this.requireDb().selectObjects(
       'SELECT * FROM session_messages WHERE session_id = ? ORDER BY timestamp ASC',
       [sessionId]
-    );
+    ) as unknown as MessageRow[];
     return rows.map((row) => ({
-      ...(row as unknown as TranscriptMessage),
+      ...row,
+      role: row.role as TranscriptMessage['role'],
+      uuid: row.uuid ?? undefined,
+      parent_uuid: row.parent_uuid ?? undefined,
     }));
   }
 
@@ -409,6 +580,9 @@ export class DatabaseManager {
       total_sessions: sessions.length,
       total_input_tokens: 0,
       total_output_tokens: 0,
+      total_cache_creation_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_tokens: 0,
       total_cost_usd: 0,
       total_tool_executions: 0,
       avg_session_duration_ms: 0,
@@ -421,6 +595,9 @@ export class DatabaseManager {
     for (const session of sessions) {
       metrics.total_input_tokens += session.input_tokens;
       metrics.total_output_tokens += session.output_tokens;
+      metrics.total_cache_creation_tokens += session.cache_creation_tokens ?? 0;
+      metrics.total_cache_read_tokens += session.cache_read_tokens ?? 0;
+      metrics.total_tokens += session.total_tokens;
       metrics.total_cost_usd += session.cost_usd ?? 0;
       metrics.total_tool_executions += session.tool_executions.length;
       totalDuration += Math.max(0, session.ended_at - session.started_at);
@@ -459,6 +636,15 @@ function rowToProject(row: Record<string, unknown>): Project {
     updated_at: Number(row.updated_at),
     session_count: Number(row.session_count ?? 0),
   };
+}
+
+function safeJsonParseArray<T>(value: string): T[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 function safeJsonParse(value: string): Record<string, unknown> | undefined {

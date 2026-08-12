@@ -34,6 +34,21 @@ async function handleRequest(request: DbRequest): Promise<DbResponse> {
       case 'saveSession':
         manager.saveSession(request.session);
         return { id: request.id, ok: true };
+      case 'upsertSessionByExternalId':
+        return {
+          id: request.id,
+          ok: true,
+          result: manager.upsertSessionByExternalId(request.session),
+        };
+      case 'replaceSession':
+        manager.replaceSession(request.session);
+        return { id: request.id, ok: true };
+      case 'findSessionByExternalId':
+        return {
+          id: request.id,
+          ok: true,
+          result: manager.findSessionByExternalId(request.projectId, request.externalId),
+        };
       case 'getSessionsByProject':
         return { id: request.id, ok: true, result: manager.getSessionsByProject(request.projectId) };
       case 'searchSessions':
@@ -63,15 +78,23 @@ async function handleRequest(request: DbRequest): Promise<DbResponse> {
   }
 }
 
+// Requests are processed strictly in arrival order (not concurrently): the
+// 'init' request must finish opening the database before any query that
+// depends on it is handled, otherwise a request issued immediately after
+// 'init' (before it resolves) would race ahead and hit an uninitialized db.
+let queue: Promise<void> = Promise.resolve();
+
 self.onmessage = (event: MessageEvent<DbRequest>) => {
-  void handleRequest(event.data).then((response) => {
-    if (response.ok && response.bytes) {
-      // Transfer the bytes instead of structured-cloning a copy.
-      self.postMessage(response, [response.bytes.buffer as ArrayBuffer]);
-    } else {
-      self.postMessage(response);
-    }
-  });
+  queue = queue.then(() =>
+    handleRequest(event.data).then((response) => {
+      if (response.ok && response.bytes) {
+        // Transfer the bytes instead of structured-cloning a copy.
+        self.postMessage(response, [response.bytes.buffer as ArrayBuffer]);
+      } else {
+        self.postMessage(response);
+      }
+    })
+  );
 };
 
 export {};

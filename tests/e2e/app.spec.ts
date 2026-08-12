@@ -98,9 +98,11 @@ test.describe('Full user journey', () => {
     await expect(page.locator('events-table')).toContainText('src/app.fixed.ts');
     await expect(page.locator('events-table')).not.toContainText('src/app.ts');
 
-    // Back to the dashboard, open the transcript.
+    // Back to the dashboard, open the dedicated transcript page.
     await page.getByRole('link', { name: '← Back to Session' }).click();
-    await page.getByRole('button', { name: 'View Session Transcript' }).click();
+    await page.getByRole('link', { name: 'View Session Transcript' }).click();
+    await expect(page).toHaveURL(/#\/sessions\/.+\/transcript$/);
+    await expect(page.getByRole('heading', { name: /^Transcript/ })).toBeVisible();
 
     const transcript = page.locator('session-transcript');
     await expect(transcript).toContainText('I fixed the bug');
@@ -108,6 +110,13 @@ test.describe('Full user journey', () => {
     await expect(transcript.locator('strong')).toHaveText('app.ts');
     // ... and DOMPurify stripped the injected event handler.
     expect(await page.content()).not.toContain('onerror');
+
+    // No subagents on this session - no card row, single main column.
+    await expect(page.locator('.subagent-row')).toHaveCount(0);
+    await expect(page.locator('.transcript-column')).toHaveCount(1);
+
+    await page.getByRole('link', { name: '← Back to Session' }).click();
+    await expect(page.getByRole('heading', { name: 'claude-session.jsonl' })).toBeVisible();
   });
 
   test('uploads every supported format', async ({ page }) => {
@@ -123,10 +132,147 @@ test.describe('Full user journey', () => {
     ]);
 
     await expect(page.locator('.session-item')).toHaveCount(5);
-    const listText = await page.locator('session-list').textContent();
+    // session-list renders into a shadow root, so a raw textContent() read
+    // (which doesn't cross shadow boundaries) comes back empty; use
+    // Playwright's own text matching, which pierces shadow DOM.
+    const sessionList = page.locator('session-list');
     for (const source of ['antigravity', 'opencode codex', 'mcp', 'local runner', 'agentic pi']) {
-      expect(listText?.toLowerCase()).toContain(source);
+      await expect(sessionList).toContainText(source, { ignoreCase: true });
     }
+  });
+});
+
+test.describe('Rich session dashboard', () => {
+  test('surfaces ai-title, token/model/skill breakdowns, cache diagnostics and message nesting', async ({
+    page,
+  }) => {
+    await createProject(page, 'Rich Panel Project');
+    await openProject(page, 'Rich Panel Project');
+
+    await uploadFile(page, 'claude-rich-session.jsonl');
+
+    // The ai-title CLI event overrides the filename as the session title.
+    const sessionRow = page.locator('.session-item', { hasText: 'Rich Session Demo' });
+    await expect(sessionRow).toBeVisible();
+    await sessionRow.click();
+    await expect(page.getByRole('heading', { name: 'Rich Session Demo' })).toBeVisible();
+
+    // Token Usage breakdown: input/output/cache-write/cache-read panel.
+    await expect(page.getByText('Cache Write')).toBeVisible();
+    await expect(page.getByText('Cache Read')).toBeVisible();
+
+    // Tool Result Tokens panel: estimated from the two tool_result payloads
+    // ("review complete" -> ceil(15/4)=4, the failed bash result -> ceil(37/4)=10,
+    // 14 total) as a percentage of total input volume (70 input + 1000 cache
+    // write + 700 cache read = 1770) -> 0.8%. Always labeled an estimate.
+    const toolTokensPanel = page.locator('.panel', { hasText: 'Tool Result Tokens' });
+    await expect(toolTokensPanel).toBeVisible();
+    await expect(toolTokensPanel).toContainText('(est.)');
+    await expect(toolTokensPanel).toContainText('14');
+    await expect(toolTokensPanel).toContainText('0.8%');
+
+    // Models Used table lists both models this session used.
+    const modelsPanel = page.locator('.panel', { hasText: 'Models Used' });
+    await expect(modelsPanel).toBeVisible();
+    await expect(modelsPanel).toContainText('claude-opus-5');
+    await expect(modelsPanel).toContainText('claude-haiku-4-5');
+
+    // Skills Used panel groups by skill name, with a total usage count.
+    await expect(page.getByRole('heading', { name: 'Skills Used' })).toBeVisible();
+    await expect(page.locator('.skill-name')).toHaveText('Skill');
+    await expect(page.locator('.skill-usage')).toHaveText('Total usage: 1');
+    await expect(page.locator('.skill-params')).toContainText('code-review');
+
+    // Cache Diagnostics panel tallies the cache_miss_reason.
+    const diagnosticsPanel = page.locator('.panel', { hasText: 'Cache Diagnostics' });
+    await expect(diagnosticsPanel).toBeVisible();
+    await expect(diagnosticsPanel.locator('.rank-item')).toContainText('tools changed');
+
+    await page.getByText('View all diagnostics →').click();
+    await expect(page.getByRole('heading', { name: 'Cache Diagnostics' })).toBeVisible();
+    await expect(page.locator('events-table')).toContainText('Cache miss: tools_changed');
+
+    // The metadata cell shows a preview, exposes the full JSON as a hover
+    // tooltip, and expands inline on click.
+    const metadataCell = page.locator('.metadata-cell').first();
+    await expect(metadataCell).toHaveAttribute('title', /cache_miss_reason/);
+    await expect(metadataCell.locator('.metadata-full')).toHaveCount(0);
+    await metadataCell.click();
+    await expect(metadataCell.locator('.metadata-full')).toContainText('cache_miss_reason');
+
+    // Task reminders: two task_reminder snapshots, both tasks completed by
+    // the second one (1s apart) -> Total Tasks 2, both completed, avg 1s.
+    await page.getByRole('link', { name: '← Back to Session' }).click();
+    const tasksCard = page.locator('metrics-card', { hasText: 'Total Tasks' });
+    await expect(tasksCard).toContainText('2');
+    await expect(page.locator('metrics-card', { hasText: 'Tasks Completed' })).toContainText('of 2 total');
+    await expect(page.locator('metrics-card', { hasText: 'Avg Time / Task' })).toContainText('1s');
+
+    await tasksCard.click();
+    await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible();
+    await expect(page.locator('events-table')).toContainText('Investigate cache');
+    await expect(page.locator('events-table')).toContainText('Write report');
+    await expect(page.locator('events-table')).toContainText('completed');
+
+    // Turns indicator: the assistant reply nests under the user message it
+    // replied to (matching uuid); the second assistant turn's immediate
+    // parent was a tool-result-only entry (never a transcript message), so
+    // it has no resolvable parent here and stays at the top level.
+    await page.getByRole('link', { name: '← Back to Session' }).click();
+    await page.locator('metrics-card', { hasText: 'Total Interactions' }).click();
+    await expect(page.getByRole('heading', { name: 'Interactions (Turns)' })).toBeVisible();
+
+    const rootNodes = page.locator('.message-tree > .message-node');
+    await expect(rootNodes).toHaveCount(2);
+    const parentNode = page.locator('.message-node.root', { hasText: 'Investigate cache behavior' });
+    await expect(parentNode.locator('.message-children')).toContainText('Investigating now.');
+    const orphanNode = page.locator('.message-node.root', { hasText: 'Done investigating.' });
+    await expect(orphanNode.locator('.message-children')).toHaveCount(0);
+  });
+});
+
+test.describe('Tools indicator', () => {
+  test('filters tool calls and expands a row to show inputs and result', async ({ page }) => {
+    await createProject(page, 'Tools Panel Project');
+    await openProject(page, 'Tools Panel Project');
+
+    await uploadFile(page, 'claude-rich-session.jsonl');
+    const sessionRow = page.locator('.session-item', { hasText: 'Rich Session Demo' });
+    await sessionRow.click();
+
+    await page.locator('metrics-card', { hasText: 'Tools Used' }).click();
+    await expect(page.getByRole('heading', { name: 'Tool Executions' })).toBeVisible();
+
+    // Two tool calls in the fixture: a successful Skill call and a failed
+    // Bash call - both start out visible.
+    await expect(page.locator('.tool-row')).toHaveCount(2);
+    const failedRow = page.locator('.tool-row', { hasText: 'Bash' });
+    await expect(failedRow).toHaveClass(/tool-row-error/);
+    await expect(failedRow).toContainText('Error');
+
+    // Expanding the failed row reveals its inputs and result.
+    await failedRow.click();
+    const detailRow = page.locator('.tool-detail-row');
+    await expect(detailRow).toContainText('"command": "false"');
+    await expect(detailRow).toContainText('bash: command failed with exit code 1');
+
+    // Errors-only filter narrows to just the failed call.
+    await page.getByLabel('Errors only').check();
+    await expect(page.locator('.tool-row')).toHaveCount(1);
+    await expect(page.locator('.tool-row')).toContainText('Bash');
+    await page.getByLabel('Errors only').uncheck();
+    await expect(page.locator('.tool-row')).toHaveCount(2);
+
+    // By-tool dropdown narrows to the selected tool.
+    await page.locator('.tool-filters select').selectOption('Skill');
+    await expect(page.locator('.tool-row')).toHaveCount(1);
+    await expect(page.locator('.tool-row')).toContainText('Skill');
+    await page.locator('.tool-filters select').selectOption('');
+
+    // Free-text filter matches against the result content too.
+    await page.locator('.tool-filters input[type="text"]').fill('review complete');
+    await expect(page.locator('.tool-row')).toHaveCount(1);
+    await expect(page.locator('.tool-row')).toContainText('Skill');
   });
 });
 
@@ -176,6 +322,132 @@ test.describe('Drag & drop upload', () => {
   });
 });
 
+test.describe('Subagent folder ingestion', () => {
+  async function dropFixtures(page: Page, fileNames: string[]): Promise<void> {
+    const files = fileNames.map((name) => ({
+      name,
+      content: fs.readFileSync(fixture(name), 'utf8'),
+    }));
+    const dataTransfer = await page.evaluateHandle((entries) => {
+      const dt = new DataTransfer();
+      for (const entry of entries) {
+        dt.items.add(new File([entry.content], entry.name, { type: 'application/json' }));
+      }
+      return dt;
+    }, files);
+    await page.locator('upload-zone div.upload-zone').dispatchEvent('drop', { dataTransfer });
+  }
+
+  test('folds subagent tokens/models into the session when dropped alongside the transcript', async ({
+    page,
+  }) => {
+    await createProject(page, 'Subagent Combined Project');
+    await openProject(page, 'Subagent Combined Project');
+
+    await dropFixtures(page, [
+      'claude-session-with-subagent.jsonl',
+      'agent-e2esub1.jsonl',
+      'agent-e2esub1.meta.json',
+    ]);
+
+    const sessionRow = page.locator('.session-item', { hasText: 'claude-session-with-subagent.jsonl' });
+    await expect(sessionRow).toBeVisible();
+    await sessionRow.click();
+
+    // total_tokens is input+output only (cache tokens excluded - see
+    // SessionBuilder.finalize): main (100+50) + subagent (20+10) = 180.
+    const totalTokensCard = page.locator('metrics-card', { hasText: 'Total Tokens' });
+    await expect(totalTokensCard).toContainText('180');
+
+    const subagentsPanel = page.locator('.panel', { hasText: 'Subagents' });
+    await expect(subagentsPanel).toBeVisible();
+    await expect(subagentsPanel).toContainText('Handle the subtask');
+    await expect(subagentsPanel).toContainText('general-purpose');
+    await expect(subagentsPanel).toContainText('claude-haiku-4-5');
+
+    const modelsPanel = page.locator('.panel', { hasText: 'Models Used' });
+    await expect(modelsPanel).toContainText('claude-sonnet-5');
+    await expect(modelsPanel).toContainText('claude-haiku-4-5');
+  });
+
+  test('attaches subagent data to an already-uploaded session from the session page', async ({ page }) => {
+    await createProject(page, 'Subagent Post-hoc Project');
+    await openProject(page, 'Subagent Post-hoc Project');
+
+    await uploadFile(page, 'claude-session-with-subagent.jsonl');
+    const sessionRow = page.locator('.session-item', { hasText: 'claude-session-with-subagent.jsonl' });
+    await expect(sessionRow).toBeVisible();
+    await sessionRow.click();
+
+    // Before attaching: just the main transcript's 150 tokens, no Subagents panel.
+    await expect(page.locator('metrics-card', { hasText: 'Total Tokens' })).toContainText('150');
+    await expect(page.locator('.panel', { hasText: 'Subagents' })).toHaveCount(0);
+
+    await dropFixtures(page, ['agent-e2esub1.jsonl', 'agent-e2esub1.meta.json']);
+
+    // 150 (main) + 30 (subagent input+output, cache excluded) = 180.
+    await expect(page.locator('metrics-card', { hasText: 'Total Tokens' })).toContainText('180');
+    const subagentsPanel = page.locator('.panel', { hasText: 'Subagents' });
+    await expect(subagentsPanel).toBeVisible();
+    await expect(subagentsPanel).toContainText('Handle the subtask');
+  });
+
+  test('opens a subagent transcript column alongside the main transcript, closable independently', async ({
+    page,
+  }) => {
+    await createProject(page, 'Subagent Transcript Project');
+    await openProject(page, 'Subagent Transcript Project');
+
+    await dropFixtures(page, [
+      'claude-session-with-subagent.jsonl',
+      'agent-e2esub1.jsonl',
+      'agent-e2esub1.meta.json',
+    ]);
+
+    const sessionRow = page.locator('.session-item', { hasText: 'claude-session-with-subagent.jsonl' });
+    await sessionRow.click();
+    await page.getByRole('link', { name: 'View Session Transcript' }).click();
+    await expect(page).toHaveURL(/#\/sessions\/.+\/transcript$/);
+
+    // Main transcript column, plus a subagent card row - no subagent column
+    // open yet.
+    await expect(page.locator('.transcript-column')).toHaveCount(1);
+    const card = page.locator('.subagent-card', { hasText: 'Handle the subtask' });
+    await expect(card).toBeVisible();
+
+    // Clicking the card opens a second column showing that subagent's own
+    // transcript, side by side with the main one.
+    await card.click();
+    await expect(page.locator('.transcript-column')).toHaveCount(2);
+    const subagentColumn = page.locator('.transcript-column').nth(1);
+    await expect(subagentColumn).toContainText('Subtask prompt');
+    await expect(subagentColumn).toContainText('Subtask done.');
+    // The main column's content is unaffected.
+    await expect(page.locator('.transcript-column').nth(0)).toContainText('Do the main task');
+
+    // Closing via the column's own close button removes just that column.
+    await subagentColumn.locator('.column-close').click();
+    await expect(page.locator('.transcript-column')).toHaveCount(1);
+  });
+
+  test('re-uploading the same session updates it in place instead of creating a duplicate', async ({
+    page,
+  }) => {
+    await createProject(page, 'Subagent Dedup Project');
+    await openProject(page, 'Subagent Dedup Project');
+
+    await uploadFile(page, 'claude-session-with-subagent.jsonl');
+    await expect(page.locator('.session-item')).toHaveCount(1);
+
+    // Re-upload the exact same transcript.
+    await uploadFile(page, 'claude-session-with-subagent.jsonl');
+
+    // Still exactly one session - the re-upload updated it, not duplicated it.
+    await expect(page.locator('.session-item')).toHaveCount(1);
+    await expect(page.locator('.project-card')).toHaveCount(0); // sanity: still on project view, not home
+  });
+});
+
 test.describe('Persistence (OPFS)', () => {
   test('projects and sessions survive a page reload', async ({ page }) => {
     await createProject(page, 'Persist Project');
@@ -187,7 +459,14 @@ test.describe('Persistence (OPFS)', () => {
 
     await page.reload();
 
-    await expect(page.locator('.project-card', { hasText: 'Persist Project' })).toBeVisible();
+    // The hash route is preserved across a reload, so we land back on the
+    // project view (not the home page) - verify the session survived there.
+    await expect(page.getByRole('heading', { name: 'Persist Project' })).toBeVisible();
+    await expect(
+      page.locator('.session-item', { hasText: 'claude-session.jsonl' })
+    ).toBeVisible();
+
+    // The project also still shows up from the home page.
     await openProject(page, 'Persist Project');
     await expect(
       page.locator('.session-item', { hasText: 'claude-session.jsonl' })
@@ -245,6 +524,11 @@ test.describe('Routing', () => {
 
   test('session dashboard shows a notice for unknown sessions', async ({ page }) => {
     await page.goto('/#/sessions/does-not-exist');
+    await expect(page.getByText(/Session not found/)).toBeVisible();
+  });
+
+  test('session transcript page shows a notice for unknown sessions', async ({ page }) => {
+    await page.goto('/#/sessions/does-not-exist/transcript');
     await expect(page.getByText(/Session not found/)).toBeVisible();
   });
 });

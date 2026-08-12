@@ -68,6 +68,20 @@ export class DbClient {
     return this.call({ type: 'saveSession', session }) as Promise<void>;
   }
 
+  /** Inserts, or - if `session.external_id` already exists in this project - updates in place. Resolves with the effective session id. */
+  upsertSessionByExternalId(session: DashboardSession): Promise<string> {
+    return this.call({ type: 'upsertSessionByExternalId', session }) as Promise<string>;
+  }
+
+  /** Replaces an existing session's row and child rows in place (same id). */
+  replaceSession(session: DashboardSession): Promise<void> {
+    return this.call({ type: 'replaceSession', session }) as Promise<void>;
+  }
+
+  findSessionByExternalId(projectId: string, externalId: string): Promise<DashboardSession | null> {
+    return this.call({ type: 'findSessionByExternalId', projectId, externalId }) as Promise<DashboardSession | null>;
+  }
+
   getSessionsByProject(projectId: string): Promise<DashboardSession[]> {
     return this.call({ type: 'getSessionsByProject', projectId }) as Promise<DashboardSession[]>;
   }
