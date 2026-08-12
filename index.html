@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0f1115" />
+  <title>Session Analyzer - Agentic Coding Sessions Dashboard</title>
+  <meta name="description" content="Offline dashboard for visualizing and managing AI coding sessions from Claude, Agentic Pi, Antigravity, and more." />
+  <style>
+    :root {
+      --md-sys-color-background: #0f1115;
+      --md-sys-color-on-background: #e6e9ef;
+      --md-sys-color-surface: #171a21;
+      --md-sys-color-surface-container: #1f242e;
+      --md-sys-color-surface-container-hover: #262d3a;
+      --md-sys-color-primary: #4f8cff;
+      --md-sys-color-primary-dark: #3a72e8;
+      --md-sys-color-primary-container: #1c2b4a;
+      --md-sys-color-on-primary-container: #cfe0ff;
+      --md-sys-color-secondary-container: #232a38;
+      --md-sys-color-on-secondary-container: #c9d4e3;
+      --md-sys-color-outline: #2a303c;
+      --md-sys-color-on-surface: #e6e9ef;
+      --md-sys-color-on-surface-variant: #9aa4b2;
+      --md-sys-color-error: #ff6b6b;
+      --md-sys-color-error-container: #5c2626;
+      --md-sys-color-on-error-container: #ffb4ab;
+      --md-sys-color-success: #3ecf8e;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: var(--md-sys-color-background);
+      color: var(--md-sys-color-on-background);
+      line-height: 1.5;
+    }
+
+    #app {
+      min-height: 100vh;
+    }
+
+    .loading-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 16px;
+    }
+
+    .loading-spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid var(--md-sys-color-outline);
+      border-top-color: var(--md-sys-color-primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="loading-screen">
+      <div class="loading-spinner"></div>
+      <p>Loading Session Analyzer…</p>
+    </div>
+  </div>
+  <script>
+    // The OPFS VFS of SQLite WASM needs SharedArrayBuffer, which requires
+    // COOP/COEP response headers. GitHub Pages cannot set them, so a small
+    // service worker injects the headers there. Dev/preview servers send the
+    // headers directly, so this registration is scoped to the Pages domain.
+    if ('serviceWorker' in navigator && location.hostname.endsWith('github.io')) {
+      navigator.serviceWorker.register('coi-sw.js').catch(function () {
+        /* OPFS falls back to in-memory storage when SAB is unavailable. */
+      });
+    }
+  </script>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

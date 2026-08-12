@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "discoveryTimeoutMs": 60000
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$QWEN_PROJECT_DIR/.qwen/hooks/block-no-verify.sh",
+            "name": "block-no-verify",
+            "description": "Deny any tool call containing --no-verify",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  },
+  "$version": 4
+}
