@@ -1,0 +1,355 @@
+[
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000001",
+    "parentUuid": null,
+    "timestamp": "2026-08-01T10:00:00.000Z",
+    "timestampMs": 1754042400000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 1,
+    "attachment": {
+      "type": "skill_listing",
+      "isInitial": true,
+      "skillCount": 3,
+      "names": ["superpowers:systematic-debugging", "dataviz", "manage-table-metadata"],
+      "content": "- superpowers:systematic-debugging: Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes\n- dataviz: Use this skill whenever you are about to create ANY chart, graph, plot, dashboard, or data visualization.\n- manage-table-metadata: Create or update table metadata JSON files (tables, columns, choices, relationships) in resources/database and resources/seeds."
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000002",
+    "parentUuid": "e0000000-0000-0000-0000-000000000001",
+    "timestamp": "2026-08-01T10:00:05.000Z",
+    "timestampMs": 1754042405000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 2,
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_skillA",
+          "name": "Skill",
+          "input": { "skill": "superpowers:systematic-debugging", "args": "Debug the failing import job" }
+        }
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "uuid": "e0000000-0000-0000-0000-000000000003",
+    "parentUuid": "e0000000-0000-0000-0000-000000000002",
+    "timestamp": "2026-08-01T10:00:06.000Z",
+    "timestampMs": 1754042406000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 3,
+    "message": {
+      "role": "user",
+      "content": [
+        { "type": "tool_result", "tool_use_id": "toolu_skillA", "content": "Launching skill: superpowers:systematic-debugging" }
+      ]
+    },
+    "toolUseResult": { "success": true, "commandName": "superpowers:systematic-debugging" }
+  },
+  {
+    "type": "user",
+    "uuid": "e0000000-0000-0000-0000-000000000004",
+    "parentUuid": "e0000000-0000-0000-0000-000000000003",
+    "timestamp": "2026-08-01T10:00:06.500Z",
+    "timestampMs": 1754042406500,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 4,
+    "isMeta": true,
+    "sourceToolUseID": "toolu_skillA",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Base directory for this skill: /Users/dev/.claude/plugins/cache/claude-plugins-official/superpowers/6.1.1/skills/systematic-debugging\n\n# Systematic Debugging\n\n## Overview\n\nRandom fixes waste time and create new bugs. Quick patches mask underlying issues.\n\n**Core principle:** ALWAYS find root cause before attempting fixes."
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000005",
+    "parentUuid": "e0000000-0000-0000-0000-000000000004",
+    "timestamp": "2026-08-01T10:00:10.000Z",
+    "timestampMs": 1754042410000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 5,
+    "attributionSkill": "superpowers:systematic-debugging",
+    "message": {
+      "role": "assistant",
+      "content": [{ "type": "text", "text": "Let's find the root cause first." }]
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000006",
+    "parentUuid": "e0000000-0000-0000-0000-000000000005",
+    "timestamp": "2026-08-01T10:00:20.000Z",
+    "timestampMs": 1754042420000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 6,
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_skillB",
+          "name": "Skill",
+          "input": { "skill": "bhzai-create-driver", "args": "Create a new adapter" }
+        }
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "uuid": "e0000000-0000-0000-0000-000000000007",
+    "parentUuid": "e0000000-0000-0000-0000-000000000006",
+    "timestamp": "2026-08-01T10:00:21.000Z",
+    "timestampMs": 1754042421000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 7,
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_skillB",
+          "content": "<tool_use_error>Unknown skill: bhzai-create-driver</tool_use_error>",
+          "is_error": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "last-prompt",
+    "lastPrompt": "Debug the failing import job",
+    "leafUuid": "e0000000-0000-0000-0000-000000000006",
+    "sessionId": "s1",
+    "lineNumber": 8
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000009",
+    "parentUuid": "e0000000-0000-0000-0000-000000000007",
+    "timestamp": "2026-08-01T10:00:22.000Z",
+    "timestampMs": 1754042422000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 9,
+    "attachment": {
+      "type": "dynamic_skill",
+      "skillDir": "/Users/dev/project/.claude/skills",
+      "skillNames": ["manage-table-metadata"],
+      "displayPath": "project/.claude/skills"
+    }
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000010",
+    "parentUuid": "e0000000-0000-0000-0000-000000000009",
+    "timestamp": "2026-08-01T10:00:23.000Z",
+    "timestampMs": 1754042423000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 10,
+    "attachment": {
+      "type": "invoked_skills",
+      "skills": [
+        {
+          "name": "delegating-to-devin",
+          "path": "projectSettings:delegating-to-devin",
+          "content": "Base directory for this skill: /Users/dev/project/.claude/skills/delegating-to-devin\n\n# Delegating to Devin\n\n## Overview\n\nShort injected body for the test fixture."
+        }
+      ]
+    }
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000011",
+    "parentUuid": "e0000000-0000-0000-0000-000000000010",
+    "timestamp": "2026-08-01T10:05:00.000Z",
+    "timestampMs": 1754042700000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 11,
+    "attachment": {
+      "type": "skill_listing",
+      "isInitial": false,
+      "skillCount": 3,
+      "names": ["superpowers:systematic-debugging", "manage-table-metadata", "loop"],
+      "content": "- superpowers:systematic-debugging: Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes\n- manage-table-metadata: Create or update table metadata JSON files (tables, columns, choices, relationships) in resources/database and resources/seeds.\n- loop: Run a prompt or slash command on a recurring interval."
+    }
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000012",
+    "parentUuid": "e0000000-0000-0000-0000-000000000001",
+    "timestamp": "2026-08-01T10:00:00.100Z",
+    "timestampMs": 1754042400100,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 12,
+    "attachment": {
+      "type": "agent_listing_delta",
+      "isInitial": true,
+      "addedTypes": ["general-purpose", "Explore"],
+      "addedLines": [
+        "- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. (Tools: All tools)",
+        "- Explore: Fast read-only search agent for locating code. Use it to find files by pattern, grep for symbols, or answer where-is-X questions. (Tools: Bash, Read, Grep, Glob)"
+      ],
+      "removedTypes": []
+    }
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000013",
+    "parentUuid": "e0000000-0000-0000-0000-000000000012",
+    "timestamp": "2026-08-01T10:10:00.000Z",
+    "timestampMs": 1754043000000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 13,
+    "attachment": {
+      "type": "agent_listing_delta",
+      "isInitial": false,
+      "addedTypes": ["Plan"],
+      "addedLines": ["- Plan: Software architect agent for designing implementation plans. (Tools: All tools)"],
+      "removedTypes": ["Explore"]
+    }
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000014",
+    "parentUuid": "e0000000-0000-0000-0000-000000000013",
+    "timestamp": "2026-08-01T10:10:05.000Z",
+    "timestampMs": 1754043005000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 14,
+    "attachment": { "type": "agent_mention", "agentType": "Plan" }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000015",
+    "parentUuid": "e0000000-0000-0000-0000-000000000014",
+    "timestamp": "2026-08-01T10:11:00.000Z",
+    "timestampMs": 1754043060000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 15,
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_agentA",
+          "name": "Agent",
+          "input": {
+            "subagent_type": "general-purpose",
+            "description": "Explore access helpers + tests",
+            "prompt": "Explore the repo and summarize the access-helper module.",
+            "run_in_background": false
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "uuid": "e0000000-0000-0000-0000-000000000016",
+    "parentUuid": "e0000000-0000-0000-0000-000000000015",
+    "timestamp": "2026-08-01T10:12:30.000Z",
+    "timestampMs": 1754043150000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 16,
+    "message": {
+      "role": "user",
+      "content": [{ "type": "tool_result", "tool_use_id": "toolu_agentA", "content": "Subagent finished." }]
+    },
+    "toolUseResult": {
+      "isAsync": true,
+      "status": "completed",
+      "agentId": "a7825f4a0ca1e001a",
+      "description": "Explore access helpers + tests",
+      "resolvedModel": "claude-fable-5",
+      "prompt": "Explore the repo and summarize the access-helper module.",
+      "totalTokens": 77668
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000017",
+    "parentUuid": "e0000000-0000-0000-0000-000000000016",
+    "timestamp": "2026-08-01T10:13:00.000Z",
+    "timestampMs": 1754043180000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 17,
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_agentB",
+          "name": "Agent",
+          "input": {
+            "subagent_type": "Explore",
+            "description": "Explore courses/questions schema",
+            "prompt": "Explore the repo (search breadth: medium).",
+            "run_in_background": true
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000018",
+    "parentUuid": "e0000000-0000-0000-0000-000000000017",
+    "timestamp": "2026-08-01T10:13:05.000Z",
+    "timestampMs": 1754043185000,
+    "isSidechain": true,
+    "sessionId": "s1",
+    "agentId": "a7825f4a0ca1e001a",
+    "attributionAgent": "general-purpose",
+    "lineNumber": 18,
+    "message": {
+      "role": "assistant",
+      "content": [{ "type": "text", "text": "Sidechain turn attributed to the general-purpose subagent." }]
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000019",
+    "parentUuid": "e0000000-0000-0000-0000-000000000018",
+    "timestamp": "2026-08-01T10:14:00.000Z",
+    "timestampMs": 1754043240000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 19,
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_taskcreateA",
+          "name": "TaskCreate",
+          "input": { "title": "Follow up on the schema explore results" }
+        }
+      ]
+    }
+  }
+]
