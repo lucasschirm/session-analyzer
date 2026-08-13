@@ -1,0 +1,18 @@
+{
+  "name": "lsc-marketplace",
+  "metadata": {
+    "description": "A claude plugins marketplace with custom plugins",
+    "version": "1.0.4"
+  },
+  "owner": {
+    "name": "Dev Person",
+    "email": "dev@example.com"
+  },
+  "plugins": [
+    {
+      "name": "lsc-claude-basics",
+      "source": "./plugins/claude-basics",
+      "description": "A collection of agents and skills for every project."
+    }
+  ]
+}
