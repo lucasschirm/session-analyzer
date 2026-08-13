@@ -7,7 +7,7 @@
   },
   "model": "opus",
   "enabledPlugins": {
-    "context7@official-demo-marketplace": true,
+    "example-docs@official-demo-marketplace": true,
     "superpowers@official-demo-marketplace": true,
     "example-basics@example-marketplace": true
   },

@@ -29,11 +29,11 @@ function asStringRecord(value: unknown): Record<string, string> | undefined {
 /**
  * Infers `McpServerConfig.transport` from a server's declared shape.
  *
- * - `command` present -> `'stdio'` (real `.mcp.json` shape, e.g. `pep:mcp`
+ * - `command` present -> `'stdio'` (real `.mcp.json` shape, e.g. `acme:mcp`
  *   running `node tools/pep-mcp/dist/index.js`).
  * - `url` present -> `'sse' | 'http'`, distinguished by an explicit
  *   `type`/`transport` key when present (real files use `"type": "http"`,
- *   e.g. the `devin` server at `https://mcp.devin.ai/mcp`). When `url` is
+ *   e.g. the `helper` server at `https://mcp.example.com/mcp`). When `url` is
  *   present with no explicit discriminant, this defaults to `'http'` — no
  *   real `sse`-typed file was found in this machine's corpus to confirm the
  *   opposite default, and `http` is Claude Code's current documented

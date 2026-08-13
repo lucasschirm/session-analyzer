@@ -17,7 +17,7 @@ import type {
 // anonymized from real transcripts found via:
 //   grep -l 'deferred_tools_delta' ~/.claude/projects/*/*.jsonl
 //   grep -o '"type":"mcp_instructions_delta"' ~/.claude/projects/*/*.jsonl
-// (server names `pep:mcp`, `claude-in-chrome`, `context7`, `devin`; the
+// (server names `acme:mcp`, `claude-in-chrome`, `example-docs`, `helper`; the
 // colon-to-underscore tool-name mapping; the LSP-four-days-later delta
 // shape; and the `pendingMcpServers` -> tools-offered transition are all
 // real, corroborated patterns — see comments in src/session/timelines/mcp.ts).
@@ -125,30 +125,30 @@ describe('deriveToolTimeline', () => {
   it('models a removal followed by a re-add distinctly from a fresh deferral', () => {
     const deferred = attachmentEntry(10, BASE_MS, {
       type: 'deferred_tools_delta',
-      addedNames: ['mcp__devin__ask_question'],
-      addedLines: ['mcp__devin__ask_question'],
+      addedNames: ['mcp__helper__ask_question'],
+      addedLines: ['mcp__helper__ask_question'],
       removedNames: [],
     });
     const removed = attachmentEntry(730, BASE_MS + 1000, {
       type: 'deferred_tools_delta',
       addedNames: [],
       addedLines: [],
-      removedNames: ['mcp__devin__ask_question'],
+      removedNames: ['mcp__helper__ask_question'],
     });
     const readded = attachmentEntry(900, BASE_MS + 2000, {
       type: 'deferred_tools_delta',
-      addedNames: ['mcp__devin__ask_question'],
+      addedNames: ['mcp__helper__ask_question'],
       addedLines: [],
       removedNames: [],
-      readdedNames: ['mcp__devin__ask_question'],
+      readdedNames: ['mcp__helper__ask_question'],
     });
 
     const records = deriveToolTimeline([deferred, removed, readded]);
-    const record = records.find((r) => r.tool === 'mcp__devin__ask_question');
+    const record = records.find((r) => r.tool === 'mcp__helper__ask_question');
     expect(record?.availability.map((e) => e.action)).toEqual(['deferred', 'removed', 'readded']);
     // mcp-shaped tool name still gets mcpServer/mcpToolName populated even
     // though it's tracked as a plain tool record here.
-    expect(record?.mcpServer).toBe('devin');
+    expect(record?.mcpServer).toBe('helper');
     expect(record?.mcpToolName).toBe('ask_question');
   });
 
@@ -190,7 +190,7 @@ describe('deriveToolTimeline', () => {
 
   it('derives "undeferred" only from an unambiguous ToolSearch select: query, never from a free-text query', () => {
     const selectCall = assistantEntry(1, BASE_MS, [
-      toolUse('ToolSearch', { query: 'select:mcp__pep_mcp__validate_metadata_file,mcp__github__create_pull_request', max_results: 5 }),
+      toolUse('ToolSearch', { query: 'select:mcp__acme_mcp__validate_record,mcp__github__create_pull_request', max_results: 5 }),
     ]);
     const freeTextCall = assistantEntry(2, BASE_MS + 1000, [
       toolUse('ToolSearch', { query: 'notebook jupyter', max_results: 5 }),
@@ -198,7 +198,7 @@ describe('deriveToolTimeline', () => {
 
     const records = deriveToolTimeline([selectCall, freeTextCall]);
 
-    const validate = records.find((r) => r.tool === 'mcp__pep_mcp__validate_metadata_file');
+    const validate = records.find((r) => r.tool === 'mcp__acme_mcp__validate_record');
     expect(validate?.availability).toEqual([expect.objectContaining({ action: 'undeferred' })]);
 
     const createPr = records.find((r) => r.tool === 'mcp__github__create_pull_request');
@@ -238,60 +238,60 @@ describe('deriveMcpTimeline', () => {
 
   it('records mcp_instructions_delta for an initial delta, matching blocks to servers by header rather than array position', () => {
     // Distilled from a real corpus mcp_instructions_delta: three servers
-    // added at once, including the plugin-qualified duplicate of context7.
+    // added at once, including the plugin-qualified duplicate of example-docs.
     const delta = attachmentEntry(8, BASE_MS, {
       type: 'mcp_instructions_delta',
-      addedNames: ['claude-in-chrome', 'context7'],
+      addedNames: ['claude-in-chrome', 'example-docs'],
       addedBlocks: [
         '## claude-in-chrome\nAutomates the Chrome browser via a connected extension.',
-        '## context7\nFetches current library documentation. … [truncated]',
+        '## example-docs\nFetches current library documentation. … [truncated]',
       ],
       removedNames: [],
     });
 
     const records = deriveMcpTimeline([delta]);
     const chrome = records.find((r) => r.server === 'claude-in-chrome');
-    const context7 = records.find((r) => r.server === 'context7');
+    const exampleDocs = records.find((r) => r.server === 'example-docs');
 
     expect(chrome?.instructions).toBe('Automates the Chrome browser via a connected extension.');
     expect(chrome?.availability).toEqual([expect.objectContaining({ action: 'instructions_added', lineNumber: 8 })]);
     // The literal "… [truncated]" suffix is retained verbatim.
-    expect(context7?.instructions).toBe('Fetches current library documentation. … [truncated]');
+    expect(exampleDocs?.instructions).toBe('Fetches current library documentation. … [truncated]');
   });
 
   it('clears instructions on instructions_removed and records the event', () => {
     const added = attachmentEntry(1, BASE_MS, {
       type: 'mcp_instructions_delta',
-      addedNames: ['devin'],
-      addedBlocks: ['## devin\nManages autonomous Devin sessions.'],
+      addedNames: ['helper'],
+      addedBlocks: ['## helper\nManages autonomous Helper sessions.'],
       removedNames: [],
     });
     const removed = attachmentEntry(2, BASE_MS + 1000, {
       type: 'mcp_instructions_delta',
       addedNames: [],
       addedBlocks: [],
-      removedNames: ['devin'],
+      removedNames: ['helper'],
     });
 
     const records = deriveMcpTimeline([added, removed]);
-    const devin = records.find((r) => r.server === 'devin');
-    expect(devin?.instructions).toBeUndefined();
-    expect(devin?.availability.map((e) => e.action)).toEqual(['instructions_added', 'instructions_removed']);
+    const helper = records.find((r) => r.server === 'helper');
+    expect(helper?.instructions).toBeUndefined();
+    expect(helper?.availability.map((e) => e.action)).toEqual(['instructions_added', 'instructions_removed']);
   });
 
   it('round-trips colon-to-underscore server naming, including a hyphenated server name, back from mcp__ tool names', () => {
-    // Real gotcha (spec §2/MCP): .mcp.json declares "pep:mcp"; the tool name
-    // embeds it as mcp__pep_mcp__<tool>. Establish the literal name first
+    // Real gotcha (spec §2/MCP): .mcp.json declares "acme:mcp"; the tool name
+    // embeds it as mcp__acme_mcp__<tool>. Establish the literal name first
     // via attributionMcpServer (as Claude Code itself reports it, colon
     // intact), matching how a real transcript actually surfaces it.
     const attributed = assistantEntry(
       1,
       BASE_MS,
       [{ type: 'text', text: 'Validating metadata…' }],
-      { attributionMcpServer: 'pep:mcp', attributionMcpTool: 'validate_metadata_file' },
+      { attributionMcpServer: 'acme:mcp', attributionMcpTool: 'validate_record' },
     );
     const invokePep = assistantEntry(2, BASE_MS + 1000, [
-      toolUse('mcp__pep_mcp__validate_metadata_file', { tableUuid: 'abc' }),
+      toolUse('mcp__acme_mcp__validate_record', { tableUuid: 'abc' }),
     ]);
     // claude-in-chrome has a hyphen, no colon — namespace mapping is the
     // identity function here (hyphens are preserved as-is).
@@ -301,9 +301,9 @@ describe('deriveMcpTimeline', () => {
 
     const records = deriveMcpTimeline([attributed, invokePep, invokeChrome]);
 
-    const pep = records.find((r) => r.server === 'pep:mcp');
-    expect(pep?.toolNamespace).toBe('pep_mcp');
-    expect(pep?.invokedTools).toEqual([{ tool: 'validate_metadata_file', count: 1 }]);
+    const pep = records.find((r) => r.server === 'acme:mcp');
+    expect(pep?.toolNamespace).toBe('acme_mcp');
+    expect(pep?.invokedTools).toEqual([{ tool: 'validate_record', count: 1 }]);
     expect(pep?.availability).toEqual([expect.objectContaining({ action: 'invoked', lineNumber: 2 })]);
 
     const chrome = records.find((r) => r.server === 'claude-in-chrome');
@@ -313,30 +313,30 @@ describe('deriveMcpTimeline', () => {
 
   it('aggregates repeated invocations of the same MCP tool into a single count entry', () => {
     const entries: ClaudeCodeEntry[] = [
-      assistantEntry(1, BASE_MS, [toolUse('mcp__pep_mcp__generate_ulid', {})]),
-      assistantEntry(2, BASE_MS + 1000, [toolUse('mcp__pep_mcp__generate_ulid', {})]),
-      assistantEntry(3, BASE_MS + 2000, [toolUse('mcp__pep_mcp__generate_ulid', {})]),
+      assistantEntry(1, BASE_MS, [toolUse('mcp__acme_mcp__generate_id', {})]),
+      assistantEntry(2, BASE_MS + 1000, [toolUse('mcp__acme_mcp__generate_id', {})]),
+      assistantEntry(3, BASE_MS + 2000, [toolUse('mcp__acme_mcp__generate_id', {})]),
     ];
     const records = deriveMcpTimeline(entries);
-    const pep = records.find((r) => r.server === 'pep_mcp'); // no literal-name signal observed — falls back to the namespace itself
-    expect(pep?.invokedTools).toEqual([{ tool: 'generate_ulid', count: 3 }]);
+    const pep = records.find((r) => r.server === 'acme_mcp'); // no literal-name signal observed — falls back to the namespace itself
+    expect(pep?.invokedTools).toEqual([{ tool: 'generate_id', count: 3 }]);
     expect(pep?.availability).toHaveLength(3);
   });
 
   it('marks a server pending, then clears pending once its tools are actually offered (real transition: pendingMcpServers -> addedNames)', () => {
-    // Distilled from a real corpus session: a `pendingMcpServers: ["devin"]`
-    // delta followed later by an `addedNames: ["mcp__devin__..."]` delta.
+    // Distilled from a real corpus session: a `pendingMcpServers: ["helper"]`
+    // delta followed later by an `addedNames: ["mcp__helper__..."]` delta.
     const pending = attachmentEntry(730, BASE_MS, {
       type: 'deferred_tools_delta',
       addedNames: [],
       addedLines: [],
       removedNames: [],
-      pendingMcpServers: ['devin'],
+      pendingMcpServers: ['helper'],
     });
     const connected = attachmentEntry(734, BASE_MS + 1000, {
       type: 'deferred_tools_delta',
-      addedNames: ['mcp__devin__ask_question', 'mcp__devin__generate_wiki'],
-      addedLines: ['mcp__devin__ask_question', 'mcp__devin__generate_wiki'],
+      addedNames: ['mcp__helper__ask_question', 'mcp__helper__generate_wiki'],
+      addedLines: ['mcp__helper__ask_question', 'mcp__helper__generate_wiki'],
       removedNames: [],
     });
 
@@ -345,10 +345,10 @@ describe('deriveMcpTimeline', () => {
     expect(afterPending.availability).toEqual([expect.objectContaining({ action: 'pending' })]);
 
     const records = deriveMcpTimeline([pending, connected]);
-    const devin = records.find((r) => r.server === 'devin');
-    expect(devin?.pending).toBe(false);
-    expect(devin?.offeredTools.sort()).toEqual(['ask_question', 'generate_wiki']);
-    expect(devin?.availability.map((e) => e.action)).toEqual(['pending', 'tools_offered']);
+    const helper = records.find((r) => r.server === 'helper');
+    expect(helper?.pending).toBe(false);
+    expect(helper?.offeredTools.sort()).toEqual(['ask_question', 'generate_wiki']);
+    expect(helper?.availability.map((e) => e.action)).toEqual(['pending', 'tools_offered']);
   });
 
   it('marks a server needs_auth, distinct from pending, and clears needsAuth once tools are offered', () => {
@@ -369,21 +369,21 @@ describe('deriveMcpTimeline', () => {
   it('removes an offered tool from offeredTools and records tools_removed', () => {
     const offered = attachmentEntry(1, BASE_MS, {
       type: 'deferred_tools_delta',
-      addedNames: ['mcp__context7__resolve-library-id', 'mcp__context7__query-docs'],
-      addedLines: ['mcp__context7__resolve-library-id', 'mcp__context7__query-docs'],
+      addedNames: ['mcp__example-docs__resolve-library-id', 'mcp__example-docs__query-docs'],
+      addedLines: ['mcp__example-docs__resolve-library-id', 'mcp__example-docs__query-docs'],
       removedNames: [],
     });
     const removed = attachmentEntry(2, BASE_MS + 1000, {
       type: 'deferred_tools_delta',
       addedNames: [],
       addedLines: [],
-      removedNames: ['mcp__context7__resolve-library-id'],
+      removedNames: ['mcp__example-docs__resolve-library-id'],
     });
 
     const records = deriveMcpTimeline([offered, removed]);
-    const context7 = records.find((r) => r.server === 'context7');
-    expect(context7?.offeredTools).toEqual(['query-docs']);
-    expect(context7?.availability.map((e) => e.action)).toEqual(['tools_offered', 'tools_removed']);
+    const exampleDocs = records.find((r) => r.server === 'example-docs');
+    expect(exampleDocs?.offeredTools).toEqual(['query-docs']);
+    expect(exampleDocs?.availability.map((e) => e.action)).toEqual(['tools_offered', 'tools_removed']);
   });
 
   it('does not count sticky attributionMcpServer/attributionMcpTool turns as invocations', () => {
@@ -392,23 +392,23 @@ describe('deriveMcpTimeline', () => {
     // (Bash, Read, TaskUpdate, ...) — only real mcp__* tool_use blocks
     // should count.
     const entries: ClaudeCodeEntry[] = [
-      assistantEntry(1, BASE_MS, [toolUse('mcp__pep_mcp__validate_metadata_file', {})], {
-        attributionMcpServer: 'pep:mcp',
-        attributionMcpTool: 'validate_metadata_file',
+      assistantEntry(1, BASE_MS, [toolUse('mcp__acme_mcp__validate_record', {})], {
+        attributionMcpServer: 'acme:mcp',
+        attributionMcpTool: 'validate_record',
       }),
       assistantEntry(2, BASE_MS + 1000, [toolUse('Bash', { command: 'ls' })], {
-        attributionMcpServer: 'pep:mcp',
-        attributionMcpTool: 'validate_metadata_file',
+        attributionMcpServer: 'acme:mcp',
+        attributionMcpTool: 'validate_record',
       }),
       assistantEntry(3, BASE_MS + 2000, [toolUse('Read', { file_path: '/x' })], {
-        attributionMcpServer: 'pep:mcp',
-        attributionMcpTool: 'validate_metadata_file',
+        attributionMcpServer: 'acme:mcp',
+        attributionMcpTool: 'validate_record',
       }),
     ];
 
     const records = deriveMcpTimeline(entries);
-    const pep = records.find((r) => r.server === 'pep:mcp');
-    expect(pep?.invokedTools).toEqual([{ tool: 'validate_metadata_file', count: 1 }]);
+    const pep = records.find((r) => r.server === 'acme:mcp');
+    expect(pep?.invokedTools).toEqual([{ tool: 'validate_record', count: 1 }]);
     expect(pep?.availability).toHaveLength(1);
   });
 });

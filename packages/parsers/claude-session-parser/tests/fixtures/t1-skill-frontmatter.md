@@ -1,7 +1,7 @@
 ---
-name: token-governance
+name: example-policy
 description: >
-  This skill should be used whenever design-token fidelity matters —
+  This skill should be used whenever example-token fidelity matters —
   extracting tokens, generating component or layout code, or auditing
   generated code.
 metadata:

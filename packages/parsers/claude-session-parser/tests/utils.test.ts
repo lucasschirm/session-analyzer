@@ -103,9 +103,9 @@ describe('makeParseError', () => {
 describe('parseFrontmatter', () => {
   it('parses a folded ">" scalar, a one-level nested map, and an inline list', () => {
     const { frontmatter, body } = parseFrontmatter(readFixture('t1-skill-frontmatter.md'));
-    expect(frontmatter.name).toBe('token-governance');
+    expect(frontmatter.name).toBe('example-policy');
     expect(frontmatter.description).toBe(
-      'This skill should be used whenever design-token fidelity matters — ' +
+      'This skill should be used whenever example-token fidelity matters — ' +
         'extracting tokens, generating component or layout code, or auditing ' +
         'generated code.',
     );
@@ -159,7 +159,7 @@ describe('parseFrontmatter', () => {
 describe('normalizeGlobs', () => {
   it('normalizes a YAML block list under "paths:"', () => {
     const { frontmatter } = parseFrontmatter(readFixture('t1-rule-paths-list.md'));
-    expect(normalizeGlobs(frontmatter)).toEqual(['projects/robot/src/steps/**', 'projects/stair-builder/**']);
+    expect(normalizeGlobs(frontmatter)).toEqual(['packages/renderer/src/widgets/**', 'packages/example-renderer/**']);
   });
 
   it('normalizes a comma-separated quoted scalar under "globs:"', () => {
@@ -175,7 +175,7 @@ describe('normalizeGlobs', () => {
 
 describe('splitMcpToolName / mcpServerNameToNamespace', () => {
   it('splits a namespaced MCP tool name', () => {
-    expect(splitMcpToolName('mcp__pep_mcp__foo')).toEqual({ server: 'pep_mcp', tool: 'foo' });
+    expect(splitMcpToolName('mcp__acme_mcp__foo')).toEqual({ server: 'acme_mcp', tool: 'foo' });
   });
 
   it('preserves hyphens in the namespace', () => {
@@ -191,7 +191,7 @@ describe('splitMcpToolName / mcpServerNameToNamespace', () => {
   });
 
   it('maps a colon-separated server name to its underscored namespace', () => {
-    expect(mcpServerNameToNamespace('pep:mcp')).toBe('pep_mcp');
+    expect(mcpServerNameToNamespace('acme:mcp')).toBe('acme_mcp');
   });
 
   it('preserves hyphens when mapping a server name with no colon', () => {

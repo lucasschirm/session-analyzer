@@ -1,10 +1,10 @@
 {
   "mcpServers": {
-    "devin": {
+    "helper": {
       "type": "http",
-      "url": "https://mcp.devin.ai/mcp",
+      "url": "https://mcp.example.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${DEVIN_API_KEY}"
+        "Authorization": "Bearer ${HELPER_API_KEY}"
       }
     },
     "legacy-sse": {

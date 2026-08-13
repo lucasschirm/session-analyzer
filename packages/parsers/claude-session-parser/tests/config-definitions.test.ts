@@ -152,15 +152,15 @@ describe('parseAgentDefinition', () => {
 describe('parseSkillDefinition', () => {
   it('parses a realistic full skill file (folded description, inline allowed-tools list, nested map)', () => {
     const result = parseSkillDefinition(
-      readFixture('t1-skill-frontmatter.md'),
-      '/Users/dev/.claude/plugins/marketplaces/example/plugins/frontend-development/skills/token-governance/SKILL.md',
+      readFixture('t7-skill-full.md'),
+      '/Users/dev/.claude/plugins/marketplaces/example/plugins/example-plugin/skills/example-skill/SKILL.md',
     );
     expect(result.kind).toBe('skill-definition');
-    expect(result.name).toBe('token-governance');
-    expect(result.description).toContain('design-token fidelity matters');
+    expect(result.name).toBe('example-skill');
+    expect(result.description).toContain('sample output formatting matters');
     expect(result.allowedTools).toEqual(['Read', 'Edit', 'Bash']);
-    expect(result.pluginPrefix).toBe('frontend-development');
-    expect(result.body).toContain('# Token Governance');
+    expect(result.pluginPrefix).toBe('example-plugin');
+    expect(result.body).toContain('# Example Skill');
     expect(result.frontmatter.metadata).toEqual({ version: '0.1.0' });
     expect(result.supportingFiles).toBeUndefined();
     expect(result.parseErrors).toEqual([]);
@@ -201,10 +201,10 @@ describe('parseSkillDefinition', () => {
 
   it('derives pluginPrefix from sourcePath when the name is bare', () => {
     const result = parseSkillDefinition(
-      '---\nname: token-governance\n---\nBody.\n',
-      '/Users/dev/.claude/plugins/marketplaces/example/plugins/token-governance/skills/token-governance/SKILL.md',
+      '---\nname: sample-plugin\n---\nBody.\n',
+      '/Users/dev/.claude/plugins/marketplaces/example/plugins/sample-plugin/skills/sample-plugin/SKILL.md',
     );
-    expect(result.pluginPrefix).toBe('token-governance');
+    expect(result.pluginPrefix).toBe('sample-plugin');
   });
 
   it('leaves pluginPrefix undefined for a plain user-level skill path', () => {

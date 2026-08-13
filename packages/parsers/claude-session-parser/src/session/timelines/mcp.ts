@@ -9,10 +9,10 @@
  * offered/invoked tools.
  *
  * Name normalization is the confirmed real gotcha (spec §2/MCP evidence): a
- * server declared as `"pep:mcp"` is reported with the colon intact by
+ * server declared as `"acme:mcp"` is reported with the colon intact by
  * `attributionMcpServer` and in `mcp_instructions_delta`/`pendingMcpServers`/
  * `needsAuthMcpServers`, but embedded in transcript tool names as
- * `mcp__pep_mcp__<tool>` (colon → underscore; hyphens like
+ * `mcp__acme_mcp__<tool>` (colon → underscore; hyphens like
  * `claude-in-chrome` preserved as-is). `server` on the resulting record
  * holds the literal name as Claude Code reports it; `toolNamespace` holds
  * the `mcpServerNameToNamespace`-mapped form used inside tool names.
@@ -58,7 +58,7 @@ function getOrCreate(map: Map<string, McpServerRecord>, server: string): McpServ
  * comment in `utils/mcp-names.ts`): a bare `_` in a namespace is
  * indistinguishable from a mapped `:`. To join transcript tool names
  * (`mcp__<namespace>__<tool>`) back to the *literal* server name Claude Code
- * reports elsewhere (`"pep:mcp"`, not `"pep_mcp"`), this pre-scans the whole
+ * reports elsewhere (`"acme:mcp"`, not `"acme_mcp"`), this pre-scans the whole
  * entry list once for every place a literal server name is recorded
  * (`mcp_instructions_delta`, `pendingMcpServers`/`needsAuthMcpServers`,
  * `attributionMcpServer`) and indexes it by its mapped namespace. Falls back
@@ -173,9 +173,9 @@ export function deriveMcpTimeline(entries: ClaudeCodeEntry[], options?: Timeline
           if (!record.offeredTools.includes(tool)) record.offeredTools.push(tool);
         }
         if (record.pending || record.needsAuth) {
-          // Confirmed real transition: a `pendingMcpServers: ["devin"]`
+          // Confirmed real transition: a `pendingMcpServers: ["helper"]`
           // delta was followed later in the same session by an
-          // `addedNames: ["mcp__devin__..."]` delta for that same server —
+          // `addedNames: ["mcp__helper__..."]` delta for that same server —
           // tools actually being offered means the server finished
           // connecting, so pending/needs-auth status is superseded.
           record.pending = false;

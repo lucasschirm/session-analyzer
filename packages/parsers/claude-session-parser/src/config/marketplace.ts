@@ -101,7 +101,7 @@ export function parsePluginMarketplace(content: string, sourcePath?: string): Pl
     sourcePath,
     // Real files disagree on where the description lives: the official
     // marketplace puts it top-level (`description`), while at least one
-    // real third-party file (lsc-marketplace) nests it under
+    // real third-party file (an example marketplace) nests it under
     // `metadata.description` instead. Top-level wins when both are present.
     name: asString(value.name) ?? fallbackName(sourcePath),
     plugins: parsePlugins(value.plugins),

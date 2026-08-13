@@ -1,12 +1,12 @@
 /**
  * MCP tool/server name mapping. Confirmed real gotcha (spec §2/MCP): a
- * server declared in `.mcp.json` as `"pep:mcp"` shows up in transcript tool
- * names as `mcp__pep_mcp__<tool>` — the colon is replaced with an
+ * server declared in `.mcp.json` as `"acme:mcp"` shows up in transcript tool
+ * names as `mcp__acme_mcp__<tool>` — the colon is replaced with an
  * underscore, and hyphens (e.g. `claude-in-chrome`) are preserved as-is.
  */
 
 /**
- * Splits a transcript tool name like `mcp__pep_mcp__foo` into its
+ * Splits a transcript tool name like `mcp__acme_mcp__foo` into its
  * namespace and bare tool name. Returns `null` for anything that doesn't
  * match the `mcp__<namespace>__<tool>` shape. `server` here is the
  * *namespace* as embedded in the tool name (already colon→underscore
@@ -26,8 +26,8 @@ export function splitMcpToolName(name: string): { server: string; tool: string }
 }
 
 /**
- * Maps a `.mcp.json` server name (e.g. `"pep:mcp"`) to the namespace used
- * inside transcript tool names (e.g. `"pep_mcp"`).
+ * Maps a `.mcp.json` server name (e.g. `"acme:mcp"`) to the namespace used
+ * inside transcript tool names (e.g. `"acme_mcp"`).
  *
  * LOSSY, ONE-WAY: `:` is replaced with `_`; hyphens are left untouched.
  * Because plain `_` in a server name is indistinguishable from a mapped

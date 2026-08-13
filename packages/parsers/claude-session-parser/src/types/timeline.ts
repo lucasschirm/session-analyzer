@@ -40,7 +40,7 @@ export interface ToolAvailabilityRecord {
 export type SkillAvailabilityAction = 'listed' | 'delisted' | 'discovered' | 'invoked' | 'expanded';
 
 export interface SkillAvailabilityRecord {
-  /** "superpowers:systematic-debugging" */
+  /** "acme:root-cause-analysis" */
   name: string;
   pluginPrefix?: string;
   bareName: string;
@@ -48,7 +48,7 @@ export interface SkillAvailabilityRecord {
   availability: AvailabilityEvent<SkillAvailabilityAction>[];
   sourceDir?: string;
   displayPath?: string;
-  /** "plugin:superpowers:systematic-debugging" */
+  /** "plugin:acme:root-cause-analysis" */
   qualifiedPath?: string;
   /** Full SKILL.md body, when actually expanded. */
   injectedContent?: string;
@@ -152,9 +152,9 @@ export type McpAvailabilityAction =
   | 'invoked';
 
 export interface McpServerRecord {
-  /** "pep:mcp" — as Claude Code reports it. */
+  /** "acme:mcp" — as Claude Code reports it. */
   server: string;
-  /** "pep_mcp" — `:` → `_`, `-` preserved. */
+  /** "acme_mcp" — `:` → `_`, `-` preserved. */
   toolNamespace?: string;
   availability: AvailabilityEvent<McpAvailabilityAction>[];
   instructions?: string;

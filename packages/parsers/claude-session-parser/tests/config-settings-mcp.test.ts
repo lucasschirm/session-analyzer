@@ -40,7 +40,7 @@ describe('parseSettings', () => {
       ask: ['Write'],
     });
     expect(settings.enabledPlugins).toEqual({
-      'context7@official-demo-marketplace': true,
+      'example-docs@official-demo-marketplace': true,
       'superpowers@official-demo-marketplace': true,
       'example-basics@example-marketplace': true,
     });
@@ -89,7 +89,7 @@ describe('parseSettings', () => {
     const settings = parseSettings(content, 'local');
 
     expect(settings.env).toEqual({
-      DEVIN_API_KEY: 'sk-fake-anonymized-0000000000000000',
+      HELPER_API_KEY: 'sk-fake-anonymized-0000000000000000',
       SOME_TOKEN: 'ghp_fakeFakeFakeFakeFakeFakeFakeFakeFa',
     });
     expect(settings.permissions?.allow).toEqual(['Bash(ssh devhost *)']);
@@ -172,16 +172,16 @@ describe('parseMcp', () => {
       transport: 'stdio',
     });
 
-    // The exact real-corpus example from the spec: "pep:mcp" -> "pep_mcp".
-    expect(byName['pep:mcp']).toMatchObject({
-      name: 'pep:mcp',
-      toolNamespace: 'pep_mcp',
+    // The exact real-corpus example from the spec: "acme:mcp" -> "acme_mcp".
+    expect(byName['acme:mcp']).toMatchObject({
+      name: 'acme:mcp',
+      toolNamespace: 'acme_mcp',
       transport: 'stdio',
       command: 'node',
       args: ['tools/pep-mcp/dist/index.js'],
       env: { PEP_ENV: 'dev' },
     });
-    expect(byName['pep:mcp'].raw).toEqual({
+    expect(byName['acme:mcp'].raw).toEqual({
       command: 'node',
       args: ['tools/pep-mcp/dist/index.js'],
       env: { PEP_ENV: 'dev' },
@@ -193,10 +193,10 @@ describe('parseMcp', () => {
     const config = parseMcp(content, 'project');
     const byName = Object.fromEntries(config.servers.map((s) => [s.name, s]));
 
-    expect(byName.devin).toMatchObject({
+    expect(byName.helper).toMatchObject({
       transport: 'http',
-      url: 'https://mcp.devin.ai/mcp',
-      headers: { Authorization: 'Bearer ${DEVIN_API_KEY}' },
+      url: 'https://mcp.example.com/mcp',
+      headers: { Authorization: 'Bearer ${HELPER_API_KEY}' },
     });
     expect(byName['legacy-sse'].transport).toBe('sse');
     expect(byName['no-discriminant'].transport).toBe('http');

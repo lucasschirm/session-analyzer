@@ -8,15 +8,15 @@
       "command": "node",
       "args": ["tools/demo-mcp.js"]
     },
-    "context7": {
+    "example-docs": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"]
+      "args": ["-y", "@upstash/example-docs-mcp@latest"]
     },
     "claude-in-chrome": {
       "command": "npx",
       "args": ["-y", "@anthropic-ai/claude-in-chrome-mcp"]
     },
-    "pep:mcp": {
+    "acme:mcp": {
       "command": "node",
       "args": ["tools/pep-mcp/dist/index.js"],
       "env": {

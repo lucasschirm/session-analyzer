@@ -167,13 +167,13 @@ export interface AssistantEntry extends ClaudeCodeEntryBase {
     stop_reason?: string;
     diagnostics?: { cache_miss_reason?: { type?: string; cache_missed_input_tokens?: number } };
   };
-  /** "superpowers:systematic-debugging" */
+  /** "acme:root-cause-analysis" */
   attributionSkill?: string;
-  /** "superpowers" */
+  /** "acme" */
   attributionPlugin?: string;
-  /** "pep:mcp" */
+  /** "acme:mcp" */
   attributionMcpServer?: string;
-  /** "validate_metadata_file" */
+  /** "validate_record" */
   attributionMcpTool?: string;
   /** Set on sidechain entries. */
   attributionAgent?: string;
