@@ -202,7 +202,7 @@ describe('parseMcp', () => {
     expect(byName['no-discriminant'].transport).toBe('http');
   });
 
-  it('tolerates a file that is the server map directly (no mcpServers wrapper)', () => {
+  it('tolerates a file that is the server map directly (no mcpServers wrapper), regression check', () => {
     const content = readFixture('t6-mcp-bare.json');
     const config = parseMcp(content, 'project');
 
@@ -211,6 +211,25 @@ describe('parseMcp', () => {
     const playwright = config.servers.find((s) => s.name === 'playwright');
     expect(playwright?.transport).toBe('stdio');
     expect(playwright?.command).toBe('npx');
+  });
+
+  it('rejects a malformed "mcpServers" value instead of silently reinterpreting it as a bare map', () => {
+    const config = parseMcp(JSON.stringify({ mcpServers: 'oops' }), 'project');
+
+    expect(config.servers).toEqual([]);
+    expect(config.parseErrors).toHaveLength(1);
+    expect(config.parseErrors[0].code).toBe('invalid_mcp_servers_shape');
+    // Must NOT produce a bogus server literally named "mcpServers".
+    expect(config.servers.some((s) => s.name === 'mcpServers')).toBe(false);
+  });
+
+  it('rejects a non-MCP object (e.g. a settings.json) rather than walking every key as a server', () => {
+    const content = readFixture('t6-mcp-not-a-server-map.json');
+    const config = parseMcp(content, 'project');
+
+    expect(config.servers).toEqual([]);
+    expect(config.parseErrors).toHaveLength(1);
+    expect(config.parseErrors[0].code).toBe('not_mcp_config');
   });
 
   it('defaults scope to unknown when omitted', () => {

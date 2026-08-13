@@ -1,4 +1,4 @@
-import type { ClaudeScope } from '../types/common.js';
+import type { ClaudeScope, ParseError } from '../types/common.js';
 import type { McpConfig, McpServerConfig } from '../types/config.js';
 import { stripBom, safeJsonParse } from '../utils/text.js';
 import { makeParseError } from '../utils/errors.js';
@@ -87,11 +87,18 @@ function parseServerConfig(name: string, value: unknown): McpServerConfig | unde
  * Real `.mcp.json` files nest servers under a top-level `mcpServers` key
  * (confirmed: `<project>/.mcp.json` files on this machine). This function
  * also tolerates a file that *is* the server map directly (no `mcpServers`
- * wrapper) — detected as: no `mcpServers` key present, but every top-level
- * value looks like a server config (a plain object). That bare-map shape is
- * accepted silently (not a `ParseError` — it's a supported input shape, not
- * malformed input); which shape was accepted only affects which object this
- * function walks, so no output field records it.
+ * wrapper), but only when that's actually plausible — the guard is:
+ *
+ * - `mcpServers` key present and a plain object -> use it (the normal case).
+ * - `mcpServers` key present but NOT a plain object (e.g. a string) -> this
+ *   is malformed, not a bare map; no servers are produced, and a
+ *   `ParseError` records it.
+ * - `mcpServers` key absent -> the bare-map shape is accepted ONLY when at
+ *   least one top-level value is itself a plain object (i.e. looks like a
+ *   server config). Otherwise the input doesn't look like an MCP config at
+ *   all (e.g. a `settings.json`-shaped file with no plain-object values) and
+ *   a `ParseError` records that too, rather than misreading every top-level
+ *   key as a server name.
  */
 export function parseMcp(content: string, scope?: ClaudeScope, sourcePath?: string): McpConfig {
   const resolvedScope = scope ?? 'unknown';
@@ -118,22 +125,35 @@ export function parseMcp(content: string, scope?: ClaudeScope, sourcePath?: stri
     };
   }
 
-  const parseErrors = [];
-  let serverMap: Record<string, unknown>;
-  if (isPlainObject(value.mcpServers)) {
-    serverMap = value.mcpServers;
+  const parseErrors: ParseError[] = [];
+  let serverMap: Record<string, unknown> | undefined;
+
+  if ('mcpServers' in value) {
+    if (isPlainObject(value.mcpServers)) {
+      serverMap = value.mcpServers;
+    } else {
+      parseErrors.push(makeParseError('invalid_mcp_servers_shape', '"mcpServers" is present but is not an object'));
+    }
   } else {
-    // Bare shape: the file itself is the server map.
-    serverMap = value;
+    // No `mcpServers` wrapper — only accept this as a bare server map when
+    // at least one top-level value actually looks like a server config.
+    const looksLikeServerMap = Object.values(value).some((v) => isPlainObject(v));
+    if (looksLikeServerMap) {
+      serverMap = value;
+    } else {
+      parseErrors.push(makeParseError('not_mcp_config', 'No "mcpServers" key and no top-level value looks like a server config'));
+    }
   }
 
   const servers: McpServerConfig[] = [];
-  for (const [name, raw] of Object.entries(serverMap)) {
-    const server = parseServerConfig(name, raw);
-    if (server) {
-      servers.push(server);
-    } else {
-      parseErrors.push(makeParseError('invalid_server_config', `MCP server "${name}" is not a valid config object`));
+  if (serverMap) {
+    for (const [name, raw] of Object.entries(serverMap)) {
+      const server = parseServerConfig(name, raw);
+      if (server) {
+        servers.push(server);
+      } else {
+        parseErrors.push(makeParseError('invalid_server_config', `MCP server "${name}" is not a valid config object`));
+      }
     }
   }
 
