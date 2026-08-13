@@ -5,7 +5,7 @@ import { navigateTo } from '../router';
 import { parseInWorker } from '../workers/parser-client';
 import type { DashboardSession, IndicatorKey, ToolExecution } from '../types';
 import { estimateTokenCount, formatCompactNumber, formatDuration, formatFullNumber } from '../lib/format';
-import { isAgentOrSkill } from '../workers/session-parser.worker';
+import { isAgentTool, isSkillTool } from '../workers/session-parser.worker';
 import {
   classifyUploadedFiles,
   mergeSubagentIntoSession,
@@ -163,6 +163,46 @@ export class SessionDashboard extends LitElement {
       gap: 8px;
     }
 
+    .subagent-list-wrap {
+      position: relative;
+    }
+
+    .subagent-list-wrap.collapsed .usage-card-list {
+      max-height: 206px;
+      overflow: hidden;
+    }
+
+    .subagent-list-wrap.collapsed::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 36px;
+      background: linear-gradient(
+        to bottom,
+        transparent,
+        var(--md-sys-color-surface-container, #1f242e)
+      );
+      pointer-events: none;
+    }
+
+    .show-all-button {
+      align-self: center;
+      margin-top: 4px;
+      padding: 6px 14px;
+      font-size: 13px;
+      color: var(--md-sys-color-primary, #4f8cff);
+      background: transparent;
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .show-all-button:hover {
+      background: var(--md-sys-color-surface-container, #1f242e);
+    }
+
     .usage-card {
       border: 1px solid var(--md-sys-color-outline, #2a303c);
       border-radius: 8px;
@@ -314,6 +354,8 @@ export class SessionDashboard extends LitElement {
 
   @state() private expandedSkillIds = new Set<string>();
 
+  @state() private showAllSubagents = false;
+
   @state() private isAttachingFolder = false;
 
   @state() private attachError: string | null = null;
@@ -373,11 +415,24 @@ export class SessionDashboard extends LitElement {
     }
   }
 
+  /**
+   * Tool executions that count as a plain "tool call" - excludes Skill and
+   * Agent invocations, which have their own dedicated tracking/metrics and
+   * are never counted or listed as generic tool calls (see AGENTS.md).
+   */
+  private get genericToolExecutions(): ToolExecution[] {
+    if (!this.session) return [];
+    return this.session.tool_executions.filter(
+      (execution) => !isSkillTool(execution.tool_name) && !isAgentTool(execution.tool_name)
+    );
+  }
+
   private get mostUsedTool(): { name: string; count: number } | null {
-    if (!this.session || this.session.tool_executions.length === 0) return null;
+    const executions = this.genericToolExecutions;
+    if (executions.length === 0) return null;
 
     const counts = new Map<string, number>();
-    for (const execution of this.session.tool_executions) {
+    for (const execution of executions) {
       counts.set(execution.tool_name, (counts.get(execution.tool_name) ?? 0) + 1);
     }
 
@@ -390,9 +445,8 @@ export class SessionDashboard extends LitElement {
 
   /** Every distinct tool used, ranked by call count (most-used first). */
   private get topTools(): Array<{ name: string; count: number }> {
-    if (!this.session) return [];
     const counts = new Map<string, number>();
-    for (const execution of this.session.tool_executions) {
+    for (const execution of this.genericToolExecutions) {
       counts.set(execution.tool_name, (counts.get(execution.tool_name) ?? 0) + 1);
     }
     return Array.from(counts.entries())
@@ -400,12 +454,12 @@ export class SessionDashboard extends LitElement {
       .sort((a, b) => b.count - a.count);
   }
 
-  /** Skill/agent tool calls grouped by skill name, each with its total usage count. */
+  /** Skill tool calls grouped by skill name, each with its total usage count. */
   private get skillGroups(): Array<{ name: string; count: number; invocations: ToolExecution[] }> {
     if (!this.session) return [];
     const groups = new Map<string, ToolExecution[]>();
     for (const execution of this.session.tool_executions) {
-      if (!isAgentOrSkill(execution.tool_name)) continue;
+      if (!isSkillTool(execution.tool_name)) continue;
       const invocations = groups.get(execution.tool_name) ?? [];
       invocations.push(execution);
       groups.set(execution.tool_name, invocations);
@@ -484,6 +538,10 @@ export class SessionDashboard extends LitElement {
     if (next.has(id)) next.delete(id);
     else next.add(id);
     this.expandedSkillIds = next;
+  }
+
+  private toggleShowAllSubagents(): void {
+    this.showAllSubagents = !this.showAllSubagents;
   }
 
   private sourceLabel(source: string): string {
@@ -572,7 +630,7 @@ export class SessionDashboard extends LitElement {
           ></metrics-card>
           <metrics-card
             label="Tools Used"
-            value="${session.tool_executions.length}"
+            value="${this.genericToolExecutions.length}"
             sub=${mostUsed ? `most used: ${mostUsed.name} (×${mostUsed.count})` : 'no tool usage'}
             icon="🛠️"
             clickable
@@ -593,11 +651,18 @@ export class SessionDashboard extends LitElement {
             @card-click=${() => this.openIndicator('files_written')}
           ></metrics-card>
           <metrics-card
-            label="Agents / Skills"
-            value="${session.agent_invocations}"
+            label="Agents"
+            value="${session.tool_executions.filter((execution) => isAgentTool(execution.tool_name)).length}"
             icon="🤖"
             clickable
             @card-click=${() => this.openIndicator('agents')}
+          ></metrics-card>
+          <metrics-card
+            label="Skills"
+            value="${session.tool_executions.filter((execution) => isSkillTool(execution.tool_name)).length}"
+            icon="🧩"
+            clickable
+            @card-click=${() => this.openIndicator('skills')}
           ></metrics-card>
           ${session.tasks.length > 0
             ? html`
@@ -812,7 +877,12 @@ export class SessionDashboard extends LitElement {
             ? html`
               <div class="panel">
                 <h3 class="panel-title">Subagents</h3>
-                <div class="usage-card-list">
+                <div
+                  class="subagent-list-wrap ${!this.showAllSubagents && session.subagents.length > 2
+                    ? 'collapsed'
+                    : ''}"
+                >
+                  <div class="usage-card-list">
                   ${session.subagents.map(
                     (subagent) => html`
                       <div class="usage-card">
@@ -854,7 +924,15 @@ export class SessionDashboard extends LitElement {
                       </div>
                     `
                   )}
+                  </div>
                 </div>
+                ${session.subagents.length > 2
+                  ? html`
+                    <button class="show-all-button" @click=${() => this.toggleShowAllSubagents()}>
+                      ${this.showAllSubagents ? 'Show less' : `Show all (${session.subagents.length})`}
+                    </button>
+                  `
+                  : ''}
               </div>
             `
             : ''}

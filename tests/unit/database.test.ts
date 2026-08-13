@@ -57,6 +57,7 @@ function makeSession(projectId: string, overrides: Partial<DashboardSession> = {
         success: true,
         parameters: { file_path: 'src/app.ts' },
         result: 'export function app() {}',
+        result_uuid: 'u2',
       },
     ],
     events: [
@@ -196,6 +197,7 @@ describe('DatabaseManager', () => {
       expect(loaded?.tool_executions[0].target).toBe('src/app.ts');
       expect(loaded?.tool_executions[0].parameters).toEqual({ file_path: 'src/app.ts' });
       expect(loaded?.tool_executions[0].result).toBe('export function app() {}');
+      expect(loaded?.tool_executions[0].result_uuid).toBe('u2');
       expect(loaded?.events[0].metadata).toEqual({ type: 'message_start' });
       expect(loaded?.messages[0].content).toContain("it's broken");
       expect(loaded?.messages[0].uuid).toBe('u1');

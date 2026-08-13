@@ -96,9 +96,87 @@ export class SessionTranscript extends LitElement {
       border: 1px dashed var(--md-sys-color-outline, #2a303c);
       border-radius: 8px;
     }
+
+    /*
+     * Inline markers (e.g. the Session Transcript page's subagent cards)
+     * rendered via renderAfter() - styled here, not in the parent page,
+     * since renderAfter's template ends up inside THIS component's shadow
+     * root, out of reach of the parent's stylesheet.
+     */
+    .subagent-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 2px 0 4px;
+    }
+
+    .subagent-card {
+      --accent: #4f8cff;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      align-items: flex-start;
+      min-width: 160px;
+      background: var(--md-sys-color-surface-container, #1f242e);
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      padding: 8px 14px 8px 12px;
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+      text-decoration: none;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      transition: background-color 0.15s ease, transform 0.1s ease;
+    }
+
+    .subagent-card:hover {
+      background: var(--md-sys-color-surface-container-hover, #262d3a);
+    }
+
+    .subagent-card:active {
+      transform: scale(0.98);
+    }
+
+    .subagent-card.active {
+      background: var(--md-sys-color-surface-container-hover, #262d3a);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+
+    .subagent-card-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .subagent-card-meta {
+      font-size: 11px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+    }
+
+    .subagent-card-tokens {
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--accent);
+    }
+
+    .subagent-card-hint {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+    }
   `;
 
   @property({ type: Array }) messages: TranscriptMessage[] = [];
+
+  /**
+   * Optional hook invoked after each rendered message, letting a parent
+   * interleave extra content (e.g. the Session Transcript page's inline
+   * subagent cards) at the point in the timeline it actually happened -
+   * rather than only being able to prepend/append around the whole list.
+   */
+  @property({ attribute: false }) renderAfter?: (message: TranscriptMessage) => unknown;
 
   private formatTime(timestamp: number): string {
     return new Date(timestamp).toLocaleTimeString();
@@ -123,6 +201,7 @@ export class SessionTranscript extends LitElement {
               <span class="role">${message.role} • ${this.formatTime(message.timestamp)}</span>
               ${unsafeHTML(renderMarkdown(message.content))}
             </div>
+            ${this.renderAfter?.(message)}
           `
         )}
       </div>

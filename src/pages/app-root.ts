@@ -16,7 +16,8 @@ import './session-transcript-page';
  * - `#/projects/:projectId`                -> Project View (upload + sessions)
  * - `#/sessions/:sessionId`                -> Session Dashboard (metrics)
  * - `#/sessions/:sessionId/indicator/:key` -> Indicator Details (drill-down)
- * - `#/sessions/:sessionId/transcript`     -> Session Transcript (+ subagents)
+ * - `#/sessions/:sessionId/transcript`     -> Session Transcript (subagent cards inline, full width)
+ * - `#/sessions/:sessionId/transcript/:agentId` -> Session Transcript, split with that subagent's column open
  */
 @customElement('app-root')
 export class AppRoot extends LitElement {
@@ -133,6 +134,14 @@ export class AppRoot extends LitElement {
         render: (params) =>
           html`<session-transcript-page
             session-id=${params.sessionId ?? ''}
+          ></session-transcript-page>`,
+      },
+      {
+        path: '/sessions/:sessionId/transcript/:agentId',
+        render: (params) =>
+          html`<session-transcript-page
+            session-id=${params.sessionId ?? ''}
+            agent-id=${params.agentId ?? ''}
           ></session-transcript-page>`,
       },
     ],

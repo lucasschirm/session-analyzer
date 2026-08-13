@@ -1,8 +1,8 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { dbClient } from '../db/db-client';
-import type { DashboardSession, SubagentUsage } from '../types';
+import type { DashboardSession, SubagentUsage, TranscriptMessage } from '../types';
 import { formatCompactNumber } from '../lib/format';
 import '../components/session-transcript';
 
@@ -14,11 +14,18 @@ import '../components/session-transcript';
 const SUBAGENT_ACCENTS = ['#4f8cff', '#3ecf8e', '#f5a623', '#e2578e', '#8b5cf6', '#22d3ee'];
 
 /**
- * Session Transcript page: the main session's transcript as the first
- * column, with an optional row of subagent cards above it. Clicking a card
- * opens (or closes) an additional column showing that subagent's own
- * transcript, so multiple subagent transcripts can be compared side by side
- * with the main transcript at once.
+ * Session Transcript page: the main session's transcript, with subagent
+ * cards rendered inline at the point in the conversation each subagent was
+ * launched (by comparing each `SubagentUsage.started_at` against the main
+ * transcript's message timestamps - Claude Code doesn't record an exact
+ * tool_use <-> subagent-transcript link, so this is a chronological
+ * best-effort placement).
+ *
+ * At most one subagent transcript is open at a time, driven entirely by the
+ * `:agentId` route segment (`#/sessions/:sessionId/transcript/:agentId`) -
+ * clicking a card navigates there, splitting the page into two columns;
+ * with no agentId the page renders a single full-width column, matching the
+ * width of every other page.
  */
 @customElement('session-transcript-page')
 export class SessionTranscriptPage extends LitElement {
@@ -71,80 +78,17 @@ export class SessionTranscriptPage extends LitElement {
       font-size: 13px;
     }
 
-    .subagent-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .subagent-card {
-      --accent: #4f8cff;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      align-items: flex-start;
-      min-width: 160px;
-      background: var(--md-sys-color-surface-container, #1f242e);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-left: 3px solid var(--accent);
-      border-radius: 8px;
-      padding: 8px 14px 8px 12px;
-      cursor: pointer;
-      font: inherit;
-      text-align: left;
-      color: var(--md-sys-color-on-surface, #e6e9ef);
-      transition: background-color 0.15s ease, transform 0.1s ease;
-    }
-
-    .subagent-card:hover {
-      background: var(--md-sys-color-surface-container-hover, #262d3a);
-    }
-
-    .subagent-card:active {
-      transform: scale(0.98);
-    }
-
-    .subagent-card.active {
-      background: var(--md-sys-color-surface-container-hover, #262d3a);
-      border-color: var(--accent);
-      box-shadow: 0 0 0 1px var(--accent);
-    }
-
-    .subagent-card-title {
-      font-size: 13px;
-      font-weight: 600;
-    }
-
-    .subagent-card-meta {
-      font-size: 11px;
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-    }
-
-    .subagent-card-tokens {
-      font-size: 11px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      color: var(--accent);
-    }
-
-    .subagent-card-hint {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-    }
-
     .transcript-columns {
       display: flex;
       align-items: flex-start;
       gap: 16px;
-      overflow-x: auto;
-      padding-bottom: 8px;
     }
 
     .transcript-column {
-      flex: 1 1 420px;
-      min-width: 320px;
-      max-width: 560px;
+      /* Alone (the default): fills the full page width, same as every
+         other page. Split with a subagent column: the two share it evenly. */
+      flex: 1 1 0;
+      min-width: 0;
       display: flex;
       flex-direction: column;
       gap: 10px;
@@ -169,6 +113,9 @@ export class SessionTranscriptPage extends LitElement {
     }
 
     .column-close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       background: transparent;
       border: 1px solid var(--md-sys-color-outline, #2a303c);
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
@@ -177,6 +124,7 @@ export class SessionTranscriptPage extends LitElement {
       height: 24px;
       line-height: 1;
       font-size: 14px;
+      text-decoration: none;
       cursor: pointer;
       flex-shrink: 0;
     }
@@ -195,12 +143,6 @@ export class SessionTranscriptPage extends LitElement {
     @media (max-width: 760px) {
       .transcript-columns {
         flex-direction: column;
-        overflow-x: visible;
-      }
-
-      .transcript-column {
-        max-width: none;
-        min-width: 0;
       }
 
       .column-body {
@@ -211,14 +153,14 @@ export class SessionTranscriptPage extends LitElement {
 
   @property({ type: String, attribute: 'session-id' }) sessionId = '';
 
+  /** The subagent whose transcript is open, from the `:agentId` route segment - empty when none is open. */
+  @property({ type: String, attribute: 'agent-id' }) agentId = '';
+
   @state() private session: DashboardSession | null = null;
 
   @state() private isLoading = true;
 
   @state() private error: string | null = null;
-
-  /** Agent ids with an open column, in the order they were opened. */
-  @state() private openAgentIds: string[] = [];
 
   willUpdate(changed: Map<string, unknown>): void {
     if (changed.has('sessionId') && this.sessionId) {
@@ -238,12 +180,6 @@ export class SessionTranscriptPage extends LitElement {
     }
   }
 
-  private toggleSubagentColumn(agentId: string): void {
-    this.openAgentIds = this.openAgentIds.includes(agentId)
-      ? this.openAgentIds.filter((id) => id !== agentId)
-      : [...this.openAgentIds, agentId];
-  }
-
   private accentFor(agentId: string): string {
     const session = this.session;
     if (!session) return SUBAGENT_ACCENTS[0];
@@ -257,6 +193,75 @@ export class SessionTranscriptPage extends LitElement {
 
   private sourceLabel(source: string): string {
     return source.replaceAll('_', ' ');
+  }
+
+  /**
+   * Groups subagents by the main-transcript message they should render
+   * after: the latest message at or before the subagent's own `started_at`.
+   * There's no exact tool_use <-> subagent link in the data, so this is a
+   * chronological best-effort placement - "when in the conversation they
+   * were called".
+   */
+  private subagentPlacements(session: DashboardSession): Map<string, SubagentUsage[]> {
+    const placements = new Map<string, SubagentUsage[]>();
+    if (session.messages.length === 0) return placements;
+
+    const sortedMessages = [...session.messages].sort((a, b) => a.timestamp - b.timestamp);
+    const sortedSubagents = [...session.subagents].sort(
+      (a, b) => (a.started_at ?? 0) - (b.started_at ?? 0)
+    );
+
+    for (const subagent of sortedSubagents) {
+      const startedAt = subagent.started_at ?? 0;
+      let anchor = sortedMessages[0];
+      for (const message of sortedMessages) {
+        if (message.timestamp <= startedAt) anchor = message;
+        else break;
+      }
+      const list = placements.get(anchor.id) ?? [];
+      list.push(subagent);
+      placements.set(anchor.id, list);
+    }
+
+    return placements;
+  }
+
+  private renderSubagentCard(subagent: SubagentUsage): TemplateResult {
+    const accent = this.accentFor(subagent.agent_id);
+    const isOpen = this.agentId === subagent.agent_id;
+    const href = isOpen
+      ? `#/sessions/${this.sessionId}/transcript`
+      : `#/sessions/${this.sessionId}/transcript/${subagent.agent_id}`;
+
+    return html`
+      <a
+        class="subagent-card ${isOpen ? 'active' : ''}"
+        style="--accent: ${accent}"
+        href=${href}
+        aria-pressed=${isOpen}
+      >
+        <span class="subagent-card-title">${this.subagentTitle(subagent)}</span>
+        ${subagent.agent_type ? html`<span class="subagent-card-meta">${subagent.agent_type}</span>` : ''}
+        <span class="subagent-card-tokens"
+          >${formatCompactNumber(subagent.total_tokens)} tokens •
+          ${(subagent.messages ?? []).length} msgs</span
+        >
+        <span class="subagent-card-hint">${isOpen ? 'Close column' : 'Open column'}</span>
+      </a>
+    `;
+  }
+
+  private renderInlineSubagents(
+    placements: Map<string, SubagentUsage[]>,
+    message: TranscriptMessage
+  ): TemplateResult | string {
+    const subagents = placements.get(message.id);
+    if (!subagents || subagents.length === 0) return '';
+    return html`
+      <div class="subagent-row">
+        ${repeat(subagents, (subagent) => subagent.agent_id, (subagent) => this.renderSubagentCard(subagent))}
+      </div>
+    `;
   }
 
   render() {
@@ -275,9 +280,10 @@ export class SessionTranscriptPage extends LitElement {
       return html`<div class="transcript-page"><p class="notice">Loading transcript…</p></div>`;
     }
 
-    const openSubagents = this.openAgentIds
-      .map((agentId) => session.subagents.find((subagent) => subagent.agent_id === agentId))
-      .filter((subagent): subagent is SubagentUsage => subagent !== undefined);
+    const openSubagent = this.agentId
+      ? session.subagents.find((subagent) => subagent.agent_id === this.agentId)
+      : undefined;
+    const placements = this.subagentPlacements(session);
 
     return html`
       <div class="transcript-page">
@@ -295,70 +301,38 @@ export class SessionTranscriptPage extends LitElement {
 
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
 
-        ${session.subagents.length > 0
-          ? html`
-            <div class="subagent-row">
-              ${repeat(
-                session.subagents,
-                (subagent) => subagent.agent_id,
-                (subagent) => {
-                  const accent = this.accentFor(subagent.agent_id);
-                  const isOpen = this.openAgentIds.includes(subagent.agent_id);
-                  return html`
-                    <button
-                      class="subagent-card ${isOpen ? 'active' : ''}"
-                      style="--accent: ${accent}"
-                      @click=${() => this.toggleSubagentColumn(subagent.agent_id)}
-                      aria-pressed=${isOpen}
-                    >
-                      <span class="subagent-card-title">${this.subagentTitle(subagent)}</span>
-                      ${subagent.agent_type
-                        ? html`<span class="subagent-card-meta">${subagent.agent_type}</span>`
-                        : ''}
-                      <span class="subagent-card-tokens"
-                        >${formatCompactNumber(subagent.total_tokens)} tokens •
-                        ${(subagent.messages ?? []).length} msgs</span
-                      >
-                      <span class="subagent-card-hint">${isOpen ? 'Close column' : 'Open column'}</span>
-                    </button>
-                  `;
-                }
-              )}
-            </div>
-          `
-          : ''}
-
         <div class="transcript-columns">
           <div class="transcript-column">
             <div class="column-header">
               <h2 class="column-title">Main Session</h2>
             </div>
             <div class="column-body">
-              <session-transcript .messages=${session.messages}></session-transcript>
+              <session-transcript
+                .messages=${session.messages}
+                .renderAfter=${(message: TranscriptMessage) => this.renderInlineSubagents(placements, message)}
+              ></session-transcript>
             </div>
           </div>
 
-          ${repeat(
-            openSubagents,
-            (subagent) => subagent.agent_id,
-            (subagent) => html`
-              <div class="transcript-column" style="--column-accent: ${this.accentFor(subagent.agent_id)}">
+          ${openSubagent
+            ? html`
+              <div class="transcript-column" style="--column-accent: ${this.accentFor(openSubagent.agent_id)}">
                 <div class="column-header">
-                  <h2 class="column-title">${this.subagentTitle(subagent)}</h2>
-                  <button
+                  <h2 class="column-title">${this.subagentTitle(openSubagent)}</h2>
+                  <a
                     class="column-close"
-                    @click=${() => this.toggleSubagentColumn(subagent.agent_id)}
-                    aria-label="Close ${this.subagentTitle(subagent)} transcript"
+                    href="#/sessions/${this.sessionId}/transcript"
+                    aria-label="Close ${this.subagentTitle(openSubagent)} transcript"
                   >
                     ×
-                  </button>
+                  </a>
                 </div>
                 <div class="column-body">
-                  <session-transcript .messages=${subagent.messages ?? []}></session-transcript>
+                  <session-transcript .messages=${openSubagent.messages ?? []}></session-transcript>
                 </div>
               </div>
             `
-          )}
+            : ''}
         </div>
       </div>
     `;

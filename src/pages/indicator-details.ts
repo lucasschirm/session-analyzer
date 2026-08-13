@@ -2,7 +2,7 @@ import { LitElement, html, css, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { dbClient } from '../db/db-client';
 import type { DashboardSession, IndicatorKey, ToolExecution, TranscriptMessage } from '../types';
-import { isAgentOrSkill, isReadTool, isWriteTool } from '../workers/session-parser.worker';
+import { isAgentTool, isReadTool, isSkillTool, isWriteTool } from '../workers/session-parser.worker';
 import { formatDuration } from '../lib/format';
 import type { EventTableRow } from '../components/events-table';
 import '../components/events-table';
@@ -19,7 +19,8 @@ const INDICATOR_LABELS: Record<IndicatorKey, string> = {
   tools: 'Tool Executions',
   files_read: 'Files Read',
   files_written: 'Files Written',
-  agents: 'Agents & Skills',
+  agents: 'Agent Invocations',
+  skills: 'Skill Invocations',
   diagnostics: 'Cache Diagnostics',
   tasks: 'Tasks',
 };
@@ -335,6 +336,18 @@ export class IndicatorDetails extends LitElement {
 
   @state() private toolTextFilter = '';
 
+  @state() private expandedSkillExecutionIds = new Set<string>();
+
+  @state() private skillNameFilter = '';
+
+  @state() private skillTextFilter = '';
+
+  @state() private expandedAgentExecutionIds = new Set<string>();
+
+  @state() private agentTypeFilter = '';
+
+  @state() private agentTextFilter = '';
+
   willUpdate(changed: Map<string, unknown>): void {
     if ((changed.has('sessionId') || changed.has('indicator')) && this.sessionId) {
       void this.loadSession();
@@ -397,13 +410,15 @@ export class IndicatorDetails extends LitElement {
           description: message.content.length > 160 ? `${message.content.slice(0, 160)}…` : message.content,
         }));
       case 'tools':
-        return this.toolRows(session, () => true);
+        return this.toolRows(session, (toolName) => !isSkillTool(toolName) && !isAgentTool(toolName));
       case 'files_read':
         return this.toolRows(session, (toolName) => isReadTool(toolName));
       case 'files_written':
         return this.toolRows(session, (toolName) => isWriteTool(toolName));
+      case 'skills':
+        return this.toolRows(session, (toolName) => isSkillTool(toolName));
       case 'agents':
-        return this.toolRows(session, (toolName) => isAgentOrSkill(toolName));
+        return this.toolRows(session, (toolName) => isAgentTool(toolName));
       case 'diagnostics':
         return session.events
           .filter((event) => event.event_type === 'diagnostic')
@@ -454,9 +469,20 @@ export class IndicatorDetails extends LitElement {
     this.expandedToolIds = next;
   }
 
+  /**
+   * Tool executions that count as a plain "tool call" - excludes Skill and
+   * Agent invocations, which have their own dedicated tracking (the
+   * `skills`/`agents` indicators) and are never listed here (see AGENTS.md).
+   */
+  private genericToolExecutions(session: DashboardSession): ToolExecution[] {
+    return session.tool_executions.filter(
+      (execution) => !isSkillTool(execution.tool_name) && !isAgentTool(execution.tool_name)
+    );
+  }
+
   /** Distinct tool names present in the session, for the "by tool" filter dropdown. */
   private distinctToolNames(session: DashboardSession): string[] {
-    return Array.from(new Set(session.tool_executions.map((execution) => execution.tool_name))).sort();
+    return Array.from(new Set(this.genericToolExecutions(session).map((execution) => execution.tool_name))).sort();
   }
 
   /**
@@ -470,7 +496,7 @@ export class IndicatorDetails extends LitElement {
     const errorsOnly = this.toolErrorsOnlyFilter;
     const text = this.toolTextFilter.trim().toLowerCase();
 
-    return session.tool_executions.filter((execution) => {
+    return this.genericToolExecutions(session).filter((execution) => {
       if (nameFilter && execution.tool_name !== nameFilter) return false;
       if (errorsOnly && execution.success !== false) return false;
       if (text) {
@@ -511,6 +537,7 @@ export class IndicatorDetails extends LitElement {
   private renderToolsSection(session: DashboardSession): TemplateResult {
     const toolNames = this.distinctToolNames(session);
     const filtered = this.filteredToolExecutions(session);
+    const totalCount = this.genericToolExecutions(session).length;
 
     return html`
       <div class="tool-filters">
@@ -541,7 +568,7 @@ export class IndicatorDetails extends LitElement {
             this.toolTextFilter = (event.target as HTMLInputElement).value;
           }}
         />
-        <span class="tool-filter-count">${filtered.length} of ${session.tool_executions.length}</span>
+        <span class="tool-filter-count">${filtered.length} of ${totalCount}</span>
       </div>
 
       <div class="tools-table">
@@ -575,6 +602,325 @@ export class IndicatorDetails extends LitElement {
                       </td>
                     </tr>
                     ${expanded ? this.renderToolDetail(execution) : ''}
+                  `;
+                })}
+              </tbody>
+            </table>
+          `}
+      </div>
+    `;
+  }
+
+  /** Every `Skill` tool invocation in the session (the `skills` indicator's scope). */
+  private skillExecutions(session: DashboardSession): ToolExecution[] {
+    return session.tool_executions.filter((execution) => isSkillTool(execution.tool_name));
+  }
+
+  /** The invoked skill's own name (e.g. `code-review`), falling back to the tool name. */
+  private skillNameFor(execution: ToolExecution): string {
+    const skillParam = execution.parameters?.skill;
+    return typeof skillParam === 'string' && skillParam ? skillParam : execution.tool_name;
+  }
+
+  /** Short preview of the skill's invocation args, for the table's detail column. */
+  private skillArgsPreview(execution: ToolExecution): string {
+    const args = execution.parameters?.args;
+    if (typeof args === 'string' && args) return args;
+    const rest = { ...(execution.parameters ?? {}) };
+    delete rest.skill;
+    return Object.keys(rest).length > 0 ? JSON.stringify(rest) : '-';
+  }
+
+  /**
+   * The content produced right after an execution's `tool_result` - found by
+   * matching `parent_uuid` against the `tool_result`'s own `uuid`
+   * (`execution.result_uuid`) - concatenated in timestamp order. Used by both
+   * the Skills and Agents sections to recover what actually happened beyond
+   * the terse `tool_result` acknowledgement (e.g. a Skill's expanded
+   * instructions, or the orchestrator's follow-up after an Agent call).
+   */
+  private linkedContentFor(session: DashboardSession, execution: ToolExecution): string {
+    if (!execution.result_uuid) return 'No linked content found';
+    const linked = session.messages
+      .filter((message) => message.parent_uuid === execution.result_uuid)
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .map((message) => message.content);
+    return linked.length > 0 ? linked.join('\n\n') : 'No linked content found';
+  }
+
+  /** Distinct skill names present in the session, for the "by skill" filter dropdown. */
+  private distinctSkillNames(session: DashboardSession): string[] {
+    return Array.from(new Set(this.skillExecutions(session).map((execution) => this.skillNameFor(execution)))).sort();
+  }
+
+  /**
+   * Applies the combinable skills-page filters (by skill, free text across
+   * skill name / inputs / result / linked content) to the session's `Skill`
+   * tool invocations.
+   */
+  private filteredSkillExecutions(session: DashboardSession): ToolExecution[] {
+    const nameFilter = this.skillNameFilter;
+    const text = this.skillTextFilter.trim().toLowerCase();
+
+    return this.skillExecutions(session).filter((execution) => {
+      if (nameFilter && this.skillNameFor(execution) !== nameFilter) return false;
+      if (text) {
+        const haystack = [
+          this.skillNameFor(execution),
+          execution.parameters ? JSON.stringify(execution.parameters) : '',
+          execution.result ?? '',
+          this.linkedContentFor(session, execution),
+        ]
+          .join('\n')
+          .toLowerCase();
+        if (!haystack.includes(text)) return false;
+      }
+      return true;
+    });
+  }
+
+  private toggleSkillExecutionExpanded(id: string): void {
+    const next = new Set(this.expandedSkillExecutionIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.expandedSkillExecutionIds = next;
+  }
+
+  private renderSkillDetail(session: DashboardSession, execution: ToolExecution): TemplateResult {
+    const inputs = execution.parameters ? JSON.stringify(execution.parameters, null, 2) : 'No inputs recorded';
+    const result = execution.result ?? 'No result recorded';
+    const content = this.linkedContentFor(session, execution);
+    return html`
+      <tr class="tool-detail-row">
+        <td colspan="4">
+          <div class="tool-detail">
+            <div class="tool-detail-section">
+              <h4>Inputs</h4>
+              <pre>${inputs}</pre>
+            </div>
+            <div class="tool-detail-section">
+              <h4>Result</h4>
+              <pre>${result}</pre>
+            </div>
+            <div class="tool-detail-section">
+              <h4>Skill Content</h4>
+              <pre>${content}</pre>
+            </div>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  private renderSkillsSection(session: DashboardSession): TemplateResult {
+    const skillExecutions = this.skillExecutions(session);
+    const skillNames = this.distinctSkillNames(session);
+    const filtered = this.filteredSkillExecutions(session);
+
+    return html`
+      <div class="tool-filters">
+        <select
+          .value=${this.skillNameFilter}
+          @change=${(event: Event) => {
+            this.skillNameFilter = (event.target as HTMLSelectElement).value;
+          }}
+        >
+          <option value="">All skills</option>
+          ${skillNames.map((name) => html`<option value=${name}>${name}</option>`)}
+        </select>
+        <input
+          type="text"
+          placeholder="Search skill, inputs, result, or content…"
+          .value=${this.skillTextFilter}
+          @input=${(event: Event) => {
+            this.skillTextFilter = (event.target as HTMLInputElement).value;
+          }}
+        />
+        <span class="tool-filter-count">${filtered.length} of ${skillExecutions.length}</span>
+      </div>
+
+      <div class="tools-table">
+        ${filtered.length === 0
+          ? html`<p class="notice">No skill invocations match these filters.</p>`
+          : html`
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Skill</th>
+                  <th>Details</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filtered.map((execution) => {
+                  const expanded = this.expandedSkillExecutionIds.has(execution.id);
+                  return html`
+                    <tr
+                      class="tool-row ${execution.success === false ? 'tool-row-error' : ''}"
+                      @click=${() => this.toggleSkillExecutionExpanded(execution.id)}
+                    >
+                      <td class="tool-timestamp">${new Date(execution.timestamp).toLocaleString()}</td>
+                      <td class="tool-name">${this.skillNameFor(execution)}</td>
+                      <td class="tool-target">${this.skillArgsPreview(execution)}</td>
+                      <td>
+                        ${execution.success === false
+                          ? html`<span class="error-badge">Error</span>`
+                          : html`<span class="success-badge">OK</span>`}
+                      </td>
+                    </tr>
+                    ${expanded ? this.renderSkillDetail(session, execution) : ''}
+                  `;
+                })}
+              </tbody>
+            </table>
+          `}
+      </div>
+    `;
+  }
+
+  /** Every `Agent` tool invocation in the session (the `agents` indicator's scope - "project agents", distinct from Sub Agents/session.subagents). */
+  private agentExecutions(session: DashboardSession): ToolExecution[] {
+    return session.tool_executions.filter((execution) => isAgentTool(execution.tool_name));
+  }
+
+  /** The invoked agent's type (e.g. `general-purpose`, `Explore`), falling back to the tool name. */
+  private agentTypeFor(execution: ToolExecution): string {
+    const subagentType = execution.parameters?.subagent_type;
+    return typeof subagentType === 'string' && subagentType ? subagentType : execution.tool_name;
+  }
+
+  /** Short preview of the agent's task description, for the table's detail column. */
+  private agentDescriptionPreview(execution: ToolExecution): string {
+    const description = execution.parameters?.description;
+    if (typeof description === 'string' && description) return description;
+    const prompt = execution.parameters?.prompt;
+    if (typeof prompt === 'string' && prompt) return prompt.length > 120 ? `${prompt.slice(0, 120)}…` : prompt;
+    return '-';
+  }
+
+  /** Distinct agent types present in the session, for the "by type" filter dropdown. */
+  private distinctAgentTypes(session: DashboardSession): string[] {
+    return Array.from(new Set(this.agentExecutions(session).map((execution) => this.agentTypeFor(execution)))).sort();
+  }
+
+  /**
+   * Applies the combinable agents-page filters (by agent type, free text
+   * across type / inputs / result / linked content) to the session's `Agent`
+   * tool invocations.
+   */
+  private filteredAgentExecutions(session: DashboardSession): ToolExecution[] {
+    const typeFilter = this.agentTypeFilter;
+    const text = this.agentTextFilter.trim().toLowerCase();
+
+    return this.agentExecutions(session).filter((execution) => {
+      if (typeFilter && this.agentTypeFor(execution) !== typeFilter) return false;
+      if (text) {
+        const haystack = [
+          this.agentTypeFor(execution),
+          execution.parameters ? JSON.stringify(execution.parameters) : '',
+          execution.result ?? '',
+          this.linkedContentFor(session, execution),
+        ]
+          .join('\n')
+          .toLowerCase();
+        if (!haystack.includes(text)) return false;
+      }
+      return true;
+    });
+  }
+
+  private toggleAgentExecutionExpanded(id: string): void {
+    const next = new Set(this.expandedAgentExecutionIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.expandedAgentExecutionIds = next;
+  }
+
+  private renderAgentDetail(session: DashboardSession, execution: ToolExecution): TemplateResult {
+    const inputs = execution.parameters ? JSON.stringify(execution.parameters, null, 2) : 'No inputs recorded';
+    const result = execution.result ?? 'No result recorded';
+    const content = this.linkedContentFor(session, execution);
+    return html`
+      <tr class="tool-detail-row">
+        <td colspan="4">
+          <div class="tool-detail">
+            <div class="tool-detail-section">
+              <h4>Inputs</h4>
+              <pre>${inputs}</pre>
+            </div>
+            <div class="tool-detail-section">
+              <h4>Result</h4>
+              <pre>${result}</pre>
+            </div>
+            <div class="tool-detail-section">
+              <h4>Linked Content</h4>
+              <pre>${content}</pre>
+            </div>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  private renderAgentsSection(session: DashboardSession): TemplateResult {
+    const agentExecutions = this.agentExecutions(session);
+    const agentTypes = this.distinctAgentTypes(session);
+    const filtered = this.filteredAgentExecutions(session);
+
+    return html`
+      <div class="tool-filters">
+        <select
+          .value=${this.agentTypeFilter}
+          @change=${(event: Event) => {
+            this.agentTypeFilter = (event.target as HTMLSelectElement).value;
+          }}
+        >
+          <option value="">All agent types</option>
+          ${agentTypes.map((name) => html`<option value=${name}>${name}</option>`)}
+        </select>
+        <input
+          type="text"
+          placeholder="Search agent type, inputs, result, or content…"
+          .value=${this.agentTextFilter}
+          @input=${(event: Event) => {
+            this.agentTextFilter = (event.target as HTMLInputElement).value;
+          }}
+        />
+        <span class="tool-filter-count">${filtered.length} of ${agentExecutions.length}</span>
+      </div>
+
+      <div class="tools-table">
+        ${filtered.length === 0
+          ? html`<p class="notice">No agent invocations match these filters.</p>`
+          : html`
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Agent Type</th>
+                  <th>Description</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filtered.map((execution) => {
+                  const expanded = this.expandedAgentExecutionIds.has(execution.id);
+                  return html`
+                    <tr
+                      class="tool-row ${execution.success === false ? 'tool-row-error' : ''}"
+                      @click=${() => this.toggleAgentExecutionExpanded(execution.id)}
+                    >
+                      <td class="tool-timestamp">${new Date(execution.timestamp).toLocaleString()}</td>
+                      <td class="tool-name">${this.agentTypeFor(execution)}</td>
+                      <td class="tool-target">${this.agentDescriptionPreview(execution)}</td>
+                      <td>
+                        ${execution.success === false
+                          ? html`<span class="error-badge">Error</span>`
+                          : html`<span class="success-badge">OK</span>`}
+                      </td>
+                    </tr>
+                    ${expanded ? this.renderAgentDetail(session, execution) : ''}
                   `;
                 })}
               </tbody>
@@ -675,13 +1021,19 @@ export class IndicatorDetails extends LitElement {
     const session = this.session;
     const isTurns = indicator === 'turns';
     const isTools = indicator === 'tools';
+    const isSkills = indicator === 'skills';
+    const isAgents = indicator === 'agents';
     const messageTree = isTurns ? this.buildMessageTree(session) : [];
-    const rows = isTurns || isTools ? [] : this.buildRows(session, indicator);
+    const rows = isTurns || isTools || isSkills || isAgents ? [] : this.buildRows(session, indicator);
     const recordCount = isTurns
       ? session.messages.length
       : isTools
-        ? session.tool_executions.length
-        : rows.length;
+        ? this.genericToolExecutions(session).length
+        : isSkills
+          ? this.skillExecutions(session).length
+          : isAgents
+            ? this.agentExecutions(session).length
+            : rows.length;
     // "Total Interactions" (session.total_turns) counts every assistant turn
     // unconditionally, including turns that only made tool calls (thinking +
     // tool_use, no `text` block). This page only lists messages that carry
@@ -727,7 +1079,11 @@ export class IndicatorDetails extends LitElement {
           `
           : isTools
             ? this.renderToolsSection(session)
-            : html`<events-table .events=${rows} showMetadata></events-table>`}
+            : isSkills
+              ? this.renderSkillsSection(session)
+              : isAgents
+                ? this.renderAgentsSection(session)
+                : html`<events-table .events=${rows} showMetadata></events-table>`}
       </div>
     `;
   }
