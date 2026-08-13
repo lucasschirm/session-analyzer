@@ -3,7 +3,9 @@ import {
   createEmptySession,
   detectFormat,
   isAgentOrSkill,
+  isAgentTool,
   isReadTool,
+  isSkillTool,
   isWriteTool,
   parseAgenticPi,
   parseAntigravity,
@@ -259,6 +261,20 @@ describe('Session Parser - Claude Code Parser', () => {
     expect(result.session.tool_executions[0].result).toBe(
       JSON.stringify([{ type: 'image', source: { data: 'abc' } }])
     );
+  });
+
+  it('should record the tool_result entry uuid as result_uuid, for locating linked follow-up content', () => {
+    const content = `{"type": "assistant", "sessionId": "s1", "uuid": "a1", "parentUuid": null, "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Skill", "input": {"skill": "code-review"}}]}}
+{"type": "user", "sessionId": "s1", "uuid": "u1", "parentUuid": "a1", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "skill loaded"}]}}
+{"type": "assistant", "sessionId": "s1", "uuid": "a2", "parentUuid": "u1", "message": {"role": "assistant", "content": [{"type": "text", "text": "Full skill instructions here."}]}}`;
+
+    const result = parseClaudeCode(content, projectId);
+
+    const execution = result.session.tool_executions[0];
+    expect(execution.result_uuid).toBe('u1');
+
+    const linked = result.session.messages.find((message) => message.parent_uuid === execution.result_uuid);
+    expect(linked?.content).toBe('Full skill instructions here.');
   });
 
   it('should leave the result undefined when the tool_result has no content', () => {
@@ -567,6 +583,16 @@ describe('Session Parser - tool classification helpers', () => {
     for (const name of ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TaskOutput', 'TaskStop']) {
       expect(isAgentOrSkill(name)).toBe(false);
     }
+  });
+
+  it('should classify the exact Skill/Agent tool names, and only those', () => {
+    expect(isSkillTool('Skill')).toBe(true);
+    expect(isSkillTool('skill_lookup')).toBe(false);
+    expect(isSkillTool('Agent')).toBe(false);
+
+    expect(isAgentTool('Agent')).toBe(true);
+    expect(isAgentTool('dispatch_agent')).toBe(false);
+    expect(isAgentTool('Skill')).toBe(false);
   });
 });
 

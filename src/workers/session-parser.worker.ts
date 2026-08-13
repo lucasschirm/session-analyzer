@@ -65,6 +65,25 @@ export function isAgentOrSkill(toolName: string): boolean {
   return AGENT_TOOL_PATTERN.test(toolName);
 }
 
+/**
+ * Claude Code's exact tool name for a Skill invocation. Skill calls have
+ * their own dedicated tracking (the `skills` indicator) and are deliberately
+ * excluded from the generic "tool call" pool (`tool_executions` as consumed
+ * by the Tools Used metric / `tools` indicator) - see AGENTS.md.
+ */
+export function isSkillTool(toolName: string): boolean {
+  return toolName === 'Skill';
+}
+
+/**
+ * Claude Code's exact tool name for a subagent-launching call. Like Skill,
+ * Agent calls have their own dedicated tracking (the `agents` indicator) and
+ * are excluded from the generic "tool call" pool - see AGENTS.md.
+ */
+export function isAgentTool(toolName: string): boolean {
+  return toolName === 'Agent';
+}
+
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 }
@@ -531,6 +550,7 @@ export function parseClaudeCode(content: string, projectId: string, title = ''):
             if (execution) {
               execution.success = block.is_error !== true;
               execution.result = normalizeToolResultContent(block.content);
+              execution.result_uuid = uuid;
               pendingToolCalls.delete(block.tool_use_id);
             }
           } else if (block.type === 'text' && typeof block.text === 'string' && block.text) {

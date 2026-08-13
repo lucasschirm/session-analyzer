@@ -78,6 +78,7 @@ interface ToolExecutionRow {
   duration_ms: number | null;
   parameters: string | null;
   result: string | null;
+  result_uuid: string | null;
 }
 
 export class DatabaseManager {
@@ -129,6 +130,7 @@ export class DatabaseManager {
       'ALTER TABLE sessions ADD COLUMN subagents TEXT',
       'ALTER TABLE tool_executions ADD COLUMN parameters TEXT',
       'ALTER TABLE tool_executions ADD COLUMN result TEXT',
+      'ALTER TABLE tool_executions ADD COLUMN result_uuid TEXT',
       'ALTER TABLE session_messages ADD COLUMN uuid TEXT',
       'ALTER TABLE session_messages ADD COLUMN parent_uuid TEXT',
     ];
@@ -194,6 +196,7 @@ export class DatabaseManager {
         duration_ms INTEGER,
         parameters TEXT,
         result TEXT,
+        result_uuid TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
 
@@ -402,8 +405,8 @@ export class DatabaseManager {
     for (const tool of session.tool_executions) {
       db.exec({
         sql: `INSERT INTO tool_executions
-              (id, session_id, timestamp, tool_name, tool_type, target, success, duration_ms, parameters, result)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              (id, session_id, timestamp, tool_name, tool_type, target, success, duration_ms, parameters, result, result_uuid)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         bind: [
           tool.id,
           tool.session_id,
@@ -415,6 +418,7 @@ export class DatabaseManager {
           tool.duration_ms ?? null,
           tool.parameters ? JSON.stringify(tool.parameters) : null,
           tool.result ?? null,
+          tool.result_uuid ?? null,
         ],
       });
     }
@@ -540,6 +544,7 @@ export class DatabaseManager {
       duration_ms: row.duration_ms ?? undefined,
       parameters: row.parameters ? safeJsonParse(row.parameters) : undefined,
       result: row.result ?? undefined,
+      result_uuid: row.result_uuid ?? undefined,
     }));
   }
 

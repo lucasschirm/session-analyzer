@@ -243,9 +243,10 @@ test.describe('Tools indicator', () => {
     await page.locator('metrics-card', { hasText: 'Tools Used' }).click();
     await expect(page.getByRole('heading', { name: 'Tool Executions' })).toBeVisible();
 
-    // Two tool calls in the fixture: a successful Skill call and a failed
-    // Bash call - both start out visible.
-    await expect(page.locator('.tool-row')).toHaveCount(2);
+    // The fixture has a Skill call and a failed Bash call, but Skill (and
+    // Agent) invocations have their own dedicated indicator and are excluded
+    // from the generic tools list - only the Bash call shows here.
+    await expect(page.locator('.tool-row')).toHaveCount(1);
     const failedRow = page.locator('.tool-row', { hasText: 'Bash' });
     await expect(failedRow).toHaveClass(/tool-row-error/);
     await expect(failedRow).toContainText('Error');
@@ -256,23 +257,75 @@ test.describe('Tools indicator', () => {
     await expect(detailRow).toContainText('"command": "false"');
     await expect(detailRow).toContainText('bash: command failed with exit code 1');
 
-    // Errors-only filter narrows to just the failed call.
+    // Errors-only filter narrows to just the failed call (already the only row here).
     await page.getByLabel('Errors only').check();
     await expect(page.locator('.tool-row')).toHaveCount(1);
     await expect(page.locator('.tool-row')).toContainText('Bash');
     await page.getByLabel('Errors only').uncheck();
-    await expect(page.locator('.tool-row')).toHaveCount(2);
 
-    // By-tool dropdown narrows to the selected tool.
-    await page.locator('.tool-filters select').selectOption('Skill');
-    await expect(page.locator('.tool-row')).toHaveCount(1);
-    await expect(page.locator('.tool-row')).toContainText('Skill');
-    await page.locator('.tool-filters select').selectOption('');
+    // The by-tool dropdown only offers generic tools - Skill is not one of them.
+    const toolOptions = await page.locator('.tool-filters select option').allTextContents();
+    expect(toolOptions).toContain('Bash');
+    expect(toolOptions).not.toContain('Skill');
 
     // Free-text filter matches against the result content too.
-    await page.locator('.tool-filters input[type="text"]').fill('review complete');
+    await page.locator('.tool-filters input[type="text"]').fill('command failed');
     await expect(page.locator('.tool-row')).toHaveCount(1);
-    await expect(page.locator('.tool-row')).toContainText('Skill');
+    await expect(page.locator('.tool-row')).toContainText('Bash');
+  });
+});
+
+test.describe('Skills indicator', () => {
+  test('shows skill invocations with inputs, result, and linked follow-up content', async ({ page }) => {
+    await createProject(page, 'Skills Panel Project');
+    await openProject(page, 'Skills Panel Project');
+
+    await uploadFile(page, 'claude-rich-session.jsonl');
+    const sessionRow = page.locator('.session-item', { hasText: 'Rich Session Demo' });
+    await sessionRow.click();
+
+    await page.locator('metrics-card', { hasText: 'Skills' }).click();
+    await expect(page.getByRole('heading', { name: 'Skill Invocations' })).toBeVisible();
+
+    await expect(page.locator('.tool-row')).toHaveCount(1);
+    const row = page.locator('.tool-row');
+    await expect(row).toContainText('code-review');
+
+    await row.click();
+    const detailRow = page.locator('.tool-detail-row');
+    await expect(detailRow).toContainText('review complete');
+    // The follow-up text the model produced right after the Skill's
+    // tool_result ("Done investigating.", uuid u2 -> a2's parent_uuid u2).
+    await expect(detailRow).toContainText('Done investigating.');
+  });
+});
+
+test.describe('Agents indicator', () => {
+  test('shows agent invocations, excluded from the tools list, with inputs and result', async ({ page }) => {
+    await createProject(page, 'Agents Panel Project');
+    await openProject(page, 'Agents Panel Project');
+
+    await uploadFile(page, 'claude-session.jsonl');
+    const sessionRow = page.locator('.session-item', { hasText: 'claude-session.jsonl' });
+    await sessionRow.click();
+
+    // The Agent call (toolu_125, "verify build") doesn't count as a tool call.
+    await page.locator('metrics-card', { hasText: 'Tools Used' }).click();
+    await expect(page.getByRole('heading', { name: 'Tool Executions' })).toBeVisible();
+    await expect(page.locator('.tool-row')).toHaveCount(2);
+    await expect(page.locator('.tool-row', { hasText: 'Agent' })).toHaveCount(0);
+
+    await page.getByRole('link', { name: '← Back to Session' }).click();
+    await page.locator('metrics-card', { hasText: 'Agents' }).click();
+    await expect(page.getByRole('heading', { name: 'Agent Invocations' })).toBeVisible();
+
+    await expect(page.locator('.tool-row')).toHaveCount(1);
+    const row = page.locator('.tool-row');
+    await expect(row).toContainText('verify build');
+
+    await row.click();
+    const detailRow = page.locator('.tool-detail-row');
+    await expect(detailRow).toContainText('build verified');
   });
 });
 
@@ -409,15 +462,33 @@ test.describe('Subagent folder ingestion', () => {
     await page.getByRole('link', { name: 'View Session Transcript' }).click();
     await expect(page).toHaveURL(/#\/sessions\/.+\/transcript$/);
 
-    // Main transcript column, plus a subagent card row - no subagent column
-    // open yet.
+    // Main transcript column, full width - no subagent column open yet, no
+    // top row: the card is rendered inline in the conversation instead.
     await expect(page.locator('.transcript-column')).toHaveCount(1);
+    const mainColumn = page.locator('.transcript-column').nth(0);
     const card = page.locator('.subagent-card', { hasText: 'Handle the subtask' });
     await expect(card).toBeVisible();
 
-    // Clicking the card opens a second column showing that subagent's own
-    // transcript, side by side with the main one.
+    // Positioned after "Working on it." (the message closest to the
+    // subagent's own started_at), not before "Do the main task" at the top -
+    // both live inside session-transcript's own shadow root, so walk it
+    // directly rather than relying on innerText to flatten nested shadow DOM.
+    const order = await mainColumn.locator('session-transcript').evaluate((el) =>
+      Array.from((el as unknown as { shadowRoot: ShadowRoot }).shadowRoot.querySelectorAll('.message, .subagent-row')).map(
+        (node) => node.textContent ?? ''
+      )
+    );
+    const mainIndex = order.findIndex((text) => text.includes('Working on it.'));
+    const cardIndex = order.findIndex((text) => text.includes('Handle the subtask'));
+    expect(mainIndex).toBeGreaterThanOrEqual(0);
+    expect(cardIndex).toBeGreaterThan(mainIndex);
+
+    // Clicking the card navigates to the agent-scoped route and opens a
+    // second column showing that subagent's own transcript, side by side.
+    // (agentId is parsed from the filename "agent-e2esub1.jsonl", stripping
+    // the "agent-" prefix - see SUBAGENT_FILE_PATTERN in lib/subagents.ts.)
     await card.click();
+    await expect(page).toHaveURL(/#\/sessions\/.+\/transcript\/e2esub1$/);
     await expect(page.locator('.transcript-column')).toHaveCount(2);
     const subagentColumn = page.locator('.transcript-column').nth(1);
     await expect(subagentColumn).toContainText('Subtask prompt');
@@ -425,9 +496,39 @@ test.describe('Subagent folder ingestion', () => {
     // The main column's content is unaffected.
     await expect(page.locator('.transcript-column').nth(0)).toContainText('Do the main task');
 
-    // Closing via the column's own close button removes just that column.
+    // Closing via the column's own close button removes just that column and
+    // navigates back to the bare transcript route.
     await subagentColumn.locator('.column-close').click();
+    await expect(page).toHaveURL(/#\/sessions\/.+\/transcript$/);
     await expect(page.locator('.transcript-column')).toHaveCount(1);
+  });
+
+  test('deep-links directly into the split view via the /transcript/:agentId route', async ({ page }) => {
+    await createProject(page, 'Subagent Deep Link Project');
+    await openProject(page, 'Subagent Deep Link Project');
+
+    await dropFixtures(page, [
+      'claude-session-with-subagent.jsonl',
+      'agent-e2esub1.jsonl',
+      'agent-e2esub1.meta.json',
+    ]);
+
+    const sessionRow = page.locator('.session-item', { hasText: 'claude-session-with-subagent.jsonl' });
+    await sessionRow.click();
+    const sessionUrl = page.url();
+    const sessionId = sessionUrl.match(/#\/sessions\/([^/]+)/)?.[1];
+
+    // agentId is parsed from the filename "agent-e2esub1.jsonl", stripping
+    // the "agent-" prefix - see SUBAGENT_FILE_PATTERN in lib/subagents.ts.
+    await page.goto(`${sessionUrl.split('#')[0]}#/sessions/${sessionId}/transcript/e2esub1`);
+
+    await expect(page.locator('.transcript-column')).toHaveCount(2);
+    const subagentColumn = page.locator('.transcript-column').nth(1);
+    await expect(subagentColumn).toContainText('Subtask done.');
+
+    const mainColumn = page.locator('.transcript-column').nth(0);
+    const activeCard = mainColumn.locator('.subagent-card.active', { hasText: 'Handle the subtask' });
+    await expect(activeCard).toBeVisible();
   });
 
   test('re-uploading the same session updates it in place instead of creating a duplicate', async ({

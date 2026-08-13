@@ -361,7 +361,7 @@ describe('session-dashboard', () => {
     expect(cardTexts).toContain('150'); // total tokens
     expect(cardTexts).toContain('↑ 100 in • ↓ 50 out');
     expect(cardTexts).toContain('most used: read_file (×2)');
-    expect(root.querySelectorAll('metrics-card').length).toBe(7);
+    expect(root.querySelectorAll('metrics-card').length).toBe(8);
   });
 
   it('does not show task metric cards when the session has no tracked tasks', async () => {
@@ -416,7 +416,7 @@ describe('session-dashboard', () => {
     await mount(dashboard);
     const root = dashboard.shadowRoot as ShadowRoot;
 
-    expect(root.querySelectorAll('metrics-card').length).toBe(10);
+    expect(root.querySelectorAll('metrics-card').length).toBe(11);
     const cardTexts = allChildTexts(root, 'metrics-card').join(' | ');
     expect(cardTexts).toContain('Total Tasks');
     expect(cardTexts).toContain('Tasks Completed');
@@ -562,8 +562,8 @@ describe('session-dashboard', () => {
     await mount(dashboard);
     const root = dashboard.shadowRoot as ShadowRoot;
 
-    // Two groups (Skill, Agent), not three flat invocation rows.
-    expect(root.querySelectorAll('.skill-item').length).toBe(2);
+    // Only the Skill group is shown; Agent invocations are excluded from Skills Used.
+    expect(root.querySelectorAll('.skill-item').length).toBe(1);
 
     const skillGroup = Array.from(root.querySelectorAll('.skill-item')).find((item) =>
       item.textContent?.includes('Skill')
@@ -571,10 +571,9 @@ describe('session-dashboard', () => {
     expect(skillGroup.querySelector('.skill-usage')?.textContent).toContain('Total usage: 2');
     expect(skillGroup.querySelectorAll('.skill-params').length).toBe(2);
 
-    const agentGroup = Array.from(root.querySelectorAll('.skill-item')).find((item) =>
-      item.textContent?.includes('Agent')
-    )!;
-    expect(agentGroup.querySelector('.skill-usage')?.textContent).toContain('Total usage: 1');
+    expect(
+      Array.from(root.querySelectorAll('.skill-item')).some((item) => item.textContent?.includes('Agent'))
+    ).toBe(false);
   });
 
   it('renders an upload-zone for attaching a session data folder', async () => {
@@ -1000,6 +999,154 @@ describe('indicator-details', () => {
 
     expect((page.shadowRoot as ShadowRoot).textContent).toContain('Unknown indicator');
   });
+
+  it('excludes Skill and Agent tool calls from the tools indicator', async () => {
+    vi.spyOn(dbClient, 'getSession').mockResolvedValue(
+      sessionFixture({
+        tool_executions: [
+          {
+            id: 't1',
+            session_id: 's1',
+            timestamp: 1_700_000_010_000,
+            tool_name: 'Bash',
+            tool_type: 'tool_use',
+            target: 'ls',
+            success: true,
+          },
+          {
+            id: 't2',
+            session_id: 's1',
+            timestamp: 1_700_000_020_000,
+            tool_name: 'Skill',
+            tool_type: 'tool_use',
+            success: true,
+            parameters: { skill: 'code-review' },
+          },
+          {
+            id: 't3',
+            session_id: 's1',
+            timestamp: 1_700_000_030_000,
+            tool_name: 'Agent',
+            tool_type: 'tool_use',
+            success: true,
+            parameters: { subagent_type: 'general-purpose' },
+          },
+        ],
+      })
+    );
+
+    const page = Object.assign(document.createElement('indicator-details'), {
+      sessionId: 's1',
+      indicator: 'tools',
+    }) as IndicatorDetails;
+    await mount(page);
+    const root = page.shadowRoot as ShadowRoot;
+
+    expect(root.textContent).toContain('1 record');
+    const rows = root.querySelectorAll('.tool-row');
+    expect(rows.length).toBe(1);
+    expect(rows[0].textContent).toContain('Bash');
+  });
+
+  it('shows skill invocations for the skills indicator, with inputs, result, and linked follow-up content', async () => {
+    vi.spyOn(dbClient, 'getSession').mockResolvedValue(
+      sessionFixture({
+        tool_executions: [
+          {
+            id: 't1',
+            session_id: 's1',
+            timestamp: 1_700_000_010_000,
+            tool_name: 'Skill',
+            tool_type: 'tool_use',
+            success: true,
+            parameters: { skill: 'code-review', args: '--effort high' },
+            result: 'skill loaded',
+            result_uuid: 'u1',
+          },
+        ],
+        messages: [
+          {
+            id: 'm1',
+            session_id: 's1',
+            role: 'assistant',
+            content: 'Full skill instructions here.',
+            timestamp: 1_700_000_011_000,
+            uuid: 'a2',
+            parent_uuid: 'u1',
+          },
+        ],
+      })
+    );
+
+    const page = Object.assign(document.createElement('indicator-details'), {
+      sessionId: 's1',
+      indicator: 'skills',
+    }) as IndicatorDetails;
+    await mount(page);
+    const root = page.shadowRoot as ShadowRoot;
+
+    expect(root.textContent).toContain('Skill Invocations');
+    expect(root.textContent).toContain('1 record');
+    const row = root.querySelector('.tool-row') as HTMLElement;
+    expect(row.textContent).toContain('code-review');
+    expect(row.textContent).toContain('--effort high');
+
+    row.click();
+    await page.updateComplete;
+    const detail = root.querySelector('.tool-detail-row');
+    expect(detail?.textContent).toContain('skill loaded');
+    expect(detail?.textContent).toContain('Full skill instructions here.');
+  });
+
+  it('shows agent invocations for the agents indicator, with inputs, result, and linked follow-up content', async () => {
+    vi.spyOn(dbClient, 'getSession').mockResolvedValue(
+      sessionFixture({
+        tool_executions: [
+          {
+            id: 't1',
+            session_id: 's1',
+            timestamp: 1_700_000_010_000,
+            tool_name: 'Agent',
+            tool_type: 'tool_use',
+            success: true,
+            parameters: { subagent_type: 'general-purpose', description: 'Investigate flaky test' },
+            result: 'agent dispatched',
+            result_uuid: 'u1',
+          },
+        ],
+        messages: [
+          {
+            id: 'm1',
+            session_id: 's1',
+            role: 'assistant',
+            content: 'Findings summarized here.',
+            timestamp: 1_700_000_011_000,
+            uuid: 'a2',
+            parent_uuid: 'u1',
+          },
+        ],
+      })
+    );
+
+    const page = Object.assign(document.createElement('indicator-details'), {
+      sessionId: 's1',
+      indicator: 'agents',
+    }) as IndicatorDetails;
+    await mount(page);
+    const root = page.shadowRoot as ShadowRoot;
+
+    expect(root.textContent).toContain('Agent Invocations');
+    expect(root.textContent).toContain('1 record');
+    const row = root.querySelector('.tool-row') as HTMLElement;
+    expect(row.textContent).toContain('general-purpose');
+    expect(row.textContent).toContain('Investigate flaky test');
+
+    row.click();
+    await page.updateComplete;
+    const detail = root.querySelector('.tool-detail-row');
+    expect(detail?.textContent).toContain('agent dispatched');
+    expect(detail?.textContent).toContain('Findings summarized here.');
+  });
 });
 
 describe('session-transcript-page', () => {
@@ -1035,7 +1182,7 @@ describe('session-transcript-page', () => {
     expect((page.shadowRoot as ShadowRoot).textContent).toContain('Session not found');
   });
 
-  it('opens and closes a subagent column when its card is clicked', async () => {
+  it('renders a subagent card inline in the main transcript, linking to its split-view route', async () => {
     vi.spyOn(dbClient, 'getSession').mockResolvedValue(
       sessionFixture({
         subagents: [
@@ -1077,27 +1224,21 @@ describe('session-transcript-page', () => {
     await mount(page);
     const root = page.shadowRoot as ShadowRoot;
 
-    expect(root.querySelector('.subagent-row')).not.toBeNull();
+    // Only one (full-width) column by default - no split, no agentId set.
     expect(root.querySelectorAll('.transcript-column').length).toBe(1);
 
-    const card = root.querySelector('.subagent-card') as HTMLButtonElement;
+    // The card is rendered inline inside the main transcript's own shadow
+    // root (via session-transcript's renderAfter hook), not as a top row on
+    // the page itself.
+    const mainTranscript = root.querySelector('session-transcript') as LitElement;
+    const card = mainTranscript.shadowRoot?.querySelector('.subagent-card') as HTMLAnchorElement;
+    expect(card).not.toBeNull();
     expect(card.textContent).toContain('Update AGENTS.md');
-    card.click();
-    await page.updateComplete;
-
-    expect(root.querySelectorAll('.transcript-column').length).toBe(2);
-    // The second transcript-column's session-transcript renders the
-    // subagent's own messages, into its own shadow root.
-    const subagentTranscriptTexts = allChildTexts(root, 'session-transcript');
-    expect(subagentTranscriptTexts[1]).toContain('Subtask done.');
-
-    // Clicking the card again closes the column.
-    card.click();
-    await page.updateComplete;
-    expect(root.querySelectorAll('.transcript-column').length).toBe(1);
+    expect(card.getAttribute('href')).toBe('#/sessions/s1/transcript/agent-1');
+    expect(card.classList.contains('active')).toBe(false);
   });
 
-  it('closes a subagent column via its close button', async () => {
+  it('splits into two columns and marks the card active when agentId matches the route', async () => {
     vi.spyOn(dbClient, 'getSession').mockResolvedValue(
       sessionFixture({
         subagents: [
@@ -1110,7 +1251,15 @@ describe('session-transcript-page', () => {
             cache_read_tokens: 0,
             total_tokens: 15,
             tool_call_count: 1,
-            messages: [],
+            messages: [
+              {
+                id: 'sm1',
+                session_id: 'agent-1',
+                role: 'assistant',
+                content: 'Subtask done.',
+                timestamp: 1_700_000_000_800,
+              },
+            ],
           },
         ],
       })
@@ -1118,16 +1267,25 @@ describe('session-transcript-page', () => {
 
     const page = Object.assign(document.createElement('session-transcript-page'), {
       sessionId: 's1',
+      agentId: 'agent-1',
     }) as SessionTranscriptPage;
     await mount(page);
     const root = page.shadowRoot as ShadowRoot;
 
-    (root.querySelector('.subagent-card') as HTMLButtonElement).click();
-    await page.updateComplete;
     expect(root.querySelectorAll('.transcript-column').length).toBe(2);
+    // The second transcript-column's session-transcript renders the
+    // subagent's own messages, into its own shadow root.
+    const subagentTranscriptTexts = allChildTexts(root, 'session-transcript');
+    expect(subagentTranscriptTexts[1]).toContain('Subtask done.');
 
-    (root.querySelector('.column-close') as HTMLButtonElement).click();
-    await page.updateComplete;
-    expect(root.querySelectorAll('.transcript-column').length).toBe(1);
+    const mainTranscript = root.querySelector('session-transcript') as LitElement;
+    const card = mainTranscript.shadowRoot?.querySelector('.subagent-card') as HTMLAnchorElement;
+    expect(card.classList.contains('active')).toBe(true);
+    // Clicking the active card should navigate back to the bare route, closing the column.
+    expect(card.getAttribute('href')).toBe('#/sessions/s1/transcript');
+
+    // The close (x) link on the open column does the same.
+    const closeLink = root.querySelector('.column-close') as HTMLAnchorElement;
+    expect(closeLink.getAttribute('href')).toBe('#/sessions/s1/transcript');
   });
 });

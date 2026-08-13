@@ -3,6 +3,16 @@
 ## Overview
 This project is a fully offline, privacy-first web application designed to help developers visualize and manage their agentic coding sessions. It runs entirely in the browser and processes session files from various AI coding assistants to generate statistical dashboards.
 
+## Domain Terminology
+A session's activity breaks down into four distinct concepts. Keep this distinction clear in code, UI copy, and metrics - each has its own indicator page and is never conflated with another:
+
+*   **Skill** - A project skill being used: describes how something works and how to execute a set of tasks. Surfaced via the `skills` indicator (`isSkillTool` in `src/workers/session-parser.worker.ts`, exact Claude Code tool name `Skill`).
+*   **Agent** - A project agent being used: describes how to execute a specific task, step by step. Surfaced via the `agents` indicator (`isAgentTool`, exact Claude Code tool name `Agent`).
+*   **Tools** - Tools available in the project. Tool availability can depend on session mode - e.g. planning mode will not allow `Write` or other content-editing tools, while auto mode allows all tools. Surfaced via the `tools` indicator.
+*   **Sub Agents** - Sub-sessions that execute their own tools, agents, and skills to complete one specific goal. These are the uploaded `subagents/agent-<id>.jsonl` transcripts (`session.subagents` / `SubagentUsage`), shown in the Session Dashboard's Subagents panel and the Session Transcript page - distinct from the `agents` indicator above.
+
+Skill and Agent are usually invoked by calling a tool (`tool_use` blocks named `Skill`/`Agent`), but they are deliberately **excluded** from the generic "tool call" pool (`Tools Used` metric, `tools` indicator) since they have their own dedicated metrics and pages.
+
 ## Technology Stack
 
 ### Core Frontend

@@ -116,6 +116,14 @@ export interface ToolExecution {
    * blocks are joined, other shapes are JSON-stringified.
    */
   result?: string;
+  /**
+   * The `uuid` of the raw transcript entry carrying this tool's `tool_result`
+   * block (Claude Code format only). Lets a caller walk the transcript
+   * forward - e.g. finding messages whose `parent_uuid` matches this value -
+   * to recover content the model produced right after the tool_result, such
+   * as a Skill invocation's expanded instructions.
+   */
+  result_uuid?: string;
 }
 
 export interface SessionEvent {
@@ -172,6 +180,7 @@ export type IndicatorKey =
   | 'files_read'
   | 'files_written'
   | 'agents'
+  | 'skills'
   | 'diagnostics'
   | 'tasks';
 
