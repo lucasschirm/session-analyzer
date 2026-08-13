@@ -4,9 +4,9 @@
       "command": "pnpm",
       "args": ["vuetify:mcp"]
     },
-    "nestjs:mcp": {
+    "demo:mcp": {
       "command": "node",
-      "args": ["tools/nest-mcp.js"]
+      "args": ["tools/demo-mcp.js"]
     },
     "context7": {
       "command": "npx",

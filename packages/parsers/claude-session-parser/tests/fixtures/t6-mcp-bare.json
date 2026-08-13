@@ -3,8 +3,8 @@
     "command": "npx",
     "args": ["-y", "@playwright/mcp@latest"]
   },
-  "sequential-thinking": {
+  "step-thinking": {
     "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    "args": ["-y", "@modelcontextprotocol/server-step-thinking"]
   }
 }

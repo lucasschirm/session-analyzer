@@ -7,18 +7,18 @@
   },
   "model": "opus",
   "enabledPlugins": {
-    "context7@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true,
-    "lsc-claude-basics@lsc-marketplace": true
+    "context7@official-demo-marketplace": true,
+    "superpowers@official-demo-marketplace": true,
+    "example-basics@example-marketplace": true
   },
   "extraKnownMarketplaces": {
-    "lsc-marketplace": {
+    "example-marketplace": {
       "source": {
         "source": "github",
         "repo": "dev/claude-marketplace"
       }
     },
-    "pep-local": {
+    "local-demo": {
       "source": {
         "source": "directory",
         "path": "/Users/dev/PEP/src"

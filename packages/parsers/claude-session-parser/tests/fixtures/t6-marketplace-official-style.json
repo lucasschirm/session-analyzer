@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "claude-plugins-official",
+  "name": "official-demo-marketplace",
   "description": "Directory of popular Claude Code extensions",
   "owner": {
     "name": "Anthropic",

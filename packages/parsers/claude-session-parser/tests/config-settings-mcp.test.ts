@@ -40,14 +40,14 @@ describe('parseSettings', () => {
       ask: ['Write'],
     });
     expect(settings.enabledPlugins).toEqual({
-      'context7@claude-plugins-official': true,
-      'superpowers@claude-plugins-official': true,
-      'lsc-claude-basics@lsc-marketplace': true,
+      'context7@official-demo-marketplace': true,
+      'superpowers@official-demo-marketplace': true,
+      'example-basics@example-marketplace': true,
     });
-    expect(settings.extraKnownMarketplaces?.['lsc-marketplace']).toEqual({
+    expect(settings.extraKnownMarketplaces?.['example-marketplace']).toEqual({
       source: { source: 'github', repo: 'dev/claude-marketplace' },
     });
-    expect(settings.extraKnownMarketplaces?.['pep-local']).toEqual({
+    expect(settings.extraKnownMarketplaces?.['local-demo']).toEqual({
       source: { source: 'directory', path: '/Users/dev/PEP/src' },
     });
     expect(settings.sandbox).toEqual({
@@ -207,7 +207,7 @@ describe('parseMcp', () => {
     const config = parseMcp(content, 'project');
 
     expect(config.parseErrors).toEqual([]);
-    expect(config.servers.map((s) => s.name).sort()).toEqual(['playwright', 'sequential-thinking']);
+    expect(config.servers.map((s) => s.name).sort()).toEqual(['playwright', 'step-thinking']);
     const playwright = config.servers.find((s) => s.name === 'playwright');
     expect(playwright?.transport).toBe('stdio');
     expect(playwright?.command).toBe('npx');
@@ -269,7 +269,7 @@ describe('parsePluginMarketplace', () => {
     const marketplace = parsePluginMarketplace(content, '/Users/dev/.claude/plugins/marketplaces/official/.claude-plugin/marketplace.json');
 
     expect(marketplace.kind).toBe('plugin-marketplace');
-    expect(marketplace.name).toBe('claude-plugins-official');
+    expect(marketplace.name).toBe('official-demo-marketplace');
     expect(marketplace.description).toBe('Directory of popular Claude Code extensions');
     expect(marketplace.owner).toEqual({ name: 'Anthropic' });
 
@@ -293,11 +293,11 @@ describe('parsePluginMarketplace', () => {
     const content = readFixture('t6-marketplace-metadata-description.json');
     const marketplace = parsePluginMarketplace(content);
 
-    expect(marketplace.name).toBe('lsc-marketplace');
+    expect(marketplace.name).toBe('example-marketplace');
     expect(marketplace.description).toBe('A claude plugins marketplace with custom plugins');
     expect(marketplace.owner).toEqual({ name: 'Dev Person' });
     expect(marketplace.plugins).toEqual([
-      { name: 'lsc-claude-basics', source: './plugins/claude-basics', description: 'A collection of agents and skills for every project.' },
+      { name: 'example-basics', source: './plugins/example-basics', description: 'A collection of agents and skills for every project.' },
     ]);
   });
 
