@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "acme:mcp": {
+      "command": "node",
+      "args": ["tools/acme-mcp/dist/index.js"]
+    },
+    "unmatched-server": {
+      "command": "node",
+      "args": ["tools/unmatched-mcp/dist/index.js"]
+    }
+  }
+}
