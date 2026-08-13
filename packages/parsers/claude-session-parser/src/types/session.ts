@@ -17,6 +17,7 @@ import type {
   PrLinkRecord,
   SubagentLaunchRecord,
 } from './timeline.js';
+import type { ClaudeCodeSettings } from './config.js';
 
 // ---------------------------------------------------------------------------
 // 1.1 Session root
@@ -81,6 +82,17 @@ export interface ClaudeCodeSession {
   parseErrors: ParseError[];
   /** Observability for unrecognized `type`/`attachment.type` values. */
   unknownTypes: Record<string, number>;
+
+  /** Additive (T9): every `ClaudeCodeSettings` folded in via
+   *  `ClaudeSessionBuilder.appendSettings`, in append order. Not populated
+   *  by `parseSessionTranscript` itself (a transcript carries no settings
+   *  data) — only the builder ever sets this. */
+  settings?: ClaudeCodeSettings[];
+  /** Additive (T9): sub-session transcripts folded in via
+   *  `ClaudeSessionBuilder.appendSubAgent`, keyed by the same `agentId`
+   *  used to join `SubagentLaunchRecord.agentId`. Not populated by
+   *  `parseSessionTranscript` itself. */
+  subagentSessions?: Record<string, ClaudeCodeSession>;
 }
 
 // ---------------------------------------------------------------------------
