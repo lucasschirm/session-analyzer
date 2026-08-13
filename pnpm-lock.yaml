@@ -7,6 +7,12 @@ settings:
 importers:
 
   .:
+    devDependencies:
+      husky:
+        specifier: ^9.1.7
+        version: 9.1.7
+
+  packages/site:
     dependencies:
       '@lit-labs/router':
         specifier: ^0.1.4
@@ -36,9 +42,6 @@ importers:
       happy-dom:
         specifier: ^20.11.2
         version: 20.11.2
-      husky:
-        specifier: ^9.1.7
-        version: 9.1.7
       jsdom:
         specifier: ^30.0.1
         version: 30.0.1

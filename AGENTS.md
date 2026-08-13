@@ -56,29 +56,38 @@ The application ingests, parses, and generates statistics for session files from
 *   **Transcripts:** Chat-like message view rendered via `marked` + sanitized with `dompurify`.
 
 ## Project Structure
+This repo is a pnpm workspace monorepo. Today it holds a single app package,
+`packages/site/`; a future, separately-designed effort will extract parser
+packages into `packages/parsers/*`.
 ```
 /workspace
-├── src/
-│   ├── components/       # Lit web components (one per file)
-│   ├── db/               # SQLite WASM database manager, db-worker, db-client
-│   ├── lib/              # Markdown rendering + sanitization
-│   ├── pages/            # Route-level components (home, project, session, indicator)
-│   ├── types/            # TypeScript type definitions
-│   └── workers/          # Web Worker for session parsing + client helper
-├── tests/
-│   ├── unit/             # Vitest unit tests
-│   └── e2e/              # Playwright E2E tests + fixture session files
-├── public/               # coi-sw.js (COOP/COEP for GitHub Pages), .nojekyll
+├── packages/
+│   └── site/                 # The dashboard app (package name: "site")
+│       ├── src/
+│       │   ├── components/       # Lit web components (one per file)
+│       │   ├── db/               # SQLite WASM database manager, db-worker, db-client
+│       │   ├── lib/              # Markdown rendering + sanitization
+│       │   ├── pages/            # Route-level components (home, project, session, indicator)
+│       │   ├── types/            # TypeScript type definitions
+│       │   └── workers/          # Web Worker for session parsing + client helper
+│       ├── tests/
+│       │   ├── unit/             # Vitest unit tests
+│       │   └── e2e/              # Playwright E2E tests + fixture session files
+│       ├── public/               # coi-sw.js (COOP/COEP for GitHub Pages), .nojekyll
+│       ├── index.html            # Entry HTML file (dark theme variables)
+│       ├── package.json          # App dependencies and scripts
+│       ├── tsconfig.json         # Extends root tsconfig.base.json, adds path aliases
+│       ├── vite.config.ts        # Vite build configuration (COOP/COEP headers, ES workers)
+│       ├── vitest.config.ts      # Vitest test configuration (coverage thresholds)
+│       └── playwright.config.ts  # Playwright E2E configuration (chromium)
 ├── .github/workflows/    # GitHub Actions CI/CD
-├── index.html            # Entry HTML file (dark theme variables)
-├── package.json          # Dependencies and scripts
-├── tsconfig.json         # TypeScript configuration
-├── vite.config.ts        # Vite build configuration (COOP/COEP headers, ES workers)
-├── vitest.config.ts      # Vitest test configuration (coverage thresholds)
-└── playwright.config.ts  # Playwright E2E configuration (chromium)
+├── package.json          # Root workspace package (private, passthrough scripts, husky)
+├── pnpm-workspace.yaml    # Workspace package globs
+└── tsconfig.base.json     # Shared TypeScript compiler options
 ```
 
 ## Scripts
+Run from the repo root - they delegate to the `site` package via `pnpm --filter`:
 ```bash
 pnpm dev            # Start development server
 pnpm build          # Type-check and build for production
@@ -87,3 +96,6 @@ pnpm test           # Run unit tests
 pnpm test:coverage  # Run unit tests with coverage thresholds
 pnpm test:e2e       # Run E2E tests
 ```
+Equivalent commands scoped to the site package directly:
+`cd packages/site && pnpm dev` (etc.), or `pnpm --filter site <script>` from
+anywhere in the workspace.
