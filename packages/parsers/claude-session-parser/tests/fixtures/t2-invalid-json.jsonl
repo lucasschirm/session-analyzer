@@ -1,0 +1,3 @@
+{"type": "mode", "mode": "normal", "sessionId": "sess-bad-json"}
+{this is not valid json at all
+{"type": "ai-title", "aiTitle": "Still parses", "sessionId": "sess-bad-json"}
