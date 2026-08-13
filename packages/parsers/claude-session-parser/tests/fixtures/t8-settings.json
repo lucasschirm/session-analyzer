@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "defaultMode": "auto"
+  },
+  "model": "opus",
+  "enabledPlugins": {
+    "example-plugin@example-marketplace": true
+  },
+  "extraKnownMarketplaces": {
+    "example-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "dev/example-marketplace"
+      }
+    }
+  },
+  "effortLevel": "high"
+}

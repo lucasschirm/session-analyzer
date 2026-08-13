@@ -1,0 +1,2 @@
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"Fix the
+{"parentUuid":"u-0001","isSidechain":false,"type":"assistant","message":{"id":"msg_001","model":"claude-sonnet-5","role":"assistant","content":[{"type":"text","text":"Looking into it."}]},"uuid":"a-0001","timestamp":"2026-08-11T15:08:01.000Z","sessionId":"9c3f1a20-1111-4a11-8a11-000000000002"}
