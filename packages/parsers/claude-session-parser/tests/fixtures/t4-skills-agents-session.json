@@ -12,8 +12,8 @@
       "type": "skill_listing",
       "isInitial": true,
       "skillCount": 3,
-      "names": ["superpowers:systematic-debugging", "dataviz", "manage-table-metadata"],
-      "content": "- superpowers:systematic-debugging: Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes\n- dataviz: Use this skill whenever you are about to create ANY chart, graph, plot, dashboard, or data visualization.\n- manage-table-metadata: Create or update table metadata JSON files (tables, columns, choices, relationships) in resources/database and resources/seeds."
+      "names": ["acme:root-cause-analysis", "chart-builder", "widget-metadata-manager"],
+      "content": "- acme:root-cause-analysis: Use when encountering any unexpected behavior, before proposing a fix.\n- chart-builder: Use this skill whenever you are about to build a chart, graph, or dashboard visualization.\n- widget-metadata-manager: Create or update widget metadata files in the example schema directory."
     }
   },
   {
@@ -32,7 +32,7 @@
           "type": "tool_use",
           "id": "toolu_skillA",
           "name": "Skill",
-          "input": { "skill": "superpowers:systematic-debugging", "args": "Debug the failing import job" }
+          "input": { "skill": "acme:root-cause-analysis", "args": "Investigate why the example calculation returns the wrong total" }
         }
       ]
     }
@@ -49,10 +49,10 @@
     "message": {
       "role": "user",
       "content": [
-        { "type": "tool_result", "tool_use_id": "toolu_skillA", "content": "Launching skill: superpowers:systematic-debugging" }
+        { "type": "tool_result", "tool_use_id": "toolu_skillA", "content": "Launching skill: acme:root-cause-analysis" }
       ]
     },
-    "toolUseResult": { "success": true, "commandName": "superpowers:systematic-debugging" }
+    "toolUseResult": { "success": true, "commandName": "acme:root-cause-analysis" }
   },
   {
     "type": "user",
@@ -70,7 +70,7 @@
       "content": [
         {
           "type": "text",
-          "text": "Base directory for this skill: /Users/dev/.claude/plugins/cache/claude-plugins-official/superpowers/6.1.1/skills/systematic-debugging\n\n# Systematic Debugging\n\n## Overview\n\nRandom fixes waste time and create new bugs. Quick patches mask underlying issues.\n\n**Core principle:** ALWAYS find root cause before attempting fixes."
+          "text": "Base directory for this skill: /Users/dev/.claude/plugins/cache/example-marketplace/acme/1.0.0/skills/root-cause-analysis\n\n# Root Cause Analysis\n\n## Overview\n\nExample placeholder methodology text used only to exercise the expansion-detection code path in this test fixture.\n\n**Core principle:** this is synthetic body content, not real skill prose."
         }
       ]
     }
@@ -84,10 +84,10 @@
     "isSidechain": false,
     "sessionId": "s1",
     "lineNumber": 5,
-    "attributionSkill": "superpowers:systematic-debugging",
+    "attributionSkill": "acme:root-cause-analysis",
     "message": {
       "role": "assistant",
-      "content": [{ "type": "text", "text": "Let's find the root cause first." }]
+      "content": [{ "type": "text", "text": "Example placeholder assistant turn attributed to the skill." }]
     }
   },
   {
@@ -106,7 +106,7 @@
           "type": "tool_use",
           "id": "toolu_skillB",
           "name": "Skill",
-          "input": { "skill": "bhzai-create-driver", "args": "Create a new adapter" }
+          "input": { "skill": "mystery-widget-driver", "args": "Create a new example driver" }
         }
       ]
     }
@@ -126,7 +126,7 @@
         {
           "type": "tool_result",
           "tool_use_id": "toolu_skillB",
-          "content": "<tool_use_error>Unknown skill: bhzai-create-driver</tool_use_error>",
+          "content": "<tool_use_error>Unknown skill: mystery-widget-driver</tool_use_error>",
           "is_error": true
         }
       ]
@@ -134,7 +134,7 @@
   },
   {
     "type": "last-prompt",
-    "lastPrompt": "Debug the failing import job",
+    "lastPrompt": "Investigate why the example calculation returns the wrong total",
     "leafUuid": "e0000000-0000-0000-0000-000000000006",
     "sessionId": "s1",
     "lineNumber": 8
@@ -150,9 +150,9 @@
     "lineNumber": 9,
     "attachment": {
       "type": "dynamic_skill",
-      "skillDir": "/Users/dev/project/.claude/skills",
-      "skillNames": ["manage-table-metadata"],
-      "displayPath": "project/.claude/skills"
+      "skillDir": "/Users/dev/example/.claude/skills",
+      "skillNames": ["widget-metadata-manager"],
+      "displayPath": "example/.claude/skills"
     }
   },
   {
@@ -168,9 +168,9 @@
       "type": "invoked_skills",
       "skills": [
         {
-          "name": "delegating-to-devin",
-          "path": "projectSettings:delegating-to-devin",
-          "content": "Base directory for this skill: /Users/dev/project/.claude/skills/delegating-to-devin\n\n# Delegating to Devin\n\n## Overview\n\nShort injected body for the test fixture."
+          "name": "handoff-to-helper",
+          "path": "projectSettings:handoff-to-helper",
+          "content": "Base directory for this skill: /Users/dev/example/.claude/skills/handoff-to-helper\n\n# Handoff To Helper\n\n## Overview\n\nShort synthetic injected body for the test fixture."
         }
       ]
     }
@@ -188,8 +188,8 @@
       "type": "skill_listing",
       "isInitial": false,
       "skillCount": 3,
-      "names": ["superpowers:systematic-debugging", "manage-table-metadata", "loop"],
-      "content": "- superpowers:systematic-debugging: Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes\n- manage-table-metadata: Create or update table metadata JSON files (tables, columns, choices, relationships) in resources/database and resources/seeds.\n- loop: Run a prompt or slash command on a recurring interval."
+      "names": ["acme:root-cause-analysis", "widget-metadata-manager", "task-scheduler"],
+      "content": "- acme:root-cause-analysis: Use when encountering any unexpected behavior, before proposing a fix.\n- widget-metadata-manager: Create or update widget metadata files in the example schema directory.\n- task-scheduler: Run a prompt or command on a recurring interval."
     }
   },
   {
@@ -204,10 +204,10 @@
     "attachment": {
       "type": "agent_listing_delta",
       "isInitial": true,
-      "addedTypes": ["general-purpose", "Explore"],
+      "addedTypes": ["generalist", "code-finder"],
       "addedLines": [
-        "- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. (Tools: All tools)",
-        "- Explore: Fast read-only search agent for locating code. Use it to find files by pattern, grep for symbols, or answer where-is-X questions. (Tools: Bash, Read, Grep, Glob)"
+        "- generalist: Example general-purpose agent for researching questions and executing multi-step tasks. (Tools: All tools)",
+        "- code-finder: Example fast read-only search agent for locating code. (Tools: Bash, Read, Grep, Glob)"
       ],
       "removedTypes": []
     }
@@ -224,9 +224,9 @@
     "attachment": {
       "type": "agent_listing_delta",
       "isInitial": false,
-      "addedTypes": ["Plan"],
-      "addedLines": ["- Plan: Software architect agent for designing implementation plans. (Tools: All tools)"],
-      "removedTypes": ["Explore"]
+      "addedTypes": ["architect"],
+      "addedLines": ["- architect: Example software-architect agent for designing implementation plans. (Tools: All tools)"],
+      "removedTypes": ["code-finder"]
     }
   },
   {
@@ -238,7 +238,7 @@
     "isSidechain": false,
     "sessionId": "s1",
     "lineNumber": 14,
-    "attachment": { "type": "agent_mention", "agentType": "Plan" }
+    "attachment": { "type": "agent_mention", "agentType": "architect" }
   },
   {
     "type": "assistant",
@@ -257,9 +257,9 @@
           "id": "toolu_agentA",
           "name": "Agent",
           "input": {
-            "subagent_type": "general-purpose",
-            "description": "Explore access helpers + tests",
-            "prompt": "Explore the repo and summarize the access-helper module.",
+            "subagent_type": "generalist",
+            "description": "Explore example helpers and tests",
+            "prompt": "Explore the example repo and summarize the helper module.",
             "run_in_background": false
           }
         }
@@ -282,11 +282,11 @@
     "toolUseResult": {
       "isAsync": true,
       "status": "completed",
-      "agentId": "a7825f4a0ca1e001a",
-      "description": "Explore access helpers + tests",
-      "resolvedModel": "claude-fable-5",
-      "prompt": "Explore the repo and summarize the access-helper module.",
-      "totalTokens": 77668
+      "agentId": "syn0000000000001",
+      "description": "Explore example helpers and tests",
+      "resolvedModel": "example-model-large",
+      "prompt": "Explore the example repo and summarize the helper module.",
+      "totalTokens": 42000
     }
   },
   {
@@ -306,9 +306,9 @@
           "id": "toolu_agentB",
           "name": "Agent",
           "input": {
-            "subagent_type": "Explore",
-            "description": "Explore courses/questions schema",
-            "prompt": "Explore the repo (search breadth: medium).",
+            "subagent_type": "code-finder",
+            "description": "Locate example schema definitions",
+            "prompt": "Explore the example repo (search breadth: wide).",
             "run_in_background": true
           }
         }
@@ -323,12 +323,12 @@
     "timestampMs": 1754043185000,
     "isSidechain": true,
     "sessionId": "s1",
-    "agentId": "a7825f4a0ca1e001a",
-    "attributionAgent": "general-purpose",
+    "agentId": "syn0000000000001",
+    "attributionAgent": "generalist",
     "lineNumber": 18,
     "message": {
       "role": "assistant",
-      "content": [{ "type": "text", "text": "Sidechain turn attributed to the general-purpose subagent." }]
+      "content": [{ "type": "text", "text": "Example sidechain turn attributed to the generalist subagent." }]
     }
   },
   {
@@ -347,7 +347,7 @@
           "type": "tool_use",
           "id": "toolu_taskcreateA",
           "name": "TaskCreate",
-          "input": { "title": "Follow up on the schema explore results" }
+          "input": { "title": "Follow up on the example schema results" }
         }
       ]
     }

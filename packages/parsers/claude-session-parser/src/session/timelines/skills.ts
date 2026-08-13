@@ -94,7 +94,7 @@ function parseSkillListingDescriptions(content: string, names: string[]): Map<st
   return descriptions;
 }
 
-/** First-`:` split: `"superpowers:systematic-debugging"` -> prefix + bare name. */
+/** First-`:` split: `"my-plugin:my-skill"` -> prefix + bare name. */
 function splitSkillName(name: string): { pluginPrefix?: string; bareName: string } {
   const idx = name.indexOf(':');
   if (idx === -1) return { bareName: name };
