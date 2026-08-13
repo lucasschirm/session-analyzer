@@ -56,7 +56,7 @@ pnpm dev        # development server on http://localhost:3000
 | Command | Purpose |
 |---|---|
 | `pnpm dev` | Start the development server |
-| `pnpm build` | Type-check (`tsc`) and build to `dist/` |
+| `pnpm build` | Type-check (`tsc`) and build to `packages/site/dist/` |
 | `pnpm preview` | Serve the production build locally |
 | `pnpm test` | Run Vitest unit tests |
 | `pnpm test:coverage` | Unit tests with coverage (60% threshold) |
@@ -77,17 +77,21 @@ pnpm dev        # development server on http://localhost:3000
 
 ## Project structure
 
+This is a pnpm workspace; the app lives in `packages/site/` (a future,
+separately-designed effort will add `packages/parsers/*`).
+
 ```
-src/
-├── components/   # One Lit component per file (metrics-card, upload-zone, …)
-├── db/           # DatabaseManager (sqlite oo1), db-worker, db-client proxy
-├── lib/          # Markdown + sanitization helpers
-├── pages/        # Route-level components (home, project, session, indicator)
-├── types/        # Shared TypeScript types
-└── workers/      # Session parser worker + client helper
-tests/
-├── unit/         # Vitest suites (parser, database, components, pages, router)
-└── e2e/          # Playwright journeys + session fixture files
+packages/site/
+├── src/
+│   ├── components/   # One Lit component per file (metrics-card, upload-zone, …)
+│   ├── db/           # DatabaseManager (sqlite oo1), db-worker, db-client proxy
+│   ├── lib/          # Markdown + sanitization helpers
+│   ├── pages/        # Route-level components (home, project, session, indicator)
+│   ├── types/        # Shared TypeScript types
+│   └── workers/      # Session parser worker + client helper
+└── tests/
+    ├── unit/         # Vitest suites (parser, database, components, pages, router)
+    └── e2e/          # Playwright journeys + session fixture files
 ```
 
 ## Husky pre-commit hook

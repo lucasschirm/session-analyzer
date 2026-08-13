@@ -17,16 +17,6 @@
     "inlineSources": true,
     "experimentalDecorators": true,
     "useDefineForClassFields": false,
-    "types": ["node"],
-    "paths": {
-      "@/*": ["./*"],
-      "@components/*": ["./src/components/*"],
-      "@pages/*": ["./src/pages/*"],
-      "@workers/*": ["./src/workers/*"],
-      "@db/*": ["./src/db/*"],
-      "@types/*": ["./src/types/*"]
-    }
-  },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules"]
+    "types": ["node"]
+  }
 }

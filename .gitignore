@@ -51,3 +51,7 @@ jspm_packages/
 jam/
 web_modules/
 package-lock.json
+
+
+# Custom
+tmp
