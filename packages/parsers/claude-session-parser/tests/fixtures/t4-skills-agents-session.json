@@ -1,0 +1,355 @@
+[
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000001",
+    "parentUuid": null,
+    "timestamp": "2026-08-01T10:00:00.000Z",
+    "timestampMs": 1754042400000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 1,
+    "attachment": {
+      "type": "skill_listing",
+      "isInitial": true,
+      "skillCount": 3,
+      "names": ["acme:root-cause-analysis", "chart-builder", "widget-metadata-manager"],
+      "content": "- acme:root-cause-analysis: Use when encountering any unexpected behavior, before proposing a fix.\n- chart-builder: Use this skill whenever you are about to build a chart, graph, or dashboard visualization.\n- widget-metadata-manager: Create or update widget metadata files in the example schema directory."
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000002",
+    "parentUuid": "e0000000-0000-0000-0000-000000000001",
+    "timestamp": "2026-08-01T10:00:05.000Z",
+    "timestampMs": 1754042405000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 2,
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_skillA",
+          "name": "Skill",
+          "input": { "skill": "acme:root-cause-analysis", "args": "Investigate why the example calculation returns the wrong total" }
+        }
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "uuid": "e0000000-0000-0000-0000-000000000003",
+    "parentUuid": "e0000000-0000-0000-0000-000000000002",
+    "timestamp": "2026-08-01T10:00:06.000Z",
+    "timestampMs": 1754042406000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 3,
+    "message": {
+      "role": "user",
+      "content": [
+        { "type": "tool_result", "tool_use_id": "toolu_skillA", "content": "Launching skill: acme:root-cause-analysis" }
+      ]
+    },
+    "toolUseResult": { "success": true, "commandName": "acme:root-cause-analysis" }
+  },
+  {
+    "type": "user",
+    "uuid": "e0000000-0000-0000-0000-000000000004",
+    "parentUuid": "e0000000-0000-0000-0000-000000000003",
+    "timestamp": "2026-08-01T10:00:06.500Z",
+    "timestampMs": 1754042406500,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 4,
+    "isMeta": true,
+    "sourceToolUseID": "toolu_skillA",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Base directory for this skill: /Users/dev/.claude/plugins/cache/example-marketplace/acme/1.0.0/skills/root-cause-analysis\n\n# Root Cause Analysis\n\n## Overview\n\nExample placeholder methodology text used only to exercise the expansion-detection code path in this test fixture.\n\n**Core principle:** this is synthetic body content, not real skill prose."
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000005",
+    "parentUuid": "e0000000-0000-0000-0000-000000000004",
+    "timestamp": "2026-08-01T10:00:10.000Z",
+    "timestampMs": 1754042410000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 5,
+    "attributionSkill": "acme:root-cause-analysis",
+    "message": {
+      "role": "assistant",
+      "content": [{ "type": "text", "text": "Example placeholder assistant turn attributed to the skill." }]
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000006",
+    "parentUuid": "e0000000-0000-0000-0000-000000000005",
+    "timestamp": "2026-08-01T10:00:20.000Z",
+    "timestampMs": 1754042420000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 6,
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_skillB",
+          "name": "Skill",
+          "input": { "skill": "mystery-widget-driver", "args": "Create a new example driver" }
+        }
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "uuid": "e0000000-0000-0000-0000-000000000007",
+    "parentUuid": "e0000000-0000-0000-0000-000000000006",
+    "timestamp": "2026-08-01T10:00:21.000Z",
+    "timestampMs": 1754042421000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 7,
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_skillB",
+          "content": "<tool_use_error>Unknown skill: mystery-widget-driver</tool_use_error>",
+          "is_error": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "last-prompt",
+    "lastPrompt": "Investigate why the example calculation returns the wrong total",
+    "leafUuid": "e0000000-0000-0000-0000-000000000006",
+    "sessionId": "s1",
+    "lineNumber": 8
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000009",
+    "parentUuid": "e0000000-0000-0000-0000-000000000007",
+    "timestamp": "2026-08-01T10:00:22.000Z",
+    "timestampMs": 1754042422000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 9,
+    "attachment": {
+      "type": "dynamic_skill",
+      "skillDir": "/Users/dev/example/.claude/skills",
+      "skillNames": ["widget-metadata-manager"],
+      "displayPath": "example/.claude/skills"
+    }
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000010",
+    "parentUuid": "e0000000-0000-0000-0000-000000000009",
+    "timestamp": "2026-08-01T10:00:23.000Z",
+    "timestampMs": 1754042423000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 10,
+    "attachment": {
+      "type": "invoked_skills",
+      "skills": [
+        {
+          "name": "handoff-to-helper",
+          "path": "projectSettings:handoff-to-helper",
+          "content": "Base directory for this skill: /Users/dev/example/.claude/skills/handoff-to-helper\n\n# Handoff To Helper\n\n## Overview\n\nShort synthetic injected body for the test fixture."
+        }
+      ]
+    }
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000011",
+    "parentUuid": "e0000000-0000-0000-0000-000000000010",
+    "timestamp": "2026-08-01T10:05:00.000Z",
+    "timestampMs": 1754042700000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 11,
+    "attachment": {
+      "type": "skill_listing",
+      "isInitial": false,
+      "skillCount": 3,
+      "names": ["acme:root-cause-analysis", "widget-metadata-manager", "task-scheduler"],
+      "content": "- acme:root-cause-analysis: Use when encountering any unexpected behavior, before proposing a fix.\n- widget-metadata-manager: Create or update widget metadata files in the example schema directory.\n- task-scheduler: Run a prompt or command on a recurring interval."
+    }
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000012",
+    "parentUuid": "e0000000-0000-0000-0000-000000000001",
+    "timestamp": "2026-08-01T10:00:00.100Z",
+    "timestampMs": 1754042400100,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 12,
+    "attachment": {
+      "type": "agent_listing_delta",
+      "isInitial": true,
+      "addedTypes": ["generalist", "code-finder"],
+      "addedLines": [
+        "- generalist: Example general-purpose agent for researching questions and executing multi-step tasks. (Tools: All tools)",
+        "- code-finder: Example fast read-only search agent for locating code. (Tools: Bash, Read, Grep, Glob)"
+      ],
+      "removedTypes": []
+    }
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000013",
+    "parentUuid": "e0000000-0000-0000-0000-000000000012",
+    "timestamp": "2026-08-01T10:10:00.000Z",
+    "timestampMs": 1754043000000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 13,
+    "attachment": {
+      "type": "agent_listing_delta",
+      "isInitial": false,
+      "addedTypes": ["architect"],
+      "addedLines": ["- architect: Example software-architect agent for designing implementation plans. (Tools: All tools)"],
+      "removedTypes": ["code-finder"]
+    }
+  },
+  {
+    "type": "attachment",
+    "uuid": "e0000000-0000-0000-0000-000000000014",
+    "parentUuid": "e0000000-0000-0000-0000-000000000013",
+    "timestamp": "2026-08-01T10:10:05.000Z",
+    "timestampMs": 1754043005000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 14,
+    "attachment": { "type": "agent_mention", "agentType": "architect" }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000015",
+    "parentUuid": "e0000000-0000-0000-0000-000000000014",
+    "timestamp": "2026-08-01T10:11:00.000Z",
+    "timestampMs": 1754043060000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 15,
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_agentA",
+          "name": "Agent",
+          "input": {
+            "subagent_type": "generalist",
+            "description": "Explore example helpers and tests",
+            "prompt": "Explore the example repo and summarize the helper module.",
+            "run_in_background": false
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "user",
+    "uuid": "e0000000-0000-0000-0000-000000000016",
+    "parentUuid": "e0000000-0000-0000-0000-000000000015",
+    "timestamp": "2026-08-01T10:12:30.000Z",
+    "timestampMs": 1754043150000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 16,
+    "message": {
+      "role": "user",
+      "content": [{ "type": "tool_result", "tool_use_id": "toolu_agentA", "content": "Subagent finished." }]
+    },
+    "toolUseResult": {
+      "isAsync": true,
+      "status": "completed",
+      "agentId": "syn0000000000001",
+      "description": "Explore example helpers and tests",
+      "resolvedModel": "example-model-large",
+      "prompt": "Explore the example repo and summarize the helper module.",
+      "totalTokens": 42000
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000017",
+    "parentUuid": "e0000000-0000-0000-0000-000000000016",
+    "timestamp": "2026-08-01T10:13:00.000Z",
+    "timestampMs": 1754043180000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 17,
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_agentB",
+          "name": "Agent",
+          "input": {
+            "subagent_type": "code-finder",
+            "description": "Locate example schema definitions",
+            "prompt": "Explore the example repo (search breadth: wide).",
+            "run_in_background": true
+          }
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000018",
+    "parentUuid": "e0000000-0000-0000-0000-000000000017",
+    "timestamp": "2026-08-01T10:13:05.000Z",
+    "timestampMs": 1754043185000,
+    "isSidechain": true,
+    "sessionId": "s1",
+    "agentId": "syn0000000000001",
+    "attributionAgent": "generalist",
+    "lineNumber": 18,
+    "message": {
+      "role": "assistant",
+      "content": [{ "type": "text", "text": "Example sidechain turn attributed to the generalist subagent." }]
+    }
+  },
+  {
+    "type": "assistant",
+    "uuid": "e0000000-0000-0000-0000-000000000019",
+    "parentUuid": "e0000000-0000-0000-0000-000000000018",
+    "timestamp": "2026-08-01T10:14:00.000Z",
+    "timestampMs": 1754043240000,
+    "isSidechain": false,
+    "sessionId": "s1",
+    "lineNumber": 19,
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_taskcreateA",
+          "name": "TaskCreate",
+          "input": { "title": "Follow up on the example schema results" }
+        }
+      ]
+    }
+  }
+]
