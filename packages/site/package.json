@@ -24,6 +24,7 @@
   "license": "ISC",
   "dependencies": {
     "@lit-labs/router": "^0.1.4",
+    "@lucasschirm/sal-claude-session-parser": "workspace:*",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
     "dompurify": "^3.4.13",
     "lit": "^3.3.3",

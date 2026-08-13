@@ -26,6 +26,9 @@ importers:
       '@lit-labs/router':
         specifier: ^0.1.4
         version: 0.1.4
+      '@lucasschirm/sal-claude-session-parser':
+        specifier: workspace:*
+        version: link:../parsers/claude-session-parser
       '@sqlite.org/sqlite-wasm':
         specifier: 3.53.0-build1
         version: 3.53.0-build1
