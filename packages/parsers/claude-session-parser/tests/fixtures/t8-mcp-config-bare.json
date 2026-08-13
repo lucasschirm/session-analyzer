@@ -1,0 +1,9 @@
+{
+  "example-browser": {
+    "command": "npx",
+    "args": ["-y", "@example/browser-mcp@latest"]
+  },
+  "example-docs-http": {
+    "url": "https://example.com/mcp"
+  }
+}
