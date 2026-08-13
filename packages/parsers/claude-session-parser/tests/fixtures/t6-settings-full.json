@@ -1,0 +1,89 @@
+{
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": ["Bash(git *)", "Read"],
+    "deny": ["Bash(rm -rf *)"],
+    "ask": ["Write"]
+  },
+  "model": "opus",
+  "enabledPlugins": {
+    "context7@official-demo-marketplace": true,
+    "superpowers@official-demo-marketplace": true,
+    "example-basics@example-marketplace": true
+  },
+  "extraKnownMarketplaces": {
+    "example-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "dev/claude-marketplace"
+      }
+    },
+    "local-demo": {
+      "source": {
+        "source": "directory",
+        "path": "/Users/dev/PEP/src"
+      }
+    }
+  },
+  "effortLevel": "high",
+  "tui": "fullscreen",
+  "skipDangerousModePermissionPrompt": true,
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true,
+  "sandbox": {
+    "enabled": true,
+    "network": {
+      "allowedDomains": ["example.com", "api.example.com"]
+    }
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "./statusline.sh"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/sync-agents-symlinks.sh",
+            "timeout": 15,
+            "statusMessage": "Syncing symlinks"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./hooks/pre-bash.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./hooks/pre-edit.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/lgtm",
+            "timeout": 360
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "devin": {
+      "type": "http",
+      "url": "https://mcp.devin.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DEVIN_API_KEY}"
+      }
+    },
+    "legacy-sse": {
+      "type": "sse",
+      "url": "https://legacy.example.com/sse"
+    },
+    "no-discriminant": {
+      "url": "https://example.com/mcp"
+    }
+  }
+}

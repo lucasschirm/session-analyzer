@@ -1,0 +1,10 @@
+{
+  "playwright": {
+    "command": "npx",
+    "args": ["-y", "@playwright/mcp@latest"]
+  },
+  "step-thinking": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-step-thinking"]
+  }
+}
