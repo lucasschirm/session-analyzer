@@ -1,0 +1,28 @@
+{
+  "name": "@lucasschirm/sal-claude-session-parser",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "license": "ISC",
+  "description": "Pure, dependency-free parser for Claude Code session transcripts and config surface (settings, MCP, agents, skills, rules).",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
