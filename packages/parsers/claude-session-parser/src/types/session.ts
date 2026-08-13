@@ -134,6 +134,12 @@ export interface ClaudeCodeEntryBase {
   ownerAccountUuid?: string;
   ownerOrganizationUuid?: string;
   isAbortedMidStream?: boolean;
+  /** Present only when `ParseOptions.retainRaw` is true — the original
+   *  parsed JSON object for this entry, verbatim. Omitted by default
+   *  (memory) — see `ParseOptions.retainRaw`. Uuid-less bookkeeping entries
+   *  (ModeEntry, AiTitleEntry, …) don't get this field: they're already
+   *  small enough that their typed shape loses nothing. */
+  raw?: Record<string, unknown>;
 }
 
 export interface AssistantEntry extends ClaudeCodeEntryBase {
