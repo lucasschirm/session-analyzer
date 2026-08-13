@@ -70,12 +70,12 @@ describe('deriveRuleTimeline', () => {
 
   const nestedMemoryAttachment: NestedMemoryAttachment = {
     type: 'nested_memory',
-    path: '/Users/dev/project/.claude/rules/step-catalog-sync.md',
+    path: '/Users/dev/project/.claude/rules/widget-catalog-sync.md',
     content: {
-      path: '/Users/dev/project/.claude/rules/step-catalog-sync.md',
+      path: '/Users/dev/project/.claude/rules/widget-catalog-sync.md',
       type: 'Project',
       content: injectedBody,
-      globs: ['projects/robot/src/steps/**'],
+      globs: ['packages/renderer/src/widgets/**'],
       contentDiffersFromDisk: true,
       rawContent,
     },
@@ -89,12 +89,12 @@ describe('deriveRuleTimeline', () => {
     expect(record.injectionStatus).toBe('injected');
     expect(record.origin).toBe('nested_memory');
     expect(record.scope).toBe('Project');
-    expect(record.title).toBe('Step Catalog Sync');
-    expect(record.globs).toEqual(['projects/robot/src/steps/**']);
+    expect(record.title).toBe('Widget Catalog Sync');
+    expect(record.globs).toEqual(['packages/renderer/src/widgets/**']);
     expect(record.injectedContent).toBe(injectedBody);
     expect(record.rawContent).toBe(rawContent);
     expect(record.contentDiffersFromDisk).toBe(true);
-    expect(record.frontmatter?.description).toContain('regenerate the step catalog');
+    expect(record.frontmatter?.description).toContain('regenerate the widget catalog');
     expect(record.availability).toHaveLength(1);
     expect(record.availability[0]).toMatchObject({ action: 'injected', lineNumber: 10, entryUuid: 'entry-nm-1' });
   });
@@ -167,9 +167,9 @@ describe('deriveRuleTimeline', () => {
   });
 
   it('never regresses injectionStatus from "injected" back to "unknown" when a later compact_file_reference sighting reuses the same path', () => {
-    const path = '/Users/dev/project/.claude/rules/step-catalog-sync.md';
+    const path = '/Users/dev/project/.claude/rules/widget-catalog-sync.md';
     const nm = attachmentEntry(1, nestedMemoryAttachment, { uuid: 'nm-1' });
-    const cfr = attachmentEntry(2, { type: 'compact_file_reference', filename: path, displayPath: '.claude/rules/step-catalog-sync.md' }, { uuid: 'cfr-1' });
+    const cfr = attachmentEntry(2, { type: 'compact_file_reference', filename: path, displayPath: '.claude/rules/widget-catalog-sync.md' }, { uuid: 'cfr-1' });
 
     const records = deriveRuleTimeline([nm, cfr]);
 
@@ -219,7 +219,7 @@ describe('deriveSupportingRecords', () => {
     };
     const hookAdditionalContext: HookAdditionalContextAttachment = {
       type: 'hook_additional_context',
-      content: ['<EXTREMELY_IMPORTANT>\nYou have superpowers.\n</EXTREMELY_IMPORTANT>'],
+      content: ['<EXTREMELY_IMPORTANT>\nExtra example tooling is now enabled.\n</EXTREMELY_IMPORTANT>'],
       hookName: 'SessionStart:startup',
       hookEvent: 'SessionStart',
       toolUseID: 'tool-4',
@@ -263,7 +263,7 @@ describe('deriveSupportingRecords', () => {
         hookName: 'SessionStart:startup',
         entryUuid: 'h4',
       });
-      expect(hooks[3].injectedContext).toEqual(['<EXTREMELY_IMPORTANT>\nYou have superpowers.\n</EXTREMELY_IMPORTANT>']);
+      expect(hooks[3].injectedContext).toEqual(['<EXTREMELY_IMPORTANT>\nExtra example tooling is now enabled.\n</EXTREMELY_IMPORTANT>']);
     });
 
     it('clamps stdout/injectedContext to maxBlobBytes', () => {

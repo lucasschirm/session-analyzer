@@ -1,15 +1,15 @@
 ---
-description: When a step in projects/robot/src/steps changes, regenerate the step catalog so projects/stair-builder reflects it
+description: When a component in packages/renderer/src/widgets changes, regenerate the widget catalog so packages/example-renderer reflects it
 paths:
-  - "projects/robot/src/steps/**"
+  - "packages/renderer/src/widgets/**"
 ---
 
-# Step Catalog Sync
+# Widget Catalog Sync
 
-Steps in `projects/robot/src/steps` are the source of truth for the step catalog that
-`projects/stair-builder` consumes. Any change to a step here MUST be propagated to
-stair-builder in the same change:
+Widgets in `packages/renderer/src/widgets` are the source of truth for the widget
+catalog that `packages/example-renderer` consumes. Any change to a widget's public
+props MUST be reflected there in the same change:
 
-- Regenerate the catalog: run `npm run build:catalog` in `projects/robot`.
-- Commit the regenerated `schemas/step-catalog.json` alongside the step change.
-- Never hand-edit `step-catalog.json` — always regenerate it.
+- Regenerate the catalog: run `npm run build:widgets` in `packages/renderer`.
+- Commit the regenerated `schemas/widget-catalog.json` alongside the widget change.
+- Never hand-edit `widget-catalog.json` — it is generated output, not source.
