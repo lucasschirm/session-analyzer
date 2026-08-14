@@ -5,10 +5,13 @@ import { dirname, join } from 'node:path';
 
 import { deriveRuleTimeline } from '../src/session/timelines/rules.js';
 import { deriveSupportingRecords } from '../src/session/timelines/supporting.js';
+import { entryTimestampMs } from '../src/session/timelines/context.js';
 import { parseFrontmatter } from '../src/utils/frontmatter.js';
 import type {
   AttachmentEntry,
+  AutoModeAttachment,
   ClaudeAttachment,
+  ClaudeCodeEntry,
   CompactFileReferenceAttachment,
   CompactMetadata,
   HookAdditionalContextAttachment,
@@ -183,6 +186,39 @@ describe('deriveRuleTimeline', () => {
     expect(() => deriveRuleTimeline([])).not.toThrow();
     expect(deriveRuleTimeline([])).toEqual([]);
   });
+
+  it('defends against a nested_memory content object missing content/rawContent, falling back to empty string / parsed body', () => {
+    const attachment = {
+      type: 'nested_memory',
+      path: '/Users/dev/project/.claude/rules/incomplete.md',
+      content: {
+        path: '/Users/dev/project/.claude/rules/incomplete.md',
+        type: 'Project',
+        contentDiffersFromDisk: false,
+        // `content` and `rawContent` deliberately omitted, simulating a
+        // malformed real-world attachment shape.
+      },
+    } as unknown as NestedMemoryAttachment;
+
+    const [record] = deriveRuleTimeline([attachmentEntry(1, attachment)]);
+
+    expect(record.injectionStatus).toBe('injected');
+    expect(record.rawContent).toBe('');
+    expect(record.injectedContent).toBe('');
+    expect(record.title).toBe('incomplete.md');
+  });
+
+  it('extracts the basename correctly for a path with a trailing slash', () => {
+    const attachment: CompactFileReferenceAttachment = {
+      type: 'compact_file_reference',
+      filename: '/Users/dev/project/.claude/rules/style-guide/',
+      displayPath: '.claude/rules/style-guide/',
+    };
+
+    const [record] = deriveRuleTimeline([attachmentEntry(1, attachment)]);
+
+    expect(record.title).toBe('style-guide');
+  });
 });
 
 describe('deriveSupportingRecords', () => {
@@ -273,6 +309,18 @@ describe('deriveSupportingRecords', () => {
 
       expect(hooks[0].stdout).toBe('{"ho');
       expect(hooks[1].injectedContext?.[0]).toBe('<EXT');
+    });
+
+    it('falls back to empty-string hookName/hookEvent when hook_non_blocking_error/hook_system_message omit them', () => {
+      const missingNonBlocking = { type: 'hook_non_blocking_error', stderr: 'boom' } as HookNonBlockingErrorAttachment;
+      const missingSystemMessage = { type: 'hook_system_message', content: 'tip' } as HookSystemMessageAttachment;
+
+      const entries = [attachmentEntry(1, missingNonBlocking, { uuid: 'h5' }), attachmentEntry(2, missingSystemMessage, { uuid: 'h6' })];
+
+      const { hooks } = deriveSupportingRecords(entries);
+
+      expect(hooks[0]).toMatchObject({ outcome: 'non_blocking_error', hookName: '', hookEvent: '', stderr: 'boom' });
+      expect(hooks[1]).toMatchObject({ outcome: 'system_message', hookName: '', hookEvent: '', stdout: 'tip' });
     });
 
     it('does not turn stop_hook_summary system entries into HookEventRecords', () => {
@@ -395,6 +443,37 @@ describe('deriveSupportingRecords', () => {
         },
       ]);
     });
+
+    it('produces no PR record for a gitOperation.pr URL that does not match the /owner/repo/pull/N shape', () => {
+      const bashResult: UserEntry = {
+        ...base(33, { uuid: 'u3', timestamp: '2026-08-01T00:13:00.000Z' }),
+        type: 'user',
+        message: { role: 'user', content: [] },
+        toolUseResult: { gitOperation: { pr: { number: 7, url: 'https://example.invalid/not-a-pr-url', action: 'created' } } },
+      };
+
+      const { prLinks } = deriveSupportingRecords([bashResult]);
+
+      expect(prLinks).toEqual([]);
+    });
+
+    it('falls back to timestampMs: 0 for a pr-link entry whose timestamp does not parse', () => {
+      const prLink: PrLinkEntry = {
+        type: 'pr-link',
+        sessionId: 'session-1',
+        prNumber: 55,
+        prUrl: 'https://github.com/devorg/repo/pull/55',
+        prRepository: 'devorg/repo',
+        timestamp: 'not-a-real-date',
+        lineNumber: 40,
+      };
+
+      const { prLinks } = deriveSupportingRecords([prLink]);
+
+      expect(prLinks).toEqual([
+        { prNumber: 55, prUrl: 'https://github.com/devorg/repo/pull/55', prRepository: 'devorg/repo', timestampMs: 0 },
+      ]);
+    });
   });
 
   describe('permissionModes', () => {
@@ -442,10 +521,35 @@ describe('deriveSupportingRecords', () => {
         { mode: 'auto', lineNumber: 3 },
       ]);
     });
+
+    it('drives a mode change to "auto" from an auto_mode attachment', () => {
+      const autoMode: AutoModeAttachment = { type: 'auto_mode', bashFirst: true };
+      const autoEntry = attachmentEntry(1, autoMode);
+
+      const { permissionModes } = deriveSupportingRecords([autoEntry]);
+
+      expect(permissionModes).toEqual([{ mode: 'auto', lineNumber: 1, timestampMs: autoEntry.timestampMs }]);
+    });
   });
 
   it('returns four empty arrays for empty input without throwing', () => {
     expect(() => deriveSupportingRecords([])).not.toThrow();
     expect(deriveSupportingRecords([])).toEqual({ permissionModes: [], hooks: [], compactions: [], prLinks: [] });
+  });
+});
+
+describe('entryTimestampMs (context.ts)', () => {
+  it('returns undefined when an entry has no timestampMs and its raw timestamp string fails to parse', () => {
+    const entry = {
+      type: 'pr-link',
+      sessionId: 's',
+      prNumber: 1,
+      prUrl: 'https://github.com/devorg/repo/pull/1',
+      prRepository: 'devorg/repo',
+      timestamp: 'definitely-not-a-date',
+      lineNumber: 1,
+    } as unknown as ClaudeCodeEntry;
+
+    expect(entryTimestampMs(entry)).toBeUndefined();
   });
 });
