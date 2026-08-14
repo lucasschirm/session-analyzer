@@ -17,7 +17,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "verify": "pnpm -r --parallel run verify",
+    "verify": "pnpm -r build && pnpm -r --parallel run verify",
     "prepare": "husky"
   },
   "author": "",
