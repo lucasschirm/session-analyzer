@@ -1,0 +1,7 @@
+{
+  "agentType": "docs-drafter",
+  "description": "Draft docs for telemetry module",
+  "toolUseId": "toolu_agent_1",
+  "spawnDepth": 1,
+  "model": "test-model-a"
+}
