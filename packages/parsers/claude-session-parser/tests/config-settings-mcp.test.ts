@@ -143,6 +143,42 @@ describe('parseSettings', () => {
     expect(settings.raw.model).toBe(42);
     expect(settings.raw.hooks).toBe('also-not-an-object');
   });
+
+  it('drops malformed-shape sub-fields (permissions, hook actions, matcher groups, non-array hook events, extraKnownMarketplaces entries) while keeping valid siblings', () => {
+    const content = readFixture('c3-settings-malformed-shapes.json');
+    const settings = parseSettings(content, 'project');
+
+    // permissions: a string, not an object -> the whole field is left unset.
+    expect(settings.permissions).toBeUndefined();
+
+    // hooks.PostToolUse: value isn't an array -> the event key is dropped
+    // entirely rather than appearing with an empty array.
+    expect(settings.hooks).toBeDefined();
+    expect('PostToolUse' in (settings.hooks ?? {})).toBe(false);
+
+    // hooks.PreToolUse: a matcher-group entry that's a bare string, and one
+    // that's an object but has no `hooks` array, are both dropped -> only
+    // the one well-formed matcher group survives.
+    expect(settings.hooks?.PreToolUse).toHaveLength(1);
+    const group = settings.hooks?.PreToolUse[0];
+    expect(group?.matcher).toBeUndefined();
+
+    // Within that group's `hooks` array: a non-object action and an action
+    // missing `type` are both skipped; a `command` action and an `agent`
+    // action carrying both `prompt` and `statusMessage` both survive.
+    expect(group?.hooks).toEqual([
+      { type: 'agent', prompt: 'Summarize the diff', statusMessage: 'Thinking...' },
+      { type: 'command', command: './hooks/valid.sh' },
+    ]);
+
+    // extraKnownMarketplaces: a non-object entry and an entry whose
+    // `source.source` is missing are both dropped; the well-formed entry
+    // (carrying `repo` AND `path` alongside `source`) survives intact.
+    expect(Object.keys(settings.extraKnownMarketplaces ?? {})).toEqual(['full-entry']);
+    expect(settings.extraKnownMarketplaces?.['full-entry']).toEqual({
+      source: { source: 'github', repo: 'example-org/full-repo', path: 'sub/dir' },
+    });
+  });
 });
 
 describe('parseMcp', () => {
@@ -261,6 +297,37 @@ describe('parseMcp', () => {
     const config = parseMcp('', 'project');
     expect(config.parseErrors).toHaveLength(1);
   });
+
+  it('infers transport "unknown" for a server with neither command nor url', () => {
+    const content = JSON.stringify({ mcpServers: { orphaned: { env: { FOO: 'bar' } } } });
+    const config = parseMcp(content, 'project');
+
+    expect(config.parseErrors).toEqual([]);
+    expect(config.servers).toHaveLength(1);
+    expect(config.servers[0]).toMatchObject({ name: 'orphaned', transport: 'unknown' });
+    expect(config.servers[0].command).toBeUndefined();
+    expect(config.servers[0].url).toBeUndefined();
+  });
+
+  it('records unexpected_root_shape for a JSON array root', () => {
+    const config = parseMcp(JSON.stringify([1, 2, 3]), 'project');
+
+    expect(config.servers).toEqual([]);
+    expect(config.parseErrors).toHaveLength(1);
+    expect(config.parseErrors[0].code).toBe('unexpected_root_shape');
+  });
+
+  it('reads the sse discriminant from an explicit "transport" key (not just "type")', () => {
+    const content = JSON.stringify({
+      mcpServers: {
+        'zephyr:tools': { url: 'https://zephyr.example.invalid/sse', transport: 'sse' },
+      },
+    });
+    const config = parseMcp(content, 'project');
+
+    expect(config.servers).toHaveLength(1);
+    expect(config.servers[0]).toMatchObject({ name: 'zephyr:tools', transport: 'sse', url: 'https://zephyr.example.invalid/sse' });
+  });
 });
 
 describe('parsePluginMarketplace', () => {
@@ -318,5 +385,77 @@ describe('parsePluginMarketplace', () => {
     const marketplace = parsePluginMarketplace('');
     expect(marketplace.name).toBe('unknown');
     expect(marketplace.plugins).toEqual([]);
+  });
+
+  it('normalizes every object-form `source` shape, and falls back to "" for a non-string/non-object source', () => {
+    const content = readFixture('c3-marketplace-source-forms.json');
+    const marketplace = parsePluginMarketplace(content);
+    const byName = Object.fromEntries(marketplace.plugins.map((p) => [p.name, p.source]));
+
+    // { source: 'git-subdir', url, path } -> url is preferred over path/source.
+    expect(byName['url-preferred']).toBe('https://example.invalid/nimbus/url-preferred.git');
+    // Object with only `path` -> path.
+    expect(byName['path-only']).toBe('plugins/path-only');
+    // Object with only the `source` sub-field -> that sub-field.
+    expect(byName['source-field-only']).toBe('git-subdir');
+    // Empty object -> JSON.stringify fallback.
+    expect(byName['empty-object-source']).toBe('{}');
+    // Non-string, non-object (a number) -> ''.
+    expect(byName['numeric-source']).toBe('');
+  });
+
+  it('skips a non-object plugin entry and an entry missing `name`, keeping valid siblings', () => {
+    const content = readFixture('c3-marketplace-plugins-skip.json');
+    const marketplace = parsePluginMarketplace(content);
+
+    expect(marketplace.plugins.map((p) => p.name)).toEqual(['valid-one', 'valid-two']);
+  });
+
+  describe('fallbackName', () => {
+    it('falls back to "unknown" when there is no sourcePath and no top-level name', () => {
+      const marketplace = parsePluginMarketplace(JSON.stringify({}));
+      expect(marketplace.name).toBe('unknown');
+    });
+
+    it('falls back to the last path segment when sourcePath has no .claude-plugin directory', () => {
+      const marketplace = parsePluginMarketplace(JSON.stringify({}), '/home/testuser/projects/orbit-tracker/marketplace.json');
+      expect(marketplace.name).toBe('marketplace.json');
+    });
+
+    it('falls back to the last path segment when .claude-plugin is the FIRST path segment (pluginDirIdx === 0 edge case)', () => {
+      const marketplace = parsePluginMarketplace(JSON.stringify({}), '.claude-plugin/marketplace.json');
+      // pluginDirIdx (0) is not > 0, so the "containing directory" branch
+      // must NOT fire here -- it must fall through to the last-segment
+      // fallback, same as the no-.claude-plugin case above.
+      expect(marketplace.name).toBe('marketplace.json');
+    });
+  });
+
+  it('prefers a top-level `description` over `metadata.description` when both are present', () => {
+    const content = JSON.stringify({
+      name: 'nimbus-market',
+      description: 'Top-level description wins',
+      metadata: { description: 'This nested description should be ignored' },
+    });
+    const marketplace = parsePluginMarketplace(content);
+    expect(marketplace.description).toBe('Top-level description wins');
+  });
+
+  it('falls back to `metadata.description` when there is no top-level `description`', () => {
+    const content = JSON.stringify({
+      name: 'nimbus-market',
+      metadata: { description: 'Only the nested description is present' },
+    });
+    const marketplace = parsePluginMarketplace(content);
+    expect(marketplace.description).toBe('Only the nested description is present');
+  });
+
+  it('mirrors owner.name, but leaves `owner` unset (not `{}`) when the owner object has no name', () => {
+    const withName = parsePluginMarketplace(JSON.stringify({ name: 'nimbus-market', owner: { name: 'Synthetic Owner' } }));
+    expect(withName.owner).toEqual({ name: 'Synthetic Owner' });
+
+    const withoutName = parsePluginMarketplace(JSON.stringify({ name: 'nimbus-market', owner: {} }));
+    expect('owner' in withoutName).toBe(false);
+    expect(withoutName.owner).toBeUndefined();
   });
 });
