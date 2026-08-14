@@ -261,11 +261,19 @@ function isMcpConfigShape(obj: Record<string, unknown>): boolean {
 
 /** `PluginMarketplace`: top-level `name` + a `plugins` array whose entries
  *  (when present) carry `name`/`source` — matches every real
- *  `.claude-plugin/marketplace.json` on this machine. */
+ *  `.claude-plugin/marketplace.json` on this machine. `source` accepts
+ *  either shape `parsePluginMarketplace`'s `normalizeSource` supports: a
+ *  plain string (a local relative path) or an object (a remote git
+ *  reference, e.g. `{ source: "git-subdir", url, path }`) — real files use
+ *  both. Requiring a bare string here would misclassify a legitimate
+ *  object-form-source marketplace file as `'unknown'`. */
 function isPluginMarketplaceShape(obj: Record<string, unknown>): boolean {
   if (typeof obj.name !== 'string' || !Array.isArray(obj.plugins)) return false;
   return obj.plugins.every(
-    (item) => isPlainObject(item) && typeof item.name === 'string' && typeof item.source === 'string',
+    (item) =>
+      isPlainObject(item) &&
+      typeof item.name === 'string' &&
+      (typeof item.source === 'string' || isPlainObject(item.source)),
   );
 }
 

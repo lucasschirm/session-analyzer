@@ -258,6 +258,24 @@ describe('detectClaudeCodeArtifact', () => {
         detectClaudeCodeArtifact({ content, relativePath: '.claude-plugin/marketplace.json' }),
       ).toBe('plugin-marketplace');
     });
+
+    it('classifies a marketplace whose plugins use the object-form source (regression)', () => {
+      // normalizeSource (config/marketplace.ts) documents and supports both
+      // a bare string source and an object-form source
+      // ({ source, url, path }) as real, confirmed shapes — the detector
+      // must accept both, not just the string form.
+      const content = JSON.stringify({
+        name: 'example-marketplace',
+        plugins: [
+          { name: 'string-source-plugin', source: './plugins/example' },
+          {
+            name: 'object-source-plugin',
+            source: { source: 'git-subdir', url: 'https://example.invalid/repo.git', path: 'plugins/example' },
+          },
+        ],
+      });
+      expect(detectClaudeCodeArtifact({ content })).toBe('plugin-marketplace');
+    });
   });
 
   describe('agent-definition', () => {

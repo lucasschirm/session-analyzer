@@ -102,27 +102,12 @@ describe('assertion 1 — detection round-trip', () => {
     expect(detectClaudeCodeArtifact({ content: skillCsvWranglerContent, fileName: 'SKILL.md' })).toBe('skill-definition');
     expect(detectClaudeCodeArtifact({ content: ruleStyleContent, fileName: 'style.md' })).toBe('rule-definition');
 
-    // --- KNOWN SOURCE BUG (found, NOT fixed here — src/** is out of scope
-    // for this chunk; reported prominently in this PR's description) ---
-    // `isPluginMarketplaceShape` in src/detect.ts requires EVERY plugin's
-    // `source` to be a *string*:
-    //   return obj.plugins.every(item => ... typeof item.source === 'string');
-    // But `PluginMarketplace.plugins[].source` (types/config.ts) and
-    // `parsePluginMarketplace`'s own `normalizeSource` (config/marketplace.ts)
-    // explicitly document and support an OBJECT-form source (`{ source:
-    // "git-subdir", url: ..., path: ... }`) as real, confirmed shape — see
-    // that file's doc comment. `e2e-marketplace.json` uses one string-form
-    // and one object-form plugin source (per this task's own fixture spec)
-    // specifically to exercise that documented object-form branch elsewhere
-    // in this file (see `parsePluginMarketplace` below). That same file
-    // therefore FAILS `detectClaudeCodeArtifact` — misclassified as
-    // 'unknown' instead of 'plugin-marketplace' — because one real,
-    // documented-valid shape trips the detector's stricter-than-the-type
-    // shape check. The correct expectation is commented out below; the
-    // active assertion pins today's actual (buggy) behavior so this test
-    // still passes and the regression stays visible in git history.
-    // expect(detectClaudeCodeArtifact({ content: marketplaceContent, fileName: 'marketplace.json' })).toBe('plugin-marketplace');
-    expect(detectClaudeCodeArtifact({ content: marketplaceContent, fileName: 'marketplace.json' })).toBe('unknown');
+    // `e2e-marketplace.json` uses one string-form and one object-form plugin
+    // source (both real, documented-valid shapes per `normalizeSource`'s doc
+    // comment in config/marketplace.ts) — `isPluginMarketplaceShape` must
+    // accept both. (Previously misclassified as 'unknown' by a detector
+    // stricter than the type it was classifying; fixed in src/detect.ts.)
+    expect(detectClaudeCodeArtifact({ content: marketplaceContent, fileName: 'marketplace.json' })).toBe('plugin-marketplace');
   });
 });
 
