@@ -1,5 +1,5 @@
 import type { PluginMarketplace } from '../types/config.js';
-import { stripBom, safeJsonParse } from '../utils/text.js';
+import { safeJsonParse, stripBom } from '../utils/text.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -107,7 +107,9 @@ export function parsePluginMarketplace(content: string, sourcePath?: string): Pl
     plugins: parsePlugins(value.plugins),
   };
 
-  const description = asString(value.description) ?? (isPlainObject(value.metadata) ? asString(value.metadata.description) : undefined);
+  const description =
+    asString(value.description) ??
+    (isPlainObject(value.metadata) ? asString(value.metadata.description) : undefined);
   if (description !== undefined) marketplace.description = description;
 
   if (isPlainObject(value.owner)) {

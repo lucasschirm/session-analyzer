@@ -1,9 +1,9 @@
-import { LitElement, html, css } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import type { TranscriptMessage } from '../types';
 import { renderMarkdown } from '../lib/markdown';
+import type { TranscriptMessage } from '../types';
 
 /**
  * Chat-like session transcript.
@@ -202,7 +202,7 @@ export class SessionTranscript extends LitElement {
               ${unsafeHTML(renderMarkdown(message.content))}
             </div>
             ${this.renderAfter?.(message)}
-          `
+          `,
         )}
       </div>
     `;

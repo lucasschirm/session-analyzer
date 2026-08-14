@@ -105,7 +105,7 @@ describe('classifyUploadedFiles', () => {
 describe('parseSubagentMeta', () => {
   it('extracts agentType and description', () => {
     const meta = parseSubagentMeta(
-      '{"agentType":"general-purpose","description":"Update AGENTS.md","toolUseId":"x","model":"haiku"}'
+      '{"agentType":"general-purpose","description":"Update AGENTS.md","toolUseId":"x","model":"haiku"}',
     );
     expect(meta).toEqual({ agentType: 'general-purpose', description: 'Update AGENTS.md' });
   });
@@ -126,11 +126,21 @@ describe('mergeSubagentIntoSession', () => {
       total_tokens: 37,
       model: 'claude-haiku-4-5',
       tool_executions: [
-        { id: 't1', session_id: 'sub', timestamp: 1, tool_name: 'Bash', tool_type: 'tool_use', success: true },
+        {
+          id: 't1',
+          session_id: 'sub',
+          timestamp: 1,
+          tool_name: 'Bash',
+          tool_type: 'tool_use',
+          success: true,
+        },
       ],
     });
 
-    mergeSubagentIntoSession(session, 'agent-1', sub, { agentType: 'general-purpose', description: 'Do X' });
+    mergeSubagentIntoSession(session, 'agent-1', sub, {
+      agentType: 'general-purpose',
+      description: 'Do X',
+    });
 
     expect(session.input_tokens).toBe(110);
     expect(session.output_tokens).toBe(70);
@@ -138,7 +148,13 @@ describe('mergeSubagentIntoSession', () => {
     expect(session.cache_read_tokens).toBe(2);
     expect(session.total_tokens).toBe(187);
     expect(session.models).toEqual([
-      { model: 'claude-haiku-4-5', input_tokens: 10, output_tokens: 20, cache_creation_tokens: 5, cache_read_tokens: 2 },
+      {
+        model: 'claude-haiku-4-5',
+        input_tokens: 10,
+        output_tokens: 20,
+        cache_creation_tokens: 5,
+        cache_read_tokens: 2,
+      },
     ]);
     expect(session.subagents.length).toBe(1);
     expect(session.subagents[0]).toMatchObject({
@@ -153,20 +169,44 @@ describe('mergeSubagentIntoSession', () => {
 
   it('merges subagent model usage into an existing model bucket the parent already uses', () => {
     const session = emptySession({
-      models: [{ model: 'claude-sonnet-5', input_tokens: 1, output_tokens: 1, cache_creation_tokens: 0, cache_read_tokens: 0 }],
+      models: [
+        {
+          model: 'claude-sonnet-5',
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_creation_tokens: 0,
+          cache_read_tokens: 0,
+        },
+      ],
     });
-    const sub = emptySession({ input_tokens: 5, output_tokens: 5, total_tokens: 10, model: 'claude-sonnet-5' });
+    const sub = emptySession({
+      input_tokens: 5,
+      output_tokens: 5,
+      total_tokens: 10,
+      model: 'claude-sonnet-5',
+    });
 
     mergeSubagentIntoSession(session, 'agent-1', sub, {});
 
     expect(session.models).toEqual([
-      { model: 'claude-sonnet-5', input_tokens: 6, output_tokens: 6, cache_creation_tokens: 0, cache_read_tokens: 0 },
+      {
+        model: 'claude-sonnet-5',
+        input_tokens: 6,
+        output_tokens: 6,
+        cache_creation_tokens: 0,
+        cache_read_tokens: 0,
+      },
     ]);
   });
 
   it('is idempotent when the same agent id is re-merged (re-upload of the same folder)', () => {
     const session = emptySession({ input_tokens: 100, total_tokens: 100 });
-    const sub = emptySession({ input_tokens: 10, output_tokens: 20, total_tokens: 30, model: 'claude-haiku-4-5' });
+    const sub = emptySession({
+      input_tokens: 10,
+      output_tokens: 20,
+      total_tokens: 30,
+      model: 'claude-haiku-4-5',
+    });
 
     mergeSubagentIntoSession(session, 'agent-1', sub, { description: 'v1' });
     mergeSubagentIntoSession(session, 'agent-1', sub, { description: 'v1' });
@@ -175,7 +215,13 @@ describe('mergeSubagentIntoSession', () => {
     expect(session.input_tokens).toBe(110);
     expect(session.total_tokens).toBe(130);
     expect(session.models).toEqual([
-      { model: 'claude-haiku-4-5', input_tokens: 10, output_tokens: 20, cache_creation_tokens: 0, cache_read_tokens: 0 },
+      {
+        model: 'claude-haiku-4-5',
+        input_tokens: 10,
+        output_tokens: 20,
+        cache_creation_tokens: 0,
+        cache_read_tokens: 0,
+      },
     ]);
     expect(session.subagents.length).toBe(1);
   });

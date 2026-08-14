@@ -1,7 +1,7 @@
-import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { expect, type Page, test } from '@playwright/test';
 
 /**
  * E2E tests covering the complete user journey:
@@ -66,7 +66,9 @@ test.describe('Home page', () => {
 });
 
 test.describe('Full user journey', () => {
-  test('create project -> upload -> dashboard -> indicator drill-down -> transcript', async ({ page }) => {
+  test('create project -> upload -> dashboard -> indicator drill-down -> transcript', async ({
+    page,
+  }) => {
     await createProject(page, 'Demo Project', 'E2E demo project');
     await openProject(page, 'Demo Project');
 
@@ -123,13 +125,15 @@ test.describe('Full user journey', () => {
     await createProject(page, 'Formats Project');
     await openProject(page, 'Formats Project');
 
-    await page.locator('input[type="file"]').setInputFiles([
-      fixture('antigravity-session.json'),
-      fixture('opencode-session.jsonl'),
-      fixture('mcp-session.jsonl'),
-      fixture('local-runner-session.jsonl'),
-      fixture('agentic-pi-session.jsonl'),
-    ]);
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles([
+        fixture('antigravity-session.json'),
+        fixture('opencode-session.jsonl'),
+        fixture('mcp-session.jsonl'),
+        fixture('local-runner-session.jsonl'),
+        fixture('agentic-pi-session.jsonl'),
+      ]);
 
     await expect(page.locator('.session-item')).toHaveCount(5);
     // session-list renders into a shadow root, so a raw textContent() read
@@ -205,7 +209,9 @@ test.describe('Rich session dashboard', () => {
     await page.getByRole('link', { name: '← Back to Session' }).click();
     const tasksCard = page.locator('metrics-card', { hasText: 'Total Tasks' });
     await expect(tasksCard).toContainText('2');
-    await expect(page.locator('metrics-card', { hasText: 'Tasks Completed' })).toContainText('of 2 total');
+    await expect(page.locator('metrics-card', { hasText: 'Tasks Completed' })).toContainText(
+      'of 2 total',
+    );
     await expect(page.locator('metrics-card', { hasText: 'Avg Time / Task' })).toContainText('1s');
 
     await tasksCard.click();
@@ -224,7 +230,9 @@ test.describe('Rich session dashboard', () => {
 
     const rootNodes = page.locator('.message-tree > .message-node');
     await expect(rootNodes).toHaveCount(2);
-    const parentNode = page.locator('.message-node.root', { hasText: 'Investigate cache behavior' });
+    const parentNode = page.locator('.message-node.root', {
+      hasText: 'Investigate cache behavior',
+    });
     await expect(parentNode.locator('.message-children')).toContainText('Investigating now.');
     const orphanNode = page.locator('.message-node.root', { hasText: 'Done investigating.' });
     await expect(orphanNode.locator('.message-children')).toHaveCount(0);
@@ -276,7 +284,9 @@ test.describe('Tools indicator', () => {
 });
 
 test.describe('Skills indicator', () => {
-  test('shows skill invocations with inputs, result, and linked follow-up content', async ({ page }) => {
+  test('shows skill invocations with inputs, result, and linked follow-up content', async ({
+    page,
+  }) => {
     await createProject(page, 'Skills Panel Project');
     await openProject(page, 'Skills Panel Project');
 
@@ -301,7 +311,9 @@ test.describe('Skills indicator', () => {
 });
 
 test.describe('Agents indicator', () => {
-  test('shows agent invocations, excluded from the tools list, with inputs and result', async ({ page }) => {
+  test('shows agent invocations, excluded from the tools list, with inputs and result', async ({
+    page,
+  }) => {
     await createProject(page, 'Agents Panel Project');
     await openProject(page, 'Agents Panel Project');
 
@@ -369,9 +381,7 @@ test.describe('Drag & drop upload', () => {
 
     await page.locator('upload-zone div.upload-zone').dispatchEvent('drop', { dataTransfer });
 
-    await expect(
-      page.locator('.session-item', { hasText: 'dropped-session.jsonl' })
-    ).toBeVisible();
+    await expect(page.locator('.session-item', { hasText: 'dropped-session.jsonl' })).toBeVisible();
   });
 });
 
@@ -403,7 +413,9 @@ test.describe('Subagent folder ingestion', () => {
       'agent-e2esub1.meta.json',
     ]);
 
-    const sessionRow = page.locator('.session-item', { hasText: 'claude-session-with-subagent.jsonl' });
+    const sessionRow = page.locator('.session-item', {
+      hasText: 'claude-session-with-subagent.jsonl',
+    });
     await expect(sessionRow).toBeVisible();
     await sessionRow.click();
 
@@ -423,12 +435,16 @@ test.describe('Subagent folder ingestion', () => {
     await expect(modelsPanel).toContainText('claude-haiku-4-5');
   });
 
-  test('attaches subagent data to an already-uploaded session from the session page', async ({ page }) => {
+  test('attaches subagent data to an already-uploaded session from the session page', async ({
+    page,
+  }) => {
     await createProject(page, 'Subagent Post-hoc Project');
     await openProject(page, 'Subagent Post-hoc Project');
 
     await uploadFile(page, 'claude-session-with-subagent.jsonl');
-    const sessionRow = page.locator('.session-item', { hasText: 'claude-session-with-subagent.jsonl' });
+    const sessionRow = page.locator('.session-item', {
+      hasText: 'claude-session-with-subagent.jsonl',
+    });
     await expect(sessionRow).toBeVisible();
     await sessionRow.click();
 
@@ -457,7 +473,9 @@ test.describe('Subagent folder ingestion', () => {
       'agent-e2esub1.meta.json',
     ]);
 
-    const sessionRow = page.locator('.session-item', { hasText: 'claude-session-with-subagent.jsonl' });
+    const sessionRow = page.locator('.session-item', {
+      hasText: 'claude-session-with-subagent.jsonl',
+    });
     await sessionRow.click();
     await page.getByRole('link', { name: 'View Session Transcript' }).click();
     await expect(page).toHaveURL(/#\/sessions\/.+\/transcript$/);
@@ -473,11 +491,15 @@ test.describe('Subagent folder ingestion', () => {
     // subagent's own started_at), not before "Do the main task" at the top -
     // both live inside session-transcript's own shadow root, so walk it
     // directly rather than relying on innerText to flatten nested shadow DOM.
-    const order = await mainColumn.locator('session-transcript').evaluate((el) =>
-      Array.from((el as unknown as { shadowRoot: ShadowRoot }).shadowRoot.querySelectorAll('.message, .subagent-row')).map(
-        (node) => node.textContent ?? ''
-      )
-    );
+    const order = await mainColumn
+      .locator('session-transcript')
+      .evaluate((el) =>
+        Array.from(
+          (el as unknown as { shadowRoot: ShadowRoot }).shadowRoot.querySelectorAll(
+            '.message, .subagent-row',
+          ),
+        ).map((node) => node.textContent ?? ''),
+      );
     const mainIndex = order.findIndex((text) => text.includes('Working on it.'));
     const cardIndex = order.findIndex((text) => text.includes('Handle the subtask'));
     expect(mainIndex).toBeGreaterThanOrEqual(0);
@@ -503,7 +525,9 @@ test.describe('Subagent folder ingestion', () => {
     await expect(page.locator('.transcript-column')).toHaveCount(1);
   });
 
-  test('deep-links directly into the split view via the /transcript/:agentId route', async ({ page }) => {
+  test('deep-links directly into the split view via the /transcript/:agentId route', async ({
+    page,
+  }) => {
     await createProject(page, 'Subagent Deep Link Project');
     await openProject(page, 'Subagent Deep Link Project');
 
@@ -513,7 +537,9 @@ test.describe('Subagent folder ingestion', () => {
       'agent-e2esub1.meta.json',
     ]);
 
-    const sessionRow = page.locator('.session-item', { hasText: 'claude-session-with-subagent.jsonl' });
+    const sessionRow = page.locator('.session-item', {
+      hasText: 'claude-session-with-subagent.jsonl',
+    });
     await sessionRow.click();
     const sessionUrl = page.url();
     const sessionId = sessionUrl.match(/#\/sessions\/([^/]+)/)?.[1];
@@ -527,7 +553,9 @@ test.describe('Subagent folder ingestion', () => {
     await expect(subagentColumn).toContainText('Subtask done.');
 
     const mainColumn = page.locator('.transcript-column').nth(0);
-    const activeCard = mainColumn.locator('.subagent-card.active', { hasText: 'Handle the subtask' });
+    const activeCard = mainColumn.locator('.subagent-card.active', {
+      hasText: 'Handle the subtask',
+    });
     await expect(activeCard).toBeVisible();
   });
 
@@ -554,24 +582,18 @@ test.describe('Persistence (OPFS)', () => {
     await createProject(page, 'Persist Project');
     await openProject(page, 'Persist Project');
     await uploadFile(page, 'claude-session.jsonl');
-    await expect(
-      page.locator('.session-item', { hasText: 'claude-session.jsonl' })
-    ).toBeVisible();
+    await expect(page.locator('.session-item', { hasText: 'claude-session.jsonl' })).toBeVisible();
 
     await page.reload();
 
     // The hash route is preserved across a reload, so we land back on the
     // project view (not the home page) - verify the session survived there.
     await expect(page.getByRole('heading', { name: 'Persist Project' })).toBeVisible();
-    await expect(
-      page.locator('.session-item', { hasText: 'claude-session.jsonl' })
-    ).toBeVisible();
+    await expect(page.locator('.session-item', { hasText: 'claude-session.jsonl' })).toBeVisible();
 
     // The project also still shows up from the home page.
     await openProject(page, 'Persist Project');
-    await expect(
-      page.locator('.session-item', { hasText: 'claude-session.jsonl' })
-    ).toBeVisible();
+    await expect(page.locator('.session-item', { hasText: 'claude-session.jsonl' })).toBeVisible();
   });
 });
 

@@ -1,15 +1,14 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-
-import { parseSession } from '../src/session/builder.js';
-import { buildConfigSnapshot } from '../src/config/snapshot.js';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
 import { parseAgentDefinition } from '../src/config/agent-definition.js';
-import { parseSkillDefinition } from '../src/config/skill-definition.js';
-import { parseRuleDefinition } from '../src/config/rule-definition.js';
 import { parseMcp } from '../src/config/mcp-config.js';
+import { parseRuleDefinition } from '../src/config/rule-definition.js';
 import { parseSettings } from '../src/config/settings.js';
+import { parseSkillDefinition } from '../src/config/skill-definition.js';
+import { buildConfigSnapshot } from '../src/config/snapshot.js';
+import { parseSession } from '../src/session/builder.js';
 import { parseSessionTranscript } from '../src/session/parse-transcript.js';
 import type {
   AgentDefinition,
@@ -41,8 +40,13 @@ describe('ClaudeSessionBuilder immutability', () => {
     const before = b1.toSession();
     const beforeSnapshot = JSON.parse(JSON.stringify(before));
 
-    const agentDef = parseAgentDefinition(readFixture('t9-agent-definition.md'), '/Users/dev/example-project/.claude/agents/example-agent.md', 'project');
-    const b2 = b1.appendMcp(parseMcp(readFixture('t9-mcp-config.json'), 'project'))
+    const agentDef = parseAgentDefinition(
+      readFixture('t9-agent-definition.md'),
+      '/Users/dev/example-project/.claude/agents/example-agent.md',
+      'project',
+    );
+    const b2 = b1
+      .appendMcp(parseMcp(readFixture('t9-mcp-config.json'), 'project'))
       .appendSettings(parseSettings(readFixture('t9-settings-project.json'), 'project'))
       .appendAgent(agentDef);
 
@@ -57,7 +61,11 @@ describe('ClaudeSessionBuilder immutability', () => {
   it('does not mutate the AgentAvailabilityRecord array in place on appendAgent', () => {
     const b1 = parseSession(baseSession());
     const originalAgents = b1.toSession().agents;
-    const agentDef = parseAgentDefinition(readFixture('t9-agent-definition.md'), undefined, 'project');
+    const agentDef = parseAgentDefinition(
+      readFixture('t9-agent-definition.md'),
+      undefined,
+      'project',
+    );
 
     const b2 = b1.appendAgent(agentDef);
 
@@ -70,8 +78,16 @@ describe('ClaudeSessionBuilder immutability', () => {
 
 describe('ClaudeSessionBuilder full chain (spec §4 usage example)', () => {
   it('folds appendMcp + appendSettings + appendAgent(s) + appendSkill(s) + appendRule(s) + appendSubAgent together', () => {
-    const agentDef = parseAgentDefinition(readFixture('t9-agent-definition.md'), '/Users/dev/example-project/.claude/agents/example-agent.md', 'project');
-    const skillDef = parseSkillDefinition(readFixture('t9-skill-definition.md'), '/Users/dev/example-project/.claude/skills/example-skill/SKILL.md', 'project');
+    const agentDef = parseAgentDefinition(
+      readFixture('t9-agent-definition.md'),
+      '/Users/dev/example-project/.claude/agents/example-agent.md',
+      'project',
+    );
+    const skillDef = parseSkillDefinition(
+      readFixture('t9-skill-definition.md'),
+      '/Users/dev/example-project/.claude/skills/example-skill/SKILL.md',
+      'project',
+    );
     const ruleDef = parseRuleDefinition(
       readFixture('t9-rule-definition.md'),
       '/Users/dev/example-project/.claude/rules/existing-rule.md',
@@ -98,16 +114,20 @@ describe('ClaudeSessionBuilder full chain (spec §4 usage example)', () => {
       })
       .toSession();
 
-    expect(session.agents.find((a) => a.agentType === 'example-agent')?.definition?.name).toBe('example-agent');
+    expect(session.agents.find((a) => a.agentType === 'example-agent')?.definition?.name).toBe(
+      'example-agent',
+    );
     // The transcript's own skill_listing already established a description
     // ("Runs the example diagnostic workflow.") — appendSkill must not
     // clobber it with the (different) definition-derived one.
     expect(session.skills.find((s) => s.name === 'example-skill')?.description).toBe(
       'Runs the example diagnostic workflow.',
     );
-    expect(session.rules.find((r) => r.path === '/Users/dev/example-project/.claude/rules/existing-rule.md')?.injectionStatus).toBe(
-      'injected',
-    );
+    expect(
+      session.rules.find(
+        (r) => r.path === '/Users/dev/example-project/.claude/rules/existing-rule.md',
+      )?.injectionStatus,
+    ).toBe('injected');
     expect(session.mcpServers.find((m) => m.server === 'acme:mcp')?.config?.command).toBe('node');
     expect(session.settings?.[0].scope).toBe('project');
     expect(session.subagentSessions?.['agent-abc123']).toBe(subSession);
@@ -155,12 +175,20 @@ describe('appendMcp', () => {
       kind: 'mcp-config',
       scope: 'project',
       servers: [
-        { name: 'acme:mcp', toolNamespace: 'acme_mcp', transport: 'stdio', command: 'node', raw: {} },
+        {
+          name: 'acme:mcp',
+          toolNamespace: 'acme_mcp',
+          transport: 'stdio',
+          command: 'node',
+          raw: {},
+        },
       ],
       parseErrors: [],
     };
 
-    const result = parseSession(readFixture('t9-mcp-invocation-only.jsonl')).appendMcp(mcpConfig).toSession();
+    const result = parseSession(readFixture('t9-mcp-invocation-only.jsonl'))
+      .appendMcp(mcpConfig)
+      .toSession();
     expect(result.mcpServers).toHaveLength(1);
     expect(result.mcpServers[0].server).toBe('acme_mcp');
     expect(result.mcpServers[0].config?.name).toBe('acme:mcp');
@@ -185,13 +213,19 @@ describe('appendMcp', () => {
     const result = builder.appendMcp(null as unknown as McpConfig).toSession();
     expect(result.parseErrors.some((e) => e.code === 'invalid_append_input')).toBe(true);
     // The original builder's session must still be untouched.
-    expect(builder.toSession().parseErrors.some((e) => e.code === 'invalid_append_input')).toBe(false);
+    expect(builder.toSession().parseErrors.some((e) => e.code === 'invalid_append_input')).toBe(
+      false,
+    );
   });
 });
 
 describe('appendAgent(s)', () => {
   it('fills AgentAvailabilityRecord.definition where def.name matches agentType', () => {
-    const agentDef = parseAgentDefinition(readFixture('t9-agent-definition.md'), undefined, 'project');
+    const agentDef = parseAgentDefinition(
+      readFixture('t9-agent-definition.md'),
+      undefined,
+      'project',
+    );
     const session = parseSession(baseSession()).appendAgent(agentDef).toSession();
 
     const record = session.agents.find((a) => a.agentType === 'example-agent');
@@ -202,7 +236,11 @@ describe('appendAgent(s)', () => {
   });
 
   it('surfaces a non-matching agent definition as its own new record rather than dropping it', () => {
-    const unmatchedDef = parseAgentDefinition(readFixture('t9-agent-definition-unmatched.md'), undefined, 'project');
+    const unmatchedDef = parseAgentDefinition(
+      readFixture('t9-agent-definition-unmatched.md'),
+      undefined,
+      'project',
+    );
     const session = parseSession(baseSession()).appendAgent(unmatchedDef).toSession();
 
     const record = session.agents.find((a) => a.agentType === 'example-formatter');
@@ -229,25 +267,42 @@ describe('appendSkill(s)', () => {
     // overwrite it.
     expect(record?.description).toBe('Runs the example diagnostic workflow.');
     // `displayPath`, which the transcript never set, IS filled in.
-    expect(record?.displayPath).toBe('/Users/dev/example-project/.claude/skills/example-skill/SKILL.md');
+    expect(record?.displayPath).toBe(
+      '/Users/dev/example-project/.claude/skills/example-skill/SKILL.md',
+    );
     // Transcript-established availability must survive.
     expect(record?.availability.length).toBeGreaterThan(0);
   });
 
   it('leaves an already-established description alone across repeated appends (idempotent enrichment, not a duplicate record)', () => {
     const transcript = parseSessionTranscript(baseSession());
-    const existingDescription = transcript.skills.find((s) => s.name === 'example-skill')?.description;
+    const existingDescription = transcript.skills.find(
+      (s) => s.name === 'example-skill',
+    )?.description;
     expect(existingDescription).toBe('Runs the example diagnostic workflow.');
 
-    const skillDef = parseSkillDefinition(readFixture('t9-skill-definition.md'), undefined, 'project');
-    const session = parseSession(baseSession()).appendSkill(skillDef).appendSkill(skillDef).toSession();
+    const skillDef = parseSkillDefinition(
+      readFixture('t9-skill-definition.md'),
+      undefined,
+      'project',
+    );
+    const session = parseSession(baseSession())
+      .appendSkill(skillDef)
+      .appendSkill(skillDef)
+      .toSession();
 
     expect(session.skills.filter((s) => s.name === 'example-skill')).toHaveLength(1);
-    expect(session.skills.find((s) => s.name === 'example-skill')?.description).toBe(existingDescription);
+    expect(session.skills.find((s) => s.name === 'example-skill')?.description).toBe(
+      existingDescription,
+    );
   });
 
   it('surfaces a non-matching skill definition as its own new record', () => {
-    const unmatchedDef = parseSkillDefinition(readFixture('t9-skill-definition-unmatched.md'), undefined, 'project');
+    const unmatchedDef = parseSkillDefinition(
+      readFixture('t9-skill-definition-unmatched.md'),
+      undefined,
+      'project',
+    );
     const session = parseSession(baseSession()).appendSkill(unmatchedDef).toSession();
 
     const record = session.skills.find((s) => s.bareName === 'example-packager');
@@ -258,10 +313,16 @@ describe('appendSkill(s)', () => {
 
 describe('appendRule(s)', () => {
   it('adds a brand-new config-derived rule with injectionStatus "unknown", never "available"', () => {
-    const ruleDef = parseRuleDefinition(readFixture('t9-rule-definition-new.md'), '/Users/dev/example-project/CHANGELOG-policy.md', 'project');
+    const ruleDef = parseRuleDefinition(
+      readFixture('t9-rule-definition-new.md'),
+      '/Users/dev/example-project/CHANGELOG-policy.md',
+      'project',
+    );
     const session = parseSession(baseSession()).appendRule(ruleDef).toSession();
 
-    const record = session.rules.find((r) => r.path === '/Users/dev/example-project/CHANGELOG-policy.md');
+    const record = session.rules.find(
+      (r) => r.path === '/Users/dev/example-project/CHANGELOG-policy.md',
+    );
     expect(record).toBeDefined();
     expect(record?.injectionStatus).toBe('unknown');
     expect(record?.origin).toBe('config_inventory');
@@ -275,23 +336,33 @@ describe('appendRule(s)', () => {
     );
 
     const before = parseSessionTranscript(baseSession());
-    const beforeRecord = before.rules.find((r) => r.path === '/Users/dev/example-project/.claude/rules/existing-rule.md');
+    const beforeRecord = before.rules.find(
+      (r) => r.path === '/Users/dev/example-project/.claude/rules/existing-rule.md',
+    );
     expect(beforeRecord?.injectionStatus).toBe('injected');
 
     const session = parseSession(baseSession()).appendRule(ruleDef).toSession();
-    const record = session.rules.find((r) => r.path === '/Users/dev/example-project/.claude/rules/existing-rule.md');
+    const record = session.rules.find(
+      (r) => r.path === '/Users/dev/example-project/.claude/rules/existing-rule.md',
+    );
 
     expect(record?.injectionStatus).toBe('injected');
     expect(record?.origin).toBe('nested_memory');
     // No duplicate record was created for the same path.
-    expect(session.rules.filter((r) => r.path === '/Users/dev/example-project/.claude/rules/existing-rule.md')).toHaveLength(1);
+    expect(
+      session.rules.filter(
+        (r) => r.path === '/Users/dev/example-project/.claude/rules/existing-rule.md',
+      ),
+    ).toHaveLength(1);
   });
 });
 
 describe('appendSubAgent', () => {
   it('keys the sub-session by agentId, joining SubagentLaunchRecord.agentId', () => {
     const subSession = parseSessionTranscript(readFixture('t9-subagent-transcript.jsonl'));
-    const session = parseSession(baseSession()).appendSubAgent('agent-abc123', subSession).toSession();
+    const session = parseSession(baseSession())
+      .appendSubAgent('agent-abc123', subSession)
+      .toSession();
 
     expect(session.subagentSessions?.['agent-abc123']).toBe(subSession);
     const launch = session.subagentLaunches.find((l) => l.agentId === 'agent-abc123');
@@ -344,7 +415,7 @@ describe('appendSettings', () => {
 describe('never throw on garbage appendX input', () => {
   it('every appendX records a ParseError instead of throwing on a garbage value', () => {
     const builder = parseSession(baseSession());
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input type to test defensive/garbage-input handling
     const garbage = 42 as any;
 
     expect(() => builder.appendMcp(garbage)).not.toThrow();
@@ -403,7 +474,11 @@ describe('buildConfigSnapshot', () => {
   });
 
   it('keys agentsByName/skillsByName/mcpServersByName with last-wins on duplicate names', () => {
-    const firstAgent = parseAgentDefinition(readFixture('t9-agent-definition.md'), '/Users/dev/example-project/.claude/agents/example-agent.md', 'project');
+    const firstAgent = parseAgentDefinition(
+      readFixture('t9-agent-definition.md'),
+      '/Users/dev/example-project/.claude/agents/example-agent.md',
+      'project',
+    );
     const secondAgent = parseAgentDefinition(
       '---\nname: "example-agent"\ndescription: "A different, later definition of the same agent name."\nmodel: opus\n---\n\nOverride body.\n',
       '/Users/dev/example-project/.claude/agents-override/example-agent.md',
@@ -414,13 +489,19 @@ describe('buildConfigSnapshot', () => {
 
     const snapshot = buildConfigSnapshot([firstAgent, secondAgent, mcp]);
 
-    expect(snapshot.agentsByName['example-agent'].description).toBe('A different, later definition of the same agent name.');
+    expect(snapshot.agentsByName['example-agent'].description).toBe(
+      'A different, later definition of the same agent name.',
+    );
     expect(snapshot.mcpServersByName['acme:mcp'].command).toBe('node');
     expect(snapshot.mcpServersByName['unmatched-server']).toBeDefined();
   });
 
   it('collects agent/skill/rule/mcp/settings parseErrors into the owning inventory rather than dropping them', () => {
-    const badMcp = parseMcp('not valid json {{{', 'project', '/Users/dev/example-project/.claude/.mcp.json');
+    const badMcp = parseMcp(
+      'not valid json {{{',
+      'project',
+      '/Users/dev/example-project/.claude/.mcp.json',
+    );
     expect(badMcp.parseErrors.length).toBeGreaterThan(0);
 
     const snapshot = buildConfigSnapshot([badMcp]);
@@ -429,8 +510,16 @@ describe('buildConfigSnapshot', () => {
   });
 
   it('buckets settings.local.json (scope "local") into localSettings alongside a sibling settings bucket', () => {
-    const project = parseSettings(readFixture('t9-settings-project.json'), 'project', '/Users/dev/example-project/.claude/settings.json');
-    const local = parseSettings(readFixture('t9-settings-local.json'), 'local', '/Users/dev/example-project/.claude/settings.local.json');
+    const project = parseSettings(
+      readFixture('t9-settings-project.json'),
+      'project',
+      '/Users/dev/example-project/.claude/settings.json',
+    );
+    const local = parseSettings(
+      readFixture('t9-settings-local.json'),
+      'local',
+      '/Users/dev/example-project/.claude/settings.local.json',
+    );
 
     const snapshot = buildConfigSnapshot([project, local]);
 
@@ -452,8 +541,16 @@ describe('buildConfigSnapshot', () => {
   });
 
   it('never throws on garbage input and still returns a valid snapshot', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const garbageInput = [null, undefined, 42, 'oops', [1, 2, 3], { kind: 'not-a-real-kind' }, {}] as any;
+    const garbageInput = [
+      null,
+      undefined,
+      42,
+      'oops',
+      [1, 2, 3],
+      { kind: 'not-a-real-kind' },
+      {},
+      // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input type to test defensive/garbage-input handling
+    ] as any;
 
     expect(() => buildConfigSnapshot(garbageInput)).not.toThrow();
     const snapshot = buildConfigSnapshot(garbageInput);
@@ -463,14 +560,17 @@ describe('buildConfigSnapshot', () => {
     expect(snapshot.mcpServersByName).toEqual({});
     // Nothing was silently dropped: every garbage item is accounted for
     // somewhere in an inventory's `unrecognized`/`parseErrors`.
-    const totalUnrecognized = snapshot.inventories.reduce((n, inv) => n + inv.unrecognized.length, 0);
+    const totalUnrecognized = snapshot.inventories.reduce(
+      (n, inv) => n + inv.unrecognized.length,
+      0,
+    );
     expect(totalUnrecognized).toBe(garbageInput.length);
   });
 
   it('never throws when handed a non-array', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input type to test defensive/garbage-input handling
     expect(() => buildConfigSnapshot(null as any)).not.toThrow();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input type to test defensive/garbage-input handling
     const snapshot = buildConfigSnapshot(null as any);
     expect(snapshot.inventories).toEqual([]);
   });
@@ -627,7 +727,11 @@ describe('parseErrors ?? [] fallbacks (def.parseErrors is undefined, not just em
   });
 
   it('appendSettings does not throw and appends nothing when settings.parseErrors is undefined', () => {
-    const settings = { kind: 'settings', scope: 'project', raw: {} } as unknown as ClaudeCodeSettings;
+    const settings = {
+      kind: 'settings',
+      scope: 'project',
+      raw: {},
+    } as unknown as ClaudeCodeSettings;
     const before = parseSession(baseSession()).toSession();
     const session = parseSession(baseSession()).appendSettings(settings).toSession();
     expect(session.parseErrors).toEqual(before.parseErrors);
@@ -680,14 +784,16 @@ describe('appendSubAgent meta error propagation and matching-by-agentId scoping'
     const subSession = parseSessionTranscript(readFixture('t9-subagent-transcript.jsonl'));
     const session = parseSession(baseSession())
       .appendSubAgent('agent-abc123', subSession, {
-        parseErrors: [{ code: 'subagent_meta_error', message: 'Could not fully parse the subagent meta file.' }],
+        parseErrors: [
+          { code: 'subagent_meta_error', message: 'Could not fully parse the subagent meta file.' },
+        ],
       })
       .toSession();
 
     expect(session.parseErrors.some((e) => e.code === 'subagent_meta_error')).toBe(true);
   });
 
-  it('enriches only the SubagentLaunchRecord matching agentId, filling only unset fields, leaving a differently-agentId\'d launch untouched', () => {
+  it("enriches only the SubagentLaunchRecord matching agentId, filling only unset fields, leaving a differently-agentId'd launch untouched", () => {
     // A synthetic two-launch transcript: the first launch already carries
     // description/model (from the tool_use input and toolUseResult), the
     // second carries neither and has a different agentId.
@@ -716,10 +822,18 @@ describe('appendSubAgent meta error propagation and matching-by-agentId scoping'
               type: 'tool_use',
               id: 'toolu_c2_agent_x',
               name: 'Agent',
-              input: { subagent_type: 'docs-drafter', description: 'Draft the initial doc outline.' },
+              input: {
+                subagent_type: 'docs-drafter',
+                description: 'Draft the initial doc outline.',
+              },
             },
           ],
-          usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
         },
         uuid: 'c2-a-0001',
         timestamp: '2026-08-11T09:00:01.000Z',
@@ -730,7 +844,12 @@ describe('appendSubAgent meta error propagation and matching-by-agentId scoping'
         isSidechain: false,
         userType: 'external',
         type: 'user',
-        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_c2_agent_x', content: 'Outline drafted.' }] },
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'toolu_c2_agent_x', content: 'Outline drafted.' },
+          ],
+        },
         toolUseResult: { agentId: 'agent-x001', resolvedModel: 'sonnet' },
         uuid: 'c2-u-0002',
         timestamp: '2026-08-11T09:00:02.000Z',
@@ -746,9 +865,19 @@ describe('appendSubAgent meta error propagation and matching-by-agentId scoping'
           model: 'test-model-a',
           role: 'assistant',
           content: [
-            { type: 'tool_use', id: 'toolu_c2_agent_y', name: 'Agent', input: { subagent_type: 'test-scout' } },
+            {
+              type: 'tool_use',
+              id: 'toolu_c2_agent_y',
+              name: 'Agent',
+              input: { subagent_type: 'test-scout' },
+            },
           ],
-          usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
         },
         uuid: 'c2-a-0002',
         timestamp: '2026-08-11T09:00:03.000Z',
@@ -759,7 +888,10 @@ describe('appendSubAgent meta error propagation and matching-by-agentId scoping'
         isSidechain: false,
         userType: 'external',
         type: 'user',
-        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_c2_agent_y', content: 'Scouted.' }] },
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'toolu_c2_agent_y', content: 'Scouted.' }],
+        },
         toolUseResult: { agentId: 'agent-y002' },
         uuid: 'c2-u-0003',
         timestamp: '2026-08-11T09:00:04.000Z',
@@ -778,7 +910,8 @@ describe('appendSubAgent meta error propagation and matching-by-agentId scoping'
     const subSession = parseSessionTranscript(readFixture('t9-subagent-transcript.jsonl'));
     const session = parseSession(transcript)
       .appendSubAgent('agent-x001', subSession, {
-        description: 'Overridden description that must NOT apply — already set from the transcript.',
+        description:
+          'Overridden description that must NOT apply — already set from the transcript.',
         model: 'opus',
         parseErrors: [],
       })
@@ -836,7 +969,9 @@ describe('skillQualifiedName / foldSkillDefinition branch coverage', () => {
     expect(record?.name).toBe('pluglet:csv-wrangler');
     expect(record?.bareName).toBe('csv-wrangler');
     // New-record path also fills displayPath from def.sourcePath.
-    expect(record?.displayPath).toBe('/home/testuser/projects/orbit-tracker/.claude/skills/csv-wrangler/SKILL.md');
+    expect(record?.displayPath).toBe(
+      '/home/testuser/projects/orbit-tracker/.claude/skills/csv-wrangler/SKILL.md',
+    );
   });
 
   it('enriches an existing record (description/displayPath/qualifiedPath, each filled only where unset) then no-ops on a repeat append', () => {
@@ -857,7 +992,9 @@ describe('skillQualifiedName / foldSkillDefinition branch coverage', () => {
     const record1 = s1.skills.find((s) => s.name === 'example-skill');
     // The transcript's own skill_listing already set a description — not clobbered.
     expect(record1?.description).toBe('Runs the example diagnostic workflow.');
-    expect(record1?.displayPath).toBe('/home/testuser/projects/orbit-tracker/.claude/skills/example-skill/SKILL.md');
+    expect(record1?.displayPath).toBe(
+      '/home/testuser/projects/orbit-tracker/.claude/skills/example-skill/SKILL.md',
+    );
     // qualifiedPath was unset before this append and def.pluginPrefix is set, so it fills.
     expect(record1?.qualifiedPath).toBe('plugin:pluglet:example-skill');
 
@@ -884,7 +1021,9 @@ describe('foldRuleDefinition branch coverage: scope fallback/mapping and field e
     } as unknown as RuleDefinition;
 
     const session = parseSession(baseSession()).appendRule(bogusDef).toSession();
-    const record = session.rules.find((r) => r.path === '/home/testuser/projects/orbit-tracker/BOGUS-SCOPE-rule.md');
+    const record = session.rules.find(
+      (r) => r.path === '/home/testuser/projects/orbit-tracker/BOGUS-SCOPE-rule.md',
+    );
     expect(record?.scope).toBe('Unknown');
   });
 

@@ -1,8 +1,8 @@
-import { LitElement, html, css } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
-import type { DashboardSession } from '../types';
 import { formatCompactNumber, formatFullNumber } from '../lib/format';
+import type { DashboardSession } from '../types';
 
 /**
  * Session list.
@@ -109,7 +109,7 @@ export class SessionList extends LitElement {
         detail: { sessionId },
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 
@@ -143,7 +143,7 @@ export class SessionList extends LitElement {
                 <div class="token-label">tokens</div>
               </div>
             </button>
-          `
+          `,
         )}
       </div>
     `;

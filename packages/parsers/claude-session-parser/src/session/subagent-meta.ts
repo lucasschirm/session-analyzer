@@ -15,8 +15,8 @@
  */
 
 import type { SubagentMeta } from '../types/config.js';
-import { stripBom, safeJsonParse } from '../utils/text.js';
 import { makeParseError } from '../utils/errors.js';
+import { safeJsonParse, stripBom } from '../utils/text.js';
 
 export function parseSubagentMeta(content: string): SubagentMeta {
   const parseErrors: SubagentMeta['parseErrors'] = [];
@@ -29,9 +29,7 @@ export function parseSubagentMeta(content: string): SubagentMeta {
   const { value, error } = safeJsonParse<unknown>(stripped);
 
   if (error !== undefined) {
-    parseErrors.push(
-      makeParseError('invalid_json', error, { rawSnippet: stripped.slice(0, 200) }),
-    );
+    parseErrors.push(makeParseError('invalid_json', error, { rawSnippet: stripped.slice(0, 200) }));
     return { parseErrors };
   }
 

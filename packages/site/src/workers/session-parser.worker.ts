@@ -10,21 +10,16 @@
  */
 
 import { detectClaudeCode, parseSessionTranscript } from '@lucasschirm/sal-claude-session-parser';
-import type {
-  DashboardSession,
-  ParsedSession,
-  SessionSource,
-  ToolExecution,
-} from '../types';
 import { toDashboardSession } from '../lib/claude-to-dashboard';
+import type { DashboardSession, ParsedSession, SessionSource, ToolExecution } from '../types';
 import {
-  SessionBuilder,
   generateId,
   isAgentOrSkill,
   isAgentTool,
   isReadTool,
   isSkillTool,
   isWriteTool,
+  SessionBuilder,
 } from './session-builder';
 
 export { isAgentOrSkill, isAgentTool, isReadTool, isSkillTool, isWriteTool };
@@ -73,7 +68,7 @@ export function detectFormat(content: string): SessionSource | 'unknown' {
       const data: unknown = JSON.parse(trimmed);
       if (Array.isArray(data)) {
         const items = data.filter((item): item is Record<string, unknown> =>
-          Boolean(item && typeof item === 'object')
+          Boolean(item && typeof item === 'object'),
         );
         if (items.some((item) => item.jsonrpc !== undefined)) return 'mcp';
         return 'antigravity';
@@ -99,7 +94,7 @@ export function detectFormat(content: string): SessionSource | 'unknown' {
   if (
     sample.some((event) => event.type === 'session' && event.version !== undefined) ||
     sample.some((event) =>
-      ['usage_snapshot', 'tool_execution_start', 'message_update'].includes(String(event.type))
+      ['usage_snapshot', 'tool_execution_start', 'message_update'].includes(String(event.type)),
     )
   ) {
     return 'agentic_pi';
@@ -111,7 +106,9 @@ export function detectFormat(content: string): SessionSource | 'unknown' {
     sample.some(
       (event) =>
         typeof event.model === 'string' &&
-        (event.prompt_eval_count !== undefined || event.eval_count !== undefined || event.warning !== undefined)
+        (event.prompt_eval_count !== undefined ||
+          event.eval_count !== undefined ||
+          event.warning !== undefined),
     )
   ) {
     return 'local_runner';
@@ -141,7 +138,10 @@ export function detectFormat(content: string): SessionSource | 'unknown' {
  */
 export function parseAgenticPi(content: string, projectId: string, title = ''): ParsedSession {
   const builder = new SessionBuilder();
-  const lines = content.trim().split('\n').filter((line) => line.trim());
+  const lines = content
+    .trim()
+    .split('\n')
+    .filter((line) => line.trim());
 
   lines.forEach((line, index) => {
     const event = tryParseJson(line);
@@ -155,7 +155,12 @@ export function parseAgenticPi(content: string, projectId: string, title = ''): 
     }
 
     if (event.type === 'session') {
-      builder.addEvent('session_start', `Session ${String(event.id ?? '')} in ${String(event.cwd ?? '')}`, Date.now(), event);
+      builder.addEvent(
+        'session_start',
+        `Session ${String(event.id ?? '')} in ${String(event.cwd ?? '')}`,
+        Date.now(),
+        event,
+      );
     } else if (event.type === 'message_update') {
       const role = event.role === 'assistant' ? 'assistant' : 'user';
       builder.addMessage(role, String(event.content ?? ''), Date.now());
@@ -164,7 +169,7 @@ export function parseAgenticPi(content: string, projectId: string, title = ''): 
         String(event.tool ?? 'unknown'),
         'tool_execution',
         event.target !== undefined ? String(event.target) : undefined,
-        Date.now()
+        Date.now(),
       );
     } else if (event.type === 'usage_snapshot') {
       const tokens = event.tokens as Record<string, unknown> | undefined;
@@ -206,7 +211,10 @@ export function parseAntigravity(content: string, projectId: string, title = '')
 
   for (const rawItem of data) {
     if (!rawItem || typeof rawItem !== 'object') {
-      builder.addError({ message: 'Skipping non-object array item', raw_data: String(rawItem).substring(0, 100) });
+      builder.addError({
+        message: 'Skipping non-object array item',
+        raw_data: String(rawItem).substring(0, 100),
+      });
       continue;
     }
     const item = rawItem as Record<string, unknown>;
@@ -217,13 +225,28 @@ export function parseAntigravity(content: string, projectId: string, title = '')
     builder.addEvent(eventType, `Event: ${eventType}`, timestamp, item);
 
     if (eventType === 'tool_exec') {
-      builder.addTool(String(item.tool ?? 'unknown'), 'bash', item.cmd !== undefined ? String(item.cmd) : undefined, timestamp);
+      builder.addTool(
+        String(item.tool ?? 'unknown'),
+        'bash',
+        item.cmd !== undefined ? String(item.cmd) : undefined,
+        timestamp,
+      );
     } else if (eventType === 'file_write') {
-      builder.addTool('file_write', 'file_system', item.file !== undefined ? String(item.file) : undefined, timestamp);
+      builder.addTool(
+        'file_write',
+        'file_system',
+        item.file !== undefined ? String(item.file) : undefined,
+        timestamp,
+      );
     } else if (eventType === 'context_compaction') {
       builder.addCompaction(timestamp, Number(item.tokens_saved ?? 0), item);
     } else if (eventType === 'request-review' || eventType === 'request_review') {
-      builder.addEvent('policy_override', `Policy override: ${String(item.policy ?? 'request-review')}`, timestamp, item);
+      builder.addEvent(
+        'policy_override',
+        `Policy override: ${String(item.policy ?? 'request-review')}`,
+        timestamp,
+        item,
+      );
     }
   }
 
@@ -242,7 +265,10 @@ export function parseAntigravity(content: string, projectId: string, title = '')
  */
 export function parseOpenCodeCodex(content: string, projectId: string, title = ''): ParsedSession {
   const builder = new SessionBuilder();
-  const lines = content.trim().split('\n').filter((line) => line.trim());
+  const lines = content
+    .trim()
+    .split('\n')
+    .filter((line) => line.trim());
 
   lines.forEach((line, index) => {
     const event = tryParseJson(line);
@@ -292,13 +318,18 @@ export function parseMCP(content: string, projectId: string, title = ''): Parsed
   try {
     const parsed: unknown = JSON.parse(content);
     if (Array.isArray(parsed)) {
-      items = parsed.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'));
+      items = parsed.filter((item): item is Record<string, unknown> =>
+        Boolean(item && typeof item === 'object'),
+      );
     } else if (parsed && typeof parsed === 'object') {
       items = [parsed as Record<string, unknown>];
     }
   } catch {
     // Not a single JSON document - treat as JSONL.
-    const lines = content.trim().split('\n').filter((line) => line.trim());
+    const lines = content
+      .trim()
+      .split('\n')
+      .filter((line) => line.trim());
     lines.forEach((line, index) => {
       const parsedLine = tryParseJson(line);
       if (parsedLine) {
@@ -328,7 +359,7 @@ export function parseMCP(content: string, projectId: string, title = ''): Parsed
         toolName,
         'mcp_call',
         params.arguments !== undefined ? JSON.stringify(params.arguments) : undefined,
-        timestamp
+        timestamp,
       );
       if (item.id !== undefined) pendingCalls.set(item.id, execution);
       builder.turns++;
@@ -341,9 +372,11 @@ export function parseMCP(content: string, projectId: string, title = ''): Parsed
       }
       builder.addEvent(
         item.error !== undefined ? 'CallToolError' : 'CallToolResult',
-        item.error !== undefined ? `MCP tool error: ${JSON.stringify(item.error)}` : 'MCP tool result received',
+        item.error !== undefined
+          ? `MCP tool error: ${JSON.stringify(item.error)}`
+          : 'MCP tool result received',
         timestamp,
-        item
+        item,
       );
     }
   }
@@ -362,7 +395,10 @@ export function parseMCP(content: string, projectId: string, title = ''): Parsed
  */
 export function parseLocalRunner(content: string, projectId: string, title = ''): ParsedSession {
   const builder = new SessionBuilder();
-  const lines = content.trim().split('\n').filter((line) => line.trim());
+  const lines = content
+    .trim()
+    .split('\n')
+    .filter((line) => line.trim());
 
   lines.forEach((line, index) => {
     const event = tryParseJson(line);
@@ -380,14 +416,15 @@ export function parseLocalRunner(content: string, projectId: string, title = '')
 
     if (typeof event.model === 'string') {
       builder.model = event.model;
-      if (event.prompt_eval_count !== undefined) builder.inputTokens += Number(event.prompt_eval_count);
+      if (event.prompt_eval_count !== undefined)
+        builder.inputTokens += Number(event.prompt_eval_count);
       if (event.eval_count !== undefined) builder.outputTokens += Number(event.eval_count);
       builder.turns++;
       builder.addEvent(
         'model_inference',
         `Model: ${event.model}, prompt evals: ${Number(event.prompt_eval_count ?? 0)}, evals: ${Number(event.eval_count ?? 0)}`,
         timestamp,
-        event
+        event,
       );
     }
 
@@ -414,7 +451,7 @@ function toTimestamp(value: unknown): number {
 export function createEmptySession(
   projectId: string,
   source: SessionSource,
-  title = ''
+  title = '',
 ): DashboardSession {
   const now = Date.now();
   return {
@@ -490,5 +527,3 @@ self.onmessage = (event: MessageEvent<ParseRequest>) => {
     self.postMessage(response);
   }
 };
-
-export {};

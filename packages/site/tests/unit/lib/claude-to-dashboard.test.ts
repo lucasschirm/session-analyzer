@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import { parseSessionTranscript } from '@lucasschirm/sal-claude-session-parser';
+import { describe, expect, it } from 'vitest';
 import { toDashboardSession } from '../../../src/lib/claude-to-dashboard';
 
 /**
@@ -32,7 +32,13 @@ describe('Session Parser - Claude Code Parser (native pipeline)', () => {
     expect(result.session.total_turns).toBe(2);
     expect(result.session.model).toBe('claude-sonnet-5');
     expect(result.session.models).toEqual([
-      { model: 'claude-sonnet-5', input_tokens: 2, output_tokens: 60, cache_creation_tokens: 100, cache_read_tokens: 18 },
+      {
+        model: 'claude-sonnet-5',
+        input_tokens: 2,
+        output_tokens: 60,
+        cache_creation_tokens: 100,
+        cache_read_tokens: 18,
+      },
     ]);
     expect(result.parseErrors.length).toBe(0);
   });
@@ -85,7 +91,9 @@ describe('Session Parser - Claude Code Parser (native pipeline)', () => {
 
     expect(result.session.total_turns).toBe(2);
     expect(result.session.messages.length).toBe(0);
-    expect(result.session.events.filter((event) => event.event_type === 'assistant_turn').length).toBe(2);
+    expect(
+      result.session.events.filter((event) => event.event_type === 'assistant_turn').length,
+    ).toBe(2);
     expect(result.session.tool_executions.length).toBe(2);
   });
 
@@ -122,7 +130,9 @@ describe('Session Parser - Claude Code Parser (native pipeline)', () => {
     const result = toDashboardSession(parseSessionTranscript(content), projectId);
 
     expect(result.session.context_compactions).toBe(1);
-    expect(result.session.events.some((event) => event.event_type === 'context_compaction')).toBe(true);
+    expect(result.session.events.some((event) => event.event_type === 'context_compaction')).toBe(
+      true,
+    );
   });
 
   it('should handle parse errors gracefully', () => {
@@ -140,7 +150,11 @@ describe('Session Parser - Claude Code Parser (native pipeline)', () => {
     const content = `{"type": "ai-title", "aiTitle": "Fix database seeding error in CI for PR #2342", "sessionId": "s1"}
 {"type": "assistant", "sessionId": "s1", "uuid": "a1", "message": {"role": "assistant", "content": [], "usage": {"input_tokens": 10, "output_tokens": 5}}}`;
 
-    const result = toDashboardSession(parseSessionTranscript(content), projectId, 'fallback-filename.jsonl');
+    const result = toDashboardSession(
+      parseSessionTranscript(content),
+      projectId,
+      'fallback-filename.jsonl',
+    );
 
     expect(result.session.title).toBe('Fix database seeding error in CI for PR #2342');
   });
@@ -148,7 +162,11 @@ describe('Session Parser - Claude Code Parser (native pipeline)', () => {
   it('should fall back to the provided title when there is no ai-title event', () => {
     const content = `{"type": "assistant", "sessionId": "s1", "uuid": "a1", "message": {"role": "assistant", "content": [], "usage": {"input_tokens": 10, "output_tokens": 5}}}`;
 
-    const result = toDashboardSession(parseSessionTranscript(content), projectId, 'fallback-filename.jsonl');
+    const result = toDashboardSession(
+      parseSessionTranscript(content),
+      projectId,
+      'fallback-filename.jsonl',
+    );
 
     expect(result.session.title).toBe('fallback-filename.jsonl');
   });
@@ -190,7 +208,7 @@ describe('Session Parser - Claude Code Parser (native pipeline)', () => {
     const result = toDashboardSession(parseSessionTranscript(content), projectId);
 
     expect(result.session.tool_executions[0].result).toBe(
-      JSON.stringify([{ type: 'image', source: { data: 'abc' } }])
+      JSON.stringify([{ type: 'image', source: { data: 'abc' } }]),
     );
   });
 
@@ -204,7 +222,9 @@ describe('Session Parser - Claude Code Parser (native pipeline)', () => {
     const execution = result.session.tool_executions[0];
     expect(execution.result_uuid).toBe('u1');
 
-    const linked = result.session.messages.find((message) => message.parent_uuid === execution.result_uuid);
+    const linked = result.session.messages.find(
+      (message) => message.parent_uuid === execution.result_uuid,
+    );
     expect(linked?.content).toBe('Full skill instructions here.');
   });
 
@@ -222,7 +242,9 @@ describe('Session Parser - Claude Code Parser (native pipeline)', () => {
 
     const result = toDashboardSession(parseSessionTranscript(content), projectId);
 
-    const diagnosticEvent = result.session.events.find((event) => event.event_type === 'diagnostic');
+    const diagnosticEvent = result.session.events.find(
+      (event) => event.event_type === 'diagnostic',
+    );
     expect(diagnosticEvent).toBeDefined();
     expect(diagnosticEvent?.description).toBe('Cache miss: tools_changed');
     expect(diagnosticEvent?.metadata).toEqual({
@@ -260,14 +282,16 @@ describe('Session Parser - Claude Code Parser (native pipeline)', () => {
     // Deduped to 2 tasks (not 6, one per raw snapshot line).
     expect(result.session.tasks.length).toBe(2);
 
-    const task1 = result.session.tasks.find((t) => t.id === '1')!;
+    const task1 = result.session.tasks.find((t) => t.id === '1');
+    if (!task1) throw new Error('task 1 not found');
     expect(task1.subject).toBe('Write parser');
     expect(task1.status).toBe('completed');
     expect(task1.first_seen_at).toBe(new Date('2026-08-12T10:00:00.000Z').getTime());
     // Completed as of the SECOND snapshot (10:05), not the third.
     expect(task1.completed_at).toBe(new Date('2026-08-12T10:05:00.000Z').getTime());
 
-    const task2 = result.session.tasks.find((t) => t.id === '2')!;
+    const task2 = result.session.tasks.find((t) => t.id === '2');
+    if (!task2) throw new Error('task 2 not found');
     expect(task2.status).toBe('completed');
     expect(task2.completed_at).toBe(new Date('2026-08-12T10:08:00.000Z').getTime());
   });

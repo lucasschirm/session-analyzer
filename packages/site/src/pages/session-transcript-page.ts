@@ -1,9 +1,9 @@
-import { LitElement, html, css, type TemplateResult } from 'lit';
+import { css, html, LitElement, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { dbClient } from '../db/db-client';
-import type { DashboardSession, SubagentUsage, TranscriptMessage } from '../types';
 import { formatCompactNumber } from '../lib/format';
+import type { DashboardSession, SubagentUsage, TranscriptMessage } from '../types';
 import '../components/session-transcript';
 
 /**
@@ -208,7 +208,7 @@ export class SessionTranscriptPage extends LitElement {
 
     const sortedMessages = [...session.messages].sort((a, b) => a.timestamp - b.timestamp);
     const sortedSubagents = [...session.subagents].sort(
-      (a, b) => (a.started_at ?? 0) - (b.started_at ?? 0)
+      (a, b) => (a.started_at ?? 0) - (b.started_at ?? 0),
     );
 
     for (const subagent of sortedSubagents) {
@@ -253,13 +253,17 @@ export class SessionTranscriptPage extends LitElement {
 
   private renderInlineSubagents(
     placements: Map<string, SubagentUsage[]>,
-    message: TranscriptMessage
+    message: TranscriptMessage,
   ): TemplateResult | string {
     const subagents = placements.get(message.id);
     if (!subagents || subagents.length === 0) return '';
     return html`
       <div class="subagent-row">
-        ${repeat(subagents, (subagent) => subagent.agent_id, (subagent) => this.renderSubagentCard(subagent))}
+        ${repeat(
+          subagents,
+          (subagent) => subagent.agent_id,
+          (subagent) => this.renderSubagentCard(subagent),
+        )}
       </div>
     `;
   }
@@ -293,9 +297,11 @@ export class SessionTranscriptPage extends LitElement {
           <h1>Transcript — ${session.title || this.sourceLabel(session.source)}</h1>
           <p class="subtitle">
             ${session.messages.length} main message${session.messages.length === 1 ? '' : 's'}
-            ${session.subagents.length > 0
-              ? html` • ${session.subagents.length} subagent${session.subagents.length === 1 ? '' : 's'}`
-              : ''}
+            ${
+              session.subagents.length > 0
+                ? html` • ${session.subagents.length} subagent${session.subagents.length === 1 ? '' : 's'}`
+                : ''
+            }
           </p>
         </div>
 
@@ -314,8 +320,9 @@ export class SessionTranscriptPage extends LitElement {
             </div>
           </div>
 
-          ${openSubagent
-            ? html`
+          ${
+            openSubagent
+              ? html`
               <div class="transcript-column" style="--column-accent: ${this.accentFor(openSubagent.agent_id)}">
                 <div class="column-header">
                   <h2 class="column-title">${this.subagentTitle(openSubagent)}</h2>
@@ -332,7 +339,8 @@ export class SessionTranscriptPage extends LitElement {
                 </div>
               </div>
             `
-            : ''}
+              : ''
+          }
         </div>
       </div>
     `;

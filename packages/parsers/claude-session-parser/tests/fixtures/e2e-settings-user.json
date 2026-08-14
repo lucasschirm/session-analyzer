@@ -11,9 +11,7 @@
   "hooks": {
     "SessionStart": [
       {
-        "hooks": [
-          { "type": "command", "command": "scripts/greet.sh" }
-        ]
+        "hooks": [{ "type": "command", "command": "scripts/greet.sh" }]
       }
     ]
   }

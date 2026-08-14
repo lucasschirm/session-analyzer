@@ -12,8 +12,8 @@
 import type { ClaudeScope } from '../types/common.js';
 import type {
   AgentDefinition,
-  ClaudeConfigSnapshot,
   ClaudeCodeSettings,
+  ClaudeConfigSnapshot,
   ClaudeFolderInventory,
   McpConfig,
   McpServerConfig,
@@ -22,8 +22,15 @@ import type {
   SkillDefinition,
 } from '../types/config.js';
 import { makeParseError } from '../utils/errors.js';
+import { getOrThrow } from '../utils/maps.js';
 
-type ParsedConfigItem = AgentDefinition | SkillDefinition | RuleDefinition | McpConfig | ClaudeCodeSettings | PluginMarketplace;
+type ParsedConfigItem =
+  | AgentDefinition
+  | SkillDefinition
+  | RuleDefinition
+  | McpConfig
+  | ClaudeCodeSettings
+  | PluginMarketplace;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -85,7 +92,10 @@ function deriveRootPath(sourcePath: string | undefined): string | undefined {
  *  those files: this task owns exactly this one file, and the AGENT_BRIEF's
  *  file-ownership rule forbids introducing a new shared util other parallel
  *  agents don't know about). */
-function inferMarketplaceScope(sourcePath: string | undefined, fallback: ClaudeScope | undefined): ClaudeScope {
+function inferMarketplaceScope(
+  sourcePath: string | undefined,
+  fallback: ClaudeScope | undefined,
+): ClaudeScope {
   if (sourcePath) {
     const normalized = sourcePath.replace(/\\/g, '/');
     if (/(^|\/)plugins\//.test(normalized)) return 'plugin';
@@ -107,7 +117,14 @@ function bucketKeyFor(rootPath: string | undefined, scope: ClaudeScope): string 
  * its actual authority relative to the known four scopes is undefined and
  * the safest default is "don't let it silently outrank a known scope".
  */
-const SETTINGS_PRECEDENCE: ClaudeScope[] = ['unknown', 'plugin', 'managed', 'user', 'project', 'local'];
+const SETTINGS_PRECEDENCE: ClaudeScope[] = [
+  'unknown',
+  'plugin',
+  'managed',
+  'user',
+  'project',
+  'local',
+];
 
 /**
  * Merges every `ClaudeCodeSettings` found (in all buckets) into one
@@ -137,7 +154,10 @@ const SETTINGS_PRECEDENCE: ClaudeScope[] = ['unknown', 'plugin', 'managed', 'use
  *   specific file "in force"), and its `scope` is that same
  *   highest-precedence settings' scope.
  */
-function mergeEffectiveSettings(allSettings: ClaudeCodeSettings[], fallbackScope: ClaudeScope): ClaudeCodeSettings {
+function mergeEffectiveSettings(
+  allSettings: ClaudeCodeSettings[],
+  fallbackScope: ClaudeScope,
+): ClaudeCodeSettings {
   if (allSettings.length === 0) {
     return { kind: 'settings', scope: fallbackScope, raw: {}, parseErrors: [] };
   }
@@ -152,7 +172,12 @@ function mergeEffectiveSettings(allSettings: ClaudeCodeSettings[], fallbackScope
     })
     .map((x) => x.s);
 
-  const merged: ClaudeCodeSettings = { kind: 'settings', scope: fallbackScope, raw: {}, parseErrors: [] };
+  const merged: ClaudeCodeSettings = {
+    kind: 'settings',
+    scope: fallbackScope,
+    raw: {},
+    parseErrors: [],
+  };
   const allowSeen = new Set<string>();
   const denySeen = new Set<string>();
   const askSeen = new Set<string>();
@@ -171,9 +196,13 @@ function mergeEffectiveSettings(allSettings: ClaudeCodeSettings[], fallbackScope
     if (s.sandbox !== undefined) merged.sandbox = s.sandbox;
 
     if (s.env !== undefined) merged.env = { ...(merged.env ?? {}), ...s.env };
-    if (s.enabledPlugins !== undefined) merged.enabledPlugins = { ...(merged.enabledPlugins ?? {}), ...s.enabledPlugins };
+    if (s.enabledPlugins !== undefined)
+      merged.enabledPlugins = { ...(merged.enabledPlugins ?? {}), ...s.enabledPlugins };
     if (s.extraKnownMarketplaces !== undefined) {
-      merged.extraKnownMarketplaces = { ...(merged.extraKnownMarketplaces ?? {}), ...s.extraKnownMarketplaces };
+      merged.extraKnownMarketplaces = {
+        ...(merged.extraKnownMarketplaces ?? {}),
+        ...s.extraKnownMarketplaces,
+      };
     }
     if (s.hooks !== undefined) merged.hooks = { ...(merged.hooks ?? {}), ...s.hooks };
 
@@ -202,7 +231,12 @@ function mergeEffectiveSettings(allSettings: ClaudeCodeSettings[], fallbackScope
     merged.parseErrors.push(...s.parseErrors);
   }
 
-  if (allow.length > 0 || deny.length > 0 || ask.length > 0 || merged.permissions?.defaultMode !== undefined) {
+  if (
+    allow.length > 0 ||
+    deny.length > 0 ||
+    ask.length > 0 ||
+    merged.permissions?.defaultMode !== undefined
+  ) {
     merged.permissions = {
       ...merged.permissions,
       ...(allow.length > 0 ? { allow } : {}),
@@ -214,7 +248,10 @@ function mergeEffectiveSettings(allSettings: ClaudeCodeSettings[], fallbackScope
   return merged;
 }
 
-export function buildConfigSnapshot(parsed: Array<ParsedConfigItem>, scope?: ClaudeScope): ClaudeConfigSnapshot {
+export function buildConfigSnapshot(
+  parsed: Array<ParsedConfigItem>,
+  scope?: ClaudeScope,
+): ClaudeConfigSnapshot {
   const buckets = new Map<string, ClaudeFolderInventory>();
   const bucketOrder: string[] = [];
   const allSettings: ClaudeCodeSettings[] = [];
@@ -222,7 +259,10 @@ export function buildConfigSnapshot(parsed: Array<ParsedConfigItem>, scope?: Cla
   const skillsByName: Record<string, SkillDefinition> = {};
   const mcpServersByName: Record<string, McpServerConfig> = {};
 
-  function getOrCreateBucket(rootPath: string | undefined, itemScope: ClaudeScope): ClaudeFolderInventory {
+  function getOrCreateBucket(
+    rootPath: string | undefined,
+    itemScope: ClaudeScope,
+  ): ClaudeFolderInventory {
     const key = bucketKeyFor(rootPath, itemScope);
     let bucket = buckets.get(key);
     if (!bucket) {
@@ -240,7 +280,12 @@ export function buildConfigSnapshot(parsed: Array<ParsedConfigItem>, scope?: Cla
     return bucket;
   }
 
-  function recordUnrecognized(itemScope: ClaudeScope, label: string, code: string, message: string): void {
+  function recordUnrecognized(
+    itemScope: ClaudeScope,
+    label: string,
+    code: string,
+    message: string,
+  ): void {
     const bucket = getOrCreateBucket(undefined, itemScope);
     bucket.unrecognized.push(label);
     bucket.parseErrors.push(makeParseError(code, message));
@@ -344,8 +389,9 @@ export function buildConfigSnapshot(parsed: Array<ParsedConfigItem>, scope?: Cla
         default: {
           recordUnrecognized(
             scope ?? 'unknown',
-            (item as { sourcePath?: unknown }).sourcePath && typeof (item as { sourcePath?: unknown }).sourcePath === 'string'
-              ? ((item as { sourcePath: string }).sourcePath)
+            (item as { sourcePath?: unknown }).sourcePath &&
+              typeof (item as { sourcePath?: unknown }).sourcePath === 'string'
+              ? (item as { sourcePath: string }).sourcePath
               : `<unrecognized item at index ${index}>`,
             'unrecognized_config_kind',
             `Item at index ${index} has an unrecognized "kind": ${JSON.stringify(kind)}.`,
@@ -365,7 +411,7 @@ export function buildConfigSnapshot(parsed: Array<ParsedConfigItem>, scope?: Cla
     }
   });
 
-  const inventories = bucketOrder.map((key) => buckets.get(key)!);
+  const inventories = bucketOrder.map((key) => getOrThrow(buckets, key));
   const effectiveSettings = mergeEffectiveSettings(allSettings, scope ?? 'unknown');
 
   return {

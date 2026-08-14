@@ -1,12 +1,10 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import { entryTimestampMs } from '../src/session/timelines/context.js';
 import { deriveRuleTimeline } from '../src/session/timelines/rules.js';
 import { deriveSupportingRecords } from '../src/session/timelines/supporting.js';
-import { entryTimestampMs } from '../src/session/timelines/context.js';
-import { parseFrontmatter } from '../src/utils/frontmatter.js';
 import type {
   AttachmentEntry,
   AutoModeAttachment,
@@ -26,6 +24,7 @@ import type {
   SystemEntry,
   UserEntry,
 } from '../src/types/session.js';
+import { parseFrontmatter } from '../src/utils/frontmatter.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, 'fixtures');
@@ -59,7 +58,11 @@ function base(lineNumber: number, overrides: BaseOverrides = {}) {
   };
 }
 
-function attachmentEntry(lineNumber: number, attachment: ClaudeAttachment, overrides: BaseOverrides = {}): AttachmentEntry {
+function attachmentEntry(
+  lineNumber: number,
+  attachment: ClaudeAttachment,
+  overrides: BaseOverrides = {},
+): AttachmentEntry {
   return {
     ...base(lineNumber, overrides),
     type: 'attachment',
@@ -85,7 +88,10 @@ describe('deriveRuleTimeline', () => {
   };
 
   it('records a nested_memory injection with frontmatter + globs as "injected"', () => {
-    const entry = attachmentEntry(10, nestedMemoryAttachment, { uuid: 'entry-nm-1', timestamp: '2026-08-01T00:00:10.000Z' });
+    const entry = attachmentEntry(10, nestedMemoryAttachment, {
+      uuid: 'entry-nm-1',
+      timestamp: '2026-08-01T00:00:10.000Z',
+    });
 
     const [record] = deriveRuleTimeline([entry]);
 
@@ -99,7 +105,11 @@ describe('deriveRuleTimeline', () => {
     expect(record.contentDiffersFromDisk).toBe(true);
     expect(record.frontmatter?.description).toContain('regenerate the widget catalog');
     expect(record.availability).toHaveLength(1);
-    expect(record.availability[0]).toMatchObject({ action: 'injected', lineNumber: 10, entryUuid: 'entry-nm-1' });
+    expect(record.availability[0]).toMatchObject({
+      action: 'injected',
+      lineNumber: 10,
+      entryUuid: 'entry-nm-1',
+    });
   });
 
   it('prefers frontmatter-derived globs (normalizeGlobs) when content.globs is absent, and falls back to the basename title when there is no heading', () => {
@@ -155,7 +165,11 @@ describe('deriveRuleTimeline', () => {
     expect(record.displayPath).toBe('.claude/rules/workspace-rules.md');
     expect(record.injectedContent).toBeUndefined();
     expect(record.availability).toHaveLength(1);
-    expect(record.availability[0]).toMatchObject({ action: 'referenced', lineNumber: 20, entryUuid: 'entry-cfr-1' });
+    expect(record.availability[0]).toMatchObject({
+      action: 'referenced',
+      lineNumber: 20,
+      entryUuid: 'entry-cfr-1',
+    });
   });
 
   it('merges repeated nested_memory sightings of the same path into one record with a growing availability array', () => {
@@ -172,7 +186,15 @@ describe('deriveRuleTimeline', () => {
   it('never regresses injectionStatus from "injected" back to "unknown" when a later compact_file_reference sighting reuses the same path', () => {
     const path = '/Users/dev/project/.claude/rules/widget-catalog-sync.md';
     const nm = attachmentEntry(1, nestedMemoryAttachment, { uuid: 'nm-1' });
-    const cfr = attachmentEntry(2, { type: 'compact_file_reference', filename: path, displayPath: '.claude/rules/widget-catalog-sync.md' }, { uuid: 'cfr-1' });
+    const cfr = attachmentEntry(
+      2,
+      {
+        type: 'compact_file_reference',
+        filename: path,
+        displayPath: '.claude/rules/widget-catalog-sync.md',
+      },
+      { uuid: 'cfr-1' },
+    );
 
     const records = deriveRuleTimeline([nm, cfr]);
 
@@ -255,7 +277,9 @@ describe('deriveSupportingRecords', () => {
     };
     const hookAdditionalContext: HookAdditionalContextAttachment = {
       type: 'hook_additional_context',
-      content: ['<EXTREMELY_IMPORTANT>\nExtra example tooling is now enabled.\n</EXTREMELY_IMPORTANT>'],
+      content: [
+        '<EXTREMELY_IMPORTANT>\nExtra example tooling is now enabled.\n</EXTREMELY_IMPORTANT>',
+      ],
       hookName: 'SessionStart:startup',
       hookEvent: 'SessionStart',
       toolUseID: 'tool-4',
@@ -299,11 +323,16 @@ describe('deriveSupportingRecords', () => {
         hookName: 'SessionStart:startup',
         entryUuid: 'h4',
       });
-      expect(hooks[3].injectedContext).toEqual(['<EXTREMELY_IMPORTANT>\nExtra example tooling is now enabled.\n</EXTREMELY_IMPORTANT>']);
+      expect(hooks[3].injectedContext).toEqual([
+        '<EXTREMELY_IMPORTANT>\nExtra example tooling is now enabled.\n</EXTREMELY_IMPORTANT>',
+      ]);
     });
 
     it('clamps stdout/injectedContext to maxBlobBytes', () => {
-      const entries = [attachmentEntry(1, hookSuccess, { uuid: 'h1' }), attachmentEntry(2, hookAdditionalContext, { uuid: 'h4' })];
+      const entries = [
+        attachmentEntry(1, hookSuccess, { uuid: 'h1' }),
+        attachmentEntry(2, hookAdditionalContext, { uuid: 'h4' }),
+      ];
 
       const { hooks } = deriveSupportingRecords(entries, { maxBlobBytes: 4 });
 
@@ -312,15 +341,34 @@ describe('deriveSupportingRecords', () => {
     });
 
     it('falls back to empty-string hookName/hookEvent when hook_non_blocking_error/hook_system_message omit them', () => {
-      const missingNonBlocking = { type: 'hook_non_blocking_error', stderr: 'boom' } as HookNonBlockingErrorAttachment;
-      const missingSystemMessage = { type: 'hook_system_message', content: 'tip' } as HookSystemMessageAttachment;
+      const missingNonBlocking = {
+        type: 'hook_non_blocking_error',
+        stderr: 'boom',
+      } as HookNonBlockingErrorAttachment;
+      const missingSystemMessage = {
+        type: 'hook_system_message',
+        content: 'tip',
+      } as HookSystemMessageAttachment;
 
-      const entries = [attachmentEntry(1, missingNonBlocking, { uuid: 'h5' }), attachmentEntry(2, missingSystemMessage, { uuid: 'h6' })];
+      const entries = [
+        attachmentEntry(1, missingNonBlocking, { uuid: 'h5' }),
+        attachmentEntry(2, missingSystemMessage, { uuid: 'h6' }),
+      ];
 
       const { hooks } = deriveSupportingRecords(entries);
 
-      expect(hooks[0]).toMatchObject({ outcome: 'non_blocking_error', hookName: '', hookEvent: '', stderr: 'boom' });
-      expect(hooks[1]).toMatchObject({ outcome: 'system_message', hookName: '', hookEvent: '', stdout: 'tip' });
+      expect(hooks[0]).toMatchObject({
+        outcome: 'non_blocking_error',
+        hookName: '',
+        hookEvent: '',
+        stderr: 'boom',
+      });
+      expect(hooks[1]).toMatchObject({
+        outcome: 'system_message',
+        hookName: '',
+        hookEvent: '',
+        stdout: 'tip',
+      });
     });
 
     it('does not turn stop_hook_summary system entries into HookEventRecords', () => {
@@ -347,7 +395,11 @@ describe('deriveSupportingRecords', () => {
         cumulativeDroppedTokens: 481930,
         durationMs: 147420,
         preservedSegment: { headUuid: 'head', anchorUuid: 'anchor', tailUuid: 'tail' },
-        preservedMessages: { anchorUuid: 'anchor', uuids: ['head', 'anchor', 'tail'], allUuids: ['head', 'anchor', 'tail'] },
+        preservedMessages: {
+          anchorUuid: 'anchor',
+          uuids: ['head', 'anchor', 'tail'],
+          allUuids: ['head', 'anchor', 'tail'],
+        },
       };
       const entry: SystemEntry = {
         ...base(10, { uuid: 'compact-1', timestamp: '2026-08-01T00:05:00.000Z' }),
@@ -358,7 +410,13 @@ describe('deriveSupportingRecords', () => {
 
       const { compactions } = deriveSupportingRecords([entry]);
 
-      expect(compactions).toEqual([{ entryUuid: 'compact-1', timestampMs: Date.parse('2026-08-01T00:05:00.000Z'), metadata: compactMetadata }]);
+      expect(compactions).toEqual([
+        {
+          entryUuid: 'compact-1',
+          timestampMs: Date.parse('2026-08-01T00:05:00.000Z'),
+          metadata: compactMetadata,
+        },
+      ]);
     });
 
     it('defends against a missing/partial compactMetadata (no real corpus example lacks preservedSegment — synthetic edge case)', () => {
@@ -366,7 +424,13 @@ describe('deriveSupportingRecords', () => {
         ...base(11, { uuid: 'compact-2' }),
         type: 'system',
         subtype: 'compact_boundary',
-        compactMetadata: { trigger: 'auto', preTokens: 1000, postTokens: 200, cumulativeDroppedTokens: 800, durationMs: 50 } as CompactMetadata,
+        compactMetadata: {
+          trigger: 'auto',
+          preTokens: 1000,
+          postTokens: 200,
+          cumulativeDroppedTokens: 800,
+          durationMs: 50,
+        } as CompactMetadata,
       };
       const missingEntry: SystemEntry = {
         ...base(12, { uuid: 'compact-3' }),
@@ -379,7 +443,13 @@ describe('deriveSupportingRecords', () => {
       expect(compactions[0].metadata.preservedSegment).toBeUndefined();
       expect(compactions[0].metadata.preservedMessages).toBeUndefined();
       expect(compactions[0].metadata.trigger).toBe('auto');
-      expect(compactions[1].metadata).toEqual({ trigger: '', preTokens: 0, postTokens: 0, cumulativeDroppedTokens: 0, durationMs: 0 });
+      expect(compactions[1].metadata).toEqual({
+        trigger: '',
+        preTokens: 0,
+        postTokens: 0,
+        cumulativeDroppedTokens: 0,
+        durationMs: 0,
+      });
     });
   });
 
@@ -398,7 +468,12 @@ describe('deriveSupportingRecords', () => {
       const { prLinks } = deriveSupportingRecords([prLink]);
 
       expect(prLinks).toEqual([
-        { prNumber: 42, prUrl: 'https://github.com/devorg/repo/pull/42', prRepository: 'devorg/repo', timestampMs: Date.parse('2026-08-01T00:10:00.000Z') },
+        {
+          prNumber: 42,
+          prUrl: 'https://github.com/devorg/repo/pull/42',
+          prRepository: 'devorg/repo',
+          timestampMs: Date.parse('2026-08-01T00:10:00.000Z'),
+        },
       ]);
     });
 
@@ -416,7 +491,11 @@ describe('deriveSupportingRecords', () => {
         ...base(31, { uuid: 'u1', timestamp: '2026-08-01T00:11:00.000Z' }),
         type: 'user',
         message: { role: 'user', content: [] },
-        toolUseResult: { gitOperation: { pr: { number: 42, url: 'https://github.com/devorg/repo/pull/42', action: 'created' } } },
+        toolUseResult: {
+          gitOperation: {
+            pr: { number: 42, url: 'https://github.com/devorg/repo/pull/42', action: 'created' },
+          },
+        },
       };
 
       const { prLinks } = deriveSupportingRecords([prLink, bashResult]);
@@ -429,7 +508,15 @@ describe('deriveSupportingRecords', () => {
         ...base(32, { uuid: 'u2', timestamp: '2026-08-01T00:12:00.000Z' }),
         type: 'user',
         message: { role: 'user', content: [] },
-        toolUseResult: { gitOperation: { pr: { number: 99, url: 'https://github.com/devorg/other-repo/pull/99', action: 'commented' } } },
+        toolUseResult: {
+          gitOperation: {
+            pr: {
+              number: 99,
+              url: 'https://github.com/devorg/other-repo/pull/99',
+              action: 'commented',
+            },
+          },
+        },
       };
 
       const { prLinks } = deriveSupportingRecords([bashResult]);
@@ -449,7 +536,11 @@ describe('deriveSupportingRecords', () => {
         ...base(33, { uuid: 'u3', timestamp: '2026-08-01T00:13:00.000Z' }),
         type: 'user',
         message: { role: 'user', content: [] },
-        toolUseResult: { gitOperation: { pr: { number: 7, url: 'https://example.invalid/not-a-pr-url', action: 'created' } } },
+        toolUseResult: {
+          gitOperation: {
+            pr: { number: 7, url: 'https://example.invalid/not-a-pr-url', action: 'created' },
+          },
+        },
       };
 
       const { prLinks } = deriveSupportingRecords([bashResult]);
@@ -471,7 +562,12 @@ describe('deriveSupportingRecords', () => {
       const { prLinks } = deriveSupportingRecords([prLink]);
 
       expect(prLinks).toEqual([
-        { prNumber: 55, prUrl: 'https://github.com/devorg/repo/pull/55', prRepository: 'devorg/repo', timestampMs: 0 },
+        {
+          prNumber: 55,
+          prUrl: 'https://github.com/devorg/repo/pull/55',
+          prRepository: 'devorg/repo',
+          timestampMs: 0,
+        },
       ]);
     });
   });
@@ -504,15 +600,32 @@ describe('deriveSupportingRecords', () => {
 
       const { permissionModes } = deriveSupportingRecords([userEntry]);
 
-      expect(permissionModes).toEqual([{ mode: 'bypassPermissions', lineNumber: 1, timestampMs: userEntry.timestampMs }]);
+      expect(permissionModes).toEqual([
+        { mode: 'bypassPermissions', lineNumber: 1, timestampMs: userEntry.timestampMs },
+      ]);
     });
 
     it('treats plan_mode/auto_mode attachments as mode sources, but not plan_mode_exit/auto_mode_exit (the real destination mode arrives via the following permission-mode entry)', () => {
-      const planMode: PlanModeAttachment = { type: 'plan_mode', reminderType: 'full', isSubAgent: false, planFilePath: '/plan.md', planExists: false };
-      const planModeExit: PlanModeExitAttachment = { type: 'plan_mode_exit', planFilePath: '/plan.md', planExists: true };
+      const planMode: PlanModeAttachment = {
+        type: 'plan_mode',
+        reminderType: 'full',
+        isSubAgent: false,
+        planFilePath: '/plan.md',
+        planExists: false,
+      };
+      const planModeExit: PlanModeExitAttachment = {
+        type: 'plan_mode_exit',
+        planFilePath: '/plan.md',
+        planExists: true,
+      };
       const planEntry = attachmentEntry(1, planMode);
       const exitEntry = attachmentEntry(2, planModeExit);
-      const followUp: PermissionModeEntry = { type: 'permission-mode', permissionMode: 'auto', sessionId: 's', lineNumber: 3 };
+      const followUp: PermissionModeEntry = {
+        type: 'permission-mode',
+        permissionMode: 'auto',
+        sessionId: 's',
+        lineNumber: 3,
+      };
 
       const { permissionModes } = deriveSupportingRecords([planEntry, exitEntry, followUp]);
 
@@ -528,13 +641,20 @@ describe('deriveSupportingRecords', () => {
 
       const { permissionModes } = deriveSupportingRecords([autoEntry]);
 
-      expect(permissionModes).toEqual([{ mode: 'auto', lineNumber: 1, timestampMs: autoEntry.timestampMs }]);
+      expect(permissionModes).toEqual([
+        { mode: 'auto', lineNumber: 1, timestampMs: autoEntry.timestampMs },
+      ]);
     });
   });
 
   it('returns four empty arrays for empty input without throwing', () => {
     expect(() => deriveSupportingRecords([])).not.toThrow();
-    expect(deriveSupportingRecords([])).toEqual({ permissionModes: [], hooks: [], compactions: [], prLinks: [] });
+    expect(deriveSupportingRecords([])).toEqual({
+      permissionModes: [],
+      hooks: [],
+      compactions: [],
+      prLinks: [],
+    });
   });
 });
 

@@ -11,7 +11,12 @@ export type DbRequest =
   | { id: number; type: 'createProject'; project: Project }
   | { id: number; type: 'getProjects' }
   | { id: number; type: 'getProject'; projectId: string }
-  | { id: number; type: 'updateProject'; projectId: string; fields: { name?: string; description?: string } }
+  | {
+      id: number;
+      type: 'updateProject';
+      projectId: string;
+      fields: { name?: string; description?: string };
+    }
   | { id: number; type: 'deleteProject'; projectId: string }
   | { id: number; type: 'saveSession'; session: DashboardSession }
   | { id: number; type: 'upsertSessionByExternalId'; session: DashboardSession }

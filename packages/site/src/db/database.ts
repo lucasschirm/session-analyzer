@@ -7,8 +7,8 @@
  * bound parameters - user-controlled values are never interpolated into SQL.
  */
 
-import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import type { Database } from '@sqlite.org/sqlite-wasm';
+import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import type {
   DashboardSession,
   ModelTokenUsage,
@@ -145,7 +145,9 @@ export class DatabaseManager {
     // Run after the alterations above so `external_id` is guaranteed to
     // exist on both fresh databases (added in createTables) and databases
     // upgraded by this migration.
-    db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(project_id, external_id)');
+    db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(project_id, external_id)',
+    );
   }
 
   private createTables(): void {
@@ -252,9 +254,7 @@ export class DatabaseManager {
   }
 
   getProjects(): Project[] {
-    const rows = this.requireDb().selectObjects(
-      'SELECT * FROM projects ORDER BY updated_at DESC'
-    );
+    const rows = this.requireDb().selectObjects('SELECT * FROM projects ORDER BY updated_at DESC');
     return rows.map(rowToProject);
   }
 
@@ -270,7 +270,12 @@ export class DatabaseManager {
 
     db.exec({
       sql: 'UPDATE projects SET name = ?, description = ?, updated_at = ? WHERE id = ?',
-      bind: [fields.name ?? project.name, fields.description ?? project.description, Date.now(), id],
+      bind: [
+        fields.name ?? project.name,
+        fields.description ?? project.description,
+        Date.now(),
+        id,
+      ],
     });
   }
 
@@ -349,7 +354,10 @@ export class DatabaseManager {
     this.replaceSession({
       ...session,
       id: existing.id,
-      tool_executions: session.tool_executions.map((tool) => ({ ...tool, session_id: existing.id })),
+      tool_executions: session.tool_executions.map((tool) => ({
+        ...tool,
+        session_id: existing.id,
+      })),
       events: session.events.map((event) => ({ ...event, session_id: existing.id })),
       messages: session.messages.map((message) => ({ ...message, session_id: existing.id })),
     });
@@ -359,7 +367,7 @@ export class DatabaseManager {
   findSessionByExternalId(projectId: string, externalId: string): DashboardSession | null {
     const row = this.requireDb().selectObject(
       'SELECT * FROM sessions WHERE project_id = ? AND external_id = ?',
-      [projectId, externalId]
+      [projectId, externalId],
     ) as unknown as SessionRow | undefined;
     return row ? this.hydrateSession(row) : null;
   }
@@ -389,7 +397,9 @@ export class DatabaseManager {
         session.models && session.models.length > 0 ? JSON.stringify(session.models) : null,
         session.tasks && session.tasks.length > 0 ? JSON.stringify(session.tasks) : null,
         session.external_id ?? null,
-        session.subagents && session.subagents.length > 0 ? JSON.stringify(session.subagents) : null,
+        session.subagents && session.subagents.length > 0
+          ? JSON.stringify(session.subagents)
+          : null,
         session.context_compactions ?? 0,
         session.total_turns ?? 0,
         session.files_read ?? 0,
@@ -459,7 +469,7 @@ export class DatabaseManager {
   getSessionsByProject(projectId: string): DashboardSession[] {
     const rows = this.requireDb().selectObjects(
       'SELECT * FROM sessions WHERE project_id = ? ORDER BY started_at DESC',
-      [projectId]
+      [projectId],
     ) as unknown as SessionRow[];
     return rows.map((row) => this.hydrateSession(row));
   }
@@ -479,7 +489,7 @@ export class DatabaseManager {
                 WHERE m.session_id = s.id AND m.content LIKE ? COLLATE NOCASE
               ))
        ORDER BY s.started_at DESC`,
-      [projectId, like, like]
+      [projectId, like, like],
     ) as unknown as SessionRow[];
     return rows.map((row) => this.hydrateSession(row));
   }
@@ -535,7 +545,7 @@ export class DatabaseManager {
   private getToolExecutionsForSession(sessionId: string): ToolExecution[] {
     const rows = this.requireDb().selectObjects(
       'SELECT * FROM tool_executions WHERE session_id = ? ORDER BY timestamp ASC',
-      [sessionId]
+      [sessionId],
     ) as unknown as ToolExecutionRow[];
     return rows.map((row) => ({
       ...row,
@@ -551,7 +561,7 @@ export class DatabaseManager {
   private getSessionEventsForSession(sessionId: string): SessionEvent[] {
     const rows = this.requireDb().selectObjects(
       'SELECT * FROM session_events WHERE session_id = ? ORDER BY timestamp ASC',
-      [sessionId]
+      [sessionId],
     ) as unknown as EventRow[];
     return rows.map((row) => ({
       id: row.id,
@@ -566,7 +576,7 @@ export class DatabaseManager {
   private getMessagesForSession(sessionId: string): TranscriptMessage[] {
     const rows = this.requireDb().selectObjects(
       'SELECT * FROM session_messages WHERE session_id = ? ORDER BY timestamp ASC',
-      [sessionId]
+      [sessionId],
     ) as unknown as MessageRow[];
     return rows.map((row) => ({
       ...row,

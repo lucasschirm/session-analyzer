@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LitElement } from 'lit';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { dbClient } from '../../src/db/db-client';
 import '../../src/pages/home-page';
 import '../../src/pages/project-view';
@@ -7,9 +7,9 @@ import '../../src/pages/session-dashboard';
 import '../../src/pages/indicator-details';
 import '../../src/pages/session-transcript-page';
 import type { HomePage } from '../../src/pages/home-page';
+import type { IndicatorDetails } from '../../src/pages/indicator-details';
 import type { ProjectView } from '../../src/pages/project-view';
 import type { SessionDashboard } from '../../src/pages/session-dashboard';
-import type { IndicatorDetails } from '../../src/pages/indicator-details';
 import type { SessionTranscriptPage } from '../../src/pages/session-transcript-page';
 import type { DashboardSession, Project, SessionMetrics } from '../../src/types';
 
@@ -50,7 +50,7 @@ function childText(parent: ShadowRoot, selector: string): string {
 
 function allChildTexts(parent: ShadowRoot, selector: string): string[] {
   return Array.from(parent.querySelectorAll(selector)).map(
-    (child) => ((child as LitElement).shadowRoot?.textContent ?? '') as string
+    (child) => ((child as LitElement).shadowRoot?.textContent ?? '') as string,
   );
 }
 
@@ -201,20 +201,20 @@ describe('home-page', () => {
     const root = page.shadowRoot as ShadowRoot;
 
     const newButton = Array.from(root.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('+ New Project')
+      button.textContent?.includes('+ New Project'),
     );
-    newButton!.click();
+    newButton?.click();
     await page.updateComplete;
 
     const modal = root.querySelector('project-modal');
     expect(modal).not.toBeNull();
 
-    modal!.dispatchEvent(
+    modal?.dispatchEvent(
       new CustomEvent('project-create', {
         detail: { name: 'Created', description: 'From modal' },
         bubbles: true,
         composed: true,
-      })
+      }),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -230,7 +230,10 @@ describe('home-page', () => {
     vi.spyOn(dbClient, 'getProjects').mockResolvedValue([projectFixture()]);
     const deleteProject = vi.spyOn(dbClient, 'deleteProject').mockResolvedValue();
     // happy-dom has no window.confirm implementation.
-    vi.stubGlobal('confirm', vi.fn(() => true));
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    );
 
     const page = await mount(document.createElement('home-page') as HomePage);
     const root = page.shadowRoot as ShadowRoot;
@@ -245,7 +248,10 @@ describe('home-page', () => {
     vi.spyOn(dbClient, 'ensureReady').mockResolvedValue('memory');
     vi.spyOn(dbClient, 'getProjects').mockResolvedValue([projectFixture()]);
     const deleteProject = vi.spyOn(dbClient, 'deleteProject').mockResolvedValue();
-    vi.stubGlobal('confirm', vi.fn(() => false));
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => false),
+    );
 
     const page = await mount(document.createElement('home-page') as HomePage);
     ((page.shadowRoot as ShadowRoot).querySelector('.delete-button') as HTMLButtonElement).click();
@@ -262,9 +268,9 @@ describe('home-page', () => {
     const root = page.shadowRoot as ShadowRoot;
 
     const exportButton = Array.from(root.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Export Database')
+      button.textContent?.includes('Export Database'),
     );
-    exportButton!.click();
+    exportButton?.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(exportAndDownload).toHaveBeenCalled();
@@ -282,7 +288,9 @@ describe('project-view', () => {
   it('loads project, metrics and sessions', async () => {
     stubProjectLoad();
 
-    const view = Object.assign(document.createElement('project-view'), { projectId: 'p1' }) as ProjectView;
+    const view = Object.assign(document.createElement('project-view'), {
+      projectId: 'p1',
+    }) as ProjectView;
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
@@ -300,7 +308,9 @@ describe('project-view', () => {
     vi.spyOn(dbClient, 'getSessionsByProject').mockResolvedValue([]);
     vi.spyOn(dbClient, 'getProjectMetrics').mockResolvedValue(metricsFixture);
 
-    const view = Object.assign(document.createElement('project-view'), { projectId: 'missing' }) as ProjectView;
+    const view = Object.assign(document.createElement('project-view'), {
+      projectId: 'missing',
+    }) as ProjectView;
     await mount(view);
 
     expect((view.shadowRoot as ShadowRoot).textContent).toContain('Project not found');
@@ -312,7 +322,9 @@ describe('project-view', () => {
       .spyOn(dbClient, 'searchSessions')
       .mockResolvedValue([sessionFixture({ title: 'matched.jsonl' })]);
 
-    const view = Object.assign(document.createElement('project-view'), { projectId: 'p1' }) as ProjectView;
+    const view = Object.assign(document.createElement('project-view'), {
+      projectId: 'p1',
+    }) as ProjectView;
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
@@ -332,7 +344,9 @@ describe('project-view', () => {
       .spyOn(dbClient, 'getSessionsByProject')
       .mockResolvedValue([sessionFixture()]);
 
-    const view = Object.assign(document.createElement('project-view'), { projectId: 'p1' }) as ProjectView;
+    const view = Object.assign(document.createElement('project-view'), {
+      projectId: 'p1',
+    }) as ProjectView;
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
@@ -374,7 +388,7 @@ describe('session-dashboard', () => {
     const root = dashboard.shadowRoot as ShadowRoot;
 
     const cardLabels = Array.from(root.querySelectorAll('metrics-card')).map(
-      (card) => (card as HTMLElement & { label: string }).label
+      (card) => (card as HTMLElement & { label: string }).label,
     );
     expect(cardLabels).not.toContain('Total Tasks');
   });
@@ -407,7 +421,7 @@ describe('session-dashboard', () => {
             first_seen_at: 1_700_000_000_000,
           },
         ],
-      })
+      }),
     );
 
     const dashboard = Object.assign(document.createElement('session-dashboard'), {
@@ -474,7 +488,7 @@ describe('session-dashboard', () => {
             result: 'a'.repeat(20), // ceil(20/4) = 5 estimated tokens
           },
         ],
-      })
+      }),
     );
 
     const dashboard = Object.assign(document.createElement('session-dashboard'), {
@@ -507,7 +521,7 @@ describe('session-dashboard', () => {
             tool_call_count: 3,
           },
         ],
-      })
+      }),
     );
 
     const dashboard = Object.assign(document.createElement('session-dashboard'), {
@@ -553,7 +567,7 @@ describe('session-dashboard', () => {
             success: true,
           },
         ],
-      })
+      }),
     );
 
     const dashboard = Object.assign(document.createElement('session-dashboard'), {
@@ -566,13 +580,16 @@ describe('session-dashboard', () => {
     expect(root.querySelectorAll('.skill-item').length).toBe(1);
 
     const skillGroup = Array.from(root.querySelectorAll('.skill-item')).find((item) =>
-      item.textContent?.includes('Skill')
-    )!;
+      item.textContent?.includes('Skill'),
+    );
+    if (!skillGroup) throw new Error('Skill group item not found');
     expect(skillGroup.querySelector('.skill-usage')?.textContent).toContain('Total usage: 2');
     expect(skillGroup.querySelectorAll('.skill-params').length).toBe(2);
 
     expect(
-      Array.from(root.querySelectorAll('.skill-item')).some((item) => item.textContent?.includes('Agent'))
+      Array.from(root.querySelectorAll('.skill-item')).some((item) =>
+        item.textContent?.includes('Agent'),
+      ),
     ).toBe(false);
   });
 
@@ -625,11 +642,15 @@ describe('session-dashboard', () => {
     const root = dashboard.shadowRoot as ShadowRoot;
 
     const cards = root.querySelectorAll('metrics-card');
-    const filesWrittenCard = Array.from(cards).find((card) =>
-      (card as HTMLElement & { label: string }).label === 'Files Written'
+    const filesWrittenCard = Array.from(cards).find(
+      (card) => (card as HTMLElement & { label: string }).label === 'Files Written',
     );
-    filesWrittenCard!.dispatchEvent(
-      new CustomEvent('card-click', { detail: { label: 'Files Written' }, bubbles: true, composed: true })
+    filesWrittenCard?.dispatchEvent(
+      new CustomEvent('card-click', {
+        detail: { label: 'Files Written' },
+        bubbles: true,
+        composed: true,
+      }),
     );
 
     expect(window.location.hash).toBe('#/sessions/s1/indicator/files_written');
@@ -669,7 +690,7 @@ describe('indicator-details', () => {
             result: 'nothing to commit',
           },
         ],
-      })
+      }),
     );
 
     const page = Object.assign(document.createElement('indicator-details'), {
@@ -706,7 +727,7 @@ describe('indicator-details', () => {
             result: 'command failed',
           },
         ],
-      })
+      }),
     );
 
     const page = Object.assign(document.createElement('indicator-details'), {
@@ -759,7 +780,7 @@ describe('indicator-details', () => {
             result: 'export const x = 1;',
           },
         ],
-      })
+      }),
     );
 
     const page = Object.assign(document.createElement('indicator-details'), {
@@ -902,7 +923,7 @@ describe('indicator-details', () => {
             parent_uuid: 'missing-uuid',
           },
         ],
-      })
+      }),
     );
 
     const page = Object.assign(document.createElement('indicator-details'), {
@@ -915,11 +936,15 @@ describe('indicator-details', () => {
     // The reply (parent found) nests under its parent's node.
     const rootNodes = root.querySelectorAll('.message-tree > .message-node');
     expect(rootNodes.length).toBe(2); // "Fix the bug" root + orphaned "Orphaned reply" root
-    const parentNode = Array.from(rootNodes).find((node) => node.textContent?.includes('Fix the bug'));
+    const parentNode = Array.from(rootNodes).find((node) =>
+      node.textContent?.includes('Fix the bug'),
+    );
     expect(parentNode?.querySelector('.message-children')?.textContent).toContain('Fixed it.');
 
     // The orphaned reply (parent uuid not found) stays at the top level, not nested.
-    const orphanNode = Array.from(rootNodes).find((node) => node.textContent?.includes('Orphaned reply'));
+    const orphanNode = Array.from(rootNodes).find((node) =>
+      node.textContent?.includes('Orphaned reply'),
+    );
     expect(orphanNode?.querySelector('.message-children')).toBeNull();
   });
 
@@ -957,7 +982,7 @@ describe('indicator-details', () => {
             first_seen_at: 1_700_000_000_000,
           },
         ],
-      })
+      }),
     );
 
     const page = Object.assign(document.createElement('indicator-details'), {
@@ -1032,7 +1057,7 @@ describe('indicator-details', () => {
             parameters: { subagent_type: 'general-purpose' },
           },
         ],
-      })
+      }),
     );
 
     const page = Object.assign(document.createElement('indicator-details'), {
@@ -1075,7 +1100,7 @@ describe('indicator-details', () => {
             parent_uuid: 'u1',
           },
         ],
-      })
+      }),
     );
 
     const page = Object.assign(document.createElement('indicator-details'), {
@@ -1125,7 +1150,7 @@ describe('indicator-details', () => {
             parent_uuid: 'u1',
           },
         ],
-      })
+      }),
     );
 
     const page = Object.assign(document.createElement('indicator-details'), {
@@ -1215,7 +1240,7 @@ describe('session-transcript-page', () => {
             ],
           },
         ],
-      })
+      }),
     );
 
     const page = Object.assign(document.createElement('session-transcript-page'), {
@@ -1262,7 +1287,7 @@ describe('session-transcript-page', () => {
             ],
           },
         ],
-      })
+      }),
     );
 
     const page = Object.assign(document.createElement('session-transcript-page'), {

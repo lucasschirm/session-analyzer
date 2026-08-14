@@ -1,5 +1,5 @@
-import { LitElement, html, css } from 'lit';
-import { customElement, property, state, query } from 'lit/decorators.js';
+import { css, html, LitElement } from 'lit';
+import { customElement, property, query, state } from 'lit/decorators.js';
 
 /**
  * New Project modal.
@@ -144,14 +144,12 @@ export class ProjectModal extends LitElement {
         detail: { name, description: this.description.trim() },
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 
   private close(): void {
-    this.dispatchEvent(
-      new CustomEvent('modal-close', { bubbles: true, composed: true })
-    );
+    this.dispatchEvent(new CustomEvent('modal-close', { bubbles: true, composed: true }));
   }
 
   render() {

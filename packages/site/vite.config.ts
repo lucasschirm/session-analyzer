@@ -1,5 +1,5 @@
+import path from 'node:path';
 import { defineConfig } from 'vite';
-import path from 'path';
 
 /**
  * COOP/COEP headers are required for SharedArrayBuffer, which the SQLite

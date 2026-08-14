@@ -1,7 +1,7 @@
 import type { ClaudeScope } from '../types/common.js';
 import type { ClaudeCodeSettings, HookMatcherGroup } from '../types/config.js';
-import { stripBom, safeJsonParse } from '../utils/text.js';
 import { makeParseError } from '../utils/errors.js';
+import { safeJsonParse, stripBom } from '../utils/text.js';
 
 /** True for a non-null, non-array `object` — the only shape we ever trust
  *  enough to walk further. Every typed-field extraction below starts here;
@@ -64,7 +64,9 @@ function parseHookAction(value: unknown): HookMatcherGroup['hooks'][number] | un
   if (!isPlainObject(value)) return undefined;
   const type = asString(value.type);
   if (type === undefined) return undefined;
-  const hook: HookMatcherGroup['hooks'][number] = { type: type as HookMatcherGroup['hooks'][number]['type'] };
+  const hook: HookMatcherGroup['hooks'][number] = {
+    type: type as HookMatcherGroup['hooks'][number]['type'],
+  };
   const command = asString(value.command);
   if (command !== undefined) hook.command = command;
   const prompt = asString(value.prompt);
@@ -144,7 +146,11 @@ function parseSandbox(value: unknown): ClaudeCodeSettings['sandbox'] {
  * values. Redaction, if ever needed, belongs in a UI/display layer that
  * consumes this output — do not add redaction here.
  */
-export function parseSettings(content: string, scope: ClaudeScope, sourcePath?: string): ClaudeCodeSettings {
+export function parseSettings(
+  content: string,
+  scope: ClaudeScope,
+  sourcePath?: string,
+): ClaudeCodeSettings {
   const stripped = stripBom(content);
   const { value, error } = safeJsonParse<unknown>(stripped);
 
@@ -154,7 +160,11 @@ export function parseSettings(content: string, scope: ClaudeScope, sourcePath?: 
       scope,
       sourcePath,
       raw: {},
-      parseErrors: [makeParseError('invalid_json', `Failed to parse settings JSON: ${error}`, { rawSnippet: stripped.slice(0, 200) })],
+      parseErrors: [
+        makeParseError('invalid_json', `Failed to parse settings JSON: ${error}`, {
+          rawSnippet: stripped.slice(0, 200),
+        }),
+      ],
     };
   }
 
@@ -164,7 +174,11 @@ export function parseSettings(content: string, scope: ClaudeScope, sourcePath?: 
       scope,
       sourcePath,
       raw: {},
-      parseErrors: [makeParseError('unexpected_root_shape', 'Settings JSON root is not an object', { rawSnippet: stripped.slice(0, 200) })],
+      parseErrors: [
+        makeParseError('unexpected_root_shape', 'Settings JSON root is not an object', {
+          rawSnippet: stripped.slice(0, 200),
+        }),
+      ],
     };
   }
 
@@ -197,7 +211,8 @@ export function parseSettings(content: string, scope: ClaudeScope, sourcePath?: 
   if (enabledPlugins !== undefined) settings.enabledPlugins = enabledPlugins;
 
   const extraKnownMarketplaces = parseExtraKnownMarketplaces(value.extraKnownMarketplaces);
-  if (extraKnownMarketplaces !== undefined) settings.extraKnownMarketplaces = extraKnownMarketplaces;
+  if (extraKnownMarketplaces !== undefined)
+    settings.extraKnownMarketplaces = extraKnownMarketplaces;
 
   const sandbox = parseSandbox(value.sandbox);
   if (sandbox !== undefined) settings.sandbox = sandbox;

@@ -13,13 +13,12 @@
  * See spec: docs/superpowers/specs/2026-08-12-claude-session-parser-design.md
  */
 
-import { clampBlob } from '../utils/text.js';
-import { makeParseError } from '../utils/errors.js';
 import type { ParseError, ParseOptions } from '../types/common.js';
 import type {
   AgentListingDeltaAttachment,
   AgentMentionAttachment,
   AgentNameEntry,
+  AiTitleEntry,
   AssistantEntry,
   AttachmentEntry,
   AutoModeAttachment,
@@ -54,11 +53,10 @@ import type {
   PlanModeAttachment,
   PlanModeExitAttachment,
   PrLinkEntry,
-  QueueOperationEntry,
   QueuedCommandAttachment,
+  QueueOperationEntry,
   ReadTruncationNoticeAttachment,
   RelocatedEntry,
-  AiTitleEntry,
   SkillListingAttachment,
   StructuredOutputAttachment,
   SummaryEntry,
@@ -71,6 +69,8 @@ import type {
   UserEntry,
   WorktreeStateEntry,
 } from '../types/session.js';
+import { makeParseError } from '../utils/errors.js';
+import { clampBlob } from '../utils/text.js';
 
 export interface EntryParseOutcome {
   entry: ClaudeCodeEntry | null;
@@ -237,7 +237,9 @@ function inlineTruncationFromText(text: string): TruncationSignal | undefined {
   const match = INLINE_TRUNCATION_RE.exec(text);
   if (!match) return undefined;
   const droppedChars = Number(match[1]);
-  return Number.isFinite(droppedChars) ? { kind: 'inline_char_count', droppedChars } : { kind: 'inline_char_count' };
+  return Number.isFinite(droppedChars)
+    ? { kind: 'inline_char_count', droppedChars }
+    : { kind: 'inline_char_count' };
 }
 
 function inlineTruncationFromBlockContent(content: unknown): TruncationSignal | undefined {
@@ -259,7 +261,10 @@ function inlineTruncationFromBlockContent(content: unknown): TruncationSignal | 
  * the same result) as a fallback source. Returns `undefined` when no real
  * signal is present — callers must not invent one.
  */
-function resolveTruncationSignal(blockContent: unknown, toolUseResult: unknown): TruncationSignal | undefined {
+function resolveTruncationSignal(
+  blockContent: unknown,
+  toolUseResult: unknown,
+): TruncationSignal | undefined {
   const fromBlock = inlineTruncationFromBlockContent(blockContent);
   if (fromBlock) return fromBlock;
 
@@ -304,7 +309,9 @@ function buildContentBlocks(raw: unknown, toolUseResult: unknown): ContentBlock[
 // assistant
 // ---------------------------------------------------------------------------
 
-function buildAssistantUsage(raw: unknown): NonNullable<AssistantEntry['message']['usage']> | undefined {
+function buildAssistantUsage(
+  raw: unknown,
+): NonNullable<AssistantEntry['message']['usage']> | undefined {
   if (!isRecord(raw)) return undefined;
   const usage: NonNullable<AssistantEntry['message']['usage']> = {
     input_tokens: numOr0(raw.input_tokens),
@@ -313,7 +320,9 @@ function buildAssistantUsage(raw: unknown): NonNullable<AssistantEntry['message'
     cache_read_input_tokens: numOr0(raw.cache_read_input_tokens),
   };
   if (isRecord(raw.cache_creation)) {
-    const cacheCreation: NonNullable<NonNullable<AssistantEntry['message']['usage']>['cache_creation']> = {};
+    const cacheCreation: NonNullable<
+      NonNullable<AssistantEntry['message']['usage']>['cache_creation']
+    > = {};
     if (typeof raw.cache_creation.ephemeral_1h_input_tokens === 'number') {
       cacheCreation.ephemeral_1h_input_tokens = raw.cache_creation.ephemeral_1h_input_tokens;
     }
@@ -322,7 +331,10 @@ function buildAssistantUsage(raw: unknown): NonNullable<AssistantEntry['message'
     }
     usage.cache_creation = cacheCreation;
   }
-  if (isRecord(raw.output_tokens_details) && typeof raw.output_tokens_details.thinking_tokens === 'number') {
+  if (
+    isRecord(raw.output_tokens_details) &&
+    typeof raw.output_tokens_details.thinking_tokens === 'number'
+  ) {
     usage.output_tokens_details = { thinking_tokens: raw.output_tokens_details.thinking_tokens };
   }
   // NOTE: `iterations` is retained verbatim for observability, but MUST NOT
@@ -339,8 +351,11 @@ function buildDiagnostics(raw: unknown): AssistantEntry['message']['diagnostics'
   if (!isRecord(raw)) return undefined;
   const diagnostics: NonNullable<AssistantEntry['message']['diagnostics']> = {};
   if (isRecord(raw.cache_miss_reason)) {
-    const cacheMissReason: NonNullable<NonNullable<AssistantEntry['message']['diagnostics']>['cache_miss_reason']> = {};
-    if (typeof raw.cache_miss_reason.type === 'string') cacheMissReason.type = raw.cache_miss_reason.type;
+    const cacheMissReason: NonNullable<
+      NonNullable<AssistantEntry['message']['diagnostics']>['cache_miss_reason']
+    > = {};
+    if (typeof raw.cache_miss_reason.type === 'string')
+      cacheMissReason.type = raw.cache_miss_reason.type;
     if (typeof raw.cache_miss_reason.cache_missed_input_tokens === 'number') {
       cacheMissReason.cache_missed_input_tokens = raw.cache_miss_reason.cache_missed_input_tokens;
     }
@@ -416,7 +431,9 @@ function parseUserEntry(
   // the type contract; the raw value (object OR string) is still consulted
   // below for truncation-marker mirroring regardless of its shape.
   const rawToolUseResult = obj.toolUseResult;
-  const toolUseResultRecord = isRecord(rawToolUseResult) ? (rawToolUseResult as ToolUseResult) : undefined;
+  const toolUseResultRecord = isRecord(rawToolUseResult)
+    ? (rawToolUseResult as ToolUseResult)
+    : undefined;
 
   const rawContent = rawMessage.content;
   const content: string | ContentBlock[] =
@@ -437,7 +454,8 @@ function parseUserEntry(
   const sourceToolUseID = str(obj, 'sourceToolUseID');
   if (sourceToolUseID !== undefined) entry.sourceToolUseID = sourceToolUseID;
   const sourceToolAssistantUUID = str(obj, 'sourceToolAssistantUUID');
-  if (sourceToolAssistantUUID !== undefined) entry.sourceToolAssistantUUID = sourceToolAssistantUUID;
+  if (sourceToolAssistantUUID !== undefined)
+    entry.sourceToolAssistantUUID = sourceToolAssistantUUID;
   const toolDenialKind = str(obj, 'toolDenialKind');
   if (toolDenialKind !== undefined) entry.toolDenialKind = toolDenialKind;
   const toolEndsTurn = bool(obj, 'toolEndsTurn');
@@ -445,7 +463,8 @@ function parseUserEntry(
   const isCompactSummary = bool(obj, 'isCompactSummary');
   if (isCompactSummary !== undefined) entry.isCompactSummary = isCompactSummary;
   const isVisibleInTranscriptOnly = bool(obj, 'isVisibleInTranscriptOnly');
-  if (isVisibleInTranscriptOnly !== undefined) entry.isVisibleInTranscriptOnly = isVisibleInTranscriptOnly;
+  if (isVisibleInTranscriptOnly !== undefined)
+    entry.isVisibleInTranscriptOnly = isVisibleInTranscriptOnly;
   const interruptedByShutdown = bool(obj, 'interruptedByShutdown');
   if (interruptedByShutdown !== undefined) entry.interruptedByShutdown = interruptedByShutdown;
   const interruptedMessageId = str(obj, 'interruptedMessageId');
@@ -518,7 +537,8 @@ function parseSystemEntry(
     });
   }
   if (Array.isArray(obj.hookErrors)) entry.hookErrors = obj.hookErrors;
-  if (Array.isArray(obj.hookAdditionalContext)) entry.hookAdditionalContext = obj.hookAdditionalContext;
+  if (Array.isArray(obj.hookAdditionalContext))
+    entry.hookAdditionalContext = obj.hookAdditionalContext;
   const preventedContinuation = bool(obj, 'preventedContinuation');
   if (preventedContinuation !== undefined) entry.preventedContinuation = preventedContinuation;
   const stopReason = str(obj, 'stopReason');
@@ -532,7 +552,8 @@ function parseSystemEntry(
   const compactMetadata = buildCompactMetadata(obj.compactMetadata);
   if (compactMetadata !== undefined) entry.compactMetadata = compactMetadata;
   const pendingBackgroundAgentCount = num(obj, 'pendingBackgroundAgentCount');
-  if (pendingBackgroundAgentCount !== undefined) entry.pendingBackgroundAgentCount = pendingBackgroundAgentCount;
+  if (pendingBackgroundAgentCount !== undefined)
+    entry.pendingBackgroundAgentCount = pendingBackgroundAgentCount;
   return entry;
 }
 
@@ -616,7 +637,10 @@ function parseAttachment(
       return { attachment };
     }
     case 'command_permissions': {
-      const attachment: CommandPermissionsAttachment = { type, allowedTools: strArr(raw, 'allowedTools') ?? [] };
+      const attachment: CommandPermissionsAttachment = {
+        type,
+        allowedTools: strArr(raw, 'allowedTools') ?? [],
+      };
       return { attachment };
     }
     case 'nested_memory': {
@@ -734,11 +758,17 @@ function parseAttachment(
       return { attachment };
     }
     case 'hook_non_blocking_error': {
-      const attachment: HookNonBlockingErrorAttachment = { ...raw, type } as HookNonBlockingErrorAttachment;
+      const attachment: HookNonBlockingErrorAttachment = {
+        ...raw,
+        type,
+      } as HookNonBlockingErrorAttachment;
       return { attachment };
     }
     case 'hook_system_message': {
-      const attachment: HookSystemMessageAttachment = { ...raw, type } as HookSystemMessageAttachment;
+      const attachment: HookSystemMessageAttachment = {
+        ...raw,
+        type,
+      } as HookSystemMessageAttachment;
       return { attachment };
     }
     default: {
@@ -769,10 +799,18 @@ function parseAttachmentEntry(
 // ---------------------------------------------------------------------------
 
 function parseModeEntry(obj: Record<string, unknown>, lineNumber: number): ModeEntry {
-  return { type: 'mode', mode: str(obj, 'mode') ?? '', sessionId: str(obj, 'sessionId') ?? '', lineNumber };
+  return {
+    type: 'mode',
+    mode: str(obj, 'mode') ?? '',
+    sessionId: str(obj, 'sessionId') ?? '',
+    lineNumber,
+  };
 }
 
-function parsePermissionModeEntry(obj: Record<string, unknown>, lineNumber: number): PermissionModeEntry {
+function parsePermissionModeEntry(
+  obj: Record<string, unknown>,
+  lineNumber: number,
+): PermissionModeEntry {
   return {
     type: 'permission-mode',
     permissionMode: (str(obj, 'permissionMode') ?? '') as PermissionModeEntry['permissionMode'],
@@ -821,7 +859,10 @@ function parsePrLinkEntry(obj: Record<string, unknown>, lineNumber: number): PrL
   };
 }
 
-function parseBridgeSessionEntry(obj: Record<string, unknown>, lineNumber: number): BridgeSessionEntry {
+function parseBridgeSessionEntry(
+  obj: Record<string, unknown>,
+  lineNumber: number,
+): BridgeSessionEntry {
   return {
     type: 'bridge-session',
     sessionId: str(obj, 'sessionId') ?? '',
@@ -831,7 +872,10 @@ function parseBridgeSessionEntry(obj: Record<string, unknown>, lineNumber: numbe
   };
 }
 
-function parseQueueOperationEntry(obj: Record<string, unknown>, lineNumber: number): QueueOperationEntry {
+function parseQueueOperationEntry(
+  obj: Record<string, unknown>,
+  lineNumber: number,
+): QueueOperationEntry {
   return {
     type: 'queue-operation',
     operation: (str(obj, 'operation') ?? '') as QueueOperationEntry['operation'],
@@ -842,7 +886,10 @@ function parseQueueOperationEntry(obj: Record<string, unknown>, lineNumber: numb
   };
 }
 
-function parseFileHistorySnapshotEntry(obj: Record<string, unknown>, lineNumber: number): FileHistorySnapshotEntry {
+function parseFileHistorySnapshotEntry(
+  obj: Record<string, unknown>,
+  lineNumber: number,
+): FileHistorySnapshotEntry {
   return {
     type: 'file-history-snapshot',
     messageId: str(obj, 'messageId') ?? '',
@@ -852,7 +899,10 @@ function parseFileHistorySnapshotEntry(obj: Record<string, unknown>, lineNumber:
   };
 }
 
-function parseFileHistoryDeltaEntry(obj: Record<string, unknown>, lineNumber: number): FileHistoryDeltaEntry {
+function parseFileHistoryDeltaEntry(
+  obj: Record<string, unknown>,
+  lineNumber: number,
+): FileHistoryDeltaEntry {
   const backupRaw = isRecord(obj.backup) ? obj.backup : {};
   return {
     type: 'file-history-delta',
@@ -860,7 +910,8 @@ function parseFileHistoryDeltaEntry(obj: Record<string, unknown>, lineNumber: nu
     snapshotMessageId: str(obj, 'snapshotMessageId') ?? '',
     trackingPath: str(obj, 'trackingPath') ?? '',
     backup: {
-      backupFileName: typeof backupRaw.backupFileName === 'string' ? backupRaw.backupFileName : null,
+      backupFileName:
+        typeof backupRaw.backupFileName === 'string' ? backupRaw.backupFileName : null,
       version: num(backupRaw, 'version') ?? 0,
       backupTime: str(backupRaw, 'backupTime') ?? '',
       realParentDir: str(backupRaw, 'realParentDir') ?? '',
@@ -879,7 +930,10 @@ function parseRelocatedEntry(obj: Record<string, unknown>, lineNumber: number): 
   };
 }
 
-function parseWorktreeStateEntry(obj: Record<string, unknown>, lineNumber: number): WorktreeStateEntry {
+function parseWorktreeStateEntry(
+  obj: Record<string, unknown>,
+  lineNumber: number,
+): WorktreeStateEntry {
   const ws = isRecord(obj.worktreeSession) ? obj.worktreeSession : {};
   return {
     type: 'worktree-state',
@@ -910,7 +964,11 @@ function parseSummaryEntry(obj: Record<string, unknown>, lineNumber: number): Su
 // Dispatch
 // ---------------------------------------------------------------------------
 
-export function parseEntry(raw: Record<string, unknown>, lineNumber: number, options?: ParseOptions): EntryParseOutcome {
+export function parseEntry(
+  raw: Record<string, unknown>,
+  lineNumber: number,
+  options?: ParseOptions,
+): EntryParseOutcome {
   const errors: ParseError[] = [];
   // `raw` is typed as Record<string, unknown> by the frozen signature, but a
   // JSON-valid line can still deserialize to an array/primitive/null — never

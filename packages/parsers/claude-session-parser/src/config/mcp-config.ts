@@ -1,8 +1,8 @@
 import type { ClaudeScope, ParseError } from '../types/common.js';
 import type { McpConfig, McpServerConfig } from '../types/config.js';
-import { stripBom, safeJsonParse } from '../utils/text.js';
 import { makeParseError } from '../utils/errors.js';
 import { mcpServerNameToNamespace } from '../utils/mcp-names.js';
+import { safeJsonParse, stripBom } from '../utils/text.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -111,7 +111,11 @@ export function parseMcp(content: string, scope?: ClaudeScope, sourcePath?: stri
       sourcePath,
       scope: resolvedScope,
       servers: [],
-      parseErrors: [makeParseError('invalid_json', `Failed to parse MCP config JSON: ${error}`, { rawSnippet: stripped.slice(0, 200) })],
+      parseErrors: [
+        makeParseError('invalid_json', `Failed to parse MCP config JSON: ${error}`, {
+          rawSnippet: stripped.slice(0, 200),
+        }),
+      ],
     };
   }
 
@@ -121,7 +125,11 @@ export function parseMcp(content: string, scope?: ClaudeScope, sourcePath?: stri
       sourcePath,
       scope: resolvedScope,
       servers: [],
-      parseErrors: [makeParseError('unexpected_root_shape', 'MCP config JSON root is not an object', { rawSnippet: stripped.slice(0, 200) })],
+      parseErrors: [
+        makeParseError('unexpected_root_shape', 'MCP config JSON root is not an object', {
+          rawSnippet: stripped.slice(0, 200),
+        }),
+      ],
     };
   }
 
@@ -132,7 +140,9 @@ export function parseMcp(content: string, scope?: ClaudeScope, sourcePath?: stri
     if (isPlainObject(value.mcpServers)) {
       serverMap = value.mcpServers;
     } else {
-      parseErrors.push(makeParseError('invalid_mcp_servers_shape', '"mcpServers" is present but is not an object'));
+      parseErrors.push(
+        makeParseError('invalid_mcp_servers_shape', '"mcpServers" is present but is not an object'),
+      );
     }
   } else {
     // No `mcpServers` wrapper — only accept this as a bare server map when
@@ -141,7 +151,12 @@ export function parseMcp(content: string, scope?: ClaudeScope, sourcePath?: stri
     if (looksLikeServerMap) {
       serverMap = value;
     } else {
-      parseErrors.push(makeParseError('not_mcp_config', 'No "mcpServers" key and no top-level value looks like a server config'));
+      parseErrors.push(
+        makeParseError(
+          'not_mcp_config',
+          'No "mcpServers" key and no top-level value looks like a server config',
+        ),
+      );
     }
   }
 
@@ -152,7 +167,12 @@ export function parseMcp(content: string, scope?: ClaudeScope, sourcePath?: stri
       if (server) {
         servers.push(server);
       } else {
-        parseErrors.push(makeParseError('invalid_server_config', `MCP server "${name}" is not a valid config object`));
+        parseErrors.push(
+          makeParseError(
+            'invalid_server_config',
+            `MCP server "${name}" is not a valid config object`,
+          ),
+        );
       }
     }
   }
