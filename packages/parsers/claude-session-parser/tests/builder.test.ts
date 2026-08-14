@@ -541,7 +541,6 @@ describe('buildConfigSnapshot', () => {
   });
 
   it('never throws on garbage input and still returns a valid snapshot', () => {
-    // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input type to test defensive/garbage-input handling
     const garbageInput = [
       null,
       undefined,
@@ -550,6 +549,7 @@ describe('buildConfigSnapshot', () => {
       [1, 2, 3],
       { kind: 'not-a-real-kind' },
       {},
+      // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input type to test defensive/garbage-input handling
     ] as any;
 
     expect(() => buildConfigSnapshot(garbageInput)).not.toThrow();
