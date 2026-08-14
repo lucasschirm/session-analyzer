@@ -42,7 +42,7 @@ describe('detectClaudeCode', () => {
   });
 
   it('tolerates leading blank lines before the first real entry', () => {
-    const content = '\n\n   \n' + readFixture('t8-session-transcript.jsonl');
+    const content = `\n\n   \n${readFixture('t8-session-transcript.jsonl')}`;
     expect(detectClaudeCode(content)).toBe(true);
   });
 

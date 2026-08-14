@@ -99,7 +99,7 @@ describe('buildConfigSnapshot: skill/rule/marketplace bucketing', () => {
 
     expect(snapshot.inventories[0].skills).toEqual([skill]);
     expect(snapshot.skillsByName).toEqual({});
-    expect(Object.prototype.hasOwnProperty.call(snapshot.skillsByName, '')).toBe(false);
+    expect(Object.hasOwn(snapshot.skillsByName, '')).toBe(false);
   });
 
   it('buckets a rule-definition into bucket.rules', () => {

@@ -232,6 +232,7 @@ describe('parseMcp', () => {
     expect(byName.helper).toMatchObject({
       transport: 'http',
       url: 'https://mcp.example.com/mcp',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var placeholder syntax under test, not a template interpolation
       headers: { Authorization: 'Bearer ${HELPER_API_KEY}' },
     });
     expect(byName['legacy-sse'].transport).toBe('sse');

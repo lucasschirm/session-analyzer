@@ -344,7 +344,7 @@ describe('appendSettings', () => {
 describe('never throw on garbage appendX input', () => {
   it('every appendX records a ParseError instead of throwing on a garbage value', () => {
     const builder = parseSession(baseSession());
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input type to test defensive/garbage-input handling
     const garbage = 42 as any;
 
     expect(() => builder.appendMcp(garbage)).not.toThrow();
@@ -452,7 +452,7 @@ describe('buildConfigSnapshot', () => {
   });
 
   it('never throws on garbage input and still returns a valid snapshot', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input type to test defensive/garbage-input handling
     const garbageInput = [null, undefined, 42, 'oops', [1, 2, 3], { kind: 'not-a-real-kind' }, {}] as any;
 
     expect(() => buildConfigSnapshot(garbageInput)).not.toThrow();
@@ -468,9 +468,9 @@ describe('buildConfigSnapshot', () => {
   });
 
   it('never throws when handed a non-array', () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input type to test defensive/garbage-input handling
     expect(() => buildConfigSnapshot(null as any)).not.toThrow();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: intentionally invalid input type to test defensive/garbage-input handling
     const snapshot = buildConfigSnapshot(null as any);
     expect(snapshot.inventories).toEqual([]);
   });

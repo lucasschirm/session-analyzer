@@ -60,7 +60,7 @@ describe('safeJsonParse', () => {
     const result = safeJsonParse('{not valid json');
     expect(result.value).toBeNull();
     expect(typeof result.error).toBe('string');
-    expect(result.error!.length).toBeGreaterThan(0);
+    expect(result.error?.length).toBeGreaterThan(0);
   });
 });
 
@@ -361,7 +361,7 @@ describe('parseFrontmatter (unescapeDoubleQuoted)', () => {
   it('handles tab, CR, escaped quote, escaped backslash, and an unknown escape', () => {
     // Raw YAML source line (backslashes are literal, not JS escapes):
     // key: "a\tb\rc\"d\\e\qf"
-    const md = '---\n' + String.raw`key: "a\tb\rc\"d\\e\qf"` + '\n---\n';
+    const md = `---\n${String.raw`key: "a\tb\rc\"d\\e\qf"`}\n---\n`;
     const { frontmatter } = parseFrontmatter(md);
     expect(frontmatter.key).toBe('a\tb\rc"d\\eqf');
   });
