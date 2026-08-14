@@ -32,7 +32,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build application
-        run: pnpm --filter site build
+        run: pnpm --filter site... build
 
       - name: Run unit tests (Vitest, with coverage)
         run: pnpm --filter site test:coverage
