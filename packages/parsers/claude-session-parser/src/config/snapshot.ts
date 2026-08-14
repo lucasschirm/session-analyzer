@@ -22,6 +22,7 @@ import type {
   SkillDefinition,
 } from '../types/config.js';
 import { makeParseError } from '../utils/errors.js';
+import { getOrThrow } from '../utils/maps.js';
 
 type ParsedConfigItem = AgentDefinition | SkillDefinition | RuleDefinition | McpConfig | ClaudeCodeSettings | PluginMarketplace;
 
@@ -365,7 +366,7 @@ export function buildConfigSnapshot(parsed: Array<ParsedConfigItem>, scope?: Cla
     }
   });
 
-  const inventories = bucketOrder.map((key) => buckets.get(key)!);
+  const inventories = bucketOrder.map((key) => getOrThrow(buckets, key));
   const effectiveSettings = mergeEffectiveSettings(allSettings, scope ?? 'unknown');
 
   return {

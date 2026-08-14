@@ -32,6 +32,7 @@ import type {
 import type { SkillAvailabilityRecord } from '../../types/timeline.js';
 import type { TimelineDeriveOptions } from './context.js';
 import { eventFrom, isAttachment } from './context.js';
+import { getOrThrow } from '../../utils/maps.js';
 import { isSkillTool } from '../../utils/tool-names.js';
 import { clampBlob } from '../../utils/text.js';
 
@@ -260,7 +261,7 @@ export function deriveSkillTimeline(entries: ClaudeCodeEntry[], options?: Timeli
           const candidate = entries[resultIdx + 1];
           if (candidate && candidate.type === 'user' && (candidate as UserEntry).isMeta) {
             const text = extractUserText((candidate as UserEntry).message);
-            if (text && text.startsWith(EXPANSION_PREFIX)) {
+            if (text?.startsWith(EXPANSION_PREFIX)) {
               invocation.launched = true;
               if (rec.injectedContent === undefined) {
                 rec.injectedContent = clampBlob(text, maxBlobBytes);
@@ -278,9 +279,9 @@ export function deriveSkillTimeline(entries: ClaudeCodeEntry[], options?: Timeli
   }
 
   for (const name of order) {
-    const rec = records.get(name)!;
+    const rec = getOrThrow(records, name);
     rec.invocationCount = rec.invocations.length;
   }
 
-  return order.map((name) => records.get(name)!);
+  return order.map((name) => getOrThrow(records, name));
 }

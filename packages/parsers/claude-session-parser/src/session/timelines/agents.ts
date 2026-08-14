@@ -29,6 +29,7 @@ import type {
 import type { AgentAvailabilityRecord, SubagentLaunchRecord } from '../../types/timeline.js';
 import type { TimelineDeriveOptions } from './context.js';
 import { eventFrom, isAttachment } from './context.js';
+import { getOrThrow } from '../../utils/maps.js';
 import { isAgentTool } from '../../utils/tool-names.js';
 
 /**
@@ -232,5 +233,5 @@ export function deriveAgentTimeline(
     }
   }
 
-  return { agents: order.map((t) => records.get(t)!), subagentLaunches };
+  return { agents: order.map((t) => getOrThrow(records, t)), subagentLaunches };
 }

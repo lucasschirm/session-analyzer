@@ -29,6 +29,7 @@ import type {
 } from '../../types/session.js';
 import type { RuleAvailabilityAction, RuleFrontmatter, RuleRecord, RuleScope } from '../../types/timeline.js';
 import { normalizeGlobs, parseFrontmatter } from '../../utils/frontmatter.js';
+import { getOrThrow } from '../../utils/maps.js';
 import { clampBlob } from '../../utils/text.js';
 import { eventFrom, isAttachment } from './context.js';
 import type { TimelineDeriveOptions } from './context.js';
@@ -142,9 +143,8 @@ export function deriveRuleTimeline(entries: ClaudeCodeEntry[], options?: Timelin
       }
 
       record.availability.push(eventFrom<RuleAvailabilityAction>(entry, 'referenced'));
-      continue;
     }
   }
 
-  return order.map((path) => byPath.get(path)!);
+  return order.map((path) => getOrThrow(byPath, path));
 }
