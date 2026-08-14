@@ -14,12 +14,17 @@
     "test:watch": "pnpm --filter site test:watch",
     "test:e2e": "pnpm --filter site test:e2e",
     "test:e2e:ui": "pnpm --filter site test:e2e:ui",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "verify": "pnpm -r --parallel run verify",
     "prepare": "husky"
   },
   "author": "",
   "license": "ISC",
   "packageManager": "pnpm@10.34.5",
   "devDependencies": {
+    "@biomejs/biome": "2.5.8",
     "husky": "^9.1.7"
   }
 }
