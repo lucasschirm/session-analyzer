@@ -39,8 +39,3 @@ const snapshot = buildConfigSnapshot([
   parseMcp(mcpJson),
 ]);
 ```
-
-## Design spec
-
-The full design — every type, field, and resolved decision — lives at
-[`docs/superpowers/specs/2026-08-12-claude-session-parser-design.md`](../../../docs/superpowers/specs/2026-08-12-claude-session-parser-design.md).
