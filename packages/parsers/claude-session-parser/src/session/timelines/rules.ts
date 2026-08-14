@@ -27,17 +27,24 @@ import type {
   CompactFileReferenceAttachment,
   NestedMemoryAttachment,
 } from '../../types/session.js';
-import type { RuleAvailabilityAction, RuleFrontmatter, RuleRecord, RuleScope } from '../../types/timeline.js';
+import type {
+  RuleAvailabilityAction,
+  RuleFrontmatter,
+  RuleRecord,
+  RuleScope,
+} from '../../types/timeline.js';
 import { normalizeGlobs, parseFrontmatter } from '../../utils/frontmatter.js';
 import { getOrThrow } from '../../utils/maps.js';
 import { clampBlob } from '../../utils/text.js';
-import { eventFrom, isAttachment } from './context.js';
 import type { TimelineDeriveOptions } from './context.js';
+import { eventFrom, isAttachment } from './context.js';
 
 const KNOWN_RULE_SCOPES = new Set<RuleScope>(['Project', 'User', 'Local', 'Managed']);
 
 function toRuleScope(type: string | undefined): RuleScope {
-  return type !== undefined && KNOWN_RULE_SCOPES.has(type as RuleScope) ? (type as RuleScope) : 'Unknown';
+  return type !== undefined && KNOWN_RULE_SCOPES.has(type as RuleScope)
+    ? (type as RuleScope)
+    : 'Unknown';
 }
 
 /** Last path segment, tolerant of a trailing slash. Used as the filename
@@ -59,7 +66,10 @@ function deriveTitle(body: string, path: string): string {
   return basename(path);
 }
 
-export function deriveRuleTimeline(entries: ClaudeCodeEntry[], options?: TimelineDeriveOptions): RuleRecord[] {
+export function deriveRuleTimeline(
+  entries: ClaudeCodeEntry[],
+  options?: TimelineDeriveOptions,
+): RuleRecord[] {
   const maxBlobBytes = options?.maxBlobBytes;
   const byPath = new Map<string, RuleRecord>();
   const order: string[] = [];

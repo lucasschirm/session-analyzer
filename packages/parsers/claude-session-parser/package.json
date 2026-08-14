@@ -20,7 +20,10 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome check src tests",
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.10",

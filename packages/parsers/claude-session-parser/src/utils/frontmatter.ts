@@ -69,7 +69,9 @@ export function parseFrontmatter(markdown: string): ParsedFrontmatter {
  * comma-separated scalar, a quoted scalar, or a YAML list (block or
  * inline).
  */
-export function normalizeGlobs(fm: RuleFrontmatter | Record<string, unknown> | null | undefined): string[] {
+export function normalizeGlobs(
+  fm: RuleFrontmatter | Record<string, unknown> | null | undefined,
+): string[] {
   if (!fm || typeof fm !== 'object') return [];
   const record = fm as Record<string, unknown>;
   const raw = record.globs ?? record.paths;
@@ -92,7 +94,10 @@ function normalizeGlobValue(raw: unknown): string[] {
 }
 
 function stripSurroundingQuotes(s: string): string {
-  if (s.length >= 2 && ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))) {
+  if (
+    s.length >= 2 &&
+    ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
+  ) {
     return s.slice(1, -1);
   }
   return s;
@@ -180,7 +185,11 @@ function parseYamlMap(
       while (j < end && lines[j].trim() === '') j++;
       const lookaheadIndent = j < end ? indentOf(lines[j]) : -1;
       const lookaheadTrimmed = j < end ? lines[j].slice(lookaheadIndent) : '';
-      if (j < end && lookaheadIndent > indent && (lookaheadTrimmed === '-' || lookaheadTrimmed.startsWith('- '))) {
+      if (
+        j < end &&
+        lookaheadIndent > indent &&
+        (lookaheadTrimmed === '-' || lookaheadTrimmed.startsWith('- '))
+      ) {
         const list = parseYamlList(lines, j, end, indent);
         obj[key] = list.items;
         i = list.next;

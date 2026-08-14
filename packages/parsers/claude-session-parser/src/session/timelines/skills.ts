@@ -30,11 +30,11 @@ import type {
   UserEntry,
 } from '../../types/session.js';
 import type { SkillAvailabilityRecord } from '../../types/timeline.js';
+import { getOrThrow } from '../../utils/maps.js';
+import { clampBlob } from '../../utils/text.js';
+import { isSkillTool } from '../../utils/tool-names.js';
 import type { TimelineDeriveOptions } from './context.js';
 import { eventFrom, isAttachment } from './context.js';
-import { getOrThrow } from '../../utils/maps.js';
-import { isSkillTool } from '../../utils/tool-names.js';
-import { clampBlob } from '../../utils/text.js';
 
 const EXPANSION_PREFIX = 'Base directory for this skill: ';
 
@@ -126,7 +126,11 @@ function buildResultIndexByToolUseId(entries: ClaudeCodeEntry[]): Map<string, nu
     const { content } = entry.message;
     if (!Array.isArray(content)) return;
     for (const block of content) {
-      if (block.type === 'tool_result' && typeof block.tool_use_id === 'string' && !map.has(block.tool_use_id)) {
+      if (
+        block.type === 'tool_result' &&
+        typeof block.tool_use_id === 'string' &&
+        !map.has(block.tool_use_id)
+      ) {
         map.set(block.tool_use_id, idx);
       }
     }
@@ -134,7 +138,10 @@ function buildResultIndexByToolUseId(entries: ClaudeCodeEntry[]): Map<string, nu
   return map;
 }
 
-export function deriveSkillTimeline(entries: ClaudeCodeEntry[], options?: TimelineDeriveOptions): SkillAvailabilityRecord[] {
+export function deriveSkillTimeline(
+  entries: ClaudeCodeEntry[],
+  options?: TimelineDeriveOptions,
+): SkillAvailabilityRecord[] {
   const maxBlobBytes = options?.maxBlobBytes;
   const records = new Map<string, SkillAvailabilityRecord>();
   const order: string[] = [];
@@ -231,11 +238,13 @@ export function deriveSkillTimeline(entries: ClaudeCodeEntry[], options?: Timeli
         const block = raw as ToolUseBlock;
         if (!isSkillTool(block.name)) continue;
 
-        const skillName = typeof block.input.skill === 'string' ? (block.input.skill as string) : undefined;
+        const skillName =
+          typeof block.input.skill === 'string' ? (block.input.skill as string) : undefined;
         if (!skillName) continue;
 
         const rec = getOrCreate(skillName);
-        const args = typeof block.input.args === 'string' ? (block.input.args as string) : undefined;
+        const args =
+          typeof block.input.args === 'string' ? (block.input.args as string) : undefined;
 
         const invocation: SkillAvailabilityRecord['invocations'][number] = {
           entryUuid: entry.uuid,

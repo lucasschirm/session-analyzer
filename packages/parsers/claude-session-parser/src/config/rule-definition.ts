@@ -17,11 +17,15 @@
 import type { ClaudeScope, ParseError } from '../types/common.js';
 import type { RuleDefinition } from '../types/config.js';
 import type { RuleFrontmatter } from '../types/timeline.js';
-import { parseFrontmatter, normalizeGlobs } from '../utils/frontmatter.js';
-import { stripBom } from '../utils/text.js';
 import { makeParseError } from '../utils/errors.js';
+import { normalizeGlobs, parseFrontmatter } from '../utils/frontmatter.js';
+import { stripBom } from '../utils/text.js';
 
-export function parseRuleDefinition(content: string, sourcePath: string, scope?: ClaudeScope): RuleDefinition {
+export function parseRuleDefinition(
+  content: string,
+  sourcePath: string,
+  scope?: ClaudeScope,
+): RuleDefinition {
   const stripped = stripBom(content ?? '');
   const { frontmatter: rawFrontmatter, body } = parseFrontmatter(stripped);
   const parseErrors: ParseError[] = [];
@@ -40,7 +44,8 @@ export function parseRuleDefinition(content: string, sourcePath: string, scope?:
   // real `globs:`/`paths:` forms (bare/quoted/comma scalar, block/inline
   // list) into one `string[]`.
   const globs = normalizeGlobs(rawFrontmatter);
-  const description = typeof rawFrontmatter.description === 'string' ? rawFrontmatter.description : undefined;
+  const description =
+    typeof rawFrontmatter.description === 'string' ? rawFrontmatter.description : undefined;
   // `RuleFrontmatter.globs` is typed `string[]` (already normalized), unlike
   // the raw scalar/list value `rawFrontmatter.globs`/`.paths` may hold — the
   // literal below deliberately overrides those raw keys with the normalized
@@ -95,7 +100,8 @@ function inferScopeFromPath(sourcePath: string | undefined): ClaudeScope {
   if (!sourcePath) return 'unknown';
   const normalized = sourcePath.replace(/\\/g, '/');
   if (/(^|\/)plugins\//.test(normalized)) return 'plugin';
-  if (/^~\/\.claude\//.test(normalized) || /(^|\/)(Users|home)\/[^/]+\/\.claude\//.test(normalized)) return 'user';
+  if (/^~\/\.claude\//.test(normalized) || /(^|\/)(Users|home)\/[^/]+\/\.claude\//.test(normalized))
+    return 'user';
   if (/(^|\/)\.claude\//.test(normalized)) return 'project';
   return 'unknown';
 }
@@ -130,7 +136,11 @@ function inferRuleKind(sourcePath: string): 'memory' | 'rule' {
  * files lead with a single top-level `#`, but nothing requires that), else
  * (2) a `title:` frontmatter key, else (3) the sourcePath basename.
  */
-function deriveTitle(body: string, rawFrontmatter: Record<string, unknown>, sourcePath: string): string {
+function deriveTitle(
+  body: string,
+  rawFrontmatter: Record<string, unknown>,
+  sourcePath: string,
+): string {
   const headingMatch = body.match(/^#{1,6}[ \t]+(.+?)\s*$/m);
   if (headingMatch) return headingMatch[1].trim();
   if (typeof rawFrontmatter.title === 'string' && rawFrontmatter.title.trim().length > 0) {

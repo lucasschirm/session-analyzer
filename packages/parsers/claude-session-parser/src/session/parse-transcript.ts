@@ -6,13 +6,13 @@
  * See spec: docs/superpowers/specs/2026-08-12-claude-session-parser-design.md
  */
 
-import { stripBom, splitLines, safeJsonParse, clampBlob } from '../utils/text.js';
-import { makeParseError } from '../utils/errors.js';
-import { parseEntry } from './entry-parsers.js';
-import { accumulateUsage } from './aggregate-usage.js';
-import { deriveTimelines, emptyTimelines } from './timelines/index.js';
 import type { ParseError, ParseOptions } from '../types/common.js';
 import type { ClaudeCodeEntry, ClaudeCodeSession, UnknownEntry } from '../types/session.js';
+import { makeParseError } from '../utils/errors.js';
+import { clampBlob, safeJsonParse, splitLines, stripBom } from '../utils/text.js';
+import { accumulateUsage } from './aggregate-usage.js';
+import { parseEntry } from './entry-parsers.js';
+import { deriveTimelines, emptyTimelines } from './timelines/index.js';
 
 /** Real transcript lines reach ~0.68MB (spec §4) — a ParseError's rawSnippet
  *  must stay short, not echo the whole offending line. */
@@ -112,7 +112,12 @@ export function parseSessionTranscript(content: string, options?: ParseOptions):
     if (entry.type === 'agent-name' && agentName === undefined && entry.agentName) {
       agentName = entry.agentName;
     }
-    if ('sessionId' in entry && typeof entry.sessionId === 'string' && entry.sessionId && sessionId === undefined) {
+    if (
+      'sessionId' in entry &&
+      typeof entry.sessionId === 'string' &&
+      entry.sessionId &&
+      sessionId === undefined
+    ) {
       sessionId = entry.sessionId;
     }
     if ('slug' in entry && typeof entry.slug === 'string' && entry.slug && slug === undefined) {
@@ -121,13 +126,28 @@ export function parseSessionTranscript(content: string, options?: ParseOptions):
     if ('cwd' in entry && typeof entry.cwd === 'string' && entry.cwd && cwd === undefined) {
       cwd = entry.cwd;
     }
-    if ('gitBranch' in entry && typeof entry.gitBranch === 'string' && entry.gitBranch && gitBranch === undefined) {
+    if (
+      'gitBranch' in entry &&
+      typeof entry.gitBranch === 'string' &&
+      entry.gitBranch &&
+      gitBranch === undefined
+    ) {
       gitBranch = entry.gitBranch;
     }
-    if ('agentId' in entry && typeof entry.agentId === 'string' && entry.agentId && agentId === undefined) {
+    if (
+      'agentId' in entry &&
+      typeof entry.agentId === 'string' &&
+      entry.agentId &&
+      agentId === undefined
+    ) {
       agentId = entry.agentId;
     }
-    if ('version' in entry && typeof entry.version === 'string' && entry.version && !seenCliVersions.has(entry.version)) {
+    if (
+      'version' in entry &&
+      typeof entry.version === 'string' &&
+      entry.version &&
+      !seenCliVersions.has(entry.version)
+    ) {
       seenCliVersions.add(entry.version);
       cliVersions.push(entry.version);
     }

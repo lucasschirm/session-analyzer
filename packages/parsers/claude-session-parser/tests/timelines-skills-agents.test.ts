@@ -1,10 +1,9 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-
-import { deriveSkillTimeline } from '../src/session/timelines/skills.js';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
 import { deriveAgentTimeline } from '../src/session/timelines/agents.js';
+import { deriveSkillTimeline } from '../src/session/timelines/skills.js';
 import type {
   AssistantEntry,
   AttachmentEntry,
@@ -42,7 +41,11 @@ function c6Base(lineNumber: number, timestampMs = C6_BASE_MS) {
   };
 }
 
-function c6Attachment(lineNumber: number, attachment: ClaudeAttachment, timestampMs = C6_BASE_MS): AttachmentEntry {
+function c6Attachment(
+  lineNumber: number,
+  attachment: ClaudeAttachment,
+  timestampMs = C6_BASE_MS,
+): AttachmentEntry {
   return { ...c6Base(lineNumber, timestampMs), type: 'attachment', attachment };
 }
 
@@ -52,10 +55,19 @@ function c6Assistant(
   extra: Partial<AssistantEntry> = {},
   timestampMs = C6_BASE_MS,
 ): AssistantEntry {
-  return { ...c6Base(lineNumber, timestampMs), type: 'assistant', message: { role: 'assistant', content }, ...extra };
+  return {
+    ...c6Base(lineNumber, timestampMs),
+    type: 'assistant',
+    message: { role: 'assistant', content },
+    ...extra,
+  };
 }
 
-function c6User(lineNumber: number, extra: Partial<UserEntry>, timestampMs = C6_BASE_MS): UserEntry {
+function c6User(
+  lineNumber: number,
+  extra: Partial<UserEntry>,
+  timestampMs = C6_BASE_MS,
+): UserEntry {
   return {
     ...c6Base(lineNumber, timestampMs),
     type: 'user',
@@ -65,7 +77,10 @@ function c6User(lineNumber: number, extra: Partial<UserEntry>, timestampMs = C6_
 }
 
 let c6ToolUseCounter = 0;
-function c6ToolUse(name: string, input: Record<string, unknown> = {}): { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> } {
+function c6ToolUse(
+  name: string,
+  input: Record<string, unknown> = {},
+): { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> } {
   c6ToolUseCounter += 1;
   return { type: 'tool_use', id: `c6-toolu-${c6ToolUseCounter}`, name, input };
 }
@@ -110,7 +125,9 @@ describe('deriveSkillTimeline', () => {
   it('records the initial skill_listing with isInitial true and parses descriptions', () => {
     const records = deriveSkillTimeline(entries);
     const rootCause = findSkill(records, 'acme:root-cause-analysis');
-    const initialListed = rootCause.availability.find((e) => e.action === 'listed' && e.isInitial === true);
+    const initialListed = rootCause.availability.find(
+      (e) => e.action === 'listed' && e.isInitial === true,
+    );
     expect(initialListed).toBeDefined();
     expect(rootCause.description).toContain('before proposing a fix');
   });
@@ -132,7 +149,9 @@ describe('deriveSkillTimeline', () => {
     // A newly listed skill in the second delta is not itself delisted.
     const scheduler = findSkill(records, 'task-scheduler');
     expect(scheduler.availability.some((e) => e.action === 'delisted')).toBe(false);
-    expect(scheduler.availability.some((e) => e.action === 'listed' && e.isInitial === false)).toBe(true);
+    expect(scheduler.availability.some((e) => e.action === 'listed' && e.isInitial === false)).toBe(
+      true,
+    );
   });
 
   it('splits plugin-prefixed vs bare skill names', () => {
@@ -197,7 +216,10 @@ describe('deriveSkillTimeline', () => {
 
   it('never conflates a skill record with a tool record shape (no `tool`/`mcpServer` fields)', () => {
     const records = deriveSkillTimeline(entries);
-    const rootCause = findSkill(records, 'acme:root-cause-analysis') as unknown as Record<string, unknown>;
+    const rootCause = findSkill(records, 'acme:root-cause-analysis') as unknown as Record<
+      string,
+      unknown
+    >;
     expect(rootCause.tool).toBeUndefined();
     expect(rootCause.mcpServer).toBeUndefined();
   });
@@ -228,8 +250,16 @@ describe('deriveSkillTimeline', () => {
     const skillToolUse = c6ToolUse('Skill', { skill: 'csv-wrangler' });
     const call = c6Assistant(1, [skillToolUse]);
     const toolUseId = skillToolUse.id;
-    const result = c6User(2, { message: { role: 'user', content: c6ToolResult(toolUseId, 'Launching skill: csv-wrangler') } });
-    const notMeta = c6User(3, { message: { role: 'user', content: 'Base directory for this skill: /Users/dev/.claude/skills/csv-wrangler\n\n# CSV Wrangler' } });
+    const result = c6User(2, {
+      message: { role: 'user', content: c6ToolResult(toolUseId, 'Launching skill: csv-wrangler') },
+    });
+    const notMeta = c6User(3, {
+      message: {
+        role: 'user',
+        content:
+          'Base directory for this skill: /Users/dev/.claude/skills/csv-wrangler\n\n# CSV Wrangler',
+      },
+    });
 
     const records = deriveSkillTimeline([call, result, notMeta]);
     const csv = records.find((r) => r.name === 'csv-wrangler');
@@ -242,7 +272,14 @@ describe('deriveSkillTimeline', () => {
     const call = c6Assistant(1, [skillToolUse]);
     const toolUseId = skillToolUse.id;
     const result = c6User(2, { message: { role: 'user', content: c6ToolResult(toolUseId, 'ok') } });
-    const meta = c6User(3, { isMeta: true, message: { role: 'user', content: 'Base dir for this skill: /Users/dev/.claude/skills/csv-wrangler\n\n# CSV Wrangler' } });
+    const meta = c6User(3, {
+      isMeta: true,
+      message: {
+        role: 'user',
+        content:
+          'Base dir for this skill: /Users/dev/.claude/skills/csv-wrangler\n\n# CSV Wrangler',
+      },
+    });
 
     const records = deriveSkillTimeline([call, result, meta]);
     const csv = records.find((r) => r.name === 'csv-wrangler');
@@ -254,7 +291,8 @@ describe('deriveSkillTimeline', () => {
     const call = c6Assistant(1, [skillToolUse]);
     const toolUseId = skillToolUse.id;
     const result = c6User(2, { message: { role: 'user', content: c6ToolResult(toolUseId, 'ok') } });
-    const text = 'Base directory for this skill: /Users/dev/.claude/skills/csv-wrangler (no blank-line separator here)';
+    const text =
+      'Base directory for this skill: /Users/dev/.claude/skills/csv-wrangler (no blank-line separator here)';
     const meta = c6User(3, { isMeta: true, message: { role: 'user', content: text } });
 
     const records = deriveSkillTimeline([call, result, meta]);
@@ -267,11 +305,23 @@ describe('deriveSkillTimeline', () => {
   it('does not overwrite an existing qualifiedPath/injectedContent from a later invoked_skills sighting', () => {
     const first = c6Attachment(1, {
       type: 'invoked_skills',
-      skills: [{ name: 'csv-wrangler', path: 'first-source:csv-wrangler', content: 'First injected content.' }],
+      skills: [
+        {
+          name: 'csv-wrangler',
+          path: 'first-source:csv-wrangler',
+          content: 'First injected content.',
+        },
+      ],
     });
     const second = c6Attachment(2, {
       type: 'invoked_skills',
-      skills: [{ name: 'csv-wrangler', path: 'second-source:csv-wrangler', content: 'Second injected content.' }],
+      skills: [
+        {
+          name: 'csv-wrangler',
+          path: 'second-source:csv-wrangler',
+          content: 'Second injected content.',
+        },
+      ],
     });
 
     const records = deriveSkillTimeline([first, second]);
@@ -292,7 +342,9 @@ describe('deriveAgentTimeline', () => {
     expect(generalist).toBeDefined();
     expect(generalist?.listingDescription).toContain('general-purpose agent');
     expect(generalist?.listingTools).toBe('All tools');
-    expect(generalist?.availability.some((e) => e.action === 'listed' && e.isInitial === true)).toBe(true);
+    expect(
+      generalist?.availability.some((e) => e.action === 'listed' && e.isInitial === true),
+    ).toBe(true);
 
     const codeFinder = agents.find((a) => a.agentType === 'code-finder');
     expect(codeFinder?.listingTools).toBe('Bash, Read, Grep, Glob');
@@ -306,7 +358,9 @@ describe('deriveAgentTimeline', () => {
 
     const architect = agents.find((a) => a.agentType === 'architect');
     if (!architect) throw new Error('architect agent not found');
-    expect(architect.availability.some((e) => e.action === 'listed' && e.isInitial === false)).toBe(true);
+    expect(architect.availability.some((e) => e.action === 'listed' && e.isInitial === false)).toBe(
+      true,
+    );
   });
 
   it('records an agent_mention as a mentioned event', () => {
@@ -411,7 +465,11 @@ describe('deriveAgentTimeline', () => {
     const resultEntry = c6User(2, {
       sourceToolUseID: agentToolUse.id,
       message: { role: 'user', content: 'Plain-text result, no structured tool_result block.' },
-      toolUseResult: { agentId: 'agent-fallback-0001', resolvedModel: 'test-model-a', totalTokens: 1200 },
+      toolUseResult: {
+        agentId: 'agent-fallback-0001',
+        resolvedModel: 'test-model-a',
+        totalTokens: 1200,
+      },
     });
 
     const { subagentLaunches } = deriveAgentTimeline([launchEntry, resultEntry]);
@@ -453,7 +511,10 @@ describe('deriveAgentTimeline', () => {
   });
 
   it('records runInBackground: true from input.run_in_background', () => {
-    const agentToolUse = c6ToolUse('Agent', { subagent_type: 'docs-drafter', run_in_background: true });
+    const agentToolUse = c6ToolUse('Agent', {
+      subagent_type: 'docs-drafter',
+      run_in_background: true,
+    });
     const launchEntry = c6Assistant(1, [agentToolUse]);
 
     const { subagentLaunches } = deriveAgentTimeline([launchEntry]);

@@ -1,13 +1,12 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-
-import { stripBom, splitLines, safeJsonParse, clampBlob } from '../src/utils/text.js';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
 import { makeParseError } from '../src/utils/errors.js';
-import { parseFrontmatter, normalizeGlobs } from '../src/utils/frontmatter.js';
-import { splitMcpToolName, mcpServerNameToNamespace } from '../src/utils/mcp-names.js';
-import { isSkillTool, isAgentTool, ALWAYS_AVAILABLE_TOOLS } from '../src/utils/tool-names.js';
+import { normalizeGlobs, parseFrontmatter } from '../src/utils/frontmatter.js';
+import { mcpServerNameToNamespace, splitMcpToolName } from '../src/utils/mcp-names.js';
+import { clampBlob, safeJsonParse, splitLines, stripBom } from '../src/utils/text.js';
+import { ALWAYS_AVAILABLE_TOOLS, isAgentTool, isSkillTool } from '../src/utils/tool-names.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, 'fixtures');
@@ -135,7 +134,9 @@ describe('parseFrontmatter', () => {
 
   it('parses a literal "|" block preserving newlines, plus booleans and numbers', () => {
     const { frontmatter } = parseFrontmatter(readFixture('t1-literal-block.md'));
-    expect(frontmatter.description).toBe('Line one of the literal block.\nLine two of the literal block.');
+    expect(frontmatter.description).toBe(
+      'Line one of the literal block.\nLine two of the literal block.',
+    );
     expect(frontmatter.notes).toBe(true);
     expect(frontmatter.count).toBe(42);
   });
@@ -159,7 +160,10 @@ describe('parseFrontmatter', () => {
 describe('normalizeGlobs', () => {
   it('normalizes a YAML block list under "paths:"', () => {
     const { frontmatter } = parseFrontmatter(readFixture('t1-rule-paths-list.md'));
-    expect(normalizeGlobs(frontmatter)).toEqual(['packages/renderer/src/widgets/**', 'packages/example-renderer/**']);
+    expect(normalizeGlobs(frontmatter)).toEqual([
+      'packages/renderer/src/widgets/**',
+      'packages/example-renderer/**',
+    ]);
   });
 
   it('normalizes a comma-separated quoted scalar under "globs:"', () => {
@@ -211,7 +215,14 @@ describe('isSkillTool / isAgentTool', () => {
   });
 
   it('does NOT match the unrelated todo-management Task* tools', () => {
-    for (const name of ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TaskOutput', 'TaskStop']) {
+    for (const name of [
+      'TaskCreate',
+      'TaskUpdate',
+      'TaskGet',
+      'TaskList',
+      'TaskOutput',
+      'TaskStop',
+    ]) {
       expect(isAgentTool(name)).toBe(false);
     }
   });
@@ -316,8 +327,19 @@ describe('parseFrontmatter (block scalars)', () => {
   });
 
   it('joins a ">" folded block into paragraphs on a blank-line break', () => {
-    const md = ['---', 'desc: >', '  para one line a', '  para one line b', '', '  para two', '---', ''].join('\n');
-    expect(parseFrontmatter(md).frontmatter.desc).toBe('para one line a para one line b\n\npara two');
+    const md = [
+      '---',
+      'desc: >',
+      '  para one line a',
+      '  para one line b',
+      '',
+      '  para two',
+      '---',
+      '',
+    ].join('\n');
+    expect(parseFrontmatter(md).frontmatter.desc).toBe(
+      'para one line a para one line b\n\npara two',
+    );
   });
 
   it('resolves "key: |" with nothing indented under it to an empty string', () => {
@@ -425,7 +447,11 @@ describe('clampBlob / utf8ByteLength (multibyte boundaries)', () => {
 
 describe('makeParseError (uuid option)', () => {
   it('sets uuid when provided', () => {
-    expect(makeParseError('c', 'm', { uuid: 'u-1' })).toEqual({ code: 'c', message: 'm', uuid: 'u-1' });
+    expect(makeParseError('c', 'm', { uuid: 'u-1' })).toEqual({
+      code: 'c',
+      message: 'm',
+      uuid: 'u-1',
+    });
   });
 });
 

@@ -53,7 +53,13 @@ export interface SkillAvailabilityRecord {
   /** Full SKILL.md body, when actually expanded. */
   injectedContent?: string;
   invocationCount: number;
-  invocations: Array<{ entryUuid: string; toolUseId: string; args?: string; timestampMs: number; launched: boolean }>;
+  invocations: Array<{
+    entryUuid: string;
+    toolUseId: string;
+    args?: string;
+    timestampMs: number;
+    launched: boolean;
+  }>;
   /** Assistant entries with matching attributionSkill. */
   attributedTurnCount: number;
 }

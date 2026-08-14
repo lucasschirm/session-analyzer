@@ -23,20 +23,27 @@
  */
 
 import type { ClaudeScope, ParseError, ParseOptions } from '../types/common.js';
-import type { ClaudeCodeSession } from '../types/session.js';
 import type {
   AgentDefinition,
+  ClaudeCodeSettings,
   McpConfig,
   McpServerConfig,
   RuleDefinition,
   SkillDefinition,
   SubagentMeta,
 } from '../types/config.js';
-import type { ClaudeCodeSettings } from '../types/config.js';
-import type { AgentAvailabilityRecord, McpServerRecord, RuleRecord, RuleScope, SkillAvailabilityRecord, SubagentLaunchRecord } from '../types/timeline.js';
-import { parseSessionTranscript } from './parse-transcript.js';
+import type { ClaudeCodeSession } from '../types/session.js';
+import type {
+  AgentAvailabilityRecord,
+  McpServerRecord,
+  RuleRecord,
+  RuleScope,
+  SkillAvailabilityRecord,
+  SubagentLaunchRecord,
+} from '../types/timeline.js';
 import { makeParseError } from '../utils/errors.js';
 import { mcpServerNameToNamespace } from '../utils/mcp-names.js';
+import { parseSessionTranscript } from './parse-transcript.js';
 
 /** Immutable: every appendX call returns a NEW builder instance rather
  *  than mutating `this` — avoids reference bugs if a UI layer
@@ -97,7 +104,13 @@ class ClaudeSessionBuilderImpl implements ClaudeSessionBuilder {
   appendMcp(config: McpConfig): this {
     try {
       if (!isPlainObject(config) || !Array.isArray((config as McpConfig).servers)) {
-        return this.next(withError(this.session, 'invalid_append_input', 'appendMcp received a value that is not a valid McpConfig'));
+        return this.next(
+          withError(
+            this.session,
+            'invalid_append_input',
+            'appendMcp received a value that is not a valid McpConfig',
+          ),
+        );
       }
 
       let mcpServers = this.session.mcpServers;
@@ -109,7 +122,13 @@ class ClaudeSessionBuilderImpl implements ClaudeSessionBuilder {
       next = appendErrors(next, config.parseErrors ?? []);
       return this.next(next);
     } catch (err) {
-      return this.next(withError(this.session, 'append_threw', `appendMcp failed unexpectedly: ${errMessage(err)}`));
+      return this.next(
+        withError(
+          this.session,
+          'append_threw',
+          `appendMcp failed unexpectedly: ${errMessage(err)}`,
+        ),
+      );
     }
   }
 
@@ -118,7 +137,13 @@ class ClaudeSessionBuilderImpl implements ClaudeSessionBuilder {
   appendSettings(settings: ClaudeCodeSettings): this {
     try {
       if (!isPlainObject(settings) || (settings as ClaudeCodeSettings).kind !== 'settings') {
-        return this.next(withError(this.session, 'invalid_append_input', 'appendSettings received a value that is not a valid ClaudeCodeSettings'));
+        return this.next(
+          withError(
+            this.session,
+            'invalid_append_input',
+            'appendSettings received a value that is not a valid ClaudeCodeSettings',
+          ),
+        );
       }
 
       // `permissions.defaultMode` is context only — per spec §4/appendSettings
@@ -130,7 +155,13 @@ class ClaudeSessionBuilderImpl implements ClaudeSessionBuilder {
       next = appendErrors(next, settings.parseErrors ?? []);
       return this.next(next);
     } catch (err) {
-      return this.next(withError(this.session, 'append_threw', `appendSettings failed unexpectedly: ${errMessage(err)}`));
+      return this.next(
+        withError(
+          this.session,
+          'append_threw',
+          `appendSettings failed unexpectedly: ${errMessage(err)}`,
+        ),
+      );
     }
   }
 
@@ -139,20 +170,38 @@ class ClaudeSessionBuilderImpl implements ClaudeSessionBuilder {
   appendAgent(def: AgentDefinition): this {
     try {
       if (!isPlainObject(def) || (def as AgentDefinition).kind !== 'agent-definition') {
-        return this.next(withError(this.session, 'invalid_append_input', 'appendAgent received a value that is not a valid AgentDefinition'));
+        return this.next(
+          withError(
+            this.session,
+            'invalid_append_input',
+            'appendAgent received a value that is not a valid AgentDefinition',
+          ),
+        );
       }
       const agents = foldAgentDefinition(this.session.agents, def);
       let next: ClaudeCodeSession = { ...this.session, agents };
       next = appendErrors(next, def.parseErrors ?? []);
       return this.next(next);
     } catch (err) {
-      return this.next(withError(this.session, 'append_threw', `appendAgent failed unexpectedly: ${errMessage(err)}`));
+      return this.next(
+        withError(
+          this.session,
+          'append_threw',
+          `appendAgent failed unexpectedly: ${errMessage(err)}`,
+        ),
+      );
     }
   }
 
   appendAgents(defs: AgentDefinition[]): this {
     if (!Array.isArray(defs)) {
-      return this.next(withError(this.session, 'invalid_append_input', 'appendAgents received a value that is not an array'));
+      return this.next(
+        withError(
+          this.session,
+          'invalid_append_input',
+          'appendAgents received a value that is not an array',
+        ),
+      );
     }
     let builder: this = this;
     for (const def of defs) builder = builder.appendAgent(def);
@@ -164,20 +213,38 @@ class ClaudeSessionBuilderImpl implements ClaudeSessionBuilder {
   appendSkill(def: SkillDefinition): this {
     try {
       if (!isPlainObject(def) || (def as SkillDefinition).kind !== 'skill-definition') {
-        return this.next(withError(this.session, 'invalid_append_input', 'appendSkill received a value that is not a valid SkillDefinition'));
+        return this.next(
+          withError(
+            this.session,
+            'invalid_append_input',
+            'appendSkill received a value that is not a valid SkillDefinition',
+          ),
+        );
       }
       const skills = foldSkillDefinition(this.session.skills, def);
       let next: ClaudeCodeSession = { ...this.session, skills };
       next = appendErrors(next, def.parseErrors ?? []);
       return this.next(next);
     } catch (err) {
-      return this.next(withError(this.session, 'append_threw', `appendSkill failed unexpectedly: ${errMessage(err)}`));
+      return this.next(
+        withError(
+          this.session,
+          'append_threw',
+          `appendSkill failed unexpectedly: ${errMessage(err)}`,
+        ),
+      );
     }
   }
 
   appendSkills(defs: SkillDefinition[]): this {
     if (!Array.isArray(defs)) {
-      return this.next(withError(this.session, 'invalid_append_input', 'appendSkills received a value that is not an array'));
+      return this.next(
+        withError(
+          this.session,
+          'invalid_append_input',
+          'appendSkills received a value that is not an array',
+        ),
+      );
     }
     let builder: this = this;
     for (const def of defs) builder = builder.appendSkill(def);
@@ -189,20 +256,38 @@ class ClaudeSessionBuilderImpl implements ClaudeSessionBuilder {
   appendRule(def: RuleDefinition): this {
     try {
       if (!isPlainObject(def) || (def as RuleDefinition).kind !== 'rule-definition') {
-        return this.next(withError(this.session, 'invalid_append_input', 'appendRule received a value that is not a valid RuleDefinition'));
+        return this.next(
+          withError(
+            this.session,
+            'invalid_append_input',
+            'appendRule received a value that is not a valid RuleDefinition',
+          ),
+        );
       }
       const rules = foldRuleDefinition(this.session.rules, def);
       let next: ClaudeCodeSession = { ...this.session, rules };
       next = appendErrors(next, def.parseErrors ?? []);
       return this.next(next);
     } catch (err) {
-      return this.next(withError(this.session, 'append_threw', `appendRule failed unexpectedly: ${errMessage(err)}`));
+      return this.next(
+        withError(
+          this.session,
+          'append_threw',
+          `appendRule failed unexpectedly: ${errMessage(err)}`,
+        ),
+      );
     }
   }
 
   appendRules(defs: RuleDefinition[]): this {
     if (!Array.isArray(defs)) {
-      return this.next(withError(this.session, 'invalid_append_input', 'appendRules received a value that is not an array'));
+      return this.next(
+        withError(
+          this.session,
+          'invalid_append_input',
+          'appendRules received a value that is not an array',
+        ),
+      );
     }
     let builder: this = this;
     for (const def of defs) builder = builder.appendRule(def);
@@ -214,10 +299,22 @@ class ClaudeSessionBuilderImpl implements ClaudeSessionBuilder {
   appendSubAgent(agentId: string, subSession: ClaudeCodeSession, meta?: SubagentMeta): this {
     try {
       if (typeof agentId !== 'string' || agentId.length === 0) {
-        return this.next(withError(this.session, 'invalid_append_input', 'appendSubAgent received an empty/non-string agentId'));
+        return this.next(
+          withError(
+            this.session,
+            'invalid_append_input',
+            'appendSubAgent received an empty/non-string agentId',
+          ),
+        );
       }
       if (!isPlainObject(subSession) || !Array.isArray((subSession as ClaudeCodeSession).entries)) {
-        return this.next(withError(this.session, 'invalid_append_input', 'appendSubAgent received a value that is not a valid ClaudeCodeSession'));
+        return this.next(
+          withError(
+            this.session,
+            'invalid_append_input',
+            'appendSubAgent received a value that is not a valid ClaudeCodeSession',
+          ),
+        );
       }
 
       // Enrich every SubagentLaunchRecord whose `agentId` matches — the
@@ -230,7 +327,8 @@ class ClaudeSessionBuilderImpl implements ClaudeSessionBuilder {
         if (launch.agentId !== agentId) return launch;
         const patch: Partial<SubagentLaunchRecord> = {};
         if (meta) {
-          if (launch.description === undefined && meta.description !== undefined) patch.description = meta.description;
+          if (launch.description === undefined && meta.description !== undefined)
+            patch.description = meta.description;
           if (launch.model === undefined && meta.model !== undefined) patch.model = meta.model;
         }
         return Object.keys(patch).length > 0 ? { ...launch, ...patch } : launch;
@@ -249,7 +347,13 @@ class ClaudeSessionBuilderImpl implements ClaudeSessionBuilder {
       if (meta?.parseErrors?.length) next = appendErrors(next, meta.parseErrors);
       return this.next(next);
     } catch (err) {
-      return this.next(withError(this.session, 'append_threw', `appendSubAgent failed unexpectedly: ${errMessage(err)}`));
+      return this.next(
+        withError(
+          this.session,
+          'append_threw',
+          `appendSubAgent failed unexpectedly: ${errMessage(err)}`,
+        ),
+      );
     }
   }
 
@@ -275,7 +379,10 @@ function errMessage(err: unknown): string {
 // in the one place a consumer already looks (`session.mcpServers`).
 // ---------------------------------------------------------------------------
 
-function foldMcpServerConfig(records: McpServerRecord[], config: McpServerConfig): McpServerRecord[] {
+function foldMcpServerConfig(
+  records: McpServerRecord[],
+  config: McpServerConfig,
+): McpServerRecord[] {
   const namespace = mcpServerNameToNamespace(config.name);
   let matchIdx = records.findIndex((r) => r.server === config.name);
   if (matchIdx === -1) {
@@ -311,7 +418,10 @@ function foldMcpServerConfig(records: McpServerRecord[], config: McpServerConfig
 // mentioned in this particular transcript.
 // ---------------------------------------------------------------------------
 
-function foldAgentDefinition(records: AgentAvailabilityRecord[], def: AgentDefinition): AgentAvailabilityRecord[] {
+function foldAgentDefinition(
+  records: AgentAvailabilityRecord[],
+  def: AgentDefinition,
+): AgentAvailabilityRecord[] {
   const idx = records.findIndex((r) => r.agentType === def.name);
   if (idx === -1) {
     const created: AgentAvailabilityRecord = {
@@ -351,7 +461,10 @@ function skillBareName(def: SkillDefinition): string {
   return idx === -1 ? def.name : def.name.slice(idx + 1);
 }
 
-function foldSkillDefinition(records: SkillAvailabilityRecord[], def: SkillDefinition): SkillAvailabilityRecord[] {
+function foldSkillDefinition(
+  records: SkillAvailabilityRecord[],
+  def: SkillDefinition,
+): SkillAvailabilityRecord[] {
   const qualified = skillQualifiedName(def);
   const bare = skillBareName(def);
   let idx = records.findIndex((r) => r.name === def.name || r.name === qualified);
@@ -374,8 +487,10 @@ function foldSkillDefinition(records: SkillAvailabilityRecord[], def: SkillDefin
 
   const rec = records[idx];
   const patch: Partial<SkillAvailabilityRecord> = {};
-  if (rec.description === undefined && def.description !== undefined) patch.description = def.description;
-  if (rec.displayPath === undefined && def.sourcePath !== undefined) patch.displayPath = def.sourcePath;
+  if (rec.description === undefined && def.description !== undefined)
+    patch.description = def.description;
+  if (rec.displayPath === undefined && def.sourcePath !== undefined)
+    patch.displayPath = def.sourcePath;
   if (rec.qualifiedPath === undefined && def.pluginPrefix !== undefined) {
     patch.qualifiedPath = `plugin:${def.pluginPrefix}:${bare}`;
   }
@@ -426,8 +541,10 @@ function foldRuleDefinition(records: RuleRecord[], def: RuleDefinition): RuleRec
     const mapped = RULE_SCOPE_BY_CLAUDE_SCOPE[def.scope];
     if (mapped) patch.scope = mapped;
   }
-  if (rec.frontmatter === undefined && def.frontmatter !== undefined) patch.frontmatter = def.frontmatter;
-  if ((rec.globs === undefined || rec.globs.length === 0) && def.globs?.length) patch.globs = def.globs;
+  if (rec.frontmatter === undefined && def.frontmatter !== undefined)
+    patch.frontmatter = def.frontmatter;
+  if ((rec.globs === undefined || rec.globs.length === 0) && def.globs?.length)
+    patch.globs = def.globs;
   if (Object.keys(patch).length === 0) return records;
   const next = records.slice();
   next[idx] = { ...rec, ...patch };

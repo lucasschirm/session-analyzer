@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
 
 import { detectClaudeCode, detectClaudeCodeArtifact } from '../src/detect.js';
 import { parseSubagentMeta } from '../src/session/subagent-meta.js';
@@ -35,9 +35,7 @@ describe('detectClaudeCode', () => {
   });
 
   it('strips a leading BOM and tolerates CRLF line endings', () => {
-    const withBomAndCrlf =
-      '﻿' +
-      readFixture('t8-session-transcript.jsonl').split('\n').join('\r\n');
+    const withBomAndCrlf = '﻿' + readFixture('t8-session-transcript.jsonl').split('\n').join('\r\n');
     expect(detectClaudeCode(withBomAndCrlf)).toBe(true);
   });
 
@@ -158,7 +156,9 @@ describe('detectClaudeCodeArtifact', () => {
   });
 
   it('returns "unknown" for unrelated prose markdown with no frontmatter or path hint', () => {
-    expect(detectClaudeCodeArtifact({ content: 'Just some notes, nothing structured here.' })).toBe('unknown');
+    expect(detectClaudeCodeArtifact({ content: 'Just some notes, nothing structured here.' })).toBe(
+      'unknown',
+    );
   });
 
   describe('session-transcript', () => {
@@ -221,9 +221,9 @@ describe('detectClaudeCodeArtifact', () => {
   describe('subagent-meta', () => {
     it('classifies a real-shaped agent-<id>.meta.json sidecar', () => {
       const content = readFixture('t8-subagent-meta.json');
-      expect(
-        detectClaudeCodeArtifact({ content, fileName: 'agent-a-sub-0001.meta.json' }),
-      ).toBe('subagent-meta');
+      expect(detectClaudeCodeArtifact({ content, fileName: 'agent-a-sub-0001.meta.json' })).toBe(
+        'subagent-meta',
+      );
     });
 
     it('classifies the same content correctly even with no filename at all', () => {
@@ -270,7 +270,11 @@ describe('detectClaudeCodeArtifact', () => {
           { name: 'string-source-plugin', source: './plugins/example' },
           {
             name: 'object-source-plugin',
-            source: { source: 'git-subdir', url: 'https://example.invalid/repo.git', path: 'plugins/example' },
+            source: {
+              source: 'git-subdir',
+              url: 'https://example.invalid/repo.git',
+              path: 'plugins/example',
+            },
           },
         ],
       });
@@ -285,10 +289,11 @@ describe('detectClaudeCodeArtifact', () => {
     });
 
     it('classifies an agent file under an agents/ path even with a generic filename', () => {
-      const content = '---\nname: bare\ndescription: minimal frontmatter, no agent/skill-only key\n---\nBody.';
-      expect(
-        detectClaudeCodeArtifact({ content, relativePath: 'plugin/agents/bare.md' }),
-      ).toBe('agent-definition');
+      const content =
+        '---\nname: bare\ndescription: minimal frontmatter, no agent/skill-only key\n---\nBody.';
+      expect(detectClaudeCodeArtifact({ content, relativePath: 'plugin/agents/bare.md' })).toBe(
+        'agent-definition',
+      );
     });
   });
 
@@ -329,9 +334,9 @@ describe('detectClaudeCodeArtifact', () => {
 
     it('classifies a bare AGENTS.md memory file by its reserved filename, overriding an agents/ directory path', () => {
       const content = '# Folder map\n\nDocumentation, not an agent definition.';
-      expect(
-        detectClaudeCodeArtifact({ content, relativePath: '.claude/agents/AGENTS.md' }),
-      ).toBe('rule-definition');
+      expect(detectClaudeCodeArtifact({ content, relativePath: '.claude/agents/AGENTS.md' })).toBe(
+        'rule-definition',
+      );
     });
   });
 
@@ -355,7 +360,9 @@ describe('detectClaudeCodeArtifact', () => {
 
     it('classifies mcp-config content by shape even when misnamed agent-<x>.meta.json', () => {
       const content = readFixture('t8-mcp-config.json');
-      expect(detectClaudeCodeArtifact({ content, fileName: 'agent-x.meta.json' })).toBe('mcp-config');
+      expect(detectClaudeCodeArtifact({ content, fileName: 'agent-x.meta.json' })).toBe(
+        'mcp-config',
+      );
     });
 
     it('classifies settings content by shape even when misnamed agent-<x>.meta.json', () => {

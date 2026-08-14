@@ -20,10 +20,15 @@ import type {
   SystemEntry,
   UserEntry,
 } from '../../types/session.js';
-import type { CompactionRecord, HookEventRecord, PermissionModeChange, PrLinkRecord } from '../../types/timeline.js';
+import type {
+  CompactionRecord,
+  HookEventRecord,
+  PermissionModeChange,
+  PrLinkRecord,
+} from '../../types/timeline.js';
 import { clampBlob } from '../../utils/text.js';
-import { entryLineNumber, entryTimestampMs, entryUuid } from './context.js';
 import type { TimelineDeriveOptions } from './context.js';
+import { entryLineNumber, entryTimestampMs, entryUuid } from './context.js';
 
 /** Builds a `HookEventRecord`, omitting optional fields entirely rather
  *  than setting them to `undefined`. `entryUuid`/`timestampMs` are typed as
@@ -72,7 +77,8 @@ function buildCompactionRecord(entry: SystemEntry): CompactionRecord {
     trigger: raw?.trigger ?? '',
     preTokens: typeof raw?.preTokens === 'number' ? raw.preTokens : 0,
     postTokens: typeof raw?.postTokens === 'number' ? raw.postTokens : 0,
-    cumulativeDroppedTokens: typeof raw?.cumulativeDroppedTokens === 'number' ? raw.cumulativeDroppedTokens : 0,
+    cumulativeDroppedTokens:
+      typeof raw?.cumulativeDroppedTokens === 'number' ? raw.cumulativeDroppedTokens : 0,
     durationMs: typeof raw?.durationMs === 'number' ? raw.durationMs : 0,
   };
   if (raw?.preservedSegment) metadata.preservedSegment = raw.preservedSegment;
@@ -178,7 +184,8 @@ export function deriveSupportingRecords(
           prNumber: pr.prNumber,
           prUrl: pr.prUrl,
           prRepository: pr.prRepository,
-          timestampMs: entryTimestampMs(entry) ?? (Number.isNaN(parsedTimestamp) ? 0 : parsedTimestamp),
+          timestampMs:
+            entryTimestampMs(entry) ?? (Number.isNaN(parsedTimestamp) ? 0 : parsedTimestamp),
         });
       }
       continue;

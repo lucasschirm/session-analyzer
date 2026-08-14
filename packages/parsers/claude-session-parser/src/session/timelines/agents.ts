@@ -27,10 +27,10 @@ import type {
   UserEntry,
 } from '../../types/session.js';
 import type { AgentAvailabilityRecord, SubagentLaunchRecord } from '../../types/timeline.js';
-import type { TimelineDeriveOptions } from './context.js';
-import { eventFrom, isAttachment } from './context.js';
 import { getOrThrow } from '../../utils/maps.js';
 import { isAgentTool } from '../../utils/tool-names.js';
+import type { TimelineDeriveOptions } from './context.js';
+import { eventFrom, isAttachment } from './context.js';
 
 /**
  * `entry.type === 'user'`/`'assistant'` alone doesn't narrow `entry` away
@@ -76,7 +76,10 @@ function splitAgentType(agentType: string): { pluginPrefix?: string } {
  * text, so anchoring on the known prefix/suffix is more robust than a
  * single greedy regex.
  */
-function parseAgentListingLine(line: string, agentType: string): { description?: string; tools?: string } {
+function parseAgentListingLine(
+  line: string,
+  agentType: string,
+): { description?: string; tools?: string } {
   const prefix = `- ${agentType}: `;
   const rest = line.startsWith(prefix) ? line.slice(prefix.length) : line;
 
@@ -112,7 +115,11 @@ function buildResultIndexByToolUseId(entries: ClaudeCodeEntry[]): Map<string, Us
     const { content } = entry.message;
     if (Array.isArray(content)) {
       for (const block of content) {
-        if (block.type === 'tool_result' && typeof block.tool_use_id === 'string' && !map.has(block.tool_use_id)) {
+        if (
+          block.type === 'tool_result' &&
+          typeof block.tool_use_id === 'string' &&
+          !map.has(block.tool_use_id)
+        ) {
           map.set(block.tool_use_id, entry);
         }
       }
@@ -198,7 +205,8 @@ export function deriveAgentTimeline(
         // Never treats TaskCreate/TaskUpdate/TaskGet/TaskList/TaskOutput/
         // TaskStop as agent launches — `isAgentTool` already excludes them.
         const input = block.input;
-        const agentType = typeof input.subagent_type === 'string' ? (input.subagent_type as string) : '';
+        const agentType =
+          typeof input.subagent_type === 'string' ? (input.subagent_type as string) : '';
         const rec = getOrCreate(agentType);
 
         const launch: SubagentLaunchRecord = {
@@ -209,7 +217,8 @@ export function deriveAgentTimeline(
         };
         if (typeof input.description === 'string') launch.description = input.description as string;
         if (typeof input.prompt === 'string') launch.prompt = input.prompt as string;
-        if (typeof input.run_in_background === 'boolean') launch.runInBackground = input.run_in_background as boolean;
+        if (typeof input.run_in_background === 'boolean')
+          launch.runInBackground = input.run_in_background as boolean;
 
         const resultEntry = resultByToolUseId.get(block.id);
         if (resultEntry) {

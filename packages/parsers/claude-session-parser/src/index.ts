@@ -6,31 +6,27 @@
  * its frozen signature.
  */
 
-// ---- Types ----------------------------------------------------------------
-export * from './types/index.js';
-
+export { parseAgentDefinition } from './config/agent-definition.js';
+export { parsePluginMarketplace } from './config/marketplace.js';
+export { parseMcp } from './config/mcp-config.js';
+export { parseRuleDefinition } from './config/rule-definition.js';
+export { parseSettings } from './config/settings.js';
+export { parseSkillDefinition } from './config/skill-definition.js';
+// ---- Config-only composition -----------------------------------------
+export { buildConfigSnapshot } from './config/snapshot.js';
+export type { ClaudeCodeArtifactKind } from './detect.js';
 // ---- Detection --------------------------------------------------------
 export { detectClaudeCode, detectClaudeCodeArtifact } from './detect.js';
-export type { ClaudeCodeArtifactKind } from './detect.js';
-
+export type { ClaudeSessionBuilder } from './session/builder.js';
+// ---- Session composition -------------------------------------------------
+export { parseSession } from './session/builder.js';
 // ---- Pure parsers -------------------------------------------------------
 export { parseSessionTranscript } from './session/parse-transcript.js';
 export { parseSubagentMeta } from './session/subagent-meta.js';
-export { parseSettings } from './config/settings.js';
-export { parseMcp } from './config/mcp-config.js';
-export { parseAgentDefinition } from './config/agent-definition.js';
-export { parseSkillDefinition } from './config/skill-definition.js';
-export { parseRuleDefinition } from './config/rule-definition.js';
-export { parsePluginMarketplace } from './config/marketplace.js';
-
-// ---- Session composition -------------------------------------------------
-export { parseSession } from './session/builder.js';
-export type { ClaudeSessionBuilder } from './session/builder.js';
-
-// ---- Config-only composition -----------------------------------------
-export { buildConfigSnapshot } from './config/snapshot.js';
+// ---- Types ----------------------------------------------------------------
+export * from './types/index.js';
 
 // ---- Utilities (also useful to the site transformer) ---------------------
-export { parseFrontmatter, normalizeGlobs } from './utils/frontmatter.js';
-export { splitMcpToolName, mcpServerNameToNamespace } from './utils/mcp-names.js';
-export { isSkillTool, isAgentTool, ALWAYS_AVAILABLE_TOOLS } from './utils/tool-names.js';
+export { normalizeGlobs, parseFrontmatter } from './utils/frontmatter.js';
+export { mcpServerNameToNamespace, splitMcpToolName } from './utils/mcp-names.js';
+export { ALWAYS_AVAILABLE_TOOLS, isAgentTool, isSkillTool } from './utils/tool-names.js';

@@ -1,11 +1,11 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
 
 import { parseAgentDefinition } from '../src/config/agent-definition.js';
-import { parseSkillDefinition } from '../src/config/skill-definition.js';
 import { parseRuleDefinition } from '../src/config/rule-definition.js';
+import { parseSkillDefinition } from '../src/config/skill-definition.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, 'fixtures');
@@ -20,7 +20,10 @@ function readFixture(name: string): string {
 
 describe('parseAgentDefinition', () => {
   it('parses a realistic full agent file (block-list tools, quoted scalars, memory)', () => {
-    const result = parseAgentDefinition(readFixture('t1-agent-definition.md'), '/Users/dev/.claude/agents/example-agent.md');
+    const result = parseAgentDefinition(
+      readFixture('t1-agent-definition.md'),
+      '/Users/dev/.claude/agents/example-agent.md',
+    );
     expect(result.kind).toBe('agent-definition');
     expect(result.name).toBe('example-agent');
     expect(result.description).toBe('Line one\nLine two "quoted" and a colon: still fine');
@@ -53,7 +56,9 @@ describe('parseAgentDefinition', () => {
 
   it('records an unterminated-frontmatter ParseError but never throws', () => {
     const original = readFixture('t1-unterminated-frontmatter.md');
-    expect(() => parseAgentDefinition(original, '/Users/dev/.claude/agents/broken.md')).not.toThrow();
+    expect(() =>
+      parseAgentDefinition(original, '/Users/dev/.claude/agents/broken.md'),
+    ).not.toThrow();
     const result = parseAgentDefinition(original, '/Users/dev/.claude/agents/broken.md');
     expect(result.frontmatter).toEqual({});
     expect(result.body).toBe(original);
@@ -64,7 +69,10 @@ describe('parseAgentDefinition', () => {
   });
 
   it('normalizes comma-separated tools and keeps an unknown extra frontmatter key ("effort")', () => {
-    const result = parseAgentDefinition(readFixture('t7-agent-tools-comma.md'), '/Users/dev/.claude/agents/explore.md');
+    const result = parseAgentDefinition(
+      readFixture('t7-agent-tools-comma.md'),
+      '/Users/dev/.claude/agents/explore.md',
+    );
     expect(result.name).toBe('explore');
     expect(result.tools).toEqual(['Read', 'Glob', 'Grep', 'Bash']);
     expect(result.color).toBe('cyan');
@@ -83,7 +91,9 @@ describe('parseAgentDefinition', () => {
   });
 
   it('normalizes a whitespace-only "tools" string to undefined', () => {
-    const result = parseAgentDefinition('---\nname: whitespace-tools-agent\ntools: "  "\n---\nBody.\n');
+    const result = parseAgentDefinition(
+      '---\nname: whitespace-tools-agent\ntools: "  "\n---\nBody.\n',
+    );
     expect(result.tools).toBeUndefined();
   });
 
@@ -93,7 +103,10 @@ describe('parseAgentDefinition', () => {
   });
 
   it('falls back to the sourcePath basename when "name" is missing, and records why', () => {
-    const result = parseAgentDefinition(readFixture('t7-agent-missing-name.md'), '/Users/dev/.claude/agents/nameless.md');
+    const result = parseAgentDefinition(
+      readFixture('t7-agent-missing-name.md'),
+      '/Users/dev/.claude/agents/nameless.md',
+    );
     expect(result.name).toBe('nameless');
     expect(result.frontmatter.reviewedBy).toBe('platform-team');
     expect(result.parseErrors).toEqual([
@@ -104,9 +117,7 @@ describe('parseAgentDefinition', () => {
   it('falls back to an empty name and a distinct error code when neither "name" nor sourcePath is available', () => {
     const result = parseAgentDefinition(readFixture('t7-agent-missing-name.md'));
     expect(result.name).toBe('');
-    expect(result.parseErrors).toEqual([
-      expect.objectContaining({ code: 'missing_name' }),
-    ]);
+    expect(result.parseErrors).toEqual([expect.objectContaining({ code: 'missing_name' })]);
   });
 
   it('handles empty-string input without throwing', () => {
@@ -115,23 +126,30 @@ describe('parseAgentDefinition', () => {
     expect(result.body).toBe('');
     expect(result.name).toBe('');
     expect(result.scope).toBe('unknown');
-    expect(result.parseErrors).toEqual([
-      expect.objectContaining({ code: 'missing_name' }),
-    ]);
+    expect(result.parseErrors).toEqual([expect.objectContaining({ code: 'missing_name' })]);
   });
 
   describe('scope inference from sourcePath shapes', () => {
     it('infers "user" for a path under a home .claude directory', () => {
-      expect(parseAgentDefinition('---\nname: a\n---\n', '/Users/dev/.claude/agents/a.md').scope).toBe('user');
-      expect(parseAgentDefinition('---\nname: a\n---\n', '/home/dev/.claude/agents/a.md').scope).toBe('user');
-      expect(parseAgentDefinition('---\nname: a\n---\n', '~/.claude/agents/a.md').scope).toBe('user');
+      expect(
+        parseAgentDefinition('---\nname: a\n---\n', '/Users/dev/.claude/agents/a.md').scope,
+      ).toBe('user');
+      expect(
+        parseAgentDefinition('---\nname: a\n---\n', '/home/dev/.claude/agents/a.md').scope,
+      ).toBe('user');
+      expect(parseAgentDefinition('---\nname: a\n---\n', '~/.claude/agents/a.md').scope).toBe(
+        'user',
+      );
     });
 
     it('infers "project" for .claude nested inside a repo checkout', () => {
       expect(
-        parseAgentDefinition('---\nname: a\n---\n', '/Users/dev/code/my-repo/.claude/agents/a.md').scope,
+        parseAgentDefinition('---\nname: a\n---\n', '/Users/dev/code/my-repo/.claude/agents/a.md')
+          .scope,
       ).toBe('project');
-      expect(parseAgentDefinition('---\nname: a\n---\n', '.claude/agents/a.md').scope).toBe('project');
+      expect(parseAgentDefinition('---\nname: a\n---\n', '.claude/agents/a.md').scope).toBe(
+        'project',
+      );
     });
 
     it('infers "plugin" for any path with a /plugins/ segment, even under a home .claude root', () => {
@@ -148,9 +166,10 @@ describe('parseAgentDefinition', () => {
     });
 
     it('respects an explicit scope argument over path inference', () => {
-      expect(parseAgentDefinition('---\nname: a\n---\n', '/Users/dev/.claude/agents/a.md', 'managed').scope).toBe(
-        'managed',
-      );
+      expect(
+        parseAgentDefinition('---\nname: a\n---\n', '/Users/dev/.claude/agents/a.md', 'managed')
+          .scope,
+      ).toBe('managed');
     });
   });
 });
@@ -218,7 +237,10 @@ describe('parseSkillDefinition', () => {
   });
 
   it('leaves pluginPrefix undefined for a plain user-level skill path', () => {
-    const result = parseSkillDefinition('---\nname: my-skill\n---\nBody.\n', '/Users/dev/.claude/skills/my-skill/SKILL.md');
+    const result = parseSkillDefinition(
+      '---\nname: my-skill\n---\nBody.\n',
+      '/Users/dev/.claude/skills/my-skill/SKILL.md',
+    );
     expect(result.pluginPrefix).toBeUndefined();
     expect(result.scope).toBe('user');
   });
@@ -232,12 +254,16 @@ describe('parseSkillDefinition', () => {
   });
 
   it('normalizes an empty "allowed-tools" string to undefined', () => {
-    const result = parseSkillDefinition('---\nname: empty-allowed-tools-skill\nallowed-tools: ""\n---\nBody.\n');
+    const result = parseSkillDefinition(
+      '---\nname: empty-allowed-tools-skill\nallowed-tools: ""\n---\nBody.\n',
+    );
     expect(result.allowedTools).toBeUndefined();
   });
 
   it('normalizes an "allowed-tools" value of the wrong type (number) to undefined', () => {
-    const result = parseSkillDefinition('---\nname: numeric-allowed-tools-skill\nallowed-tools: 42\n---\nBody.\n');
+    const result = parseSkillDefinition(
+      '---\nname: numeric-allowed-tools-skill\nallowed-tools: 42\n---\nBody.\n',
+    );
     expect(result.allowedTools).toBeUndefined();
   });
 
@@ -249,9 +275,14 @@ describe('parseSkillDefinition', () => {
   });
 
   it('falls back to the sourcePath basename when "name" is missing', () => {
-    const result = parseSkillDefinition('---\ndescription: no name here\n---\nBody.\n', '/Users/dev/.claude/skills/mystery/SKILL.md');
+    const result = parseSkillDefinition(
+      '---\ndescription: no name here\n---\nBody.\n',
+      '/Users/dev/.claude/skills/mystery/SKILL.md',
+    );
     expect(result.name).toBe('SKILL');
-    expect(result.parseErrors).toEqual([expect.objectContaining({ code: 'missing_name_fallback' })]);
+    expect(result.parseErrors).toEqual([
+      expect.objectContaining({ code: 'missing_name_fallback' }),
+    ]);
   });
 
   it('handles empty-string input without throwing', () => {
@@ -269,7 +300,10 @@ describe('parseSkillDefinition', () => {
 
 describe('parseRuleDefinition', () => {
   it('parses a realistic rule file: comma glob scalar, heading title, unknown extra key survives', () => {
-    const result = parseRuleDefinition(readFixture('t7-rule-basic.md'), '/Users/dev/project/.claude/rules/typescript.md');
+    const result = parseRuleDefinition(
+      readFixture('t7-rule-basic.md'),
+      '/Users/dev/project/.claude/rules/typescript.md',
+    );
     expect(result.kind).toBe('rule-definition');
     expect(result.ruleKind).toBe('rule');
     expect(result.title).toBe('TypeScript Conventions');
@@ -281,8 +315,14 @@ describe('parseRuleDefinition', () => {
   });
 
   it('normalizes "globs:" (comma scalar) and "paths:" (YAML list) to the identical string[]', () => {
-    const viaGlobs = parseRuleDefinition(readFixture('t7-rule-basic.md'), '.claude/rules/typescript.md');
-    const viaPaths = parseRuleDefinition(readFixture('t7-rule-paths-equiv.md'), '.claude/rules/typescript-2.md');
+    const viaGlobs = parseRuleDefinition(
+      readFixture('t7-rule-basic.md'),
+      '.claude/rules/typescript.md',
+    );
+    const viaPaths = parseRuleDefinition(
+      readFixture('t7-rule-paths-equiv.md'),
+      '.claude/rules/typescript-2.md',
+    );
     expect(viaGlobs.globs).toEqual(['src/**/*.ts', 'src/**/*.tsx']);
     expect(viaPaths.globs).toEqual(viaGlobs.globs);
   });
@@ -307,13 +347,19 @@ describe('parseRuleDefinition', () => {
   });
 
   it('title precedence: a frontmatter "title:" key wins when the body has no heading', () => {
-    const result = parseRuleDefinition(readFixture('t7-rule-title-frontmatter.md'), '.claude/rules/no-heading.md');
+    const result = parseRuleDefinition(
+      readFixture('t7-rule-title-frontmatter.md'),
+      '.claude/rules/no-heading.md',
+    );
     expect(result.title).toBe('Explicit Frontmatter Title');
     expect(result.globs).toEqual([]);
   });
 
   it('title precedence: falls back to the sourcePath basename when there is no heading and no frontmatter title', () => {
-    const result = parseRuleDefinition(readFixture('t7-rule-plain.md'), '/Users/dev/project/.claude/rules/plain-notes.md');
+    const result = parseRuleDefinition(
+      readFixture('t7-rule-plain.md'),
+      '/Users/dev/project/.claude/rules/plain-notes.md',
+    );
     expect(result.title).toBe('plain-notes');
     expect(result.frontmatter.description).toBeUndefined();
     expect(result.frontmatter.globs).toEqual([]);
@@ -348,11 +394,15 @@ describe('parseRuleDefinition', () => {
     it('classifies CLAUDE.md / AGENTS.md and their variants as "memory"', () => {
       expect(parseRuleDefinition('# x', '/Users/dev/.claude/CLAUDE.md').ruleKind).toBe('memory');
       expect(parseRuleDefinition('# x', '/Users/dev/project/AGENTS.md').ruleKind).toBe('memory');
-      expect(parseRuleDefinition('# x', '/Users/dev/project/CLAUDE.local.md').ruleKind).toBe('memory');
+      expect(parseRuleDefinition('# x', '/Users/dev/project/CLAUDE.local.md').ruleKind).toBe(
+        'memory',
+      );
     });
 
     it('classifies files under .claude/rules/ as "rule"', () => {
-      expect(parseRuleDefinition('# x', '/Users/dev/project/.claude/rules/style.md').ruleKind).toBe('rule');
+      expect(parseRuleDefinition('# x', '/Users/dev/project/.claude/rules/style.md').ruleKind).toBe(
+        'rule',
+      );
     });
 
     it('defaults unrecognized paths to "rule" rather than mislabeling them as memory', () => {

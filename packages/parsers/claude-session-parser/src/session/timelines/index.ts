@@ -18,13 +18,13 @@ import type {
   SubagentLaunchRecord,
   ToolAvailabilityRecord,
 } from '../../types/timeline.js';
-import type { TimelineDeriveOptions } from './context.js';
-import { deriveToolTimeline } from './tools.js';
-import { deriveMcpTimeline } from './mcp.js';
-import { deriveSkillTimeline } from './skills.js';
 import { deriveAgentTimeline } from './agents.js';
+import type { TimelineDeriveOptions } from './context.js';
+import { deriveMcpTimeline } from './mcp.js';
 import { deriveRuleTimeline } from './rules.js';
+import { deriveSkillTimeline } from './skills.js';
 import { deriveSupportingRecords } from './supporting.js';
+import { deriveToolTimeline } from './tools.js';
 
 export type { TimelineDeriveOptions } from './context.js';
 
@@ -41,13 +41,19 @@ export interface DerivedTimelines {
   subagentLaunches: SubagentLaunchRecord[];
 }
 
-export function deriveTimelines(entries: ClaudeCodeEntry[], options?: TimelineDeriveOptions): DerivedTimelines {
+export function deriveTimelines(
+  entries: ClaudeCodeEntry[],
+  options?: TimelineDeriveOptions,
+): DerivedTimelines {
   const tools = deriveToolTimeline(entries, options);
   const mcpServers = deriveMcpTimeline(entries, options);
   const skills = deriveSkillTimeline(entries, options);
   const { agents, subagentLaunches } = deriveAgentTimeline(entries, options);
   const rules = deriveRuleTimeline(entries, options);
-  const { permissionModes, hooks, compactions, prLinks } = deriveSupportingRecords(entries, options);
+  const { permissionModes, hooks, compactions, prLinks } = deriveSupportingRecords(
+    entries,
+    options,
+  );
 
   return {
     tools,

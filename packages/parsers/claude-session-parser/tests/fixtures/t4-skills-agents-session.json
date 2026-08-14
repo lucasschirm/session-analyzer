@@ -32,7 +32,10 @@
           "type": "tool_use",
           "id": "toolu_skillA",
           "name": "Skill",
-          "input": { "skill": "acme:root-cause-analysis", "args": "Investigate why the example calculation returns the wrong total" }
+          "input": {
+            "skill": "acme:root-cause-analysis",
+            "args": "Investigate why the example calculation returns the wrong total"
+          }
         }
       ]
     }
@@ -49,7 +52,11 @@
     "message": {
       "role": "user",
       "content": [
-        { "type": "tool_result", "tool_use_id": "toolu_skillA", "content": "Launching skill: acme:root-cause-analysis" }
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_skillA",
+          "content": "Launching skill: acme:root-cause-analysis"
+        }
       ]
     },
     "toolUseResult": { "success": true, "commandName": "acme:root-cause-analysis" }
@@ -87,7 +94,9 @@
     "attributionSkill": "acme:root-cause-analysis",
     "message": {
       "role": "assistant",
-      "content": [{ "type": "text", "text": "Example placeholder assistant turn attributed to the skill." }]
+      "content": [
+        { "type": "text", "text": "Example placeholder assistant turn attributed to the skill." }
+      ]
     }
   },
   {
@@ -225,7 +234,9 @@
       "type": "agent_listing_delta",
       "isInitial": false,
       "addedTypes": ["architect"],
-      "addedLines": ["- architect: Example software-architect agent for designing implementation plans. (Tools: All tools)"],
+      "addedLines": [
+        "- architect: Example software-architect agent for designing implementation plans. (Tools: All tools)"
+      ],
       "removedTypes": ["code-finder"]
     }
   },
@@ -277,7 +288,9 @@
     "lineNumber": 16,
     "message": {
       "role": "user",
-      "content": [{ "type": "tool_result", "tool_use_id": "toolu_agentA", "content": "Subagent finished." }]
+      "content": [
+        { "type": "tool_result", "tool_use_id": "toolu_agentA", "content": "Subagent finished." }
+      ]
     },
     "toolUseResult": {
       "isAsync": true,
@@ -328,7 +341,9 @@
     "lineNumber": 18,
     "message": {
       "role": "assistant",
-      "content": [{ "type": "text", "text": "Example sidechain turn attributed to the generalist subagent." }]
+      "content": [
+        { "type": "text", "text": "Example sidechain turn attributed to the generalist subagent." }
+      ]
     }
   },
   {

@@ -85,7 +85,9 @@ function baseAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
 
 describe('buildConfigSnapshot: skill/rule/marketplace bucketing', () => {
   it('buckets a skill-definition into bucket.skills and skillsByName by name', () => {
-    const skill = baseSkill({ sourcePath: '/home/testuser/projects/orbit-tracker/.claude/skills/csv-wrangler/SKILL.md' });
+    const skill = baseSkill({
+      sourcePath: '/home/testuser/projects/orbit-tracker/.claude/skills/csv-wrangler/SKILL.md',
+    });
     const snapshot = buildConfigSnapshot([skill]);
 
     expect(snapshot.inventories).toHaveLength(1);
@@ -135,7 +137,8 @@ describe('buildConfigSnapshot: inferMarketplaceScope', () => {
 
   it('falls back to the caller-supplied scope argument when sourcePath has no /plugins/ segment', () => {
     const marketplace = baseMarketplace({
-      sourcePath: '/home/testuser/.claude/marketplaces/nimbus-market/.claude-plugin/marketplace.json',
+      sourcePath:
+        '/home/testuser/.claude/marketplaces/nimbus-market/.claude-plugin/marketplace.json',
     });
     const snapshot = buildConfigSnapshot([marketplace], 'project');
 
@@ -163,7 +166,9 @@ describe('buildConfigSnapshot: deriveRootPath', () => {
     });
     const snapshot = buildConfigSnapshot([marketplace]);
 
-    expect(snapshot.inventories[0].rootPath).toBe('/home/testuser/projects/orbit-tracker/.claude-plugin');
+    expect(snapshot.inventories[0].rootPath).toBe(
+      '/home/testuser/projects/orbit-tracker/.claude-plugin',
+    );
   });
 
   it('derives an undefined rootPath (bucketed by scope alone) when sourcePath has neither .claude nor .claude-plugin', () => {
@@ -261,7 +266,7 @@ describe('buildConfigSnapshot: bucket scope upgrade', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildConfigSnapshot: mergeEffectiveSettings field matrix', () => {
-  it('shallow-replaces effortLevel/tui/statusLine/sandbox with the higher-precedence scope\'s value', () => {
+  it("shallow-replaces effortLevel/tui/statusLine/sandbox with the higher-precedence scope's value", () => {
     const userSettings = baseSettings({
       scope: 'user',
       sourcePath: '/home/testuser/.claude/settings.json',
@@ -303,7 +308,9 @@ describe('buildConfigSnapshot: mergeEffectiveSettings field matrix', () => {
       scope: 'user',
       env: { SHARED: 'from-user', USER_ONLY: 'u1' },
       enabledPlugins: { 'pluglet-a': true },
-      extraKnownMarketplaces: { 'nimbus-market': { source: { source: 'git', repo: 'demo-org/nimbus-market' } } },
+      extraKnownMarketplaces: {
+        'nimbus-market': { source: { source: 'git', repo: 'demo-org/nimbus-market' } },
+      },
       hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'scripts/greet.sh' }] }] },
     });
     const projectSettings = baseSettings({
@@ -316,12 +323,21 @@ describe('buildConfigSnapshot: mergeEffectiveSettings field matrix', () => {
 
     const snapshot = buildConfigSnapshot([userSettings, projectSettings]);
 
-    expect(snapshot.effectiveSettings.env).toEqual({ SHARED: 'from-project', USER_ONLY: 'u1', PROJECT_ONLY: 'p1' });
-    expect(snapshot.effectiveSettings.enabledPlugins).toEqual({ 'pluglet-a': true, 'pluglet-b': true });
+    expect(snapshot.effectiveSettings.env).toEqual({
+      SHARED: 'from-project',
+      USER_ONLY: 'u1',
+      PROJECT_ONLY: 'p1',
+    });
+    expect(snapshot.effectiveSettings.enabledPlugins).toEqual({
+      'pluglet-a': true,
+      'pluglet-b': true,
+    });
     expect(Object.keys(snapshot.effectiveSettings.extraKnownMarketplaces ?? {})).toEqual(
       expect.arrayContaining(['nimbus-market', 'quill-market']),
     );
-    expect(Object.keys(snapshot.effectiveSettings.hooks ?? {})).toEqual(expect.arrayContaining(['SessionStart', 'PreToolUse']));
+    expect(Object.keys(snapshot.effectiveSettings.hooks ?? {})).toEqual(
+      expect.arrayContaining(['SessionStart', 'PreToolUse']),
+    );
   });
 
   it('concatenates and de-dupes permissions.ask across scopes; defaultMode is last-wins', () => {
@@ -345,11 +361,16 @@ describe('buildConfigSnapshot: mergeEffectiveSettings field matrix', () => {
     const snapshot = buildConfigSnapshot([userSettingsA, userSettingsB, projectSettings]);
 
     // Deduped, first-occurrence order preserved.
-    expect(snapshot.effectiveSettings.permissions?.ask).toEqual(['Bash(git push*)', 'Bash(npm publish*)']);
+    expect(snapshot.effectiveSettings.permissions?.ask).toEqual([
+      'Bash(git push*)',
+      'Bash(npm publish*)',
+    ]);
     // project (highest precedence present) wins the single-value field.
     expect(snapshot.effectiveSettings.permissions?.defaultMode).toBe('acceptEdits');
     // The merged sourcePath/scope reflect the highest-precedence contributor.
-    expect(snapshot.effectiveSettings.sourcePath).toBe('/home/testuser/projects/orbit-tracker/.claude/settings.json');
+    expect(snapshot.effectiveSettings.sourcePath).toBe(
+      '/home/testuser/projects/orbit-tracker/.claude/settings.json',
+    );
     expect(snapshot.effectiveSettings.scope).toBe('project');
   });
 
@@ -375,14 +396,28 @@ describe('buildConfigSnapshot: duplicate MCP server names across two configs', (
     const firstMcp: McpConfig = {
       kind: 'mcp-config',
       scope: 'user',
-      servers: [{ name: 'zephyr:tools', toolNamespace: 'zephyr_tools', transport: 'stdio', command: 'node', raw: {} }],
+      servers: [
+        {
+          name: 'zephyr:tools',
+          toolNamespace: 'zephyr_tools',
+          transport: 'stdio',
+          command: 'node',
+          raw: {},
+        },
+      ],
       parseErrors: [],
     };
     const secondMcp: McpConfig = {
       kind: 'mcp-config',
       scope: 'project',
       servers: [
-        { name: 'zephyr:tools', toolNamespace: 'zephyr_tools', transport: 'http', url: 'https://zephyr.invalid/mcp', raw: {} },
+        {
+          name: 'zephyr:tools',
+          toolNamespace: 'zephyr_tools',
+          transport: 'http',
+          url: 'https://zephyr.invalid/mcp',
+          raw: {},
+        },
       ],
       parseErrors: [],
     };

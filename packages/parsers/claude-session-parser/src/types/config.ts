@@ -21,7 +21,10 @@ export interface ClaudeCodeSettings {
   env?: Record<string, string>;
   hooks?: Record<string, HookMatcherGroup[]>;
   enabledPlugins?: Record<string, boolean>;
-  extraKnownMarketplaces?: Record<string, { source: { source: string; repo?: string; path?: string } }>;
+  extraKnownMarketplaces?: Record<
+    string,
+    { source: { source: string; repo?: string; path?: string } }
+  >;
   sandbox?: { enabled?: boolean; network?: { allowedDomains?: string[] } };
   tui?: string;
   statusLine?: unknown;
@@ -32,7 +35,13 @@ export interface ClaudeCodeSettings {
 
 export interface HookMatcherGroup {
   matcher?: string;
-  hooks: Array<{ type: 'command' | 'agent' | (string & {}); command?: string; prompt?: string; timeout?: number; statusMessage?: string }>;
+  hooks: Array<{
+    type: 'command' | 'agent' | (string & {});
+    command?: string;
+    prompt?: string;
+    timeout?: number;
+    statusMessage?: string;
+  }>;
 }
 
 export interface McpConfig {

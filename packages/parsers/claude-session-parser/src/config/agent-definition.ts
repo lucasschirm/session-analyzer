@@ -20,11 +20,15 @@
 
 import type { ClaudeScope, ParseError } from '../types/common.js';
 import type { AgentDefinition } from '../types/config.js';
+import { makeParseError } from '../utils/errors.js';
 import { parseFrontmatter } from '../utils/frontmatter.js';
 import { stripBom } from '../utils/text.js';
-import { makeParseError } from '../utils/errors.js';
 
-export function parseAgentDefinition(content: string, sourcePath?: string, scope?: ClaudeScope): AgentDefinition {
+export function parseAgentDefinition(
+  content: string,
+  sourcePath?: string,
+  scope?: ClaudeScope,
+): AgentDefinition {
   const stripped = stripBom(content ?? '');
   const { frontmatter, body } = parseFrontmatter(stripped);
   const parseErrors: ParseError[] = [];
@@ -61,10 +65,13 @@ export function parseAgentDefinition(content: string, sourcePath?: string, scope
     );
   }
 
-  const description = typeof frontmatter.description === 'string' ? frontmatter.description : undefined;
+  const description =
+    typeof frontmatter.description === 'string' ? frontmatter.description : undefined;
   const model = typeof frontmatter.model === 'string' ? frontmatter.model : undefined;
   const memory =
-    typeof frontmatter.memory === 'string' ? (frontmatter.memory as AgentDefinition['memory']) : undefined;
+    typeof frontmatter.memory === 'string'
+      ? (frontmatter.memory as AgentDefinition['memory'])
+      : undefined;
   const tools = normalizeToolsField(frontmatter.tools);
   const color = typeof frontmatter.color === 'string' ? frontmatter.color : undefined;
 
@@ -141,7 +148,8 @@ function inferScopeFromPath(sourcePath: string | undefined): ClaudeScope {
   if (!sourcePath) return 'unknown';
   const normalized = sourcePath.replace(/\\/g, '/');
   if (/(^|\/)plugins\//.test(normalized)) return 'plugin';
-  if (/^~\/\.claude\//.test(normalized) || /(^|\/)(Users|home)\/[^/]+\/\.claude\//.test(normalized)) return 'user';
+  if (/^~\/\.claude\//.test(normalized) || /(^|\/)(Users|home)\/[^/]+\/\.claude\//.test(normalized))
+    return 'user';
   if (/(^|\/)\.claude\//.test(normalized)) return 'project';
   return 'unknown';
 }
