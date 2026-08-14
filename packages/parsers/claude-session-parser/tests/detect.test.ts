@@ -114,6 +114,11 @@ describe('detectClaudeCode', () => {
     expect(detectClaudeCode(content)).toBe(false);
   });
 
+  it('still detects an entry with sessionId + uuid + type:"user" but no "parentUuid" key at all', () => {
+    const content = JSON.stringify({ type: 'user', sessionId: 'c4-session-1', uuid: 'c4-uuid-1' });
+    expect(detectClaudeCode(content)).toBe(true);
+  });
+
   it('returns false for Local Runner log content', () => {
     const content = [
       '{"timestamp":"2026-08-11T12:45:00Z","model":"qwen2.5-coder","prompt_eval_count":1024,"eval_count":256}',
@@ -138,6 +143,10 @@ describe('detectClaudeCodeArtifact', () => {
 
   it('returns "unknown" for a JSON object with no recognizable shape', () => {
     expect(detectClaudeCodeArtifact({ content: '{"foo":"bar"}' })).toBe('unknown');
+  });
+
+  it('returns "unknown" for an empty JSON object (not mcp-config, not subagent-meta)', () => {
+    expect(detectClaudeCodeArtifact({ content: '{}' })).toBe('unknown');
   });
 
   it('returns "unknown" for a top-level JSON array', () => {
@@ -178,6 +187,32 @@ describe('detectClaudeCodeArtifact', () => {
         detectClaudeCodeArtifact({
           content,
           relativePath: 'projects/example/9c3f1a20/subagents/agent-a-sub-0001.jsonl',
+        }),
+      ).toBe('subagent-transcript');
+    });
+
+    it('classifies via a non-empty agentId alone, with no isSidechain flag present', () => {
+      const content = JSON.stringify({
+        type: 'user',
+        sessionId: 'c4-session-2',
+        uuid: 'c4-uuid-2',
+        parentUuid: null,
+        agentId: 'c4-example-agent',
+      });
+      expect(detectClaudeCodeArtifact({ content })).toBe('subagent-transcript');
+    });
+
+    it('falls back to a subagents/ path tiebreak when content alone is inconclusive (no isSidechain, no agentId)', () => {
+      const content = JSON.stringify({
+        type: 'user',
+        sessionId: 'c4-session-3',
+        uuid: 'c4-uuid-3',
+        parentUuid: null,
+      });
+      expect(
+        detectClaudeCodeArtifact({
+          content,
+          relativePath: 'projects/example/c4-session-3/subagents/c4-example-agent-sub-0001.jsonl',
         }),
       ).toBe('subagent-transcript');
     });
