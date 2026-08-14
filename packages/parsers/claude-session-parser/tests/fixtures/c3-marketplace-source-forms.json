@@ -1,0 +1,33 @@
+{
+  "name": "nimbus-market",
+  "plugins": [
+    {
+      "name": "url-preferred",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://example.invalid/nimbus/url-preferred.git",
+        "path": "plugins/url-preferred"
+      }
+    },
+    {
+      "name": "path-only",
+      "source": {
+        "path": "plugins/path-only"
+      }
+    },
+    {
+      "name": "source-field-only",
+      "source": {
+        "source": "git-subdir"
+      }
+    },
+    {
+      "name": "empty-object-source",
+      "source": {}
+    },
+    {
+      "name": "numeric-source",
+      "source": 42
+    }
+  ]
+}
