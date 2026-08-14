@@ -290,26 +290,29 @@ describe('deriveAgentTimeline', () => {
     const { agents } = deriveAgentTimeline(entries);
     const generalist = agents.find((a) => a.agentType === 'generalist');
     expect(generalist).toBeDefined();
-    expect(generalist!.listingDescription).toContain('general-purpose agent');
-    expect(generalist!.listingTools).toBe('All tools');
-    expect(generalist!.availability.some((e) => e.action === 'listed' && e.isInitial === true)).toBe(true);
+    expect(generalist?.listingDescription).toContain('general-purpose agent');
+    expect(generalist?.listingTools).toBe('All tools');
+    expect(generalist?.availability.some((e) => e.action === 'listed' && e.isInitial === true)).toBe(true);
 
     const codeFinder = agents.find((a) => a.agentType === 'code-finder');
-    expect(codeFinder!.listingTools).toBe('Bash, Read, Grep, Glob');
+    expect(codeFinder?.listingTools).toBe('Bash, Read, Grep, Glob');
   });
 
   it('detects delisting directly from agent_listing_delta.removedTypes', () => {
     const { agents } = deriveAgentTimeline(entries);
-    const codeFinder = agents.find((a) => a.agentType === 'code-finder')!;
+    const codeFinder = agents.find((a) => a.agentType === 'code-finder');
+    if (!codeFinder) throw new Error('code-finder agent not found');
     expect(codeFinder.availability.some((e) => e.action === 'delisted')).toBe(true);
 
-    const architect = agents.find((a) => a.agentType === 'architect')!;
+    const architect = agents.find((a) => a.agentType === 'architect');
+    if (!architect) throw new Error('architect agent not found');
     expect(architect.availability.some((e) => e.action === 'listed' && e.isInitial === false)).toBe(true);
   });
 
   it('records an agent_mention as a mentioned event', () => {
     const { agents } = deriveAgentTimeline(entries);
-    const architect = agents.find((a) => a.agentType === 'architect')!;
+    const architect = agents.find((a) => a.agentType === 'architect');
+    if (!architect) throw new Error('architect agent not found');
     expect(architect.availability.some((e) => e.action === 'mentioned')).toBe(true);
   });
 
@@ -317,34 +320,36 @@ describe('deriveAgentTimeline', () => {
     const { subagentLaunches } = deriveAgentTimeline(entries);
     const launch = subagentLaunches.find((l) => l.toolUseId === 'toolu_agentA');
     expect(launch).toBeDefined();
-    expect(launch!.agentType).toBe('generalist');
-    expect(launch!.agentId).toBe('syn0000000000001');
-    expect(launch!.model).toBe('example-model-large');
-    expect(launch!.totalTokens).toBe(42000);
-    expect(launch!.isAsync).toBe(true);
-    expect(launch!.resultEntryUuid).toBe('e0000000-0000-0000-0000-000000000016');
-    expect(launch!.runInBackground).toBe(false);
+    expect(launch?.agentType).toBe('generalist');
+    expect(launch?.agentId).toBe('syn0000000000001');
+    expect(launch?.model).toBe('example-model-large');
+    expect(launch?.totalTokens).toBe(42000);
+    expect(launch?.isAsync).toBe(true);
+    expect(launch?.resultEntryUuid).toBe('e0000000-0000-0000-0000-000000000016');
+    expect(launch?.runInBackground).toBe(false);
   });
 
   it('does not throw when an Agent launch result never arrives, and leaves resultEntryUuid unset', () => {
     const { subagentLaunches } = deriveAgentTimeline(entries);
     const launch = subagentLaunches.find((l) => l.toolUseId === 'toolu_agentB');
     expect(launch).toBeDefined();
-    expect(launch!.agentType).toBe('code-finder');
-    expect(launch!.resultEntryUuid).toBeUndefined();
-    expect(launch!.agentId).toBeUndefined();
-    expect(launch!.totalTokens).toBeUndefined();
+    expect(launch?.agentType).toBe('code-finder');
+    expect(launch?.resultEntryUuid).toBeUndefined();
+    expect(launch?.agentId).toBeUndefined();
+    expect(launch?.totalTokens).toBeUndefined();
   });
 
   it('attaches each launch to its agent type record invocations', () => {
     const { agents } = deriveAgentTimeline(entries);
-    const generalist = agents.find((a) => a.agentType === 'generalist')!;
+    const generalist = agents.find((a) => a.agentType === 'generalist');
+    if (!generalist) throw new Error('generalist agent not found');
     expect(generalist.invocations.map((l) => l.toolUseId)).toContain('toolu_agentA');
   });
 
   it('counts attributedTurnCount from matching attributionAgent on sidechain entries', () => {
     const { agents } = deriveAgentTimeline(entries);
-    const generalist = agents.find((a) => a.agentType === 'generalist')!;
+    const generalist = agents.find((a) => a.agentType === 'generalist');
+    if (!generalist) throw new Error('generalist agent not found');
     expect(generalist.attributedTurnCount).toBe(1);
   });
 
