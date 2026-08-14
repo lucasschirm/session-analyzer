@@ -1,0 +1,20 @@
+{
+  "model": "test-model-a",
+  "env": {
+    "API_HOST": "https://telemetry.example.invalid",
+    "USER_ONLY_VAR": "user-value"
+  },
+  "permissions": {
+    "allow": ["Bash(pnpm test)"],
+    "deny": ["Bash(rm -rf *)"]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "scripts/greet.sh" }
+        ]
+      }
+    ]
+  }
+}
