@@ -34,7 +34,12 @@ jobs:
       - name: Build application
         run: pnpm --filter site... build
 
-      - name: Run unit tests (Vitest, with coverage)
+      - name: Run claude-session-parser tests (Vitest, with coverage)
+        run: pnpm --filter @lucasschirm/sal-claude-session-parser test:coverage
+        env:
+          CI: true
+
+      - name: Run site unit tests (Vitest, with coverage)
         run: pnpm --filter site test:coverage
         env:
           CI: true
