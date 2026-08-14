@@ -220,6 +220,66 @@ describe('deriveToolTimeline', () => {
     const records = deriveToolTimeline([permissions]);
     expect(records).toEqual([]);
   });
+
+  it('leaves description unset when addedLines is empty (no positional line to read at all)', () => {
+    const delta = attachmentEntry(1, BASE_MS, {
+      type: 'deferred_tools_delta',
+      addedNames: ['Monitor'],
+      addedLines: [],
+      removedNames: [],
+    });
+    const records = deriveToolTimeline([delta]);
+    const monitor = records.find((r) => r.tool === 'Monitor');
+    expect(monitor?.description).toBeUndefined();
+  });
+
+  it('falls back to a content search (find) when the positional addedLines entry does not start with the tool name', () => {
+    // addedNames/addedLines are misaligned: index 0 for 'Foo' is actually
+    // Bar's line. The word-boundary check on the positional line fails, so
+    // extractDescription falls back to scanning the whole addedLines array.
+    const delta = attachmentEntry(1, BASE_MS, {
+      type: 'deferred_tools_delta',
+      addedNames: ['Foo', 'Bar'],
+      addedLines: ['Bar: bar description', 'Foo: foo description'],
+      removedNames: [],
+    });
+    const records = deriveToolTimeline([delta]);
+    const foo = records.find((r) => r.tool === 'Foo');
+    expect(foo?.description).toBe('foo description');
+  });
+
+  it('uses the whole remainder as the description when the line has no `:`/`-` separator after the name', () => {
+    const delta = attachmentEntry(1, BASE_MS, {
+      type: 'deferred_tools_delta',
+      addedNames: ['Foo'],
+      addedLines: ['Foo bar baz'],
+      removedNames: [],
+    });
+    const records = deriveToolTimeline([delta]);
+    const foo = records.find((r) => r.tool === 'Foo');
+    expect(foo?.description).toBe('bar baz');
+  });
+
+  it('covers a name present only in readdedNames, not addedNames (defensive branch)', () => {
+    const delta = attachmentEntry(1, BASE_MS, {
+      type: 'deferred_tools_delta',
+      addedNames: [],
+      addedLines: [],
+      removedNames: [],
+      readdedNames: ['GhostTool'],
+    });
+    const records = deriveToolTimeline([delta]);
+    const ghost = records.find((r) => r.tool === 'GhostTool');
+    expect(ghost?.availability).toEqual([expect.objectContaining({ action: 'readded' })]);
+  });
+
+  it('leaves ToolSearch select: query undefined when it has only commas/whitespace and no real names', () => {
+    const call = assistantEntry(1, BASE_MS, [toolUse('ToolSearch', { query: 'select: , ,  ' })]);
+    const records = deriveToolTimeline([call]);
+    const toolSearch = records.find((r) => r.tool === 'ToolSearch');
+    expect(toolSearch?.availability.every((e) => e.action === 'invoked')).toBe(true);
+    expect(records.some((r) => r.availability.some((e) => e.action === 'undeferred'))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -384,6 +444,34 @@ describe('deriveMcpTimeline', () => {
     const exampleDocs = records.find((r) => r.server === 'example-docs');
     expect(exampleDocs?.offeredTools).toEqual(['query-docs']);
     expect(exampleDocs?.availability.map((e) => e.action)).toEqual(['tools_offered', 'tools_removed']);
+  });
+
+  it('skips an addedBlocks entry that does not match the "## header" shape, without throwing', () => {
+    const delta = attachmentEntry(1, BASE_MS, {
+      type: 'mcp_instructions_delta',
+      addedNames: ['helper'],
+      addedBlocks: ['Instructions with no leading ## header line at all.'],
+      removedNames: [],
+    });
+    const records = deriveMcpTimeline([delta]);
+    const helper = records.find((r) => r.server === 'helper');
+    expect(helper).toBeDefined();
+    expect(helper?.instructions).toBeUndefined();
+    expect(helper?.availability).toEqual([expect.objectContaining({ action: 'instructions_added' })]);
+  });
+
+  it('offers tools for a server named only in readdedNames (not addedNames) via the extraReadded fold-in', () => {
+    const delta = attachmentEntry(1, BASE_MS, {
+      type: 'deferred_tools_delta',
+      addedNames: [],
+      addedLines: [],
+      removedNames: [],
+      readdedNames: ['mcp__helper__ask_question'],
+    });
+    const records = deriveMcpTimeline([delta]);
+    const helper = records.find((r) => r.server === 'helper');
+    expect(helper?.offeredTools).toEqual(['ask_question']);
+    expect(helper?.availability).toEqual([expect.objectContaining({ action: 'tools_offered' })]);
   });
 
   it('does not count sticky attributionMcpServer/attributionMcpTool turns as invocations', () => {
