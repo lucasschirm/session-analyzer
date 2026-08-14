@@ -82,6 +82,16 @@ describe('parseAgentDefinition', () => {
     expect(result.tools).toEqual(['*']);
   });
 
+  it('normalizes a whitespace-only "tools" string to undefined', () => {
+    const result = parseAgentDefinition('---\nname: whitespace-tools-agent\ntools: "  "\n---\nBody.\n');
+    expect(result.tools).toBeUndefined();
+  });
+
+  it('normalizes a "tools" value of the wrong type (number) to undefined', () => {
+    const result = parseAgentDefinition('---\nname: numeric-tools-agent\ntools: 42\n---\nBody.\n');
+    expect(result.tools).toBeUndefined();
+  });
+
   it('falls back to the sourcePath basename when "name" is missing, and records why', () => {
     const result = parseAgentDefinition(readFixture('t7-agent-missing-name.md'), '/Users/dev/.claude/agents/nameless.md');
     expect(result.name).toBe('nameless');
@@ -213,6 +223,31 @@ describe('parseSkillDefinition', () => {
     expect(result.scope).toBe('user');
   });
 
+  it('infers "project" scope for a sourcePath under a project .claude/ root', () => {
+    const result = parseSkillDefinition(
+      '---\nname: example-skill\n---\nBody.\n',
+      '/Users/dev/code/my-repo/.claude/skills/example-skill/SKILL.md',
+    );
+    expect(result.scope).toBe('project');
+  });
+
+  it('normalizes an empty "allowed-tools" string to undefined', () => {
+    const result = parseSkillDefinition('---\nname: empty-allowed-tools-skill\nallowed-tools: ""\n---\nBody.\n');
+    expect(result.allowedTools).toBeUndefined();
+  });
+
+  it('normalizes an "allowed-tools" value of the wrong type (number) to undefined', () => {
+    const result = parseSkillDefinition('---\nname: numeric-allowed-tools-skill\nallowed-tools: 42\n---\nBody.\n');
+    expect(result.allowedTools).toBeUndefined();
+  });
+
+  it('normalizes the lowercase "all tools" spelling variant to [\'*\']', () => {
+    const result = parseSkillDefinition(
+      '---\nname: lowercase-all-tools-skill\nallowed-tools: "all tools"\n---\nBody.\n',
+    );
+    expect(result.allowedTools).toEqual(['*']);
+  });
+
   it('falls back to the sourcePath basename when "name" is missing', () => {
     const result = parseSkillDefinition('---\ndescription: no name here\n---\nBody.\n', '/Users/dev/.claude/skills/mystery/SKILL.md');
     expect(result.name).toBe('SKILL');
@@ -282,6 +317,31 @@ describe('parseRuleDefinition', () => {
     expect(result.title).toBe('plain-notes');
     expect(result.frontmatter.description).toBeUndefined();
     expect(result.frontmatter.globs).toEqual([]);
+  });
+
+  describe('scope inference from sourcePath shapes', () => {
+    it('infers "user" for the /home/ alternative home-directory pattern', () => {
+      const result = parseRuleDefinition('# Title\nBody.', '/home/testuser/.claude/rules/x.md');
+      expect(result.scope).toBe('user');
+    });
+
+    it('infers "project" for a bare relative .claude/rules path', () => {
+      const result = parseRuleDefinition('# Title\nBody.', '.claude/rules/x.md');
+      expect(result.scope).toBe('project');
+    });
+
+    it('infers "unknown" for an empty sourcePath', () => {
+      const result = parseRuleDefinition('# Title\nBody.', '');
+      expect(result.scope).toBe('unknown');
+    });
+
+    it('infers "plugin" for a rule sourcePath with a /plugins/ segment, even under a home .claude root', () => {
+      const result = parseRuleDefinition(
+        '# Title\nBody.',
+        '/Users/dev/.claude/plugins/marketplaces/example/plugins/example-plugin/rules/x.md',
+      );
+      expect(result.scope).toBe('plugin');
+    });
   });
 
   describe('ruleKind discrimination', () => {
