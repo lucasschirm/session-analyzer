@@ -1,0 +1,34 @@
+{"type": "assistant"}
+{"type": "user"}
+{"type": "system", "hookInfos": [{}], "compactMetadata": {"preservedSegment": {}, "preservedMessages": {}}}
+{"type": "attachment"}
+{"type": "attachment", "attachment": {"type": "deferred_tools_delta"}}
+{"type": "attachment", "attachment": {"type": "agent_listing_delta"}}
+{"type": "attachment", "attachment": {"type": "skill_listing"}}
+{"type": "attachment", "attachment": {"type": "dynamic_skill"}}
+{"type": "attachment", "attachment": {"type": "invoked_skills", "skills": [{}]}}
+{"type": "attachment", "attachment": {"type": "invoked_skills"}}
+{"type": "attachment", "attachment": {"type": "mcp_instructions_delta"}}
+{"type": "attachment", "attachment": {"type": "command_permissions"}}
+{"type": "attachment", "attachment": {"type": "nested_memory"}}
+{"type": "attachment", "attachment": {"type": "compact_file_reference"}}
+{"type": "attachment", "attachment": {"type": "hook_success"}}
+{"type": "attachment", "attachment": {"type": "hook_additional_context"}}
+{"type": "attachment", "attachment": {"type": "read_truncation_notice"}}
+{"type": "mode"}
+{"type": "permission-mode"}
+{"type": "ai-title"}
+{"type": "last-prompt"}
+{"type": "agent-name"}
+{"type": "pr-link"}
+{"type": "bridge-session"}
+{"type": "queue-operation"}
+{"type": "file-history-snapshot"}
+{"type": "file-history-delta"}
+{"type": "file-history-delta", "backup": {"backupFileName": "backup-fake-0001.bak"}}
+{"type": "relocated"}
+{"type": "worktree-state"}
+{"type": "summary"}
+{"type": "assistant", "uuid": "sp-usage-1", "timestamp": "2026-08-01T00:00:00.000Z", "sessionId": "sess-sparse", "message": {"role": "assistant", "content": [], "model": "model-sparse", "usage": {}}}
+{"type": "user", "uuid": "sp-empty-ts", "timestamp": "", "sessionId": "sess-sparse", "message": {"role": "user", "content": "Empty string timestamp, not a missing field."}}
+{"type": "user", "timestamp": "not-a-date", "sessionId": "sess-sparse", "message": {"role": "user", "content": "Invalid timestamp without a uuid at all."}}
