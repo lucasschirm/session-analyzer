@@ -35,7 +35,7 @@ describe('detectClaudeCode', () => {
   });
 
   it('strips a leading BOM and tolerates CRLF line endings', () => {
-    const withBomAndCrlf = '﻿' + readFixture('t8-session-transcript.jsonl').split('\n').join('\r\n');
+    const withBomAndCrlf = `﻿${readFixture('t8-session-transcript.jsonl').split('\n').join('\r\n')}`;
     expect(detectClaudeCode(withBomAndCrlf)).toBe(true);
   });
 
