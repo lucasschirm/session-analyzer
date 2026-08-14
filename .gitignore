@@ -56,3 +56,4 @@ package-lock.json
 # Custom
 tmp
 docs/superpowers
+.claude/scheduled_tasks.lock
