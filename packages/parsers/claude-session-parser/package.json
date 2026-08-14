@@ -19,9 +19,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
