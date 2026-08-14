@@ -14,17 +14,15 @@ export default defineConfig({
         'src/types/**',
       ],
       reporter: ['text', 'html'],
-      // NOTE: thresholds are temporarily set to the current measured floor
-      // (rounded down slightly) rather than the package's 80% target for all
-      // four metrics. This lets `pnpm test:coverage` pass on the codebase as
-      // it stands today, before the coverage-improvement test chunks land.
-      // TODO(coverage-plan integration step): once all coverage-improvement
-      // chunks have merged, flip these back to 80/80/80/80.
+      // Package-wide coverage target. All eight coverage-improvement chunks
+      // (see docs/superpowers/specs coverage plan) have landed; measured
+      // coverage is 99.19% statements / 95.91% branches / 100% functions /
+      // 99.38% lines, comfortably above this floor.
       thresholds: {
-        lines: 90,
-        functions: 98,
-        branches: 73,
-        statements: 86,
+        lines: 80,
+        functions: 80,
+        branches: 80,
+        statements: 80,
       },
     },
   },
