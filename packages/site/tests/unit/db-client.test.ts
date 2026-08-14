@@ -55,7 +55,11 @@ describe('DbClient', () => {
 
     await expect(projectsPromise).resolves.toEqual([{ id: 'p1' }]);
     await expect(projectPromise).resolves.toEqual({ id: 'p1', name: 'One' });
-    expect(worker.posted.map((request) => request.type)).toEqual(['init', 'getProjects', 'getProject']);
+    expect(worker.posted.map((request) => request.type)).toEqual([
+      'init',
+      'getProjects',
+      'getProject',
+    ]);
   });
 
   it('rejects when the worker reports an error response', async () => {
@@ -117,17 +121,23 @@ describe('DbClient', () => {
     void client.deleteSession('s1');
 
     expect(worker.posted[1]).toMatchObject({ type: 'createProject', project });
-    expect(worker.posted[2]).toMatchObject({ type: 'updateProject', projectId: 'p1', fields: { name: 'N2' } });
+    expect(worker.posted[2]).toMatchObject({
+      type: 'updateProject',
+      projectId: 'p1',
+      fields: { name: 'N2' },
+    });
     expect(worker.posted[3]).toMatchObject({ type: 'deleteProject', projectId: 'p1' });
-    expect(worker.posted[4]).toMatchObject({ type: 'searchSessions', projectId: 'p1', query: 'query' });
+    expect(worker.posted[4]).toMatchObject({
+      type: 'searchSessions',
+      projectId: 'p1',
+      query: 'query',
+    });
     expect(worker.posted[5]).toMatchObject({ type: 'deleteSession', sessionId: 's1' });
   });
 
   it('exports and triggers a download', async () => {
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    const createObjectURLSpy = vi
-      .spyOn(URL, 'createObjectURL')
-      .mockReturnValue('blob:mock-url');
+    const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url');
     const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
     void client.ensureReady();

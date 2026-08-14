@@ -7,8 +7,8 @@
  * on same-page `#/...` links.
  */
 
-import { Routes } from '@lit-labs/router';
 import type { BaseRouteConfig, RouteConfig } from '@lit-labs/router';
+import { Routes } from '@lit-labs/router';
 import type { ReactiveControllerHost } from 'lit';
 
 /** Reads the current hash as a leading-slash pathname, defaulting to `/`. */
@@ -31,7 +31,7 @@ export class HashRouter extends Routes {
   constructor(
     host: ReactiveControllerHost & HTMLElement,
     routes: RouteConfig[],
-    fallback?: BaseRouteConfig
+    fallback?: BaseRouteConfig,
   ) {
     super(host, routes, fallback ? { fallback } : undefined);
   }
@@ -58,7 +58,7 @@ export class HashRouter extends Routes {
     if (anchor.getAttribute('rel') === 'external') return;
 
     const href = anchor.getAttribute('href');
-    if (!href || !href.startsWith('#/')) return;
+    if (!href?.startsWith('#/')) return;
 
     event.preventDefault();
     navigateTo(href.slice(1));

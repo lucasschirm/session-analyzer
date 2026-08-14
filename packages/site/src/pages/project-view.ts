@@ -1,9 +1,6 @@
-import { LitElement, html, css } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { dbClient } from '../db/db-client';
-import { navigateTo } from '../router';
-import { parseInWorker } from '../workers/parser-client';
-import type { DashboardSession, Project } from '../types';
 import { formatCompactNumber, formatFullNumber } from '../lib/format';
 import {
   classifyUploadedFiles,
@@ -11,6 +8,9 @@ import {
   parseSubagentMeta,
   type UploadedFile,
 } from '../lib/subagents';
+import { navigateTo } from '../router';
+import type { DashboardSession, Project } from '../types';
+import { parseInWorker } from '../workers/parser-client';
 import '../components/metrics-card';
 import '../components/session-list';
 import '../components/upload-zone';
@@ -193,15 +193,20 @@ export class ProjectView extends LitElement {
           title: upload.file.name,
         });
 
-        if (parsed.parseErrors.length > 0 && parsed.session.total_tokens === 0 &&
-            parsed.session.tool_executions.length === 0 && parsed.session.events.length === 0) {
+        if (
+          parsed.parseErrors.length > 0 &&
+          parsed.session.total_tokens === 0 &&
+          parsed.session.tool_executions.length === 0 &&
+          parsed.session.events.length === 0
+        ) {
           throw new Error(
-            `Could not parse "${upload.file.name}": ${parsed.parseErrors[0]?.message ?? 'unknown format'}`
+            `Could not parse "${upload.file.name}": ${parsed.parseErrors[0]?.message ?? 'unknown format'}`,
           );
         }
 
         const sessionId = await dbClient.upsertSessionByExternalId(parsed.session);
-        if (parsed.session.external_id) sessionIdByExternalId.set(parsed.session.external_id, sessionId);
+        if (parsed.session.external_id)
+          sessionIdByExternalId.set(parsed.session.external_id, sessionId);
       }
 
       for (const group of subagentGroups) {
@@ -266,9 +271,11 @@ export class ProjectView extends LitElement {
 
         <div>
           <h1>${this.project?.name ?? 'Project'}</h1>
-          ${this.project?.description
-            ? html`<p class="project-description">${this.project.description}</p>`
-            : ''}
+          ${
+            this.project?.description
+              ? html`<p class="project-description">${this.project.description}</p>`
+              : ''
+          }
         </div>
 
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
@@ -310,14 +317,16 @@ export class ProjectView extends LitElement {
           />
         </div>
 
-        ${this.isLoading
-          ? html`<p class="notice">Loading sessions…</p>`
-          : html`
+        ${
+          this.isLoading
+            ? html`<p class="notice">Loading sessions…</p>`
+            : html`
             <session-list
               .sessions=${this.sessions}
               @session-click=${this.handleSessionClick}
             ></session-list>
-          `}
+          `
+        }
       </div>
     `;
   }

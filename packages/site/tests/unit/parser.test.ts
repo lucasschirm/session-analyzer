@@ -145,7 +145,9 @@ describe('Session Parser - Antigravity Parser', () => {
 
   it('should track policy overrides', () => {
     const result = parseAntigravity(sample, projectId);
-    expect(result.session.events.some((event) => event.event_type === 'policy_override')).toBe(true);
+    expect(result.session.events.some((event) => event.event_type === 'policy_override')).toBe(
+      true,
+    );
   });
 
   it('should handle invalid JSON', () => {
@@ -207,7 +209,9 @@ describe('Session Parser - MCP Parser', () => {
     expect(result.session.tool_executions.length).toBe(1);
     expect(result.session.tool_executions[0].tool_name).toBe('serve_rest_api_tool');
     expect(result.session.tool_executions[0].success).toBe(true);
-    expect(result.session.events.some((event) => event.event_type === 'CallToolRequest')).toBe(true);
+    expect(result.session.events.some((event) => event.event_type === 'CallToolRequest')).toBe(
+      true,
+    );
     expect(result.session.events.some((event) => event.event_type === 'CallToolResult')).toBe(true);
     expect(result.session.total_turns).toBe(1);
   });
@@ -310,7 +314,14 @@ describe('Session Parser - tool classification helpers', () => {
   });
 
   it('should not classify the TaskCreate/TaskUpdate/TaskGet/TaskList/TaskOutput/TaskStop todo tools as agent/skill', () => {
-    for (const name of ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'TaskOutput', 'TaskStop']) {
+    for (const name of [
+      'TaskCreate',
+      'TaskUpdate',
+      'TaskGet',
+      'TaskList',
+      'TaskOutput',
+      'TaskStop',
+    ]) {
       expect(isAgentOrSkill(name)).toBe(false);
     }
   });

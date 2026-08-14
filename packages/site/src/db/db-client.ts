@@ -79,7 +79,11 @@ export class DbClient {
   }
 
   findSessionByExternalId(projectId: string, externalId: string): Promise<DashboardSession | null> {
-    return this.call({ type: 'findSessionByExternalId', projectId, externalId }) as Promise<DashboardSession | null>;
+    return this.call({
+      type: 'findSessionByExternalId',
+      projectId,
+      externalId,
+    }) as Promise<DashboardSession | null>;
   }
 
   getSessionsByProject(projectId: string): Promise<DashboardSession[]> {
@@ -124,12 +128,16 @@ export class DbClient {
       // 'init' message is queued ahead of this request.
       this.ensureReady();
     }
+    const worker = this.worker;
+    if (!worker) {
+      throw new Error('Worker failed to initialize');
+    }
     const id = ++this.seq;
     const request = { ...payload, id } as DbRequest;
 
     return new Promise((resolve, reject) => {
       this.pending.set(id, { requestType: request.type, resolve, reject });
-      this.worker!.postMessage(request);
+      worker.postMessage(request);
     });
   }
 

@@ -121,7 +121,8 @@ export class SessionBuilder {
       this.tasks.set(id, {
         id,
         subject: typeof item.subject === 'string' ? item.subject : (existing?.subject ?? ''),
-        description: typeof item.description === 'string' ? item.description : (existing?.description ?? ''),
+        description:
+          typeof item.description === 'string' ? item.description : (existing?.description ?? ''),
         status,
         first_seen_at: existing ? Math.min(existing.first_seen_at, timestamp) : timestamp,
         completed_at: existing?.completed_at ?? (status === 'completed' ? timestamp : undefined),
@@ -135,7 +136,7 @@ export class SessionBuilder {
     inputTokens: number,
     outputTokens: number,
     cacheCreationTokens = 0,
-    cacheReadTokens = 0
+    cacheReadTokens = 0,
   ): void {
     const usage = this.modelUsage.get(model) ?? {
       model,
@@ -157,7 +158,7 @@ export class SessionBuilder {
     target: string | undefined,
     timestamp: number,
     success = true,
-    parameters?: Record<string, unknown>
+    parameters?: Record<string, unknown>,
   ): ToolExecution {
     if (isReadTool(toolName) && target) this.filesRead.add(target);
     if (isWriteTool(toolName) && target) this.filesWritten.add(target);
@@ -181,7 +182,7 @@ export class SessionBuilder {
     eventType: string,
     description: string,
     timestamp: number,
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
   ): void {
     this.events.push({
       id: generateId(),
@@ -208,7 +209,7 @@ export class SessionBuilder {
     content: string,
     timestamp: number,
     uuid?: string,
-    parentUuid?: string
+    parentUuid?: string,
   ): void {
     if (!content) return;
     this.messages.push({
@@ -228,7 +229,7 @@ export class SessionBuilder {
       'context_compaction',
       `Context compaction: ${tokensSaved} tokens saved`,
       timestamp,
-      metadata
+      metadata,
     );
   }
 

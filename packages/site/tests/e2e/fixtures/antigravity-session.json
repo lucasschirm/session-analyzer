@@ -1,6 +1,16 @@
 [
-  {"timestamp": "2026-08-11T12:00:00Z", "event": "tool_exec", "tool": "bash", "cmd": "npm run build"},
-  {"timestamp": "2026-08-11T12:05:00Z", "event": "file_write", "file": "dist/main.js"},
-  {"timestamp": "2026-08-11T12:10:00Z", "event": "context_compaction", "tokens_saved": 15000, "trigger": "threshold_reached"},
-  {"timestamp": "2026-08-11T12:12:00Z", "event": "request-review", "policy": "auto_approve"}
+  {
+    "timestamp": "2026-08-11T12:00:00Z",
+    "event": "tool_exec",
+    "tool": "bash",
+    "cmd": "npm run build"
+  },
+  { "timestamp": "2026-08-11T12:05:00Z", "event": "file_write", "file": "dist/main.js" },
+  {
+    "timestamp": "2026-08-11T12:10:00Z",
+    "event": "context_compaction",
+    "tokens_saved": 15000,
+    "trigger": "threshold_reached"
+  },
+  { "timestamp": "2026-08-11T12:12:00Z", "event": "request-review", "policy": "auto_approve" }
 ]

@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import type { Project } from '../types';
@@ -44,7 +44,7 @@ export class ProjectSelector extends LitElement {
         detail: { value: target.value },
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 
@@ -63,7 +63,7 @@ export class ProjectSelector extends LitElement {
             <option value="${project.id}">
               ${project.name} (${project.session_count} session${project.session_count === 1 ? '' : 's'})
             </option>
-          `
+          `,
         )}
       </select>
     `;

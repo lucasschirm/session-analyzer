@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { dbClient } from '../db/db-client';
@@ -204,7 +204,9 @@ export class HomePage extends LitElement {
     this.modalOpen = false;
   }
 
-  private async handleProjectCreate(event: CustomEvent<{ name: string; description: string }>): Promise<void> {
+  private async handleProjectCreate(
+    event: CustomEvent<{ name: string; description: string }>,
+  ): Promise<void> {
     const { name, description } = event.detail;
     const now = Date.now();
     const project: Project = {
@@ -232,7 +234,7 @@ export class HomePage extends LitElement {
   private async handleDeleteProject(event: Event, project: Project): Promise<void> {
     event.stopPropagation();
     const confirmed = window.confirm(
-      `Delete project "${project.name}"? All of its sessions will be removed as well.`
+      `Delete project "${project.name}"? All of its sessions will be removed as well.`,
     );
     if (!confirmed) return;
 
@@ -264,15 +266,16 @@ export class HomePage extends LitElement {
         </div>
 
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
-        ${this.isLoading
-          ? html`<p class="notice">Loading projects…</p>`
-          : this.projects.length === 0
-            ? html`
+        ${
+          this.isLoading
+            ? html`<p class="notice">Loading projects…</p>`
+            : this.projects.length === 0
+              ? html`
               <div class="empty-state">
                 <p>No projects yet. Create one to get started!</p>
               </div>
             `
-            : html`
+              : html`
               <div class="projects-grid">
                 ${repeat(
                   this.projects,
@@ -305,10 +308,11 @@ export class HomePage extends LitElement {
                         </button>
                       </div>
                     </div>
-                  `
+                  `,
                 )}
               </div>
-            `}
+            `
+        }
 
         <project-modal
           .open=${this.modalOpen}

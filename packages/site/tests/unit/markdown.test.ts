@@ -48,7 +48,7 @@ describe('renderMarkdown', () => {
 describe('escapeHtml', () => {
   it('escapes HTML special characters', () => {
     expect(escapeHtml(`<a href="x">'&'</a>`)).toBe(
-      '&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;'
+      '&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;',
     );
   });
 });

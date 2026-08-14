@@ -96,7 +96,7 @@ export function mergeSubagentIntoSession(
   session: DashboardSession,
   agentId: string,
   subSession: DashboardSession,
-  meta: SubagentMeta
+  meta: SubagentMeta,
 ): DashboardSession {
   const existingIndex = session.subagents.findIndex((s) => s.agent_id === agentId);
   const previous = existingIndex >= 0 ? session.subagents[existingIndex] : undefined;

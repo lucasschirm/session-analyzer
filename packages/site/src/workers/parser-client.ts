@@ -16,11 +16,13 @@ export interface ParseFileOptions {
 }
 
 /** Parses a session file's text content inside a dedicated Web Worker. */
-export async function parseInWorker(payload: string, options: ParseFileOptions): Promise<ParsedSession> {
+export async function parseInWorker(
+  payload: string,
+  options: ParseFileOptions,
+): Promise<ParsedSession> {
   const createWorker =
     options.createWorker ??
-    (() =>
-      new Worker(new URL('./session-parser.worker.ts', import.meta.url), { type: 'module' }));
+    (() => new Worker(new URL('./session-parser.worker.ts', import.meta.url), { type: 'module' }));
   const worker = createWorker();
 
   try {
