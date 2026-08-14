@@ -1,0 +1,10 @@
+{
+  "env": {
+    "API_HOST": "https://telemetry-project.example.invalid",
+    "PROJECT_ONLY_VAR": "project-value"
+  },
+  "permissions": {
+    "allow": ["Write(src/**)"],
+    "defaultMode": "acceptEdits"
+  }
+}

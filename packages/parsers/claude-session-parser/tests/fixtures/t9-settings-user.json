@@ -1,0 +1,9 @@
+{
+  "model": "sonnet",
+  "permissions": {
+    "allow": ["Read"]
+  },
+  "env": {
+    "USER_FLAG": "1"
+  }
+}

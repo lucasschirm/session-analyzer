@@ -1,0 +1,29 @@
+{
+  "permissions": "nope",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          42,
+          { "command": "./hooks/no-type.sh" },
+          { "type": "agent", "prompt": "Summarize the diff", "statusMessage": "Thinking..." },
+          { "type": "command", "command": "./hooks/valid.sh" }
+        ]
+      },
+      { "matcher": "Bash" },
+      "not-a-group"
+    ],
+    "PostToolUse": "not-an-array"
+  },
+  "extraKnownMarketplaces": {
+    "not-an-object-entry": "oops",
+    "missing-source-source": { "source": { "repo": "example-org/example-repo" } },
+    "full-entry": {
+      "source": {
+        "source": "github",
+        "repo": "example-org/full-repo",
+        "path": "sub/dir"
+      }
+    }
+  }
+}

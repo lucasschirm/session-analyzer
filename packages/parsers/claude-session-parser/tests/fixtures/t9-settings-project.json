@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": ["Bash(git *)"],
+    "defaultMode": "auto"
+  },
+  "env": {
+    "PROJECT_FLAG": "1"
+  }
+}

@@ -1,0 +1,3 @@
+{"type": "mode", "mode": "normal", "sessionId": "sess-unknown-1"}
+{"type": "future-entry-kind", "sessionId": "sess-unknown-1", "someField": "someValue"}
+{"parentUuid": null, "isSidechain": false, "type": "attachment", "uuid": "u-1", "timestamp": "2026-08-01T10:00:00.000Z", "sessionId": "sess-unknown-1", "attachment": {"type": "future_attachment_kind", "someField": "someValue"}}

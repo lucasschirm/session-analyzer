@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits"
+  },
+  "env": {
+    "USER_FLAG": "overridden-by-local",
+    "LOCAL_SECRET": "sk-fake-anonymized-0000000000000000"
+  }
+}

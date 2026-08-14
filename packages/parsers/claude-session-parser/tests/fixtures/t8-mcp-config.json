@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "example-docs": {
+      "command": "npx",
+      "args": ["-y", "@example/docs-mcp@latest"]
+    },
+    "demo:mcp": {
+      "command": "node",
+      "args": ["tools/demo-mcp/dist/index.js"]
+    }
+  }
+}

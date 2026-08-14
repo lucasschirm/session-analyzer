@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "zephyr:tools": {
+      "command": "node",
+      "args": ["tools/zephyr-mcp/dist/index.js"],
+      "env": { "ZEPHYR_API_KEY": "sk-fake-zephyr-0000" }
+    },
+    "quill-db": {
+      "url": "https://quill-db.example.invalid/mcp",
+      "type": "http"
+    }
+  }
+}

@@ -23,7 +23,8 @@ src/
 │   └── db-client.ts               # Main-thread proxy with promise correlation
 ├── lib/
 │   ├── markdown.ts                # marked + DOMPurify rendering helpers
-│   └── format.ts                  # Compact number formatting (K/M/B) with full-number tooltips; estimateTokenCount/formatEstimatedTokens for the ~4-chars/token tool-result estimate (no exact tokenizer available client-side)
+│   ├── format.ts                  # Compact number formatting (K/M/B) with full-number tooltips; estimateTokenCount/formatEstimatedTokens for the ~4-chars/token tool-result estimate (no exact tokenizer available client-side)
+│   └── claude-to-dashboard.ts     # toDashboardSession(native, projectId, title): transforms a `@lucasschirm/sal-claude-session-parser` ClaudeCodeSession into DashboardSession - token accumulation incl. per-model, tool_use/tool_result pairing by id, result_uuid capture, isMeta filtering, compact_boundary -> compactions, task_reminder -> SessionTask, ai-title -> title. Successor to the old inline parseClaudeCode; reuses SessionBuilder from workers/session-builder.ts
 ├── pages/
 │   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap
 │   ├── home-page.ts               # Projects CRUD grid + export database
@@ -34,7 +35,8 @@ src/
 ├── types/
 │   └── index.ts                   # Centralized TypeScript type definitions; new types: ModelTokenUsage, updated DashboardSession (added cache_creation_tokens/cache_read_tokens/models), ToolExecution (added parameters, result_uuid - the tool_result entry's own uuid, used to locate follow-up content via parent_uuid), TranscriptMessage (added uuid/parent_uuid), SessionMetrics (added cache/total token fields), IndicatorKey (added 'diagnostics', 'skills'), SubagentUsage (added optional messages: TranscriptMessage[] for the subagent's own transcript)
 └── workers/
-    ├── session-parser.worker.ts   # Format detection + 6 format parsers; rewritten Claude Code parser now handles real ~/.claude/projects/*.jsonl CLI format (not synthetic API events); added per-model token tracking, cache token accounting, tool parameter capture, message uuid/parent_uuid propagation, cache-miss-reason diagnostics, ai-title CLI event for session title, and result_uuid capture on tool_result match; isSkillTool/isAgentTool (exact 'Skill'/'Agent' tool name match - see root AGENTS.md's Domain Terminology) alongside the broader isAgentOrSkill/isReadTool/isWriteTool classifiers
+    ├── session-parser.worker.ts   # Format detection + 6 format parsers. Claude Code detection/parsing now delegates to `@lucasschirm/sal-claude-session-parser` (detectClaudeCode + parseSessionTranscript) followed by lib/claude-to-dashboard.ts's toDashboardSession, in place of the old inline parseClaudeCode; the other five formats (Agentic Pi, Antigravity, OpenCode/Codex, MCP, Local Runner) still parse directly into DashboardSession here via SessionBuilder. Re-exports isSkillTool/isAgentTool/isReadTool/isWriteTool/isAgentOrSkill from session-builder.ts for existing importers (exact 'Skill'/'Agent' tool name match - see root AGENTS.md's Domain Terminology)
+    ├── session-builder.ts         # SessionBuilder class + generateId + isReadTool/isWriteTool/isAgentOrSkill/isSkillTool/isAgentTool - extracted out of session-parser.worker.ts so lib/claude-to-dashboard.ts can reuse it without pulling in the other five formats' parsing code; behaviour unchanged from before the extraction
     └── parser-client.ts           # Spawns the parser worker per file
 ```
 

@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "helper": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${HELPER_API_KEY}"
+      }
+    },
+    "legacy-sse": {
+      "type": "sse",
+      "url": "https://legacy.example.com/sse"
+    },
+    "no-discriminant": {
+      "url": "https://example.com/mcp"
+    }
+  }
+}

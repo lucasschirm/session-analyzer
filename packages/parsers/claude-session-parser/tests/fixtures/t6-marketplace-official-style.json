@@ -1,0 +1,37 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "official-demo-marketplace",
+  "description": "Directory of popular Claude Code extensions",
+  "owner": {
+    "name": "Anthropic",
+    "email": "support@example.com"
+  },
+  "plugins": [
+    {
+      "name": "agent-sdk-dev",
+      "description": "Development kit for working with the Claude Agent SDK",
+      "source": "./plugins/agent-sdk-dev"
+    },
+    {
+      "name": "agentforce-adlc",
+      "description": "Agentforce Agent Development Life Cycle",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/example/agentforce-adlc.git",
+        "sha": "deadbeef0000000000000000000000000000"
+      }
+    },
+    {
+      "name": "42crunch-api-security-testing",
+      "description": "Automate API security",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/example/claude-plugins.git",
+        "path": "plugins/api-security-testing",
+        "ref": "v1.5.5",
+        "sha": "0000000000000000000000000000000000abcd"
+      }
+    },
+    { "source": "./plugins/missing-name" }
+  ]
+}

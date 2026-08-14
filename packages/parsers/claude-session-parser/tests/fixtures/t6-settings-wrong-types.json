@@ -1,0 +1,11 @@
+{
+  "model": 42,
+  "effortLevel": "high",
+  "env": ["not", "a", "record"],
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": ["Read", 7, "Write"]
+  },
+  "enabledPlugins": "not-an-object",
+  "hooks": "also-not-an-object"
+}

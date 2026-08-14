@@ -1,0 +1,9 @@
+{
+  "model": "opus",
+  "permissions": {
+    "deny": ["Bash(rm -rf *)"]
+  },
+  "env": {
+    "MANAGED_FLAG": "1"
+  }
+}

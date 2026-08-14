@@ -1,0 +1,9 @@
+{
+  "name": "nimbus-market",
+  "plugins": [
+    { "name": "valid-one", "source": "./plugins/valid-one" },
+    "not-an-object",
+    { "source": "./plugins/missing-name" },
+    { "name": "valid-two", "source": "./plugins/valid-two" }
+  ]
+}

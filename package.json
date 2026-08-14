@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "build": "pnpm --filter site build",
+    "build": "pnpm -r build",
     "dev": "pnpm --filter site dev",
     "preview": "pnpm --filter site preview",
     "test": "pnpm --filter site test",

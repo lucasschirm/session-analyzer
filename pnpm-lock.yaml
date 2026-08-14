@@ -12,11 +12,26 @@ importers:
         specifier: ^9.1.7
         version: 9.1.7
 
+  packages/parsers/claude-session-parser:
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^4.1.10
+        version: 4.1.10(vitest@4.1.10)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@26.2.0)(lightningcss@1.33.0)(tsx@4.23.12))
+
   packages/site:
     dependencies:
       '@lit-labs/router':
         specifier: ^0.1.4
         version: 0.1.4
+      '@lucasschirm/sal-claude-session-parser':
+        specifier: workspace:*
+        version: link:../parsers/claude-session-parser
       '@sqlite.org/sqlite-wasm':
         specifier: 3.53.0-build1
         version: 3.53.0-build1

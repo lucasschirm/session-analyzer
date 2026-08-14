@@ -1,0 +1,16 @@
+{
+  "name": "nimbus-market",
+  "description": "Synthetic marketplace for e2e fixtures.",
+  "owner": { "name": "Synthetic Owner" },
+  "plugins": [
+    { "name": "pluglet", "source": "./plugins/pluglet" },
+    {
+      "name": "second-pluglet",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://example.invalid/nimbus-plugins.git",
+        "path": "plugins/second-pluglet"
+      }
+    }
+  ]
+}

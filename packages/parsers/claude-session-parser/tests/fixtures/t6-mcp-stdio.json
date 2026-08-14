@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "vuetify:mcp": {
+      "command": "pnpm",
+      "args": ["vuetify:mcp"]
+    },
+    "demo:mcp": {
+      "command": "node",
+      "args": ["tools/demo-mcp.js"]
+    },
+    "example-docs": {
+      "command": "npx",
+      "args": ["-y", "@upstash/example-docs-mcp@latest"]
+    },
+    "claude-in-chrome": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/claude-in-chrome-mcp"]
+    },
+    "acme:mcp": {
+      "command": "node",
+      "args": ["tools/pep-mcp/dist/index.js"],
+      "env": {
+        "PEP_ENV": "dev"
+      }
+    }
+  }
+}
