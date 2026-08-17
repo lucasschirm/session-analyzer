@@ -8,6 +8,7 @@ export * from './manifest.js';
 export * from './privacy.js';
 export * from './sanitization/index.js';
 export * from './session.js';
+export * from './state/index.js';
 export * from './sync-run.js';
 export * from './versions.js';
 export * from './watcher.js';
