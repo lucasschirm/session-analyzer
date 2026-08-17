@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages (including plugin bundle)
+        run: pnpm -r build
+
+      - name: Run all tests with coverage
+        run: pnpm -r test:coverage
+        env:
+          CI: true
+
+      - name: Verify tag matches package version
+        if: github.ref_type == 'tag'
+        working-directory: packages/sync
+        run: |
+          set -e
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Verify version is not already published
+        working-directory: packages/sync
+        run: |
+          node - <<'EOF'
+          const { execSync } = require('node:child_process');
+          const { readFileSync } = require('node:fs');
+          const local = JSON.parse(readFileSync('./package.json', 'utf8')).version;
+          let published;
+          try {
+            published = JSON.parse(execSync('npm view @lucasschirm/sal-sync versions --json', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }));
+          } catch {
+            console.log('Package not yet published on npm; continuing.');
+            process.exit(0);
+          }
+          if (!Array.isArray(published)) {
+            console.error('Unexpected npm view response');
+            process.exit(1);
+          }
+          if (published.includes(local)) {
+            console.error(`Version ${local} already exists on npm`);
+            process.exit(1);
+          }
+          console.log(`Version ${local} is not published; continuing.`);
+          EOF
+
+      - name: Publish to npm with provenance
+        working-directory: packages/sync
+        run: npm publish --provenance --access public
