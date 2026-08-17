@@ -1,7 +1,11 @@
 /**
  * storage/ module barrel.
  *
- * Implementation modules (adapter interface, S3StorageAdapter) are added by
- * TSK0008 and must be exported from this barrel.
+ * Exports the storage adapter contract, deterministic object key builder,
+ * retry policy, and S3StorageAdapter implementation.
  */
-export {};
+
+export * from './contract.js';
+export * from './object-key.js';
+export * from './retry.js';
+export * from './s3-adapter.js';
