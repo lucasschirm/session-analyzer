@@ -223,7 +223,7 @@ export type ContentBlock =
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: unknown; is_error?: boolean; truncated?: TruncationSignal }
   // Forward-compatible catch-all.
-  | { type: string; [k: string]: unknown };
+  | { type: string;[k: string]: unknown };
 
 /** Claude Code truncates content in several distinct, differently-shaped
  *  real forms (confirmed: 37 inline markers, 20 read_truncation_notice
@@ -276,22 +276,36 @@ export interface ToolUseResult {
   [k: string]: unknown;
 }
 
+export interface ModelRefusalFallback {
+  originalModel: string;
+  fallbackModel: string;
+  direction?: string;
+  scope?: string;
+  trigger?: string;
+  apiRefusalCategory?: string;
+  apiRefusalExplanation?: string;
+  retractedMessageUuids?: string[];
+  refusedUserMessageUuid?: string;
+}
+
 export interface SystemEntry extends ClaudeCodeEntryBase {
   type: 'system';
   subtype:
-    | 'turn_duration'
-    | 'stop_hook_summary'
-    | 'away_summary'
-    | 'local_command'
-    | 'bridge_status'
-    | 'compact_boundary'
-    | 'scheduled_task_fire'
-    | 'agents_killed'
-    | (string & {});
+  | 'turn_duration'
+  | 'stop_hook_summary'
+  | 'away_summary'
+  | 'local_command'
+  | 'bridge_status'
+  | 'compact_boundary'
+  | 'scheduled_task_fire'
+  | 'agents_killed'
+  | 'model_refusal_fallback'
+  | (string & {});
   content?: string;
   level?: string;
   isMeta?: boolean;
   toolUseID?: string;
+  requestId?: string;
   durationMs?: number;
   messageCount?: number;
   hookCount?: number;
@@ -305,6 +319,7 @@ export interface SystemEntry extends ClaudeCodeEntryBase {
   logicalParentUuid?: string;
   compactMetadata?: CompactMetadata;
   pendingBackgroundAgentCount?: number;
+  modelRefusalFallback?: ModelRefusalFallback;
 }
 
 export interface CompactMetadata {
@@ -351,7 +366,7 @@ export type ClaudeAttachment =
   | DateChangeAttachment
   | ReadTruncationNoticeAttachment
   | MaxTurnsReachedAttachment
-  | { type: string; [k: string]: unknown };
+  | { type: string;[k: string]: unknown };
 
 export interface DeferredToolsDeltaAttachment {
   type: 'deferred_tools_delta';

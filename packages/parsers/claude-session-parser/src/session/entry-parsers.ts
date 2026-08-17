@@ -48,6 +48,7 @@ import type {
   LastPromptEntry,
   MaxTurnsReachedAttachment,
   McpInstructionsDeltaAttachment,
+  ModelRefusalFallback,
   ModeEntry,
   NestedMemoryAttachment,
   PermissionModeEntry,
@@ -487,6 +488,32 @@ function buildCompactMetadata(raw: unknown): CompactMetadata | undefined {
   return metadata;
 }
 
+function buildModelRefusalFallback(raw: Record<string, unknown>): ModelRefusalFallback | undefined {
+  const originalModel = str(raw, 'originalModel');
+  const fallbackModel = str(raw, 'fallbackModel');
+  if (originalModel === undefined && fallbackModel === undefined) return undefined;
+
+  const fallback: ModelRefusalFallback = {
+    originalModel: originalModel ?? '',
+    fallbackModel: fallbackModel ?? '',
+  };
+  const direction = str(raw, 'direction');
+  if (direction !== undefined) fallback.direction = direction;
+  const scope = str(raw, 'scope');
+  if (scope !== undefined) fallback.scope = scope;
+  const trigger = str(raw, 'trigger');
+  if (trigger !== undefined) fallback.trigger = trigger;
+  const apiRefusalCategory = str(raw, 'apiRefusalCategory');
+  if (apiRefusalCategory !== undefined) fallback.apiRefusalCategory = apiRefusalCategory;
+  const apiRefusalExplanation = str(raw, 'apiRefusalExplanation');
+  if (apiRefusalExplanation !== undefined) fallback.apiRefusalExplanation = apiRefusalExplanation;
+  const retractedMessageUuids = strArr(raw, 'retractedMessageUuids');
+  if (retractedMessageUuids !== undefined) fallback.retractedMessageUuids = retractedMessageUuids;
+  const refusedUserMessageUuid = str(raw, 'refusedUserMessageUuid');
+  if (refusedUserMessageUuid !== undefined) fallback.refusedUserMessageUuid = refusedUserMessageUuid;
+  return fallback;
+}
+
 function parseSystemEntry(
   obj: Record<string, unknown>,
   lineNumber: number,
@@ -533,6 +560,10 @@ function parseSystemEntry(
   if (compactMetadata !== undefined) entry.compactMetadata = compactMetadata;
   const pendingBackgroundAgentCount = num(obj, 'pendingBackgroundAgentCount');
   if (pendingBackgroundAgentCount !== undefined) entry.pendingBackgroundAgentCount = pendingBackgroundAgentCount;
+  const requestId = str(obj, 'requestId');
+  if (requestId !== undefined) entry.requestId = requestId;
+  const modelRefusalFallback = buildModelRefusalFallback(obj);
+  if (modelRefusalFallback !== undefined) entry.modelRefusalFallback = modelRefusalFallback;
   return entry;
 }
 
@@ -598,10 +629,10 @@ function parseAttachment(
     case 'invoked_skills': {
       const skills = Array.isArray(raw.skills)
         ? raw.skills.filter(isRecord).map((s) => ({
-            name: str(s, 'name') ?? '',
-            path: str(s, 'path') ?? '',
-            content: clampBlob(str(s, 'content') ?? '', maxBlobBytes),
-          }))
+          name: str(s, 'name') ?? '',
+          path: str(s, 'path') ?? '',
+          content: clampBlob(str(s, 'content') ?? '', maxBlobBytes),
+        }))
         : [];
       const attachment: InvokedSkillsAttachment = { type, skills };
       return { attachment };
