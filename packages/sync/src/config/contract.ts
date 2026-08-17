@@ -1,4 +1,4 @@
-import type { SyncLimits } from './limits.js';
+import type { SyncLimits } from '../limits.js';
 
 export const ENV_SAL_PROJECT_ID = 'SAL_PROJECT_ID';
 export const ENV_SAL_SYNC_DISABLED = 'SAL_SYNC_DISABLED';

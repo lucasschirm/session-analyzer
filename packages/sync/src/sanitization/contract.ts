@@ -1,4 +1,4 @@
-import { SANITIZATION_POLICY_VERSION } from './versions.js';
+import { SANITIZATION_POLICY_VERSION } from '../versions.js';
 
 export type RedactionAction = 'redact' | 'remove' | 'hash';
 

@@ -1,4 +1,4 @@
-import { TRANSCRIPT_OPT_OUT_ENV_VAR } from './sanitization.js';
+import { TRANSCRIPT_OPT_OUT_ENV_VAR } from './sanitization/index.js';
 
 export const FULL_DISABLE_ENV_VAR = 'SAL_SYNC_DISABLED';
 export const FULL_DISABLE_VALUE = 'true';
