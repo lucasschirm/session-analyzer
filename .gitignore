@@ -61,3 +61,6 @@ docs/superpowers
 .gitignore
 .claude/rules
 .claude/skills
+.devin/agents
+.devin/rules
+.devin/skills

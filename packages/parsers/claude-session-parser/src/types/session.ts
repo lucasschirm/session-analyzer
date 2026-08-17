@@ -298,6 +298,18 @@ export interface ToolUseResult {
   [k: string]: unknown;
 }
 
+export interface ModelRefusalFallback {
+  originalModel: string;
+  fallbackModel: string;
+  direction?: string;
+  scope?: string;
+  trigger?: string;
+  apiRefusalCategory?: string;
+  apiRefusalExplanation?: string;
+  retractedMessageUuids?: string[];
+  refusedUserMessageUuid?: string;
+}
+
 export interface SystemEntry extends ClaudeCodeEntryBase {
   type: 'system';
   subtype:
@@ -309,11 +321,13 @@ export interface SystemEntry extends ClaudeCodeEntryBase {
     | 'compact_boundary'
     | 'scheduled_task_fire'
     | 'agents_killed'
+    | 'model_refusal_fallback'
     | (string & {});
   content?: string;
   level?: string;
   isMeta?: boolean;
   toolUseID?: string;
+  requestId?: string;
   durationMs?: number;
   messageCount?: number;
   hookCount?: number;
@@ -327,6 +341,7 @@ export interface SystemEntry extends ClaudeCodeEntryBase {
   logicalParentUuid?: string;
   compactMetadata?: CompactMetadata;
   pendingBackgroundAgentCount?: number;
+  modelRefusalFallback?: ModelRefusalFallback;
 }
 
 export interface CompactMetadata {

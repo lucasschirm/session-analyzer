@@ -48,6 +48,7 @@ import type {
   MaxTurnsReachedAttachment,
   McpInstructionsDeltaAttachment,
   ModeEntry,
+  ModelRefusalFallback,
   NestedMemoryAttachment,
   PermissionModeEntry,
   PlanModeAttachment,
@@ -504,6 +505,33 @@ function buildCompactMetadata(raw: unknown): CompactMetadata | undefined {
     };
   }
   return metadata;
+}
+
+function buildModelRefusalFallback(raw: Record<string, unknown>): ModelRefusalFallback | undefined {
+  const originalModel = str(raw, 'originalModel');
+  const fallbackModel = str(raw, 'fallbackModel');
+  if (originalModel === undefined && fallbackModel === undefined) return undefined;
+
+  const fallback: ModelRefusalFallback = {
+    originalModel: originalModel ?? '',
+    fallbackModel: fallbackModel ?? '',
+  };
+  const direction = str(raw, 'direction');
+  if (direction !== undefined) fallback.direction = direction;
+  const scope = str(raw, 'scope');
+  if (scope !== undefined) fallback.scope = scope;
+  const trigger = str(raw, 'trigger');
+  if (trigger !== undefined) fallback.trigger = trigger;
+  const apiRefusalCategory = str(raw, 'apiRefusalCategory');
+  if (apiRefusalCategory !== undefined) fallback.apiRefusalCategory = apiRefusalCategory;
+  const apiRefusalExplanation = str(raw, 'apiRefusalExplanation');
+  if (apiRefusalExplanation !== undefined) fallback.apiRefusalExplanation = apiRefusalExplanation;
+  const retractedMessageUuids = strArr(raw, 'retractedMessageUuids');
+  if (retractedMessageUuids !== undefined) fallback.retractedMessageUuids = retractedMessageUuids;
+  const refusedUserMessageUuid = str(raw, 'refusedUserMessageUuid');
+  if (refusedUserMessageUuid !== undefined)
+    fallback.refusedUserMessageUuid = refusedUserMessageUuid;
+  return fallback;
 }
 
 function parseSystemEntry(

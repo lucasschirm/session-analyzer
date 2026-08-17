@@ -1,10 +1,59 @@
-# Session Analyzer — Agentic Coding Sessions Dashboard
+# Session Analyzer
 
-A fully offline, privacy-first web dashboard for visualizing and managing
-coding sessions from AI assistants. Everything — parsing, analytics, and
-storage — runs locally in the browser. No backend, no network calls.
+Tools for working with AI coding agent session data — parsing raw transcripts
+and configuration into typed data, and visualizing them offline in the
+browser. This is a pnpm workspace with two packages:
 
-## Features
+| Package | What it is |
+|---|---|
+| [`packages/site`](packages/site) | A fully offline, privacy-first web dashboard for visualizing and managing coding sessions from AI assistants. Everything — parsing, analytics, and storage — runs locally in the browser. No backend, no network calls. |
+| [`packages/parsers/claude-session-parser`](packages/parsers/claude-session-parser) | [`@lucasschirm/sal-claude-session-parser`](https://www.npmjs.com/package/@lucasschirm/sal-claude-session-parser) — a pure, dependency-free parser for Claude Code's on-disk formats (session transcripts, subagent files, and the full `.claude` configuration surface). Used by the dashboard, but publishable and usable standalone. |
+
+**[Live demo →](https://lucasschirm.github.io/session-analyzer/)**
+
+## Getting started
+
+```bash
+pnpm install
+pnpm dev        # dashboard dev server on http://localhost:3000
+```
+
+| Command | Purpose |
+|---|---|
+| `pnpm dev` | Start the dashboard's development server |
+| `pnpm build` | Build every package (`pnpm -r build`) |
+| `pnpm preview` | Serve the dashboard's production build locally |
+| `pnpm test` | Run the dashboard's Vitest unit tests |
+| `pnpm test:coverage` | Dashboard unit tests with coverage (60% threshold) |
+| `pnpm test:e2e` | Run Playwright E2E tests against `pnpm preview` |
+
+`pnpm build` runs before every commit via a husky pre-commit hook; the
+commit is blocked if any package's type-check or build fails.
+
+## Repository structure
+
+```
+packages/
+├── site/                       # The dashboard app (see below)
+│   ├── src/
+│   │   ├── components/         # One Lit component per file (metrics-card, upload-zone, …)
+│   │   ├── db/                 # DatabaseManager (sqlite oo1), db-worker, db-client proxy
+│   │   ├── lib/                # Markdown + sanitization helpers
+│   │   ├── pages/               # Route-level components (home, project, session, indicator)
+│   │   ├── types/               # Shared TypeScript types
+│   │   └── workers/             # Session parser worker + client helper
+│   └── tests/
+│       ├── unit/                # Vitest suites (parser, database, components, pages, router)
+│       └── e2e/                 # Playwright journeys + session fixture files
+└── parsers/
+    └── claude-session-parser/  # @lucasschirm/sal-claude-session-parser (see below)
+        ├── src/
+        └── tests/
+```
+
+## `packages/site` — the dashboard
+
+### Features
 
 - **Project CRUD** — create (with name + description), list, and delete
   projects; deleting cascades to all of a project's sessions.
@@ -31,9 +80,8 @@ storage — runs locally in the browser. No backend, no network calls.
 - **Database export** — download the entire SQLite database as a `.sqlite`
   file at any time.
 
-## Tech stack
+### Tech stack
 
-- [pnpm](https://pnpm.io/) — package manager
 - [Lit](https://lit.dev/) — web components
 - [@lit-labs/router](https://lit.dev/docs/libraries/router/) — routing
   (wrapped in a hash-based router for GitHub Pages compatibility)
@@ -42,27 +90,8 @@ storage — runs locally in the browser. No backend, no network calls.
 - [Vite](https://vitejs.dev/) — dev server and bundler
 - [Vitest](https://vitest.dev/) — unit tests (≥60% coverage enforced)
 - [Playwright](https://playwright.dev/) — E2E tests (Chromium on Linux CI)
-- GitHub Actions — PR test pipeline and GitHub Pages deploy
 
-## Getting started
-
-```bash
-pnpm install
-pnpm dev        # development server on http://localhost:3000
-```
-
-### Scripts
-
-| Command | Purpose |
-|---|---|
-| `pnpm dev` | Start the development server |
-| `pnpm build` | Type-check (`tsc`) and build to `packages/site/dist/` |
-| `pnpm preview` | Serve the production build locally |
-| `pnpm test` | Run Vitest unit tests |
-| `pnpm test:coverage` | Unit tests with coverage (60% threshold) |
-| `pnpm test:e2e` | Run Playwright E2E tests against `pnpm preview` |
-
-## Architecture notes
+### Architecture notes
 
 - **Workers do the heavy lifting.** Session parsing and every SQLite
   transaction run in dedicated Web Workers so the UI thread never blocks.
@@ -75,26 +104,21 @@ pnpm dev        # development server on http://localhost:3000
   GitHub Pages, where server-side path rewrites are unavailable.
 - **Parameterized SQL only** — no user input is ever interpolated into SQL.
 
-## Project structure
+## `packages/parsers/claude-session-parser`
 
-This is a pnpm workspace; the app lives in `packages/site/` (a future,
-separately-designed effort will add `packages/parsers/*`).
+A pure, dependency-free parser for Claude Code's on-disk formats: session
+transcripts, subagent transcripts and meta files, and the `.claude`
+configuration surface (`settings.json`, `.mcp.json`, agent/skill/rule
+definitions, plugin marketplaces). It parses text the caller supplies — it
+never touches a filesystem — so it runs anywhere JavaScript does, including
+inside the dashboard's browser Web Worker.
 
-```
-packages/site/
-├── src/
-│   ├── components/   # One Lit component per file (metrics-card, upload-zone, …)
-│   ├── db/           # DatabaseManager (sqlite oo1), db-worker, db-client proxy
-│   ├── lib/          # Markdown + sanitization helpers
-│   ├── pages/        # Route-level components (home, project, session, indicator)
-│   ├── types/        # Shared TypeScript types
-│   └── workers/      # Session parser worker + client helper
-└── tests/
-    ├── unit/         # Vitest suites (parser, database, components, pages, router)
-    └── e2e/          # Playwright journeys + session fixture files
-```
+Published standalone as
+[`@lucasschirm/sal-claude-session-parser`](https://www.npmjs.com/package/@lucasschirm/sal-claude-session-parser).
+See [its README](packages/parsers/claude-session-parser/README.md) for usage
+and design constraints.
 
-## Husky pre-commit hook
+## Deploy
 
-`pnpm build` runs before every commit; the commit is blocked if the
-type-check or Vite build fails.
+Pushes to `main` build the dashboard and deploy it to GitHub Pages via
+`.github/workflows/deploy.yml`: **https://lucasschirm.github.io/session-analyzer/**
