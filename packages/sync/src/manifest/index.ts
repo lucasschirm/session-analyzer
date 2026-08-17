@@ -5,3 +5,5 @@
  * exported from this barrel.
  */
 export * from './contract.js';
+export * from './generator.js';
+export * from './manifest.js';
