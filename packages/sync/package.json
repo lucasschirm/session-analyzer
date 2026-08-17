@@ -16,6 +16,11 @@
   "files": [
     "dist"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucasschirm/session-analyzer.git",
+    "directory": "packages/sync"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",

@@ -4,10 +4,12 @@ on:
   pull_request:
     branches: [main, develop]
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+jobs:
+  lint:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,27 +21,82 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - name: Cache pnpm modules
-        uses: actions/cache@v4
-        with:
-          path: ~/.pnpm-store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
+          cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build application
-        run: pnpm --filter site... build
+      - name: Lint all packages
+        run: pnpm -r lint
 
-      - name: Run claude-session-parser tests (Vitest, with coverage)
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build parser and sync dist (needed for downstream typechecks)
+        run: |
+          pnpm --filter @lucasschirm/sal-claude-session-parser build
+          pnpm --filter @lucasschirm/sal-sync build
+
+      - name: Typecheck all packages
+        run: pnpm -r typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    needs: [lint, typecheck]
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages (including plugin bundle)
+        run: pnpm -r build
+
+      - name: Run claude-session-parser tests with coverage
         run: pnpm --filter @lucasschirm/sal-claude-session-parser test:coverage
         env:
           CI: true
 
-      - name: Run site unit tests (Vitest, with coverage)
+      - name: Run sal-sync tests with coverage
+        run: pnpm --filter @lucasschirm/sal-sync test:coverage
+        env:
+          CI: true
+
+      - name: Run claude-session-sync tests with coverage
+        run: pnpm --filter @lucasschirm/claude-session-sync test:coverage
+        env:
+          CI: true
+
+      - name: Run site unit tests with coverage
         run: pnpm --filter site test:coverage
         env:
           CI: true
@@ -47,23 +104,27 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter site exec playwright install chromium --with-deps
 
-      - name: Run E2E tests (Playwright)
+      - name: Run site E2E tests
         run: pnpm --filter site test:e2e
         env:
           CI: true
 
-      - name: Upload test results
+      - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: packages/site/playwright-report/
+          name: coverage-reports-node-${{ matrix.node-version }}
+          path: |
+            packages/parsers/claude-session-parser/coverage/
+            packages/sync/coverage/
+            packages/plugins/claude-session-sync/coverage/
+            packages/site/coverage/
           retention-days: 30
 
-      - name: Upload coverage report
+      - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: packages/site/coverage/
+          name: playwright-report-node-${{ matrix.node-version }}
+          path: packages/site/playwright-report/
           retention-days: 30

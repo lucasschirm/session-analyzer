@@ -15,6 +15,7 @@
     "build": "node build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage --coverage.include='src/**/*.ts' --coverage.include='build.mjs' --coverage.exclude='src/hook.ts' --coverage.exclude='src/session-start.ts' --coverage.exclude='src/session-end.ts' --coverage.exclude='src/transcript-watcher.ts' --coverage.thresholds.statements=60 --coverage.thresholds.branches=60 --coverage.thresholds.functions=60 --coverage.thresholds.lines=60",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check src tests build.mjs",
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test"
