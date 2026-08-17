@@ -1,7 +1,8 @@
-/**
- * discovery/ module barrel.
- *
- * Implementation modules (workspace, global, transcript) are added by TSK0003
- * and must be exported from this barrel.
- */
-export {};
+export * from './context.js';
+export * from './contract.js';
+export * from './core.js';
+export * from './glob.js';
+export * from './global.js';
+export * from './paths.js';
+export * from './transcript.js';
+export * from './workspace.js';
