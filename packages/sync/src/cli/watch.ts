@@ -1,0 +1,73 @@
+import process from 'node:process';
+import { fileURLToPath } from 'node:url';
+
+import {
+  type CliOptions,
+  type CommandResult,
+  parseCliArgs,
+  removeWatcherPid,
+  writeWatcherPid,
+} from './common.js';
+
+export interface WatchOptions extends CliOptions {
+  watcher?(options: { dataDir: string; sessionId: string; transcriptPath: string }): Promise<void>;
+}
+
+/**
+ * Thin CLI wrapper for the transcript watcher.
+ *
+ * Parses argv, writes a pid file so the session can be shut down later, and
+ * invokes the pluggable watcher function. The actual watcher core is provided
+ * by TSK0011.
+ */
+export async function watch(options: WatchOptions = {}): Promise<CommandResult> {
+  const args = parseCliArgs(options.argv ?? process.argv.slice(2));
+  const sessionId = args.sessionId;
+  const dataDir = options.dataDir ?? args.dataDir ?? '';
+  const transcriptPath = args.transcriptPath ?? '';
+
+  if (!sessionId || !dataDir) {
+    return { exitCode: 0 };
+  }
+
+  const watcher =
+    options.watcher ??
+    (() => {
+      // Default: wait forever. The real watcher (TSK0011) will be injected.
+      return new Promise<void>(() => {});
+    });
+
+  await writeWatcherPid(dataDir, sessionId, process.pid);
+
+  const shutdown = async (): Promise<void> => {
+    await removeWatcherPid(dataDir, sessionId);
+  };
+
+  process.on('SIGTERM', () => {
+    void shutdown().finally(() => process.exit(0));
+  });
+  process.on('SIGINT', () => {
+    void shutdown().finally(() => process.exit(0));
+  });
+
+  try {
+    await watcher({ dataDir, sessionId, transcriptPath });
+    await shutdown();
+    return { exitCode: 0 };
+  } catch {
+    await shutdown();
+    return { exitCode: 1 };
+  }
+}
+
+async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+  const result = await watch({ argv });
+  return result.exitCode;
+}
+
+if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().then(
+    (code) => process.exit(code),
+    () => process.exit(1),
+  );
+}
