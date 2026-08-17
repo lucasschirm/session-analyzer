@@ -1,0 +1,14 @@
+{
+  "name": "session-analyzer",
+  "owner": {
+    "name": "lucasschirm"
+  },
+  "description": "Session Analyzer Claude Code plugins.",
+  "plugins": [
+    {
+      "name": "claude-session-sync",
+      "source": "./packages/plugins/claude-session-sync",
+      "description": "Sync Claude Code session data to the SAL sync engine."
+    }
+  ]
+}
