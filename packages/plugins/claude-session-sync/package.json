@@ -5,12 +5,18 @@
   "type": "module",
   "license": "ISC",
   "description": "Claude Code plugin adapter for the @lucasschirm/sal-sync session data sync engine.",
+  "files": [
+    ".claude-plugin",
+    "bin",
+    "hooks",
+    "package.json"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "biome check src tests",
+    "lint": "biome check src tests build.mjs",
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test"
   },
   "dependencies": {
@@ -19,6 +25,7 @@
   "devDependencies": {
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "^4.1.10",
+    "esbuild": "^0.25.12",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }
