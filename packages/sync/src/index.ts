@@ -16,4 +16,4 @@ export * from './storage/index.js';
 export * from './sync-run.js';
 export * from './telemetry/index.js';
 export * from './versions.js';
-export * from './watcher.js';
+export * from './watcher/index.js';

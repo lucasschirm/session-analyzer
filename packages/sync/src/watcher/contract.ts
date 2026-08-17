@@ -1,5 +1,3 @@
-import { WATCHER_MATCHER_VERSION } from './versions.js';
-
 export interface WatcherMatcher {
   baseDirectory: string;
   allowedRelativePatterns: readonly string[];
@@ -17,5 +15,3 @@ export const DEFAULT_WATCHER_MATCHER: WatcherMatcher = {
   baseDirectory: '',
   allowedRelativePatterns: WATCHER_ALLOWED_PATTERNS,
 };
-
-export { WATCHER_MATCHER_VERSION };
