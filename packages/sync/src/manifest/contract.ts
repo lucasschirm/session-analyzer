@@ -1,6 +1,5 @@
 import type { ManifestArtifact } from '../artifact.js';
 import type { SyncRun } from '../sync-run.js';
-import { MANIFEST_SCHEMA_VERSION, SYNC_VERSION } from '../versions.js';
 
 export interface SyncManifest {
   schemaVersion: number;

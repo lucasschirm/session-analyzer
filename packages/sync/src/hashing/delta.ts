@@ -8,7 +8,6 @@ import type {
 } from '../artifact.js';
 import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
 import type { SyncManifest } from '../manifest/index.js';
-import { MANIFEST_SCHEMA_VERSION } from '../versions.js';
 import type { SessionData } from '../session.js';
 import {
   getArtifactRecord,
@@ -20,7 +19,7 @@ import {
   type SyncState,
 } from '../state/index.js';
 import type { SyncRun, SyncTrigger } from '../sync-run.js';
-import { DEFAULT_PLUGIN_VERSION, SYNC_VERSION } from '../versions.js';
+import { DEFAULT_PLUGIN_VERSION, MANIFEST_SCHEMA_VERSION, SYNC_VERSION } from '../versions.js';
 import { type ArtifactSanitizer, selectSanitizer } from './sanitize.js';
 import { sha256Hex } from './sha256.js';
 
