@@ -17,8 +17,8 @@
  * See spec: docs/superpowers/specs/2026-08-12-claude-session-parser-design.md
  */
 
-import { stripBom, safeJsonParse } from './utils/text.js';
 import { parseFrontmatter } from './utils/frontmatter.js';
+import { safeJsonParse, stripBom } from './utils/text.js';
 
 export type ClaudeCodeArtifactKind =
   | 'session-transcript'
@@ -255,7 +255,9 @@ function isMcpConfigShape(obj: Record<string, unknown>): boolean {
   if (keys.length === 0) return false;
   return keys.every((key) => {
     const value = obj[key];
-    return isPlainObject(value) && (typeof value.command === 'string' || typeof value.url === 'string');
+    return (
+      isPlainObject(value) && (typeof value.command === 'string' || typeof value.url === 'string')
+    );
   });
 }
 
@@ -284,7 +286,13 @@ function isPluginMarketplaceShape(obj: Record<string, unknown>): boolean {
  *  kinds, so a config file that happens to be misnamed `agent-<x>.meta.json`
  *  (the filename trap flagged in spec §6 site follow-up item 4) is
  *  classified by its actual JSON shape, never by that filename. */
-const SUBAGENT_META_KEYS = new Set(['agentType', 'description', 'toolUseId', 'spawnDepth', 'model']);
+const SUBAGENT_META_KEYS = new Set([
+  'agentType',
+  'description',
+  'toolUseId',
+  'spawnDepth',
+  'model',
+]);
 
 function isSubagentMetaShape(obj: Record<string, unknown>): boolean {
   const keys = Object.keys(obj);

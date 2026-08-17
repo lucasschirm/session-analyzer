@@ -5,19 +5,19 @@
  */
 
 import type { ParseError } from './common.js';
+import type { ClaudeCodeSettings } from './config.js';
 import type {
-  ToolAvailabilityRecord,
-  SkillAvailabilityRecord,
   AgentAvailabilityRecord,
-  RuleRecord,
+  CompactionRecord,
+  HookEventRecord,
   McpServerRecord,
   PermissionModeChange,
-  HookEventRecord,
-  CompactionRecord,
   PrLinkRecord,
+  RuleRecord,
+  SkillAvailabilityRecord,
   SubagentLaunchRecord,
+  ToolAvailabilityRecord,
 } from './timeline.js';
-import type { ClaudeCodeSettings } from './config.js';
 
 // ---------------------------------------------------------------------------
 // 1.1 Session root
@@ -221,9 +221,15 @@ export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'thinking'; thinking?: string; signature?: string }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; tool_use_id: string; content: unknown; is_error?: boolean; truncated?: TruncationSignal }
+  | {
+      type: 'tool_result';
+      tool_use_id: string;
+      content: unknown;
+      is_error?: boolean;
+      truncated?: TruncationSignal;
+    }
   // Forward-compatible catch-all.
-  | { type: string;[k: string]: unknown };
+  | { type: string; [k: string]: unknown };
 
 /** Claude Code truncates content in several distinct, differently-shaped
  *  real forms (confirmed: 37 inline markers, 20 read_truncation_notice
@@ -234,7 +240,12 @@ export type ContentBlock =
  *  `"... [N characters truncated] ..."` marker found in `tool_result`
  *  content and mirrored onto `toolUseResult`. */
 export interface TruncationSignal {
-  kind: 'inline_char_count' | 'read_truncation_notice' | 'file_token_cap' | 'search_truncated' | 'mcp_instructions_truncated';
+  kind:
+    | 'inline_char_count'
+    | 'read_truncation_notice'
+    | 'file_token_cap'
+    | 'search_truncated'
+    | 'mcp_instructions_truncated';
   droppedChars?: number;
   shownLines?: number;
   totalLines?: number;
@@ -247,7 +258,14 @@ export interface TruncationSignal {
  *  the *paired* tool_use block, not on the result itself. */
 export interface ToolUseResult {
   // Read
-  file?: { filePath: string; content: string; numLines: number; totalLines: number; startLine?: number; truncatedByTokenCap?: boolean };
+  file?: {
+    filePath: string;
+    content: string;
+    numLines: number;
+    totalLines: number;
+    startLine?: number;
+    truncatedByTokenCap?: boolean;
+  };
   // Glob / Grep
   truncated?: boolean;
   countIsComplete?: boolean;
@@ -255,7 +273,11 @@ export interface ToolUseResult {
   totalMatches?: number;
   filenames?: string[];
   // Bash — real structured git signal, confirmed (commit.sha, push.branch, pr.number/url/action)
-  gitOperation?: { commit?: { sha: string; kind: string }; push?: { branch: string }; pr?: { number: number; url: string; action: string } };
+  gitOperation?: {
+    commit?: { sha: string; kind: string };
+    push?: { branch: string };
+    pr?: { number: number; url: string; action: string };
+  };
   stdout?: string;
   stderr?: string;
   interrupted?: boolean;
@@ -291,16 +313,16 @@ export interface ModelRefusalFallback {
 export interface SystemEntry extends ClaudeCodeEntryBase {
   type: 'system';
   subtype:
-  | 'turn_duration'
-  | 'stop_hook_summary'
-  | 'away_summary'
-  | 'local_command'
-  | 'bridge_status'
-  | 'compact_boundary'
-  | 'scheduled_task_fire'
-  | 'agents_killed'
-  | 'model_refusal_fallback'
-  | (string & {});
+    | 'turn_duration'
+    | 'stop_hook_summary'
+    | 'away_summary'
+    | 'local_command'
+    | 'bridge_status'
+    | 'compact_boundary'
+    | 'scheduled_task_fire'
+    | 'agents_killed'
+    | 'model_refusal_fallback'
+    | (string & {});
   content?: string;
   level?: string;
   isMeta?: boolean;
@@ -366,7 +388,7 @@ export type ClaudeAttachment =
   | DateChangeAttachment
   | ReadTruncationNoticeAttachment
   | MaxTurnsReachedAttachment
-  | { type: string;[k: string]: unknown };
+  | { type: string; [k: string]: unknown };
 
 export interface DeferredToolsDeltaAttachment {
   type: 'deferred_tools_delta';
@@ -691,7 +713,12 @@ export interface FileHistoryDeltaEntry {
   messageId: string;
   snapshotMessageId: string;
   trackingPath: string;
-  backup: { backupFileName: string | null; version: number; backupTime: string; realParentDir: string };
+  backup: {
+    backupFileName: string | null;
+    version: number;
+    backupTime: string;
+    realParentDir: string;
+  };
   timestamp: string;
   lineNumber: number;
 }

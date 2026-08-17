@@ -1,10 +1,15 @@
-import { LitElement, html, css, type TemplateResult } from 'lit';
+import { css, html, LitElement, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { dbClient } from '../db/db-client';
-import type { DashboardSession, IndicatorKey, ToolExecution, TranscriptMessage } from '../types';
-import { isAgentTool, isReadTool, isSkillTool, isWriteTool } from '../workers/session-parser.worker';
-import { formatDuration } from '../lib/format';
 import type { EventTableRow } from '../components/events-table';
+import { dbClient } from '../db/db-client';
+import { formatDuration } from '../lib/format';
+import type { DashboardSession, IndicatorKey, ToolExecution, TranscriptMessage } from '../types';
+import {
+  isAgentTool,
+  isReadTool,
+  isSkillTool,
+  isWriteTool,
+} from '../workers/session-parser.worker';
 import '../components/events-table';
 
 interface MessageNode {
@@ -407,10 +412,14 @@ export class IndicatorDetails extends LitElement {
           id: message.id,
           timestamp: message.timestamp,
           event_type: `${message.role} message`,
-          description: message.content.length > 160 ? `${message.content.slice(0, 160)}…` : message.content,
+          description:
+            message.content.length > 160 ? `${message.content.slice(0, 160)}…` : message.content,
         }));
       case 'tools':
-        return this.toolRows(session, (toolName) => !isSkillTool(toolName) && !isAgentTool(toolName));
+        return this.toolRows(
+          session,
+          (toolName) => !isSkillTool(toolName) && !isAgentTool(toolName),
+        );
       case 'files_read':
         return this.toolRows(session, (toolName) => isReadTool(toolName));
       case 'files_written':
@@ -438,7 +447,9 @@ export class IndicatorDetails extends LitElement {
           metadata: {
             description: task.description,
             first_seen_at: new Date(task.first_seen_at).toLocaleString(),
-            completed_at: task.completed_at ? new Date(task.completed_at).toLocaleString() : undefined,
+            completed_at: task.completed_at
+              ? new Date(task.completed_at).toLocaleString()
+              : undefined,
             duration: task.completed_at
               ? formatDuration(task.completed_at - task.first_seen_at)
               : undefined,
@@ -449,7 +460,7 @@ export class IndicatorDetails extends LitElement {
 
   private toolRows(
     session: DashboardSession,
-    predicate: (toolName: string) => boolean
+    predicate: (toolName: string) => boolean,
   ): EventTableRow[] {
     return session.tool_executions
       .filter((execution) => predicate(execution.tool_name))
@@ -476,13 +487,15 @@ export class IndicatorDetails extends LitElement {
    */
   private genericToolExecutions(session: DashboardSession): ToolExecution[] {
     return session.tool_executions.filter(
-      (execution) => !isSkillTool(execution.tool_name) && !isAgentTool(execution.tool_name)
+      (execution) => !isSkillTool(execution.tool_name) && !isAgentTool(execution.tool_name),
     );
   }
 
   /** Distinct tool names present in the session, for the "by tool" filter dropdown. */
   private distinctToolNames(session: DashboardSession): string[] {
-    return Array.from(new Set(this.genericToolExecutions(session).map((execution) => execution.tool_name))).sort();
+    return Array.from(
+      new Set(this.genericToolExecutions(session).map((execution) => execution.tool_name)),
+    ).sort();
   }
 
   /**
@@ -514,7 +527,9 @@ export class IndicatorDetails extends LitElement {
   }
 
   private renderToolDetail(execution: ToolExecution): TemplateResult {
-    const inputs = execution.parameters ? JSON.stringify(execution.parameters, null, 2) : 'No inputs recorded';
+    const inputs = execution.parameters
+      ? JSON.stringify(execution.parameters, null, 2)
+      : 'No inputs recorded';
     const result = execution.result ?? 'No result recorded';
     return html`
       <tr class="tool-detail-row">
@@ -572,9 +587,10 @@ export class IndicatorDetails extends LitElement {
       </div>
 
       <div class="tools-table">
-        ${filtered.length === 0
-          ? html`<p class="notice">No tool executions match these filters.</p>`
-          : html`
+        ${
+          filtered.length === 0
+            ? html`<p class="notice">No tool executions match these filters.</p>`
+            : html`
             <table>
               <thead>
                 <tr>
@@ -596,9 +612,11 @@ export class IndicatorDetails extends LitElement {
                       <td class="tool-name">${execution.tool_name}</td>
                       <td class="tool-target">${execution.target ?? '-'}</td>
                       <td>
-                        ${execution.success === false
-                          ? html`<span class="error-badge">Error</span>`
-                          : html`<span class="success-badge">OK</span>`}
+                        ${
+                          execution.success === false
+                            ? html`<span class="error-badge">Error</span>`
+                            : html`<span class="success-badge">OK</span>`
+                        }
                       </td>
                     </tr>
                     ${expanded ? this.renderToolDetail(execution) : ''}
@@ -606,7 +624,8 @@ export class IndicatorDetails extends LitElement {
                 })}
               </tbody>
             </table>
-          `}
+          `
+        }
       </div>
     `;
   }
@@ -650,7 +669,9 @@ export class IndicatorDetails extends LitElement {
 
   /** Distinct skill names present in the session, for the "by skill" filter dropdown. */
   private distinctSkillNames(session: DashboardSession): string[] {
-    return Array.from(new Set(this.skillExecutions(session).map((execution) => this.skillNameFor(execution)))).sort();
+    return Array.from(
+      new Set(this.skillExecutions(session).map((execution) => this.skillNameFor(execution))),
+    ).sort();
   }
 
   /**
@@ -687,7 +708,9 @@ export class IndicatorDetails extends LitElement {
   }
 
   private renderSkillDetail(session: DashboardSession, execution: ToolExecution): TemplateResult {
-    const inputs = execution.parameters ? JSON.stringify(execution.parameters, null, 2) : 'No inputs recorded';
+    const inputs = execution.parameters
+      ? JSON.stringify(execution.parameters, null, 2)
+      : 'No inputs recorded';
     const result = execution.result ?? 'No result recorded';
     const content = this.linkedContentFor(session, execution);
     return html`
@@ -740,9 +763,10 @@ export class IndicatorDetails extends LitElement {
       </div>
 
       <div class="tools-table">
-        ${filtered.length === 0
-          ? html`<p class="notice">No skill invocations match these filters.</p>`
-          : html`
+        ${
+          filtered.length === 0
+            ? html`<p class="notice">No skill invocations match these filters.</p>`
+            : html`
             <table>
               <thead>
                 <tr>
@@ -764,9 +788,11 @@ export class IndicatorDetails extends LitElement {
                       <td class="tool-name">${this.skillNameFor(execution)}</td>
                       <td class="tool-target">${this.skillArgsPreview(execution)}</td>
                       <td>
-                        ${execution.success === false
-                          ? html`<span class="error-badge">Error</span>`
-                          : html`<span class="success-badge">OK</span>`}
+                        ${
+                          execution.success === false
+                            ? html`<span class="error-badge">Error</span>`
+                            : html`<span class="success-badge">OK</span>`
+                        }
                       </td>
                     </tr>
                     ${expanded ? this.renderSkillDetail(session, execution) : ''}
@@ -774,7 +800,8 @@ export class IndicatorDetails extends LitElement {
                 })}
               </tbody>
             </table>
-          `}
+          `
+        }
       </div>
     `;
   }
@@ -795,13 +822,16 @@ export class IndicatorDetails extends LitElement {
     const description = execution.parameters?.description;
     if (typeof description === 'string' && description) return description;
     const prompt = execution.parameters?.prompt;
-    if (typeof prompt === 'string' && prompt) return prompt.length > 120 ? `${prompt.slice(0, 120)}…` : prompt;
+    if (typeof prompt === 'string' && prompt)
+      return prompt.length > 120 ? `${prompt.slice(0, 120)}…` : prompt;
     return '-';
   }
 
   /** Distinct agent types present in the session, for the "by type" filter dropdown. */
   private distinctAgentTypes(session: DashboardSession): string[] {
-    return Array.from(new Set(this.agentExecutions(session).map((execution) => this.agentTypeFor(execution)))).sort();
+    return Array.from(
+      new Set(this.agentExecutions(session).map((execution) => this.agentTypeFor(execution))),
+    ).sort();
   }
 
   /**
@@ -838,7 +868,9 @@ export class IndicatorDetails extends LitElement {
   }
 
   private renderAgentDetail(session: DashboardSession, execution: ToolExecution): TemplateResult {
-    const inputs = execution.parameters ? JSON.stringify(execution.parameters, null, 2) : 'No inputs recorded';
+    const inputs = execution.parameters
+      ? JSON.stringify(execution.parameters, null, 2)
+      : 'No inputs recorded';
     const result = execution.result ?? 'No result recorded';
     const content = this.linkedContentFor(session, execution);
     return html`
@@ -891,9 +923,10 @@ export class IndicatorDetails extends LitElement {
       </div>
 
       <div class="tools-table">
-        ${filtered.length === 0
-          ? html`<p class="notice">No agent invocations match these filters.</p>`
-          : html`
+        ${
+          filtered.length === 0
+            ? html`<p class="notice">No agent invocations match these filters.</p>`
+            : html`
             <table>
               <thead>
                 <tr>
@@ -915,9 +948,11 @@ export class IndicatorDetails extends LitElement {
                       <td class="tool-name">${this.agentTypeFor(execution)}</td>
                       <td class="tool-target">${this.agentDescriptionPreview(execution)}</td>
                       <td>
-                        ${execution.success === false
-                          ? html`<span class="error-badge">Error</span>`
-                          : html`<span class="success-badge">OK</span>`}
+                        ${
+                          execution.success === false
+                            ? html`<span class="error-badge">Error</span>`
+                            : html`<span class="success-badge">OK</span>`
+                        }
                       </td>
                     </tr>
                     ${expanded ? this.renderAgentDetail(session, execution) : ''}
@@ -925,7 +960,8 @@ export class IndicatorDetails extends LitElement {
                 })}
               </tbody>
             </table>
-          `}
+          `
+        }
       </div>
     `;
   }
@@ -974,22 +1010,26 @@ export class IndicatorDetails extends LitElement {
           <span class="message-toggle">${hasChildren ? (collapsed ? '▶' : '▼') : ''}</span>
           <span class="message-role">${message.role}</span>
           <span class="message-timestamp">${new Date(message.timestamp).toLocaleString()}</span>
-          ${hasChildren
-            ? html`<span class="message-child-count"
+          ${
+            hasChildren
+              ? html`<span class="message-child-count"
                 >${children.length} repl${children.length === 1 ? 'y' : 'ies'}</span
               >`
-            : ''}
+              : ''
+          }
         </div>
         <div class="message-content">
           ${message.content.length > 300 ? `${message.content.slice(0, 300)}…` : message.content}
         </div>
-        ${hasChildren && !collapsed
-          ? html`
+        ${
+          hasChildren && !collapsed
+            ? html`
             <div class="message-children">
               ${children.map((child) => this.renderMessageNode(child, false))}
             </div>
           `
-          : ''}
+            : ''
+        }
       </div>
     `;
   }
@@ -1024,7 +1064,8 @@ export class IndicatorDetails extends LitElement {
     const isSkills = indicator === 'skills';
     const isAgents = indicator === 'agents';
     const messageTree = isTurns ? this.buildMessageTree(session) : [];
-    const rows = isTurns || isTools || isSkills || isAgents ? [] : this.buildRows(session, indicator);
+    const rows =
+      isTurns || isTools || isSkills || isAgents ? [] : this.buildRows(session, indicator);
     const recordCount = isTurns
       ? session.messages.length
       : isTools
@@ -1044,7 +1085,9 @@ export class IndicatorDetails extends LitElement {
     const assistantMessagesWithText = isTurns
       ? session.messages.filter((message) => message.role === 'assistant').length
       : 0;
-    const toolOnlyTurns = isTurns ? Math.max(0, session.total_turns - assistantMessagesWithText) : 0;
+    const toolOnlyTurns = isTurns
+      ? Math.max(0, session.total_turns - assistantMessagesWithText)
+      : 0;
 
     return html`
       <div class="indicator-details">
@@ -1058,8 +1101,9 @@ export class IndicatorDetails extends LitElement {
 
         ${this.error ? html`<div class="error">${this.error}</div>` : ''}
 
-        ${isTurns && toolOnlyTurns > 0
-          ? html`
+        ${
+          isTurns && toolOnlyTurns > 0
+            ? html`
             <p class="notice">
               ${assistantMessagesWithText} of ${session.total_turns} assistant turns produced visible
               text and appear below. The other ${toolOnlyTurns}
@@ -1069,21 +1113,24 @@ export class IndicatorDetails extends LitElement {
               for that activity.
             </p>
           `
-          : ''}
+            : ''
+        }
 
-        ${isTurns
-          ? html`
+        ${
+          isTurns
+            ? html`
             <div class="message-tree">
               ${messageTree.map((node) => this.renderMessageNode(node, true))}
             </div>
           `
-          : isTools
-            ? this.renderToolsSection(session)
-            : isSkills
-              ? this.renderSkillsSection(session)
-              : isAgents
-                ? this.renderAgentsSection(session)
-                : html`<events-table .events=${rows} showMetadata></events-table>`}
+            : isTools
+              ? this.renderToolsSection(session)
+              : isSkills
+                ? this.renderSkillsSection(session)
+                : isAgents
+                  ? this.renderAgentsSection(session)
+                  : html`<events-table .events=${rows} showMetadata></events-table>`
+        }
       </div>
     `;
   }

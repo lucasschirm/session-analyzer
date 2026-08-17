@@ -57,3 +57,7 @@ package-lock.json
 tmp
 docs/superpowers
 .claude/scheduled_tasks.lock
+.claude/agents
+.gitignore
+.claude/rules
+.claude/skills

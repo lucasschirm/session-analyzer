@@ -48,7 +48,10 @@ export function entryUuid(entry: ClaudeCodeEntry): string | undefined {
  * return `undefined`.
  */
 export function entryTimestampMs(entry: ClaudeCodeEntry): number | undefined {
-  if ('timestampMs' in entry && typeof (entry as { timestampMs?: unknown }).timestampMs === 'number') {
+  if (
+    'timestampMs' in entry &&
+    typeof (entry as { timestampMs?: unknown }).timestampMs === 'number'
+  ) {
     return (entry as { timestampMs: number }).timestampMs;
   }
   if ('timestamp' in entry && typeof (entry as { timestamp?: unknown }).timestamp === 'string') {
@@ -70,7 +73,11 @@ export function isAttachment(entry: ClaudeCodeEntry, type: string): boolean {
  * actually available, so downstream consumers never see spurious
  * `undefined` keys.
  */
-export function eventFrom<A extends string>(entry: ClaudeCodeEntry, action: A, isInitial?: boolean): AvailabilityEvent<A> {
+export function eventFrom<A extends string>(
+  entry: ClaudeCodeEntry,
+  action: A,
+  isInitial?: boolean,
+): AvailabilityEvent<A> {
   const event: AvailabilityEvent<A> = {
     action,
     lineNumber: entryLineNumber(entry),

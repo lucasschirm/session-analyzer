@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { dbClient } from '../db/db-client';
 import { HashRouter } from '../router';
@@ -149,7 +149,7 @@ export class AppRoot extends LitElement {
       render: () => html`
         <p>Page not found. <a href="#/">Go back home</a>.</p>
       `,
-    }
+    },
   );
 
   @state() private storage: 'opfs' | 'memory' | null = null;
@@ -169,11 +169,13 @@ export class AppRoot extends LitElement {
       <header>
         <a href="#/" class="logo">Session Analyzer</a>
         <div class="header-right">
-          ${this.storage
-            ? html`<span class="storage-badge ${this.storage}" title="SQLite storage backend">
+          ${
+            this.storage
+              ? html`<span class="storage-badge ${this.storage}" title="SQLite storage backend">
                 ${this.storage === 'opfs' ? 'OPFS' : 'In-Memory'}
               </span>`
-            : ''}
+              : ''
+          }
           <nav>
             <a href="#/">Home</a>
           </nav>

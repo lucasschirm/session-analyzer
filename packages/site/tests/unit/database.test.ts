@@ -21,7 +21,10 @@ function makeProject(overrides: Partial<Project> = {}): Project {
   };
 }
 
-function makeSession(projectId: string, overrides: Partial<DashboardSession> = {}): DashboardSession {
+function makeSession(
+  projectId: string,
+  overrides: Partial<DashboardSession> = {},
+): DashboardSession {
   // Resolve the id first so child rows (tools/events/messages) always
   // reference the final session id, keeping FK integrity when tests
   // override `id`.
@@ -39,7 +42,13 @@ function makeSession(projectId: string, overrides: Partial<DashboardSession> = {
     cache_read_tokens: 10,
     total_tokens: 180,
     models: [
-      { model: 'claude-sonnet-5', input_tokens: 100, output_tokens: 50, cache_creation_tokens: 20, cache_read_tokens: 10 },
+      {
+        model: 'claude-sonnet-5',
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_tokens: 20,
+        cache_read_tokens: 10,
+      },
     ],
     context_compactions: 0,
     total_turns: 2,
@@ -191,7 +200,13 @@ describe('DatabaseManager', () => {
       expect(loaded?.cache_creation_tokens).toBe(20);
       expect(loaded?.cache_read_tokens).toBe(10);
       expect(loaded?.models).toEqual([
-        { model: 'claude-sonnet-5', input_tokens: 100, output_tokens: 50, cache_creation_tokens: 20, cache_read_tokens: 10 },
+        {
+          model: 'claude-sonnet-5',
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_creation_tokens: 20,
+          cache_read_tokens: 10,
+        },
       ]);
       expect(loaded?.tool_executions.length).toBe(1);
       expect(loaded?.tool_executions[0].target).toBe('src/app.ts');
@@ -235,8 +250,12 @@ describe('DatabaseManager', () => {
     it('lists sessions by project ordered by date descending', () => {
       const project = makeProject();
       manager.createProject(project);
-      manager.saveSession(makeSession(project.id, { id: 'older', started_at: 1000, ended_at: 2000 }));
-      manager.saveSession(makeSession(project.id, { id: 'newer', started_at: 3000, ended_at: 4000 }));
+      manager.saveSession(
+        makeSession(project.id, { id: 'older', started_at: 1000, ended_at: 2000 }),
+      );
+      manager.saveSession(
+        makeSession(project.id, { id: 'newer', started_at: 3000, ended_at: 4000 }),
+      );
 
       const sessions = manager.getSessionsByProject(project.id);
       expect(sessions.map((session) => session.id)).toEqual(['newer', 'older']);
@@ -315,7 +334,11 @@ describe('DatabaseManager', () => {
     it('updates the existing session in place on a re-upload with the same external_id, keeping its id', () => {
       const project = makeProject();
       manager.createProject(project);
-      const first = makeSession(project.id, { external_id: 'ext-1', total_tokens: 100, title: 'first-pass.jsonl' });
+      const first = makeSession(project.id, {
+        external_id: 'ext-1',
+        total_tokens: 100,
+        title: 'first-pass.jsonl',
+      });
       const firstId = manager.upsertSessionByExternalId(first);
 
       const second = makeSession(project.id, {
@@ -409,7 +432,7 @@ describe('DatabaseManager', () => {
           model: 'claude-sonnet',
           started_at: 0,
           ended_at: 60_000,
-        })
+        }),
       );
       manager.saveSession(
         makeSession(project.id, {
@@ -420,7 +443,7 @@ describe('DatabaseManager', () => {
           model: 'claude-opus',
           started_at: 0,
           ended_at: 30_000,
-        })
+        }),
       );
 
       const metrics = manager.getProjectMetrics(project.id);

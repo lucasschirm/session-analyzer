@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { LitElement, html } from 'lit';
+import { html, LitElement } from 'lit';
 import { customElement } from 'lit/decorators.js';
-import { HashRouter, currentHashPath, navigateTo } from '../../src/router';
+import { afterEach, describe, expect, it } from 'vitest';
+import { currentHashPath, HashRouter, navigateTo } from '../../src/router';
 
 @customElement('router-test-host')
 class RouterTestHost extends LitElement {
@@ -19,7 +19,7 @@ class RouterTestHost extends LitElement {
           html`<div id="route-indicator">${params.sessionId}:${params.indicator}</div>`,
       },
     ],
-    { render: () => html`<div id="route-fallback">not found</div>` }
+    { render: () => html`<div id="route-fallback">not found</div>` },
   );
 
   render() {

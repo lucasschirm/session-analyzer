@@ -50,7 +50,11 @@ async function handleRequest(request: DbRequest): Promise<DbResponse> {
           result: manager.findSessionByExternalId(request.projectId, request.externalId),
         };
       case 'getSessionsByProject':
-        return { id: request.id, ok: true, result: manager.getSessionsByProject(request.projectId) };
+        return {
+          id: request.id,
+          ok: true,
+          result: manager.getSessionsByProject(request.projectId),
+        };
       case 'searchSessions':
         return {
           id: request.id,
@@ -93,8 +97,6 @@ self.onmessage = (event: MessageEvent<DbRequest>) => {
       } else {
         self.postMessage(response);
       }
-    })
+    }),
   );
 };
-
-export {};

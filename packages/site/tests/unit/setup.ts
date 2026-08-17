@@ -20,7 +20,7 @@ function matchPattern(pattern: string, pathname: string): PatternGroups | null {
     const segment = patternSegments[patternIndex];
 
     if (segment === '*') {
-      groups['0'] = '/' + pathSegments.slice(patternIndex).join('/');
+      groups['0'] = `/${pathSegments.slice(patternIndex).join('/')}`;
       return groups;
     }
 

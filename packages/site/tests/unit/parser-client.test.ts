@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parseInWorker } from '../../src/workers/parser-client';
-import type { ParseErrorResponse, ParseRequest, ParseResponse } from '../../src/workers/session-parser.worker';
 import type { ParsedSession } from '../../src/types';
+import { parseInWorker } from '../../src/workers/parser-client';
+import type {
+  ParseErrorResponse,
+  ParseRequest,
+  ParseResponse,
+} from '../../src/workers/session-parser.worker';
 
 class FakeParserWorker {
   onmessage: ((event: MessageEvent) => void) | null = null;

@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
@@ -163,21 +163,25 @@ export class EventsTable extends LitElement {
                   <td class="timestamp">${this.formatTimestamp(event.timestamp)}</td>
                   <td class="event-type">${event.event_type}</td>
                   <td class="description">${event.description}</td>
-                  ${this.showMetadata
-                    ? html`
+                  ${
+                    this.showMetadata
+                      ? html`
                       <td
                         class="metadata-cell"
                         title=${this.metadataFull(event.metadata) || 'No metadata'}
                         @click=${() => event.metadata && this.toggleMetadata(event.id)}
                       >
-                        ${event.metadata && this.expandedIds.has(event.id)
-                          ? html`<pre class="metadata-full">${this.metadataFull(event.metadata)}</pre>`
-                          : html`<span class="metadata-preview">${this.metadataPreview(event.metadata)}</span>`}
+                        ${
+                          event.metadata && this.expandedIds.has(event.id)
+                            ? html`<pre class="metadata-full">${this.metadataFull(event.metadata)}</pre>`
+                            : html`<span class="metadata-preview">${this.metadataPreview(event.metadata)}</span>`
+                        }
                       </td>
                     `
-                    : ''}
+                      : ''
+                  }
                 </tr>
-              `
+              `,
             )}
           </tbody>
         </table>

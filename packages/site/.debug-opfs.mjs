@@ -5,7 +5,9 @@ const page = await browser.newPage();
 page.on('pageerror', (error) => console.log('[pageerror]', error.message));
 page.on('worker', (worker) => {
   console.log('[worker started]', worker.url());
-  worker.on('console', (message) => console.log('[worker console]', message.type(), message.text()));
+  worker.on('console', (message) =>
+    console.log('[worker console]', message.type(), message.text()),
+  );
   worker.on('close', () => console.log('[worker closed]', worker.url()));
 });
 

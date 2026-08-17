@@ -1,16 +1,16 @@
-import { afterEach, describe, expect, it } from 'vitest';
 import type { LitElement } from 'lit';
+import { afterEach, describe, expect, it } from 'vitest';
 import '../../src/components/metrics-card';
 import '../../src/components/session-list';
 import '../../src/components/events-table';
 import '../../src/components/project-selector';
 import '../../src/components/project-modal';
 import '../../src/components/upload-zone';
-import type { MetricsCard } from '../../src/components/metrics-card';
-import type { SessionList } from '../../src/components/session-list';
 import type { EventsTable } from '../../src/components/events-table';
-import type { ProjectSelector } from '../../src/components/project-selector';
+import type { MetricsCard } from '../../src/components/metrics-card';
 import type { ProjectModal } from '../../src/components/project-modal';
+import type { ProjectSelector } from '../../src/components/project-selector';
+import type { SessionList } from '../../src/components/session-list';
 import type { UploadZone } from '../../src/components/upload-zone';
 import type { UploadedFile } from '../../src/lib/subagents';
 import type { DashboardSession, Project } from '../../src/types';
@@ -72,12 +72,14 @@ function projectFixture(overrides: Partial<Project> = {}): Project {
 
 describe('metrics-card', () => {
   it('renders value, label, icon and sub-detail', async () => {
-    const card = await mount(Object.assign(document.createElement('metrics-card'), {
-      label: 'Total Tokens',
-      value: '1,234',
-      icon: '🔤',
-      sub: 'extra detail',
-    }) as MetricsCard);
+    const card = await mount(
+      Object.assign(document.createElement('metrics-card'), {
+        label: 'Total Tokens',
+        value: '1,234',
+        icon: '🔤',
+        sub: 'extra detail',
+      }) as MetricsCard,
+    );
 
     const root = shadow(card);
     expect(root.textContent).toContain('1,234');
@@ -95,10 +97,12 @@ describe('metrics-card', () => {
   });
 
   it('renders as a button and emits card-click when clickable', async () => {
-    const card = await mount(Object.assign(document.createElement('metrics-card'), {
-      clickable: true,
-      label: 'Files Written',
-    }) as MetricsCard);
+    const card = await mount(
+      Object.assign(document.createElement('metrics-card'), {
+        clickable: true,
+        label: 'Files Written',
+      }) as MetricsCard,
+    );
     const root = shadow(card);
 
     const button = root.querySelector('button.metrics-card') as HTMLButtonElement;
@@ -121,9 +125,14 @@ describe('session-list', () => {
   });
 
   it('renders rows and emits session-click with the session id', async () => {
-    const list = await mount(Object.assign(document.createElement('session-list'), {
-      sessions: [sessionFixture(), sessionFixture({ id: 's2', title: 'second.jsonl', source: 'mcp' })],
-    }) as SessionList);
+    const list = await mount(
+      Object.assign(document.createElement('session-list'), {
+        sessions: [
+          sessionFixture(),
+          sessionFixture({ id: 's2', title: 'second.jsonl', source: 'mcp' }),
+        ],
+      }) as SessionList,
+    );
     const root = shadow(list);
 
     const rows = root.querySelectorAll('.session-item');
@@ -148,12 +157,24 @@ describe('events-table', () => {
   });
 
   it('renders rows with timestamps, types and descriptions', async () => {
-    const table = await mount(Object.assign(document.createElement('events-table'), {
-      events: [
-        { id: 'e1', timestamp: 1_700_000_000_000, event_type: 'tool_exec', description: 'npm run build' },
-        { id: 'e2', timestamp: 1_700_000_010_000, event_type: 'file_write', description: 'dist/main.js' },
-      ],
-    }) as EventsTable);
+    const table = await mount(
+      Object.assign(document.createElement('events-table'), {
+        events: [
+          {
+            id: 'e1',
+            timestamp: 1_700_000_000_000,
+            event_type: 'tool_exec',
+            description: 'npm run build',
+          },
+          {
+            id: 'e2',
+            timestamp: 1_700_000_010_000,
+            event_type: 'file_write',
+            description: 'dist/main.js',
+          },
+        ],
+      }) as EventsTable,
+    );
     const root = shadow(table);
 
     expect(root.querySelectorAll('tbody tr').length).toBe(2);
@@ -163,18 +184,20 @@ describe('events-table', () => {
   });
 
   it('adds a metadata column when showMetadata is set', async () => {
-    const table = await mount(Object.assign(document.createElement('events-table'), {
-      showMetadata: true,
-      events: [
-        {
-          id: 'e1',
-          timestamp: 1_700_000_000_000,
-          event_type: 'message_start',
-          description: 'x',
-          metadata: { usage: { input_tokens: 5 } },
-        },
-      ],
-    }) as EventsTable);
+    const table = await mount(
+      Object.assign(document.createElement('events-table'), {
+        showMetadata: true,
+        events: [
+          {
+            id: 'e1',
+            timestamp: 1_700_000_000_000,
+            event_type: 'message_start',
+            description: 'x',
+            metadata: { usage: { input_tokens: 5 } },
+          },
+        ],
+      }) as EventsTable,
+    );
     const root = shadow(table);
 
     expect(root.querySelectorAll('th').length).toBe(4);
@@ -184,10 +207,20 @@ describe('events-table', () => {
 
   it('shows a full-content tooltip and expands the metadata cell inline on click', async () => {
     const metadata = { usage: { input_tokens: 5, output_tokens: 500_000 } };
-    const table = await mount(Object.assign(document.createElement('events-table'), {
-      showMetadata: true,
-      events: [{ id: 'e1', timestamp: 1_700_000_000_000, event_type: 'assistant_turn', description: 'x', metadata }],
-    }) as EventsTable);
+    const table = await mount(
+      Object.assign(document.createElement('events-table'), {
+        showMetadata: true,
+        events: [
+          {
+            id: 'e1',
+            timestamp: 1_700_000_000_000,
+            event_type: 'assistant_turn',
+            description: 'x',
+            metadata,
+          },
+        ],
+      }) as EventsTable,
+    );
     const root = shadow(table);
     const fullJson = JSON.stringify(metadata, null, 2);
 
@@ -211,9 +244,14 @@ describe('events-table', () => {
 
 describe('project-selector', () => {
   it('renders options and emits value-changed on selection', async () => {
-    const selector = await mount(Object.assign(document.createElement('project-selector'), {
-      projects: [projectFixture(), projectFixture({ id: 'p2', name: 'Project Two', session_count: 1 })],
-    }) as ProjectSelector);
+    const selector = await mount(
+      Object.assign(document.createElement('project-selector'), {
+        projects: [
+          projectFixture(),
+          projectFixture({ id: 'p2', name: 'Project Two', session_count: 1 }),
+        ],
+      }) as ProjectSelector,
+    );
     const root = shadow(selector);
 
     const options = root.querySelectorAll('option');
@@ -242,14 +280,18 @@ describe('project-modal', () => {
   });
 
   it('emits project-create with trimmed values on submit', async () => {
-    const modal = await mount(Object.assign(document.createElement('project-modal'), {
-      open: true,
-    }) as ProjectModal);
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+      }) as ProjectModal,
+    );
     await modal.updateComplete;
     const root = shadow(modal);
 
     const nameInput = root.querySelector('#project-name-input') as HTMLInputElement;
-    const descriptionInput = root.querySelector('#project-description-input') as HTMLTextAreaElement;
+    const descriptionInput = root.querySelector(
+      '#project-description-input',
+    ) as HTMLTextAreaElement;
     expect(nameInput).not.toBeNull();
 
     nameInput.value = '  My Project  ';
@@ -270,9 +312,11 @@ describe('project-modal', () => {
   });
 
   it('disables submit while the name is empty', async () => {
-    const modal = await mount(Object.assign(document.createElement('project-modal'), {
-      open: true,
-    }) as ProjectModal);
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+      }) as ProjectModal,
+    );
     await modal.updateComplete;
 
     const submit = shadow(modal).querySelector('button.primary') as HTMLButtonElement;
@@ -280,9 +324,11 @@ describe('project-modal', () => {
   });
 
   it('emits modal-close on cancel and overlay click', async () => {
-    const modal = await mount(Object.assign(document.createElement('project-modal'), {
-      open: true,
-    }) as ProjectModal);
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+      }) as ProjectModal,
+    );
     await modal.updateComplete;
     const root = shadow(modal);
 
@@ -298,9 +344,11 @@ describe('project-modal', () => {
   });
 
   it('emits modal-close on Escape', async () => {
-    const modal = await mount(Object.assign(document.createElement('project-modal'), {
-      open: true,
-    }) as ProjectModal);
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+      }) as ProjectModal,
+    );
     await modal.updateComplete;
 
     let closed = 0;
@@ -402,7 +450,10 @@ describe('upload-zone', () => {
               callback([]);
             } else {
               read = true;
-              callback([fileEntry(mainFile, 'agent-abc.jsonl'), fileEntry(metaFile, 'agent-abc.meta.json')]);
+              callback([
+                fileEntry(mainFile, 'agent-abc.jsonl'),
+                fileEntry(metaFile, 'agent-abc.meta.json'),
+              ]);
             }
           },
         };
@@ -432,11 +483,15 @@ describe('upload-zone', () => {
 
     dropArea.dispatchEvent(new Event('dragenter', { cancelable: true }));
     await zone.updateComplete;
-    expect((shadow(zone).querySelector('.upload-zone') as HTMLDivElement).classList.contains('dragging')).toBe(true);
+    expect(
+      (shadow(zone).querySelector('.upload-zone') as HTMLDivElement).classList.contains('dragging'),
+    ).toBe(true);
 
     dropArea.dispatchEvent(new Event('dragleave', { cancelable: true }));
     await zone.updateComplete;
-    expect((shadow(zone).querySelector('.upload-zone') as HTMLDivElement).classList.contains('dragging')).toBe(false);
+    expect(
+      (shadow(zone).querySelector('.upload-zone') as HTMLDivElement).classList.contains('dragging'),
+    ).toBe(false);
   });
 
   it('accepts .json,.jsonl,.log files', async () => {

@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
 
@@ -105,7 +105,7 @@ export class MetricsCard extends LitElement {
         detail: { label: this.label },
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 

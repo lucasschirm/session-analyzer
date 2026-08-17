@@ -1,17 +1,22 @@
-import { LitElement, html, css } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { dbClient } from '../db/db-client';
-import { navigateTo } from '../router';
-import { parseInWorker } from '../workers/parser-client';
-import type { DashboardSession, IndicatorKey, ToolExecution } from '../types';
-import { estimateTokenCount, formatCompactNumber, formatDuration, formatFullNumber } from '../lib/format';
-import { isAgentTool, isSkillTool } from '../workers/session-parser.worker';
+import {
+  estimateTokenCount,
+  formatCompactNumber,
+  formatDuration,
+  formatFullNumber,
+} from '../lib/format';
 import {
   classifyUploadedFiles,
   mergeSubagentIntoSession,
   parseSubagentMeta,
   type UploadedFile,
 } from '../lib/subagents';
+import { navigateTo } from '../router';
+import type { DashboardSession, IndicatorKey, SessionTask, ToolExecution } from '../types';
+import { parseInWorker } from '../workers/parser-client';
+import { isAgentTool, isSkillTool } from '../workers/session-parser.worker';
 import '../components/metrics-card';
 import '../components/upload-zone';
 
@@ -423,7 +428,7 @@ export class SessionDashboard extends LitElement {
   private get genericToolExecutions(): ToolExecution[] {
     if (!this.session) return [];
     return this.session.tool_executions.filter(
-      (execution) => !isSkillTool(execution.tool_name) && !isAgentTool(execution.tool_name)
+      (execution) => !isSkillTool(execution.tool_name) && !isAgentTool(execution.tool_name),
     );
   }
 
@@ -475,9 +480,13 @@ export class SessionDashboard extends LitElement {
     const counts = new Map<string, number>();
     for (const event of this.session.events) {
       if (event.event_type !== 'diagnostic') continue;
-      const cacheMissReason = event.metadata?.cache_miss_reason as Record<string, unknown> | undefined;
+      const cacheMissReason = event.metadata?.cache_miss_reason as
+        | Record<string, unknown>
+        | undefined;
       const reason =
-        cacheMissReason && typeof cacheMissReason.type === 'string' ? cacheMissReason.type : 'unknown';
+        cacheMissReason && typeof cacheMissReason.type === 'string'
+          ? cacheMissReason.type
+          : 'unknown';
       counts.set(reason, (counts.get(reason) ?? 0) + 1);
     }
     return Array.from(counts.entries())
@@ -514,7 +523,9 @@ export class SessionDashboard extends LitElement {
   private get toolResultTokenPercent(): number | null {
     if (!this.session) return null;
     const totalInputVolume =
-      this.session.input_tokens + this.session.cache_creation_tokens + this.session.cache_read_tokens;
+      this.session.input_tokens +
+      this.session.cache_creation_tokens +
+      this.session.cache_read_tokens;
     if (totalInputVolume <= 0) return null;
     return (this.toolResultTokenEstimate / totalInputVolume) * 100;
   }
@@ -523,8 +534,10 @@ export class SessionDashboard extends LitElement {
   private get avgTaskDurationMs(): number {
     if (!this.session) return 0;
     const durations = this.session.tasks
-      .filter((task) => task.completed_at !== undefined)
-      .map((task) => task.completed_at! - task.first_seen_at);
+      .filter(
+        (task): task is SessionTask & { completed_at: number } => task.completed_at !== undefined,
+      )
+      .map((task) => task.completed_at - task.first_seen_at);
     if (durations.length === 0) return 0;
     return durations.reduce((sum, duration) => sum + duration, 0) / durations.length;
   }
@@ -568,9 +581,11 @@ export class SessionDashboard extends LitElement {
 
     return html`
       <div class="session-dashboard">
-        ${session.project_id
-          ? html`<a class="back-link" href="#/projects/${session.project_id}">← Back to Project</a>`
-          : ''}
+        ${
+          session.project_id
+            ? html`<a class="back-link" href="#/projects/${session.project_id}">← Back to Project</a>`
+            : ''
+        }
 
         <div class="title-row">
           <div>
@@ -664,8 +679,9 @@ export class SessionDashboard extends LitElement {
             clickable
             @card-click=${() => this.openIndicator('skills')}
           ></metrics-card>
-          ${session.tasks.length > 0
-            ? html`
+          ${
+            session.tasks.length > 0
+              ? html`
               <metrics-card
                 label="Total Tasks"
                 value="${session.tasks.length}"
@@ -690,7 +706,8 @@ export class SessionDashboard extends LitElement {
                 @card-click=${() => this.openIndicator('tasks')}
               ></metrics-card>
             `
-            : ''}
+              : ''
+          }
         </div>
 
         <div class="insights-grid">
@@ -724,8 +741,9 @@ export class SessionDashboard extends LitElement {
             </div>
           </div>
 
-          ${session.tool_executions.some((execution) => execution.result)
-            ? html`
+          ${
+            session.tool_executions.some((execution) => execution.result)
+              ? html`
               <div class="panel">
                 <h3 class="panel-title">Tool Result Tokens</h3>
                 <div class="stat-row">
@@ -747,10 +765,12 @@ export class SessionDashboard extends LitElement {
                 </div>
               </div>
             `
-            : ''}
+              : ''
+          }
 
-          ${session.models.length > 0
-            ? html`
+          ${
+            session.models.length > 0
+              ? html`
               <div class="panel">
                 <h3 class="panel-title">Models Used</h3>
                 <div class="usage-card-list">
@@ -788,15 +808,17 @@ export class SessionDashboard extends LitElement {
                           </div>
                         </div>
                       </div>
-                    `
+                    `,
                   )}
                 </div>
               </div>
             `
-            : ''}
+              : ''
+          }
 
-          ${this.topTools.length > 0
-            ? html`
+          ${
+            this.topTools.length > 0
+              ? html`
               <div class="panel">
                 <h3 class="panel-title">Most Used Tools</h3>
                 <ul class="rank-list">
@@ -806,15 +828,17 @@ export class SessionDashboard extends LitElement {
                         <span>${tool.name}</span>
                         <span class="rank-count">×${tool.count}</span>
                       </li>
-                    `
+                    `,
                   )}
                 </ul>
               </div>
             `
-            : ''}
+              : ''
+          }
 
-          ${this.skillGroups.length > 0
-            ? html`
+          ${
+            this.skillGroups.length > 0
+              ? html`
               <div class="panel">
                 <h3 class="panel-title">Skills Used</h3>
                 <div class="skill-list">
@@ -845,15 +869,17 @@ export class SessionDashboard extends LitElement {
                           })}
                         </div>
                       </div>
-                    `
+                    `,
                   )}
                 </div>
               </div>
             `
-            : ''}
+              : ''
+          }
 
-          ${this.cacheMissReasons.length > 0
-            ? html`
+          ${
+            this.cacheMissReasons.length > 0
+              ? html`
               <div class="panel">
                 <h3 class="panel-title">Cache Diagnostics</h3>
                 <ul class="rank-list">
@@ -863,7 +889,7 @@ export class SessionDashboard extends LitElement {
                         <span>${item.reason.replaceAll('_', ' ')}</span>
                         <span class="rank-count">×${item.count}</span>
                       </li>
-                    `
+                    `,
                   )}
                 </ul>
                 <a class="back-link" href="#/sessions/${this.sessionId}/indicator/diagnostics"
@@ -871,16 +897,18 @@ export class SessionDashboard extends LitElement {
                 >
               </div>
             `
-            : ''}
+              : ''
+          }
 
-          ${session.subagents.length > 0
-            ? html`
+          ${
+            session.subagents.length > 0
+              ? html`
               <div class="panel">
                 <h3 class="panel-title">Subagents</h3>
                 <div
-                  class="subagent-list-wrap ${!this.showAllSubagents && session.subagents.length > 2
-                    ? 'collapsed'
-                    : ''}"
+                  class="subagent-list-wrap ${
+                    !this.showAllSubagents && session.subagents.length > 2 ? 'collapsed' : ''
+                  }"
                 >
                   <div class="usage-card-list">
                   ${session.subagents.map(
@@ -922,20 +950,23 @@ export class SessionDashboard extends LitElement {
                           </div>
                         </div>
                       </div>
-                    `
+                    `,
                   )}
                   </div>
                 </div>
-                ${session.subagents.length > 2
-                  ? html`
+                ${
+                  session.subagents.length > 2
+                    ? html`
                     <button class="show-all-button" @click=${() => this.toggleShowAllSubagents()}>
                       ${this.showAllSubagents ? 'Show less' : `Show all (${session.subagents.length})`}
                     </button>
                   `
-                  : ''}
+                    : ''
+                }
               </div>
             `
-            : ''}
+              : ''
+          }
         </div>
       </div>
     `;

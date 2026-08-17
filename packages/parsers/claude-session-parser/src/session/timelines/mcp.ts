@@ -22,11 +22,17 @@
  * the official MCP TypeScript SDK's wire protocol).
  */
 
-import type { AssistantEntry, AttachmentEntry, ClaudeCodeEntry, DeferredToolsDeltaAttachment, McpInstructionsDeltaAttachment } from '../../types/session.js';
+import type {
+  AssistantEntry,
+  AttachmentEntry,
+  ClaudeCodeEntry,
+  DeferredToolsDeltaAttachment,
+  McpInstructionsDeltaAttachment,
+} from '../../types/session.js';
 import type { McpServerRecord } from '../../types/timeline.js';
+import { mcpServerNameToNamespace, splitMcpToolName } from '../../utils/mcp-names.js';
 import type { TimelineDeriveOptions } from './context.js';
 import { eventFrom } from './context.js';
-import { mcpServerNameToNamespace, splitMcpToolName } from '../../utils/mcp-names.js';
 
 /** `ClaudeCodeEntry`'s `UnknownEntry` member types `type` as a bare
  *  `string`, which TypeScript can't exclude via a `entry.type === '...'`
@@ -75,11 +81,17 @@ function buildNamespaceToServerName(entries: ClaudeCodeEntry[]): Map<string, str
   };
 
   for (const entry of entries) {
-    if (entry.type === 'attachment' && (entry as AttachmentEntry).attachment.type === 'mcp_instructions_delta') {
+    if (
+      entry.type === 'attachment' &&
+      (entry as AttachmentEntry).attachment.type === 'mcp_instructions_delta'
+    ) {
       const att = (entry as AttachmentEntry).attachment as McpInstructionsDeltaAttachment;
       for (const name of att.addedNames) note(name);
       for (const name of att.removedNames) note(name);
-    } else if (entry.type === 'attachment' && (entry as AttachmentEntry).attachment.type === 'deferred_tools_delta') {
+    } else if (
+      entry.type === 'attachment' &&
+      (entry as AttachmentEntry).attachment.type === 'deferred_tools_delta'
+    ) {
       const att = (entry as AttachmentEntry).attachment as DeferredToolsDeltaAttachment;
       for (const name of att.pendingMcpServers ?? []) note(name);
       for (const name of att.needsAuthMcpServers ?? []) note(name);
@@ -95,7 +107,10 @@ function buildNamespaceToServerName(entries: ClaudeCodeEntry[]): Map<string, str
  *  silently skipped — this is the MCP-specific view of the same
  *  `deferred_tools_delta` attachment `tools.ts` also reads for its own,
  *  non-MCP tool records. */
-function groupMcpToolsByServer(names: string[], namespaceToServer: Map<string, string>): Map<string, string[]> {
+function groupMcpToolsByServer(
+  names: string[],
+  namespaceToServer: Map<string, string>,
+): Map<string, string[]> {
   const bySrv = new Map<string, string[]>();
   for (const name of names) {
     const split = splitMcpToolName(name);
@@ -108,14 +123,20 @@ function groupMcpToolsByServer(names: string[], namespaceToServer: Map<string, s
   return bySrv;
 }
 
-export function deriveMcpTimeline(entries: ClaudeCodeEntry[], options?: TimelineDeriveOptions): McpServerRecord[] {
+export function deriveMcpTimeline(
+  entries: ClaudeCodeEntry[],
+  options?: TimelineDeriveOptions,
+): McpServerRecord[] {
   void options; // no blob-size-sensitive fields retained beyond `instructions`, which is not capped here
 
   const namespaceToServer = buildNamespaceToServerName(entries);
   const records = new Map<string, McpServerRecord>();
 
   for (const entry of entries) {
-    if (entry.type === 'attachment' && (entry as AttachmentEntry).attachment.type === 'mcp_instructions_delta') {
+    if (
+      entry.type === 'attachment' &&
+      (entry as AttachmentEntry).attachment.type === 'mcp_instructions_delta'
+    ) {
       const att = (entry as AttachmentEntry).attachment as McpInstructionsDeltaAttachment;
 
       for (const name of att.addedNames) {
@@ -143,7 +164,10 @@ export function deriveMcpTimeline(entries: ClaudeCodeEntry[], options?: Timeline
       }
     }
 
-    if (entry.type === 'attachment' && (entry as AttachmentEntry).attachment.type === 'deferred_tools_delta') {
+    if (
+      entry.type === 'attachment' &&
+      (entry as AttachmentEntry).attachment.type === 'deferred_tools_delta'
+    ) {
       const att = (entry as AttachmentEntry).attachment as DeferredToolsDeltaAttachment;
 
       for (const server of att.pendingMcpServers ?? []) {
@@ -166,7 +190,10 @@ export function deriveMcpTimeline(entries: ClaudeCodeEntry[], options?: Timeline
       // "readded" action for offered tools anyway (only 'tools_offered' /
       // 'tools_removed') — a re-offer is observably the same event.
       const extraReadded = (att.readdedNames ?? []).filter((n) => !att.addedNames.includes(n));
-      const offeredBySrv = groupMcpToolsByServer([...att.addedNames, ...extraReadded], namespaceToServer);
+      const offeredBySrv = groupMcpToolsByServer(
+        [...att.addedNames, ...extraReadded],
+        namespaceToServer,
+      );
       for (const [server, tools] of offeredBySrv) {
         const record = getOrCreate(records, server);
         for (const tool of tools) {

@@ -14,7 +14,7 @@
  * deterministic `0` fallback in place of the old code's `Date.now()`).
  */
 
-import type { ClaudeCodeSession, ClaudeCodeEntry } from '@lucasschirm/sal-claude-session-parser';
+import type { ClaudeCodeEntry, ClaudeCodeSession } from '@lucasschirm/sal-claude-session-parser';
 import type { ParsedSession, ParseError as SiteParseError, ToolExecution } from '../types';
 import { SessionBuilder } from '../workers/session-builder';
 
@@ -30,9 +30,11 @@ function normalizeToolResultContent(content: unknown): string | undefined {
   if (Array.isArray(content)) {
     const textParts = content
       .map((block) =>
-        block && typeof block === 'object' && typeof (block as Record<string, unknown>).text === 'string'
+        block &&
+        typeof block === 'object' &&
+        typeof (block as Record<string, unknown>).text === 'string'
           ? ((block as Record<string, unknown>).text as string)
-          : undefined
+          : undefined,
       )
       .filter((text): text is string => text !== undefined);
     if (textParts.length === content.length) return textParts.join('\n');
@@ -80,7 +82,7 @@ function resolveTimestampMs(event: Record<string, unknown>): number {
 export function toDashboardSession(
   native: ClaudeCodeSession,
   projectId: string,
-  title = ''
+  title = '',
 ): ParsedSession {
   const builder = new SessionBuilder();
   const pendingToolCalls = new Map<string, ToolExecution>();
@@ -129,20 +131,25 @@ export function toDashboardSession(
 
       const diagnostics = message?.diagnostics as Record<string, unknown> | null | undefined;
       if (diagnostics) {
-        const cacheMissReason = diagnostics.cache_miss_reason as Record<string, unknown> | undefined;
+        const cacheMissReason = diagnostics.cache_miss_reason as
+          | Record<string, unknown>
+          | undefined;
         const reasonType =
-          cacheMissReason && typeof cacheMissReason.type === 'string' ? cacheMissReason.type : undefined;
+          cacheMissReason && typeof cacheMissReason.type === 'string'
+            ? cacheMissReason.type
+            : undefined;
         builder.addEvent(
           'diagnostic',
           reasonType ? `Cache miss: ${reasonType}` : 'Diagnostic recorded',
           timestampMs,
-          diagnostics
+          diagnostics,
         );
       }
 
-      const blocks = Array.isArray(message?.content)
-        ? (message!.content as Array<Record<string, unknown>>)
-        : [];
+      const blocks =
+        message && Array.isArray(message.content)
+          ? (message.content as Array<Record<string, unknown>>)
+          : [];
       for (const block of blocks) {
         if (block.type === 'text' && typeof block.text === 'string' && block.text) {
           builder.addTranscriptMessage('assistant', block.text, timestampMs, uuid, parentUuid);
@@ -161,7 +168,7 @@ export function toDashboardSession(
             target,
             timestampMs,
             true,
-            input
+            input,
           );
           if (typeof block.id === 'string') pendingToolCalls.set(block.id, execution);
         }
@@ -205,7 +212,10 @@ export function toDashboardSession(
     } else if (type === 'attachment') {
       const attachment = event.attachment as Record<string, unknown> | undefined;
       if (attachment?.type === 'task_reminder' && Array.isArray(attachment.content)) {
-        builder.trackTaskReminder(attachment.content as Array<Record<string, unknown>>, timestampMs);
+        builder.trackTaskReminder(
+          attachment.content as Array<Record<string, unknown>>,
+          timestampMs,
+        );
       }
       builder.addEvent(type, `Claude CLI event: ${type}`, timestampMs, event);
     } else {

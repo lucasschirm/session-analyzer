@@ -10,29 +10,25 @@
  * invented project/agent/skill/MCP/marketplace names, invented prose,
  * invented paths. See `tests/fixtures/README.md`.
  */
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import type { AssistantEntry, AttachmentEntry, ClaudeCodeSession } from '../src/index.js';
 import {
+  buildConfigSnapshot,
   detectClaudeCode,
   detectClaudeCodeArtifact,
-  parseSessionTranscript,
-  parseSubagentMeta,
-  parseSettings,
-  parseMcp,
   parseAgentDefinition,
-  parseSkillDefinition,
-  parseRuleDefinition,
+  parseMcp,
   parsePluginMarketplace,
+  parseRuleDefinition,
   parseSession,
-  buildConfigSnapshot,
-} from '../src/index.js';
-import type {
-  AssistantEntry,
-  AttachmentEntry,
-  ClaudeCodeSession,
+  parseSessionTranscript,
+  parseSettings,
+  parseSkillDefinition,
+  parseSubagentMeta,
 } from '../src/index.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -74,7 +70,8 @@ const RULE_SOURCE_PATH = '/home/testuser/projects/orbit-tracker/.claude/rules/st
 const SETTINGS_USER_PATH = '/home/testuser/.claude/settings.json';
 const SETTINGS_PROJECT_PATH = '/home/testuser/projects/orbit-tracker/.claude/settings.json';
 const MCP_SOURCE_PATH = '/home/testuser/projects/orbit-tracker/.mcp.json';
-const MARKETPLACE_SOURCE_PATH = '/home/testuser/projects/orbit-tracker/.claude-plugin/marketplace.json';
+const MARKETPLACE_SOURCE_PATH =
+  '/home/testuser/projects/orbit-tracker/.claude-plugin/marketplace.json';
 
 // ---------------------------------------------------------------------------
 // Assertion 1: detection round-trip — every fixture classifies to its own
@@ -86,7 +83,9 @@ const MARKETPLACE_SOURCE_PATH = '/home/testuser/projects/orbit-tracker/.claude-p
 describe('assertion 1 — detection round-trip', () => {
   it('classifies every fixture to its own artifact kind', () => {
     expect(detectClaudeCode(mainContent)).toBe(true);
-    expect(detectClaudeCodeArtifact({ content: mainContent, fileName: 'e2e-main-session.jsonl' })).toBe('session-transcript');
+    expect(
+      detectClaudeCodeArtifact({ content: mainContent, fileName: 'e2e-main-session.jsonl' }),
+    ).toBe('session-transcript');
 
     expect(detectClaudeCode(subagentContent)).toBe(true);
     // Deliberately no fileName/relativePath — proves this resolves from
@@ -98,16 +97,24 @@ describe('assertion 1 — detection round-trip', () => {
     expect(detectClaudeCodeArtifact({ content: settingsUserContent })).toBe('settings');
     expect(detectClaudeCodeArtifact({ content: settingsProjectContent })).toBe('settings');
     expect(detectClaudeCodeArtifact({ content: mcpContent })).toBe('mcp-config');
-    expect(detectClaudeCodeArtifact({ content: agentDocsDrafterContent, fileName: 'docs-drafter.md' })).toBe('agent-definition');
-    expect(detectClaudeCodeArtifact({ content: skillCsvWranglerContent, fileName: 'SKILL.md' })).toBe('skill-definition');
-    expect(detectClaudeCodeArtifact({ content: ruleStyleContent, fileName: 'style.md' })).toBe('rule-definition');
+    expect(
+      detectClaudeCodeArtifact({ content: agentDocsDrafterContent, fileName: 'docs-drafter.md' }),
+    ).toBe('agent-definition');
+    expect(
+      detectClaudeCodeArtifact({ content: skillCsvWranglerContent, fileName: 'SKILL.md' }),
+    ).toBe('skill-definition');
+    expect(detectClaudeCodeArtifact({ content: ruleStyleContent, fileName: 'style.md' })).toBe(
+      'rule-definition',
+    );
 
     // `e2e-marketplace.json` uses one string-form and one object-form plugin
     // source (both real, documented-valid shapes per `normalizeSource`'s doc
     // comment in config/marketplace.ts) — `isPluginMarketplaceShape` must
     // accept both. (Previously misclassified as 'unknown' by a detector
     // stricter than the type it was classifying; fixed in src/detect.ts.)
-    expect(detectClaudeCodeArtifact({ content: marketplaceContent, fileName: 'marketplace.json' })).toBe('plugin-marketplace');
+    expect(
+      detectClaudeCodeArtifact({ content: marketplaceContent, fileName: 'marketplace.json' }),
+    ).toBe('plugin-marketplace');
   });
 });
 
@@ -152,9 +159,9 @@ describe('assertion 3 — cross-timeline tool consistency', () => {
   it('Bash is always-available (invoked, never deferred); a delta-listed tool is not', () => {
     const bash = session1.tools.find((t) => t.tool === 'Bash');
     expect(bash).toBeDefined();
-    expect(bash!.alwaysAvailable).toBe(true);
+    expect(bash?.alwaysAvailable).toBe(true);
     // Never appears in any deferred_tools_delta.
-    expect(bash!.availability.every((e) => e.action === 'invoked')).toBe(true);
+    expect(bash?.availability.every((e) => e.action === 'invoked')).toBe(true);
 
     // The specific assistant entry that carried the first Bash tool_use
     // (uuid "a-bash-1") is the exact entryUuid one of Bash's 'invoked'
@@ -163,18 +170,22 @@ describe('assertion 3 — cross-timeline tool consistency', () => {
       (e): e is AssistantEntry => e.type === 'assistant' && e.uuid === 'a-bash-1',
     );
     expect(bashEntry).toBeDefined();
-    const bashToolUse = (bashEntry as AssistantEntry).message.content.find((b) => b.type === 'tool_use' && (b as { name?: string }).name === 'Bash');
+    const bashToolUse = (bashEntry as AssistantEntry).message.content.find(
+      (b) => b.type === 'tool_use' && (b as { name?: string }).name === 'Bash',
+    );
     expect(bashToolUse).toBeDefined();
-    expect(bash!.availability.some((e) => e.entryUuid === 'a-bash-1' && e.action === 'invoked')).toBe(true);
+    expect(
+      bash?.availability.some((e) => e.entryUuid === 'a-bash-1' && e.action === 'invoked'),
+    ).toBe(true);
 
     // "Write" is delta-listed (present in the initial deferred_tools_delta)
     // AND invoked once — alwaysAvailable must be false despite being used,
     // in contrast to Bash above.
     const write = session1.tools.find((t) => t.tool === 'Write');
     expect(write).toBeDefined();
-    expect(write!.invocationCount).toBe(1);
-    expect(write!.alwaysAvailable).toBe(false);
-    expect(write!.availability.some((e) => e.action === 'deferred')).toBe(true);
+    expect(write?.invocationCount).toBe(1);
+    expect(write?.alwaysAvailable).toBe(false);
+    expect(write?.availability.some((e) => e.action === 'deferred')).toBe(true);
   });
 
   it('sums both assistants’ usage by hand and matches aggregateUsage exactly, per model', () => {
@@ -192,7 +203,10 @@ describe('assertion 3 — cross-timeline tool consistency', () => {
     expect(session1.aggregateUsage.cacheCreationTokens).toBe(expectedTotal.cacheCreationTokens);
     expect(session1.aggregateUsage.cacheReadTokens).toBe(expectedTotal.cacheReadTokens);
 
-    expect(Object.keys(session1.aggregateUsage.models).sort()).toEqual(['test-model-a', 'test-model-b']);
+    expect(Object.keys(session1.aggregateUsage.models).sort()).toEqual([
+      'test-model-a',
+      'test-model-b',
+    ]);
     expect(session1.aggregateUsage.models['test-model-a']).toEqual({
       inputTokens: 1000,
       outputTokens: 200,
@@ -208,10 +222,14 @@ describe('assertion 3 — cross-timeline tool consistency', () => {
 
     // That assistant's usage is included in aggregateUsage: the turn1
     // assistant entry (a-turn1) really does carry the usage summed above.
-    const turn1 = session1.entries.find((e): e is AssistantEntry => e.type === 'assistant' && e.uuid === 'a-turn1');
+    const turn1 = session1.entries.find(
+      (e): e is AssistantEntry => e.type === 'assistant' && e.uuid === 'a-turn1',
+    );
     expect(turn1?.message.usage?.input_tokens).toBe(1000);
     expect(turn1?.message.model).toBe('test-model-a');
-    const turn2 = session1.entries.find((e): e is AssistantEntry => e.type === 'assistant' && e.uuid === 'a-turn2');
+    const turn2 = session1.entries.find(
+      (e): e is AssistantEntry => e.type === 'assistant' && e.uuid === 'a-turn2',
+    );
     expect(turn2?.message.usage?.input_tokens).toBe(500);
     expect(turn2?.message.model).toBe('test-model-b');
   });
@@ -260,15 +278,15 @@ describe('assertion 4 — MCP namespace join, end to end', () => {
   it('joins mcp__zephyr_tools__forecast onto the zephyr:tools record, before and after appendMcp', () => {
     const zephyr = session1.mcpServers.find((m) => m.server === 'zephyr:tools');
     expect(zephyr).toBeDefined();
-    expect(zephyr!.toolNamespace).toBe('zephyr_tools');
-    expect(zephyr!.invokedTools).toEqual([{ tool: 'forecast', count: 1 }]);
+    expect(zephyr?.toolNamespace).toBe('zephyr_tools');
+    expect(zephyr?.invokedTools).toEqual([{ tool: 'forecast', count: 1 }]);
 
     // After appendMcp, the SAME record (not a duplicate) carries `config`
     // from the .mcp.json fixture.
     const zephyr2 = session2.mcpServers.find((m) => m.server === 'zephyr:tools');
     expect(zephyr2).toBeDefined();
-    expect(zephyr2!.invokedTools).toEqual([{ tool: 'forecast', count: 1 }]);
-    expect(zephyr2!.config?.command).toBe('node');
+    expect(zephyr2?.invokedTools).toEqual([{ tool: 'forecast', count: 1 }]);
+    expect(zephyr2?.config?.command).toBe('node');
     // Exactly one zephyr:tools record post-append, not two.
     expect(session2.mcpServers.filter((m) => m.server === 'zephyr:tools')).toHaveLength(1);
   });
@@ -276,13 +294,13 @@ describe('assertion 4 — MCP namespace join, end to end', () => {
   it('quill-db stays pending: true, with its config attached as the same (not a duplicate) record', () => {
     const quill1 = session1.mcpServers.find((m) => m.server === 'quill-db');
     expect(quill1).toBeDefined();
-    expect(quill1!.pending).toBe(true);
-    expect(quill1!.config).toBeUndefined();
+    expect(quill1?.pending).toBe(true);
+    expect(quill1?.config).toBeUndefined();
 
     const quill2 = session2.mcpServers.find((m) => m.server === 'quill-db');
     expect(quill2).toBeDefined();
-    expect(quill2!.pending).toBe(true);
-    expect(quill2!.config?.url).toBe('https://quill-db.example.invalid/mcp');
+    expect(quill2?.pending).toBe(true);
+    expect(quill2?.config?.url).toBe('https://quill-db.example.invalid/mcp');
     expect(session2.mcpServers.filter((m) => m.server === 'quill-db')).toHaveLength(1);
   });
 });
@@ -295,13 +313,13 @@ describe('assertion 5 — subagent join', () => {
   it('the SubagentLaunchRecord carries agentId from toolUseResult, and appendSubAgent enriches consistently in both views', () => {
     const launch1 = session1.subagentLaunches.find((l) => l.toolUseId === 'toolu_agent_1');
     expect(launch1).toBeDefined();
-    expect(launch1!.agentId).toBe('e2e-agent-0001');
+    expect(launch1?.agentId).toBe('e2e-agent-0001');
     // The transcript's own Agent tool_use omitted `description`, and its
     // toolUseResult carried a `resolvedModel` distinct from the meta's
     // `model` — set up specifically to prove appendSubAgent only fills
     // UNSET fields.
-    expect(launch1!.description).toBeUndefined();
-    expect(launch1!.model).toBe('test-model-transcript');
+    expect(launch1?.description).toBeUndefined();
+    expect(launch1?.model).toBe('test-model-transcript');
 
     // After appendSubAgent: session.subagentSessions['e2e-agent-0001'] is
     // the parsed subagent session (isSidechain true, agentId folded to root).
@@ -314,14 +332,16 @@ describe('assertion 5 — subagent join', () => {
     // meta.description fills the unset field; meta.model does NOT override
     // the already-set transcript value.
     const launch2 = session2.subagentLaunches.find((l) => l.toolUseId === 'toolu_agent_1');
-    expect(launch2!.description).toBe('Draft docs for telemetry module');
-    expect(launch2!.model).toBe('test-model-transcript');
+    expect(launch2?.description).toBe('Draft docs for telemetry module');
+    expect(launch2?.model).toBe('test-model-transcript');
 
     // The same enriched launch object appears identically inside
     // agents['docs-drafter'].invocations — both views rebuilt consistently.
     const docsDrafterAgent = session2.agents.find((a) => a.agentType === 'docs-drafter');
     expect(docsDrafterAgent).toBeDefined();
-    const invocationView = docsDrafterAgent!.invocations.find((l) => l.toolUseId === 'toolu_agent_1');
+    const invocationView = docsDrafterAgent?.invocations.find(
+      (l) => l.toolUseId === 'toolu_agent_1',
+    );
     expect(invocationView).toEqual(launch2);
   });
 });
@@ -334,21 +354,29 @@ describe('assertion 6 — skill lifecycle', () => {
   it('csv-wrangler goes listed -> invoked -> expanded, with launched:true and sourceDir extracted', () => {
     const csvWrangler = session1.skills.find((s) => s.name === 'csv-wrangler');
     expect(csvWrangler).toBeDefined();
-    expect(csvWrangler!.availability.map((e) => e.action)).toEqual(['listed', 'invoked', 'expanded']);
-    expect(csvWrangler!.availability[0].isInitial).toBe(true);
-    expect(csvWrangler!.invocations).toHaveLength(1);
-    expect(csvWrangler!.invocations[0].launched).toBe(true);
-    expect(csvWrangler!.sourceDir).toBe('/home/testuser/.claude/skills/csv-wrangler');
+    expect(csvWrangler?.availability.map((e) => e.action)).toEqual([
+      'listed',
+      'invoked',
+      'expanded',
+    ]);
+    expect(csvWrangler?.availability[0].isInitial).toBe(true);
+    expect(csvWrangler?.invocations).toHaveLength(1);
+    expect(csvWrangler?.invocations[0].launched).toBe(true);
+    expect(csvWrangler?.sourceDir).toBe('/home/testuser/.claude/skills/csv-wrangler');
   });
 
   it('appendSkill fills description/displayPath only where unset', () => {
-    const before = session1.skills.find((s) => s.name === 'csv-wrangler')!;
+    const before = session1.skills.find((s) => s.name === 'csv-wrangler');
+    if (!before) throw new Error('csv-wrangler skill not found in session1');
     // The transcript's own skill_listing already supplied a description —
     // appendSkill must NOT clobber it.
-    expect(before.description).toBe('Normalizes CSV exports from the telemetry pipeline into tidy tables.');
+    expect(before.description).toBe(
+      'Normalizes CSV exports from the telemetry pipeline into tidy tables.',
+    );
     expect(before.displayPath).toBeUndefined();
 
-    const after = session2.skills.find((s) => s.name === 'csv-wrangler')!;
+    const after = session2.skills.find((s) => s.name === 'csv-wrangler');
+    if (!after) throw new Error('csv-wrangler skill not found in session2');
     // description unchanged (already set, from the transcript)
     expect(after.description).toBe(before.description);
     // displayPath newly filled from the definition (was unset)
@@ -358,8 +386,8 @@ describe('assertion 6 — skill lifecycle', () => {
   it('the plugin skill pluglet:report-gen has pluginPrefix/bareName split', () => {
     const reportGen = session1.skills.find((s) => s.name === 'pluglet:report-gen');
     expect(reportGen).toBeDefined();
-    expect(reportGen!.pluginPrefix).toBe('pluglet');
-    expect(reportGen!.bareName).toBe('report-gen');
+    expect(reportGen?.pluginPrefix).toBe('pluglet');
+    expect(reportGen?.bareName).toBe('report-gen');
   });
 });
 
@@ -371,13 +399,14 @@ describe('assertion 7 — rule tri-state', () => {
   it('style.md is injected via nested_memory, with globs from the attachment', () => {
     const rule = session1.rules.find((r) => r.path === RULE_SOURCE_PATH);
     expect(rule).toBeDefined();
-    expect(rule!.injectionStatus).toBe('injected');
-    expect(rule!.origin).toBe('nested_memory');
-    expect(rule!.globs).toEqual(['src/**']);
+    expect(rule?.injectionStatus).toBe('injected');
+    expect(rule?.origin).toBe('nested_memory');
+    expect(rule?.globs).toEqual(['src/**']);
   });
 
   it('compact_file_reference for the same path adds a referenced event without downgrading status', () => {
-    const rule = session1.rules.find((r) => r.path === RULE_SOURCE_PATH)!;
+    const rule = session1.rules.find((r) => r.path === RULE_SOURCE_PATH);
+    if (!rule) throw new Error('style.md rule not found in session1');
     expect(rule.availability.map((e) => e.action)).toEqual(['injected', 'referenced']);
     expect(rule.injectionStatus).toBe('injected'); // never downgraded
   });
@@ -388,10 +417,12 @@ describe('assertion 7 — rule tri-state', () => {
     // `session1` — otherwise the reference-identity check below compares
     // objects from two independent `parseSessionTranscript` calls, which
     // are only ever structurally equal, never `===`.
-    const before = preChainSession.rules.find((r) => r.path === RULE_SOURCE_PATH)!;
+    const before = preChainSession.rules.find((r) => r.path === RULE_SOURCE_PATH);
+    if (!before) throw new Error('style.md rule not found in preChainSession');
     const beforeFrontmatter = before.frontmatter;
 
-    const after = session2.rules.find((r) => r.path === RULE_SOURCE_PATH)!;
+    const after = session2.rules.find((r) => r.path === RULE_SOURCE_PATH);
+    if (!after) throw new Error('style.md rule not found in session2');
     expect(after.injectionStatus).toBe('injected'); // unchanged
     expect(after.globs).toEqual(['src/**']);
     expect(after.globs).toEqual(ruleDef.globs); // record and definition agree
@@ -410,8 +441,8 @@ describe('assertion 7 — rule tri-state', () => {
     const withExtraRule = chainedBuilder.appendRule(untouchedRuleDef).toSession();
     const newRecord = withExtraRule.rules.find((r) => r.path === untouchedRuleDef.sourcePath);
     expect(newRecord).toBeDefined();
-    expect(newRecord!.injectionStatus).toBe('unknown');
-    expect(newRecord!.origin).toBe('config_inventory');
+    expect(newRecord?.injectionStatus).toBe('unknown');
+    expect(newRecord?.origin).toBe('config_inventory');
   });
 });
 
@@ -442,13 +473,15 @@ describe('assertion 8 — supporting records', () => {
   it('hook records include hook_success (outcome success, exit code) and hook_additional_context (outcome additional_context)', () => {
     const success = session1.hooks.find((h) => h.hookName === 'lint-check');
     expect(success).toBeDefined();
-    expect(success!.outcome).toBe('success');
-    expect(success!.exitCode).toBe(0);
+    expect(success?.outcome).toBe('success');
+    expect(success?.exitCode).toBe(0);
 
     const additionalContext = session1.hooks.find((h) => h.hookName === 'context-hook');
     expect(additionalContext).toBeDefined();
-    expect(additionalContext!.outcome).toBe('additional_context');
-    expect(additionalContext!.injectedContext).toEqual(['Reminder: telemetry schema changed in migration 0007.']);
+    expect(additionalContext?.outcome).toBe('additional_context');
+    expect(additionalContext?.injectedContext).toEqual([
+      'Reminder: telemetry schema changed in migration 0007.',
+    ]);
   });
 });
 
@@ -478,9 +511,10 @@ describe('assertion 9 — error/unknown accounting at scale', () => {
     // both were counted toward line numbering even though neither produced
     // an entry of their own (the malformed line produced only a ParseError,
     // the blank line produced nothing).
-    const lastLine = mainContent.split('\n').filter((l) => l.length > 0).length === 0
-      ? 0
-      : mainContent.split('\n').length - (mainContent.endsWith('\n') ? 1 : 0);
+    const lastLine =
+      mainContent.split('\n').filter((l) => l.length > 0).length === 0
+        ? 0
+        : mainContent.split('\n').length - (mainContent.endsWith('\n') ? 1 : 0);
     const finalAiTitle = session1.entries.filter((e) => e.type === 'ai-title').pop();
     expect(finalAiTitle).toBeDefined();
     expect((finalAiTitle as { lineNumber: number }).lineNumber).toBe(lastLine);
@@ -510,35 +544,48 @@ describe('assertion 10 — builder immutability', () => {
 
 describe('assertion 11 — buildConfigSnapshot coherence', () => {
   it('inventories bucket by root: user root, project root, and marketplace’s own .claude-plugin root', () => {
-    const userRoot = configSnapshot.inventories.find((i) => i.rootPath === '/home/testuser/.claude');
+    const userRoot = configSnapshot.inventories.find(
+      (i) => i.rootPath === '/home/testuser/.claude',
+    );
     expect(userRoot).toBeDefined();
-    expect(userRoot!.scope).toBe('user');
-    expect(userRoot!.agents).toHaveLength(1);
-    expect(userRoot!.skills).toHaveLength(1);
+    expect(userRoot?.scope).toBe('user');
+    expect(userRoot?.agents).toHaveLength(1);
+    expect(userRoot?.skills).toHaveLength(1);
 
-    const projectRoot = configSnapshot.inventories.find((i) => i.rootPath === '/home/testuser/projects/orbit-tracker/.claude');
+    const projectRoot = configSnapshot.inventories.find(
+      (i) => i.rootPath === '/home/testuser/projects/orbit-tracker/.claude',
+    );
     expect(projectRoot).toBeDefined();
-    expect(projectRoot!.scope).toBe('project');
-    expect(projectRoot!.rules).toHaveLength(1);
+    expect(projectRoot?.scope).toBe('project');
+    expect(projectRoot?.rules).toHaveLength(1);
 
     // The marketplace gets its OWN inventory — a distinct .claude-plugin
     // root, not merged into either root above.
-    const marketplaceInventory = configSnapshot.inventories.find((i) => i.marketplace !== undefined);
+    const marketplaceInventory = configSnapshot.inventories.find(
+      (i) => i.marketplace !== undefined,
+    );
     expect(marketplaceInventory).toBeDefined();
-    expect(marketplaceInventory!.rootPath).toBe('/home/testuser/projects/orbit-tracker/.claude-plugin');
-    expect(marketplaceInventory!.marketplace?.name).toBe('nimbus-market');
+    expect(marketplaceInventory?.rootPath).toBe(
+      '/home/testuser/projects/orbit-tracker/.claude-plugin',
+    );
+    expect(marketplaceInventory?.marketplace?.name).toBe('nimbus-market');
     expect(marketplaceInventory).not.toBe(userRoot);
     expect(marketplaceInventory).not.toBe(projectRoot);
   });
 
   it('effectiveSettings.env: project overrides the shared key, the user-only key survives', () => {
-    expect(configSnapshot.effectiveSettings.env?.API_HOST).toBe('https://telemetry-project.example.invalid');
+    expect(configSnapshot.effectiveSettings.env?.API_HOST).toBe(
+      'https://telemetry-project.example.invalid',
+    );
     expect(configSnapshot.effectiveSettings.env?.USER_ONLY_VAR).toBe('user-value');
     expect(configSnapshot.effectiveSettings.env?.PROJECT_ONLY_VAR).toBe('project-value');
   });
 
   it('permissions.allow is the deduped union across scopes', () => {
-    expect(configSnapshot.effectiveSettings.permissions?.allow).toEqual(['Bash(pnpm test)', 'Write(src/**)']);
+    expect(configSnapshot.effectiveSettings.permissions?.allow).toEqual([
+      'Bash(pnpm test)',
+      'Write(src/**)',
+    ]);
     expect(configSnapshot.effectiveSettings.permissions?.defaultMode).toBe('acceptEdits');
   });
 
@@ -546,7 +593,9 @@ describe('assertion 11 — buildConfigSnapshot coherence', () => {
     expect(configSnapshot.agentsByName['docs-drafter']?.name).toBe('docs-drafter');
     expect(configSnapshot.skillsByName['csv-wrangler']?.name).toBe('csv-wrangler');
     expect(configSnapshot.mcpServersByName['zephyr:tools']?.command).toBe('node');
-    expect(configSnapshot.mcpServersByName['quill-db']?.url).toBe('https://quill-db.example.invalid/mcp');
+    expect(configSnapshot.mcpServersByName['quill-db']?.url).toBe(
+      'https://quill-db.example.invalid/mcp',
+    );
   });
 });
 
@@ -572,16 +621,24 @@ describe('assertion 13 — ParseOptions pass-through', () => {
     const clamped = parseSession(mainContent, { maxBlobBytes: 48 }).toSession();
 
     const clampedSkill = clamped.skills.find((s) => s.name === 'csv-wrangler');
-    expect(clampedSkill?.injectedContent).toBeDefined();
-    expect((clampedSkill!.injectedContent as string).length).toBeLessThanOrEqual(48);
-    const unclamped = session1.skills.find((s) => s.name === 'csv-wrangler')!;
-    expect((clampedSkill!.injectedContent as string).length).toBeLessThan((unclamped.injectedContent as string).length);
+    if (!clampedSkill) throw new Error('csv-wrangler skill not found in clamped session');
+    expect(clampedSkill.injectedContent).toBeDefined();
+    expect((clampedSkill.injectedContent as string).length).toBeLessThanOrEqual(48);
+    const unclamped = session1.skills.find((s) => s.name === 'csv-wrangler');
+    if (!unclamped) throw new Error('csv-wrangler skill not found in session1');
+    expect((clampedSkill.injectedContent as string).length).toBeLessThan(
+      (unclamped.injectedContent as string).length,
+    );
 
     const clampedHook = clamped.hooks.find((h) => h.hookName === 'lint-check');
-    expect(clampedHook?.stdout).toBeDefined();
-    expect((clampedHook!.stdout as string).length).toBeLessThanOrEqual(48);
-    const unclampedHook = session1.hooks.find((h) => h.hookName === 'lint-check')!;
-    expect((clampedHook!.stdout as string).length).toBeLessThan((unclampedHook.stdout as string).length);
+    if (!clampedHook) throw new Error('lint-check hook not found in clamped session');
+    expect(clampedHook.stdout).toBeDefined();
+    expect((clampedHook.stdout as string).length).toBeLessThanOrEqual(48);
+    const unclampedHook = session1.hooks.find((h) => h.hookName === 'lint-check');
+    if (!unclampedHook) throw new Error('lint-check hook not found in session1');
+    expect((clampedHook.stdout as string).length).toBeLessThan(
+      (unclampedHook.stdout as string).length,
+    );
   });
 
   it('skipTimelines yields empty timelines but identical entries/aggregateUsage/parseErrors', () => {
@@ -613,7 +670,8 @@ describe('assertion 13 — ParseOptions pass-through', () => {
 describe('sanity — attachment discrimination used elsewhere in this file', () => {
   it('the initial deferred_tools_delta attachment really is that attachment type', () => {
     const first = session1.entries.find(
-      (e): e is AttachmentEntry => e.type === 'attachment' && (e as AttachmentEntry).uuid === 'att-deferred-1',
+      (e): e is AttachmentEntry =>
+        e.type === 'attachment' && (e as AttachmentEntry).uuid === 'att-deferred-1',
     );
     expect(first?.attachment.type).toBe('deferred_tools_delta');
   });

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-
-import { deriveToolTimeline } from '../src/session/timelines/tools.js';
 import { deriveMcpTimeline } from '../src/session/timelines/mcp.js';
+import { deriveToolTimeline } from '../src/session/timelines/tools.js';
 import type {
   AssistantEntry,
   AttachmentEntry,
@@ -45,7 +44,11 @@ function baseFields(lineNumber: number, timestampMs: number) {
   };
 }
 
-function attachmentEntry(lineNumber: number, timestampMs: number, attachment: ClaudeAttachment): AttachmentEntry {
+function attachmentEntry(
+  lineNumber: number,
+  timestampMs: number,
+  attachment: ClaudeAttachment,
+): AttachmentEntry {
   return {
     ...baseFields(lineNumber, timestampMs),
     type: 'attachment',
@@ -110,7 +113,11 @@ describe('deriveToolTimeline', () => {
     const lsp = records.find((r) => r.tool === 'LSP');
     expect(lsp).toBeDefined();
     expect(lsp?.availability).toEqual([
-      expect.objectContaining({ action: 'deferred', lineNumber: 4021, timestampMs: BASE_MS + 4 * DAY_MS }),
+      expect.objectContaining({
+        action: 'deferred',
+        lineNumber: 4021,
+        timestampMs: BASE_MS + 4 * DAY_MS,
+      }),
     ]);
 
     const webFetch = records.find((r) => r.tool === 'WebFetch');
@@ -160,7 +167,9 @@ describe('deriveToolTimeline', () => {
       removedNames: [],
     });
     const bashCall = assistantEntry(2, BASE_MS + 1000, [toolUse('Bash', { command: 'ls' })]);
-    const webFetchCall = assistantEntry(3, BASE_MS + 2000, [toolUse('WebFetch', { url: 'https://example.com' })]);
+    const webFetchCall = assistantEntry(3, BASE_MS + 2000, [
+      toolUse('WebFetch', { url: 'https://example.com' }),
+    ]);
 
     const records = deriveToolTimeline([delta, bashCall, webFetchCall]);
 
@@ -190,7 +199,10 @@ describe('deriveToolTimeline', () => {
 
   it('derives "undeferred" only from an unambiguous ToolSearch select: query, never from a free-text query', () => {
     const selectCall = assistantEntry(1, BASE_MS, [
-      toolUse('ToolSearch', { query: 'select:mcp__acme_mcp__validate_record,mcp__github__create_pull_request', max_results: 5 }),
+      toolUse('ToolSearch', {
+        query: 'select:mcp__acme_mcp__validate_record,mcp__github__create_pull_request',
+        max_results: 5,
+      }),
     ]);
     const freeTextCall = assistantEntry(2, BASE_MS + 1000, [
       toolUse('ToolSearch', { query: 'notebook jupyter', max_results: 5 }),
@@ -314,7 +326,9 @@ describe('deriveMcpTimeline', () => {
     const exampleDocs = records.find((r) => r.server === 'example-docs');
 
     expect(chrome?.instructions).toBe('Automates the Chrome browser via a connected extension.');
-    expect(chrome?.availability).toEqual([expect.objectContaining({ action: 'instructions_added', lineNumber: 8 })]);
+    expect(chrome?.availability).toEqual([
+      expect.objectContaining({ action: 'instructions_added', lineNumber: 8 }),
+    ]);
     // The literal "… [truncated]" suffix is retained verbatim.
     expect(exampleDocs?.instructions).toBe('Fetches current library documentation. … [truncated]');
   });
@@ -336,7 +350,10 @@ describe('deriveMcpTimeline', () => {
     const records = deriveMcpTimeline([added, removed]);
     const helper = records.find((r) => r.server === 'helper');
     expect(helper?.instructions).toBeUndefined();
-    expect(helper?.availability.map((e) => e.action)).toEqual(['instructions_added', 'instructions_removed']);
+    expect(helper?.availability.map((e) => e.action)).toEqual([
+      'instructions_added',
+      'instructions_removed',
+    ]);
   });
 
   it('round-trips colon-to-underscore server naming, including a hyphenated server name, back from mcp__ tool names', () => {
@@ -364,7 +381,9 @@ describe('deriveMcpTimeline', () => {
     const pep = records.find((r) => r.server === 'acme:mcp');
     expect(pep?.toolNamespace).toBe('acme_mcp');
     expect(pep?.invokedTools).toEqual([{ tool: 'validate_record', count: 1 }]);
-    expect(pep?.availability).toEqual([expect.objectContaining({ action: 'invoked', lineNumber: 2 })]);
+    expect(pep?.availability).toEqual([
+      expect.objectContaining({ action: 'invoked', lineNumber: 2 }),
+    ]);
 
     const chrome = records.find((r) => r.server === 'claude-in-chrome');
     expect(chrome?.toolNamespace).toBe('claude-in-chrome');
@@ -443,7 +462,10 @@ describe('deriveMcpTimeline', () => {
     const records = deriveMcpTimeline([offered, removed]);
     const exampleDocs = records.find((r) => r.server === 'example-docs');
     expect(exampleDocs?.offeredTools).toEqual(['query-docs']);
-    expect(exampleDocs?.availability.map((e) => e.action)).toEqual(['tools_offered', 'tools_removed']);
+    expect(exampleDocs?.availability.map((e) => e.action)).toEqual([
+      'tools_offered',
+      'tools_removed',
+    ]);
   });
 
   it('skips an addedBlocks entry that does not match the "## header" shape, without throwing', () => {
@@ -457,7 +479,9 @@ describe('deriveMcpTimeline', () => {
     const helper = records.find((r) => r.server === 'helper');
     expect(helper).toBeDefined();
     expect(helper?.instructions).toBeUndefined();
-    expect(helper?.availability).toEqual([expect.objectContaining({ action: 'instructions_added' })]);
+    expect(helper?.availability).toEqual([
+      expect.objectContaining({ action: 'instructions_added' }),
+    ]);
   });
 
   it('offers tools for a server named only in readdedNames (not addedNames) via the extraReadded fold-in', () => {

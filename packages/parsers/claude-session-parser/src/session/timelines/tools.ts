@@ -12,11 +12,16 @@
  * attachments at all; do not "fix" this by wiring them in here.
  */
 
-import type { AssistantEntry, AttachmentEntry, ClaudeCodeEntry, DeferredToolsDeltaAttachment } from '../../types/session.js';
+import type {
+  AssistantEntry,
+  AttachmentEntry,
+  ClaudeCodeEntry,
+  DeferredToolsDeltaAttachment,
+} from '../../types/session.js';
 import type { ToolAvailabilityAction, ToolAvailabilityRecord } from '../../types/timeline.js';
+import { splitMcpToolName } from '../../utils/mcp-names.js';
 import type { TimelineDeriveOptions } from './context.js';
 import { entryTimestampMs, eventFrom } from './context.js';
-import { splitMcpToolName } from '../../utils/mcp-names.js';
 
 /** `ClaudeCodeEntry`'s `UnknownEntry` member types `type` as a bare
  *  `string`, which TypeScript can't exclude via a `entry.type === '...'`
@@ -35,7 +40,11 @@ type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<
  * content search otherwise. Returns `undefined` when the line is just the
  * bare name (no description) or no matching line is found.
  */
-function extractDescription(name: string, addedNames: string[], addedLines: string[]): string | undefined {
+function extractDescription(
+  name: string,
+  addedNames: string[],
+  addedLines: string[],
+): string | undefined {
   if (addedLines.length === 0) return undefined;
 
   const isWordBoundaryMatch = (line: string): boolean => {
@@ -78,7 +87,10 @@ function parseToolSearchSelectQuery(query: string): string[] | undefined {
   return names.length > 0 ? names : undefined;
 }
 
-function getOrCreate(map: Map<string, ToolAvailabilityRecord>, name: string): ToolAvailabilityRecord {
+function getOrCreate(
+  map: Map<string, ToolAvailabilityRecord>,
+  name: string,
+): ToolAvailabilityRecord {
   let record = map.get(name);
   if (!record) {
     const split = splitMcpToolName(name);
@@ -94,7 +106,10 @@ function getOrCreate(map: Map<string, ToolAvailabilityRecord>, name: string): To
   return record;
 }
 
-export function deriveToolTimeline(entries: ClaudeCodeEntry[], options?: TimelineDeriveOptions): ToolAvailabilityRecord[] {
+export function deriveToolTimeline(
+  entries: ClaudeCodeEntry[],
+  options?: TimelineDeriveOptions,
+): ToolAvailabilityRecord[] {
   void options; // no blob-size-sensitive fields in this record type
 
   const records = new Map<string, ToolAvailabilityRecord>();
@@ -106,7 +121,10 @@ export function deriveToolTimeline(entries: ClaudeCodeEntry[], options?: Timelin
   const everDeferredNames = new Set<string>();
 
   for (const entry of entries) {
-    if (entry.type === 'attachment' && (entry as AttachmentEntry).attachment.type === 'deferred_tools_delta') {
+    if (
+      entry.type === 'attachment' &&
+      (entry as AttachmentEntry).attachment.type === 'deferred_tools_delta'
+    ) {
       const att = (entry as AttachmentEntry).attachment as DeferredToolsDeltaAttachment;
       const readdedSet = new Set(att.readdedNames ?? []);
 

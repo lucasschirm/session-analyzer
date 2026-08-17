@@ -1,11 +1,9 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-
-import { parseSessionTranscript } from '../src/session/parse-transcript.js';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
 import { accumulateUsage } from '../src/session/aggregate-usage.js';
-import { clampBlob } from '../src/utils/text.js';
+import { parseSessionTranscript } from '../src/session/parse-transcript.js';
 import type {
   AssistantEntry,
   AttachmentEntry,
@@ -13,10 +11,16 @@ import type {
   SystemEntry,
   UserEntry,
 } from '../src/types/session.js';
+import { clampBlob } from '../src/utils/text.js';
 
-function entryAt<T extends { type: string }>(session: { entries: unknown[] }, index: number, type: string): T {
+function entryAt<T extends { type: string }>(
+  session: { entries: unknown[] },
+  index: number,
+  type: string,
+): T {
   const entry = session.entries[index] as { type: string } | undefined;
-  if (entry?.type !== type) throw new Error(`expected entries[${index}] to be type '${type}', got '${entry?.type}'`);
+  if (entry?.type !== type)
+    throw new Error(`expected entries[${index}] to be type '${type}', got '${entry?.type}'`);
   return entry as T;
 }
 
@@ -73,7 +77,9 @@ describe('parseSessionTranscript — happy path', () => {
   });
 
   it('parses attachment sub-types correctly', () => {
-    const attachments = session.entries.filter((e): e is AttachmentEntry => e.type === 'attachment');
+    const attachments = session.entries.filter(
+      (e): e is AttachmentEntry => e.type === 'attachment',
+    );
     expect(attachments.map((a) => a.attachment.type)).toEqual([
       'hook_success',
       'deferred_tools_delta',
@@ -100,7 +106,14 @@ describe('parseSessionTranscript — happy path', () => {
   });
 
   it('keeps session_id (snake) and sessionId (camel) distinct when both are present', () => {
-    const raw = { type: 'user', sessionId: 'camel-id', session_id: 'snake-id', uuid: 'x', timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'user', content: 'hi' } };
+    const raw = {
+      type: 'user',
+      sessionId: 'camel-id',
+      session_id: 'snake-id',
+      uuid: 'x',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      message: { role: 'user', content: 'hi' },
+    };
     const single = parseSessionTranscript(JSON.stringify(raw));
     const entry = single.entries[0];
     if (entry?.type !== 'user') throw new Error('expected user entry');
@@ -180,7 +193,9 @@ describe('parseSessionTranscript — unknown types', () => {
     // The unrecognized top-level entry still lands in `entries` as an UnknownEntry.
     const unknownEntry = session.entries.find((e) => e.type === 'future-entry-kind');
     expect(unknownEntry).toBeDefined();
-    expect(unknownEntry && 'raw' in unknownEntry ? (unknownEntry as { raw: unknown }).raw : undefined).toBeDefined();
+    expect(
+      unknownEntry && 'raw' in unknownEntry ? (unknownEntry as { raw: unknown }).raw : undefined,
+    ).toBeDefined();
   });
 });
 
@@ -282,12 +297,16 @@ describe('parseSessionTranscript — truncation signals', () => {
   const content = readFixture('t2-truncation.jsonl');
   const session = parseSessionTranscript(content, { skipTimelines: true });
 
-  function toolResultBlock(entryIndex: number): (ContentBlock & { truncated?: unknown }) | undefined {
+  function toolResultBlock(
+    entryIndex: number,
+  ): (ContentBlock & { truncated?: unknown }) | undefined {
     const entry = session.entries[entryIndex];
     if (entry?.type !== 'user') return undefined;
     const content = entry.message.content;
     if (typeof content === 'string') return undefined;
-    return content.find((b) => b.type === 'tool_result') as (ContentBlock & { truncated?: unknown }) | undefined;
+    return content.find((b) => b.type === 'tool_result') as
+      | (ContentBlock & { truncated?: unknown })
+      | undefined;
   }
 
   it('parses the inline "[N characters truncated]" marker into an inline_char_count signal', () => {
@@ -426,23 +445,34 @@ describe('parseEntry (via parseSessionTranscript) — optional-fields fixture', 
   function toolResultBlock(entry: UserEntry): (ContentBlock & { truncated?: unknown }) | undefined {
     const content = entry.message.content;
     if (typeof content === 'string') return undefined;
-    return content.find((b) => b.type === 'tool_result') as (ContentBlock & { truncated?: unknown }) | undefined;
+    return content.find((b) => b.type === 'tool_result') as
+      | (ContentBlock & { truncated?: unknown })
+      | undefined;
   }
 
   it('array-of-text-parts tool_result content carries the inline_char_count marker', () => {
     const entry = session.entries[4] as UserEntry;
-    expect(toolResultBlock(entry)?.truncated).toEqual({ kind: 'inline_char_count', droppedChars: 321 });
+    expect(toolResultBlock(entry)?.truncated).toEqual({
+      kind: 'inline_char_count',
+      droppedChars: 321,
+    });
   });
 
   it('string-shaped toolUseResult supplies the truncation marker but is never stored as entry.toolUseResult', () => {
     const entry = session.entries[5] as UserEntry;
-    expect(toolResultBlock(entry)?.truncated).toEqual({ kind: 'inline_char_count', droppedChars: 77 });
+    expect(toolResultBlock(entry)?.truncated).toEqual({
+      kind: 'inline_char_count',
+      droppedChars: 77,
+    });
     expect(entry.toolUseResult).toBeUndefined();
   });
 
   it('toolUseResult.stdout marker resolves the signal when the block itself has none', () => {
     const entry = session.entries[6] as UserEntry;
-    expect(toolResultBlock(entry)?.truncated).toEqual({ kind: 'inline_char_count', droppedChars: 55 });
+    expect(toolResultBlock(entry)?.truncated).toEqual({
+      kind: 'inline_char_count',
+      droppedChars: 55,
+    });
     expect(entry.toolUseResult?.stdout).toContain('characters truncated');
   });
 
@@ -498,7 +528,8 @@ describe('parseEntry (via parseSessionTranscript) — optional-fields fixture', 
   it('strArr falls back to [] when the raw field is not an array', () => {
     const entry = session.entries[9] as AttachmentEntry;
     expect(entry.attachment.type).toBe('deferred_tools_delta');
-    if (entry.attachment.type !== 'deferred_tools_delta') throw new Error('expected deferred_tools_delta');
+    if (entry.attachment.type !== 'deferred_tools_delta')
+      throw new Error('expected deferred_tools_delta');
     expect(entry.attachment.addedNames).toEqual([]);
     expect(entry.attachment.addedLines).toEqual(['Bash']);
   });
@@ -512,7 +543,9 @@ describe('parseEntry (via parseSessionTranscript) — optional-fields fixture', 
 describe('parseEntry (via parseSessionTranscript) — attachment zoo fixture', () => {
   const content = readFixture('c1-attachment-zoo.jsonl');
   const session = parseSessionTranscript(content, { skipTimelines: true });
-  const attachments = session.entries.filter((e): e is AttachmentEntry => e.type === 'attachment').map((e) => e.attachment);
+  const attachments = session.entries
+    .filter((e): e is AttachmentEntry => e.type === 'attachment')
+    .map((e) => e.attachment);
 
   it('parses all 27 attachments and discriminates every type correctly', () => {
     expect(attachments.map((a) => a.type)).toEqual([
@@ -598,12 +631,35 @@ describe('parseEntry (via parseSessionTranscript) — attachment zoo fixture', (
   });
 
   it('pass-through attachment family round-trips {...raw, type} verbatim', () => {
-    expect(attachments[8]).toEqual({ type: 'task_reminder', content: [{ task: 'Update the changelog' }], itemCount: 1 });
-    expect(attachments[9]).toEqual({ type: 'todo_reminder', items: [{ status: 'pending', text: 'Write more tests' }] });
-    expect(attachments[10]).toEqual({ type: 'file', filename: 'notes.md', content: 'Some synthetic notes.' });
-    expect(attachments[11]).toEqual({ type: 'edited_text_file', filename: 'notes.md', snippet: '- added a synthetic line' });
-    expect(attachments[12]).toEqual({ type: 'diagnostics', files: ['src/example.ts'], isNew: true });
-    expect(attachments[13]).toEqual({ type: 'structured_output', data: { result: 'ok' }, toolUseID: 'tool-structured-1' });
+    expect(attachments[8]).toEqual({
+      type: 'task_reminder',
+      content: [{ task: 'Update the changelog' }],
+      itemCount: 1,
+    });
+    expect(attachments[9]).toEqual({
+      type: 'todo_reminder',
+      items: [{ status: 'pending', text: 'Write more tests' }],
+    });
+    expect(attachments[10]).toEqual({
+      type: 'file',
+      filename: 'notes.md',
+      content: 'Some synthetic notes.',
+    });
+    expect(attachments[11]).toEqual({
+      type: 'edited_text_file',
+      filename: 'notes.md',
+      snippet: '- added a synthetic line',
+    });
+    expect(attachments[12]).toEqual({
+      type: 'diagnostics',
+      files: ['src/example.ts'],
+      isNew: true,
+    });
+    expect(attachments[13]).toEqual({
+      type: 'structured_output',
+      data: { result: 'ok' },
+      toolUseID: 'tool-structured-1',
+    });
     expect(attachments[14]).toEqual({
       type: 'queued_command',
       prompt: 'Run the linter.',
@@ -622,7 +678,12 @@ describe('parseEntry (via parseSessionTranscript) — attachment zoo fixture', (
       planFilePath: '/home/testuser/projects/orbit-tracker/.claude/plans/telemetry.md',
       planExists: true,
     });
-    expect(attachments[17]).toEqual({ type: 'auto_mode', autoModeConsentFlow: true, bashFirst: false, steerOnly: false });
+    expect(attachments[17]).toEqual({
+      type: 'auto_mode',
+      autoModeConsentFlow: true,
+      bashFirst: false,
+      steerOnly: false,
+    });
     expect(attachments[18]).toEqual({ type: 'auto_mode_exit' });
     expect(attachments[19]).toEqual({ type: 'agent_mention', agentType: 'docs-drafter' });
     expect(attachments[20]).toEqual({ type: 'date_change', newDate: '2026-08-02' });
@@ -648,7 +709,10 @@ describe('parseEntry (via parseSessionTranscript) — attachment zoo fixture', (
   });
 
   it('an attachment with no type field at all is caught by the default arm with unknownType undefined', () => {
-    expect(attachments[26]).toEqual({ type: '', note: 'no type field at all on this attachment object' });
+    expect(attachments[26]).toEqual({
+      type: '',
+      note: 'no type field at all on this attachment object',
+    });
     expect(session.unknownTypes).toEqual({});
   });
 
@@ -671,7 +735,8 @@ describe('parseEntry (via parseSessionTranscript) — attachment zoo fixture', (
     it('clamps nested_memory.content.rawContent', () => {
       const original = attachments[4];
       const shrunk = clampedAttachments[4];
-      if (original.type !== 'nested_memory' || shrunk.type !== 'nested_memory') throw new Error('expected nested_memory');
+      if (original.type !== 'nested_memory' || shrunk.type !== 'nested_memory')
+        throw new Error('expected nested_memory');
       expect(shrunk.content.rawContent).toBe(clampBlob(original.content.rawContent, 8));
       expect(shrunk.content.rawContent.length).toBeLessThan(original.content.rawContent.length);
     });
@@ -679,7 +744,8 @@ describe('parseEntry (via parseSessionTranscript) — attachment zoo fixture', (
     it('clamps hook_success.stdout', () => {
       const original = attachments[24];
       const shrunk = clampedAttachments[24];
-      if (original.type !== 'hook_success' || shrunk.type !== 'hook_success') throw new Error('expected hook_success');
+      if (original.type !== 'hook_success' || shrunk.type !== 'hook_success')
+        throw new Error('expected hook_success');
       expect(shrunk.stdout).toBe(clampBlob(original.stdout, 8));
       expect(shrunk.stdout.length).toBeLessThan(original.stdout.length);
     });
@@ -687,7 +753,8 @@ describe('parseEntry (via parseSessionTranscript) — attachment zoo fixture', (
     it('clamps skill_listing.content', () => {
       const original = attachments[25];
       const shrunk = clampedAttachments[25];
-      if (original.type !== 'skill_listing' || shrunk.type !== 'skill_listing') throw new Error('expected skill_listing');
+      if (original.type !== 'skill_listing' || shrunk.type !== 'skill_listing')
+        throw new Error('expected skill_listing');
       expect(shrunk.content).toBe(clampBlob(original.content, 8));
       expect(shrunk.content.length).toBeLessThan(original.content.length);
     });
@@ -695,9 +762,12 @@ describe('parseEntry (via parseSessionTranscript) — attachment zoo fixture', (
     it('clamps invoked_skills[].content', () => {
       const original = attachments[2];
       const shrunk = clampedAttachments[2];
-      if (original.type !== 'invoked_skills' || shrunk.type !== 'invoked_skills') throw new Error('expected invoked_skills');
+      if (original.type !== 'invoked_skills' || shrunk.type !== 'invoked_skills')
+        throw new Error('expected invoked_skills');
       expect(shrunk.skills[0]?.content).toBe(clampBlob(original.skills[0]?.content ?? '', 8));
-      expect((shrunk.skills[0]?.content.length ?? 0)).toBeLessThan(original.skills[0]?.content.length ?? 0);
+      expect(shrunk.skills[0]?.content.length ?? 0).toBeLessThan(
+        original.skills[0]?.content.length ?? 0,
+      );
     });
   });
 });
@@ -731,7 +801,11 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
     expect(entry.timestampMs).toBe(0);
     expect(entry.message.content).toEqual([]);
     const err = session.parseErrors.find((e) => e.line === 1);
-    expect(err).toEqual({ code: 'missing_timestamp', message: 'Entry has no parseable timestamp field', line: 1 });
+    expect(err).toEqual({
+      code: 'missing_timestamp',
+      message: 'Entry has no parseable timestamp field',
+      line: 1,
+    });
     expect(err && 'uuid' in err).toBe(false);
   });
 
@@ -762,7 +836,8 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
 
   it('deferred_tools_delta with only {type} defaults addedLines/removedNames to []', () => {
     const entry = entryAt<AttachmentEntry>(session, 4, 'attachment');
-    if (entry.attachment.type !== 'deferred_tools_delta') throw new Error('expected deferred_tools_delta');
+    if (entry.attachment.type !== 'deferred_tools_delta')
+      throw new Error('expected deferred_tools_delta');
     expect(entry.attachment.addedNames).toEqual([]);
     expect(entry.attachment.addedLines).toEqual([]);
     expect(entry.attachment.removedNames).toEqual([]);
@@ -770,7 +845,8 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
 
   it('agent_listing_delta with only {type} defaults every array/bool field', () => {
     const entry = entryAt<AttachmentEntry>(session, 5, 'attachment');
-    if (entry.attachment.type !== 'agent_listing_delta') throw new Error('expected agent_listing_delta');
+    if (entry.attachment.type !== 'agent_listing_delta')
+      throw new Error('expected agent_listing_delta');
     expect(entry.attachment.addedTypes).toEqual([]);
     expect(entry.attachment.addedLines).toEqual([]);
     expect(entry.attachment.removedTypes).toEqual([]);
@@ -808,7 +884,8 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
 
   it('mcp_instructions_delta with only {type} defaults addedNames/addedBlocks/removedNames', () => {
     const entry = entryAt<AttachmentEntry>(session, 10, 'attachment');
-    if (entry.attachment.type !== 'mcp_instructions_delta') throw new Error('expected mcp_instructions_delta');
+    if (entry.attachment.type !== 'mcp_instructions_delta')
+      throw new Error('expected mcp_instructions_delta');
     expect(entry.attachment.addedNames).toEqual([]);
     expect(entry.attachment.addedBlocks).toEqual([]);
     expect(entry.attachment.removedNames).toEqual([]);
@@ -816,7 +893,8 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
 
   it('command_permissions with only {type} defaults allowedTools to []', () => {
     const entry = entryAt<AttachmentEntry>(session, 11, 'attachment');
-    if (entry.attachment.type !== 'command_permissions') throw new Error('expected command_permissions');
+    if (entry.attachment.type !== 'command_permissions')
+      throw new Error('expected command_permissions');
     expect(entry.attachment.allowedTools).toEqual([]);
   });
 
@@ -835,7 +913,8 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
 
   it('compact_file_reference with only {type} defaults filename/displayPath', () => {
     const entry = entryAt<AttachmentEntry>(session, 13, 'attachment');
-    if (entry.attachment.type !== 'compact_file_reference') throw new Error('expected compact_file_reference');
+    if (entry.attachment.type !== 'compact_file_reference')
+      throw new Error('expected compact_file_reference');
     expect(entry.attachment.filename).toBe('');
     expect(entry.attachment.displayPath).toBe('');
   });
@@ -856,7 +935,8 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
 
   it('hook_additional_context with only {type} defaults content/hookName/hookEvent/toolUseID', () => {
     const entry = entryAt<AttachmentEntry>(session, 15, 'attachment');
-    if (entry.attachment.type !== 'hook_additional_context') throw new Error('expected hook_additional_context');
+    if (entry.attachment.type !== 'hook_additional_context')
+      throw new Error('expected hook_additional_context');
     expect(entry.attachment.content).toEqual([]);
     expect(entry.attachment.hookName).toBe('');
     expect(entry.attachment.hookEvent).toBe('');
@@ -865,7 +945,8 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
 
   it('read_truncation_notice with only {type} defaults banner/toolUseID', () => {
     const entry = entryAt<AttachmentEntry>(session, 16, 'attachment');
-    if (entry.attachment.type !== 'read_truncation_notice') throw new Error('expected read_truncation_notice');
+    if (entry.attachment.type !== 'read_truncation_notice')
+      throw new Error('expected read_truncation_notice');
     expect(entry.attachment.banner).toBe('');
     expect(entry.attachment.toolUseID).toBe('');
   });
@@ -878,7 +959,12 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
       sessionId: '',
       lineNumber: 19,
     });
-    expect(session.entries[19]).toEqual({ type: 'ai-title', aiTitle: '', sessionId: '', lineNumber: 20 });
+    expect(session.entries[19]).toEqual({
+      type: 'ai-title',
+      aiTitle: '',
+      sessionId: '',
+      lineNumber: 20,
+    });
     expect(session.entries[20]).toEqual({
       type: 'last-prompt',
       lastPrompt: '',
@@ -886,7 +972,12 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
       sessionId: '',
       lineNumber: 21,
     });
-    expect(session.entries[21]).toEqual({ type: 'agent-name', agentName: '', sessionId: '', lineNumber: 22 });
+    expect(session.entries[21]).toEqual({
+      type: 'agent-name',
+      agentName: '',
+      sessionId: '',
+      lineNumber: 22,
+    });
     expect(session.entries[22]).toEqual({
       type: 'pr-link',
       sessionId: '',
@@ -918,8 +1009,18 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
       isSnapshotUpdate: false,
       lineNumber: 26,
     });
-    expect(session.entries[28]).toEqual({ type: 'relocated', sessionId: '', relocatedCwd: '', lineNumber: 29 });
-    expect(session.entries[30]).toEqual({ type: 'summary', summary: '', leafUuid: '', lineNumber: 31 });
+    expect(session.entries[28]).toEqual({
+      type: 'relocated',
+      sessionId: '',
+      relocatedCwd: '',
+      lineNumber: 29,
+    });
+    expect(session.entries[30]).toEqual({
+      type: 'summary',
+      summary: '',
+      leafUuid: '',
+      lineNumber: 31,
+    });
   });
 
   it('file-history-delta with no "backup" key defaults every backup field, backupFileName falling to null', () => {
@@ -942,7 +1043,12 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
       messageId: '',
       snapshotMessageId: '',
       trackingPath: '',
-      backup: { backupFileName: 'backup-fake-0001.bak', version: 0, backupTime: '', realParentDir: '' },
+      backup: {
+        backupFileName: 'backup-fake-0001.bak',
+        version: 0,
+        backupTime: '',
+        realParentDir: '',
+      },
       timestamp: '',
       lineNumber: 28,
     });
@@ -988,7 +1094,11 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
     expect(entry.uuid).toBe('');
     expect(entry.timestamp).toBe('not-a-date');
     const err = session.parseErrors.find((e) => e.line === 34);
-    expect(err).toEqual({ code: 'invalid_timestamp', message: 'Unparseable timestamp: "not-a-date"', line: 34 });
+    expect(err).toEqual({
+      code: 'invalid_timestamp',
+      message: 'Unparseable timestamp: "not-a-date"',
+      line: 34,
+    });
     expect(err && 'uuid' in err).toBe(false);
   });
 });

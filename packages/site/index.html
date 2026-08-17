@@ -82,7 +82,7 @@
     // service worker injects the headers there. Dev/preview servers send the
     // headers directly, so this registration is scoped to the Pages domain.
     if ('serviceWorker' in navigator && location.hostname.endsWith('github.io')) {
-      navigator.serviceWorker.register('coi-sw.js').catch(function () {
+      navigator.serviceWorker.register('coi-sw.js').catch(() => {
         /* OPFS falls back to in-memory storage when SAB is unavailable. */
       });
     }

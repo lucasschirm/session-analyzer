@@ -1,5 +1,5 @@
-import { LitElement, html, css } from 'lit';
-import { customElement, property, state, query } from 'lit/decorators.js';
+import { css, html, LitElement } from 'lit';
+import { customElement, property, query, state } from 'lit/decorators.js';
 import type { UploadedFile } from '../lib/subagents';
 
 /**
@@ -99,7 +99,9 @@ export class UploadZone extends LitElement {
 
   private handleInputChange(event: Event): void {
     const input = event.target as HTMLInputElement;
-    this.emitUploads(Array.from(input.files ?? []).map((file) => ({ file, relativePath: file.name })));
+    this.emitUploads(
+      Array.from(input.files ?? []).map((file) => ({ file, relativePath: file.name })),
+    );
     input.value = '';
   }
 
@@ -138,17 +140,23 @@ export class UploadZone extends LitElement {
     const items = dataTransfer.items;
     const entries = items
       ? Array.from(items)
-          .map((item) => (typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null))
+          .map((item) =>
+            typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null,
+          )
           .filter((entry): entry is FileSystemEntry => entry !== null)
       : [];
 
     if (entries.length > 0) {
-      const uploads = (await Promise.all(entries.map((entry) => readEntryRecursive(entry, '')))).flat();
+      const uploads = (
+        await Promise.all(entries.map((entry) => readEntryRecursive(entry, '')))
+      ).flat();
       this.emitUploads(uploads);
       return;
     }
 
-    this.emitUploads(Array.from(dataTransfer.files ?? []).map((file) => ({ file, relativePath: file.name })));
+    this.emitUploads(
+      Array.from(dataTransfer.files ?? []).map((file) => ({ file, relativePath: file.name })),
+    );
   }
 
   private emitUploads(uploads: UploadedFile[]): void {
@@ -160,12 +168,16 @@ export class UploadZone extends LitElement {
         detail: { files: relevant },
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 
   render() {
-    const zoneClasses = ['upload-zone', this.dragging ? 'dragging' : '', this.disabled ? 'disabled' : '']
+    const zoneClasses = [
+      'upload-zone',
+      this.dragging ? 'dragging' : '',
+      this.disabled ? 'disabled' : '',
+    ]
       .filter(Boolean)
       .join(' ');
 
@@ -211,7 +223,7 @@ function readEntryRecursive(entry: FileSystemEntry, parentPath: string): Promise
     return new Promise((resolve, reject) => {
       (entry as FileSystemFileEntry).file(
         (file) => resolve([{ file, relativePath: `${parentPath}${entry.name}` }]),
-        reject
+        reject,
       );
     });
   }
@@ -223,7 +235,7 @@ function readEntryRecursive(entry: FileSystemEntry, parentPath: string): Promise
 
 async function readDirectoryRecursive(
   dirEntry: FileSystemDirectoryEntry,
-  path: string
+  path: string,
 ): Promise<UploadedFile[]> {
   const children = await readAllDirectoryEntries(dirEntry.createReader());
   const results = await Promise.all(children.map((child) => readEntryRecursive(child, path)));

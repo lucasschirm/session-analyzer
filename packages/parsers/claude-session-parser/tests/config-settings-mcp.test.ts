@@ -1,11 +1,10 @@
-import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-
-import { parseSettings } from '../src/config/settings.js';
-import { parseMcp } from '../src/config/mcp-config.js';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
 import { parsePluginMarketplace } from '../src/config/marketplace.js';
+import { parseMcp } from '../src/config/mcp-config.js';
+import { parseSettings } from '../src/config/settings.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, 'fixtures');
@@ -232,6 +231,7 @@ describe('parseMcp', () => {
     expect(byName.helper).toMatchObject({
       transport: 'http',
       url: 'https://mcp.example.com/mcp',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal env-var placeholder syntax under test, not a template interpolation
       headers: { Authorization: 'Bearer ${HELPER_API_KEY}' },
     });
     expect(byName['legacy-sse'].transport).toBe('sse');
@@ -326,14 +326,21 @@ describe('parseMcp', () => {
     const config = parseMcp(content, 'project');
 
     expect(config.servers).toHaveLength(1);
-    expect(config.servers[0]).toMatchObject({ name: 'zephyr:tools', transport: 'sse', url: 'https://zephyr.example.invalid/sse' });
+    expect(config.servers[0]).toMatchObject({
+      name: 'zephyr:tools',
+      transport: 'sse',
+      url: 'https://zephyr.example.invalid/sse',
+    });
   });
 });
 
 describe('parsePluginMarketplace', () => {
   it('parses an official-style marketplace with both string and object source forms', () => {
     const content = readFixture('t6-marketplace-official-style.json');
-    const marketplace = parsePluginMarketplace(content, '/Users/dev/.claude/plugins/marketplaces/official/.claude-plugin/marketplace.json');
+    const marketplace = parsePluginMarketplace(
+      content,
+      '/Users/dev/.claude/plugins/marketplaces/official/.claude-plugin/marketplace.json',
+    );
 
     expect(marketplace.kind).toBe('plugin-marketplace');
     expect(marketplace.name).toBe('official-demo-marketplace');
@@ -364,15 +371,24 @@ describe('parsePluginMarketplace', () => {
     expect(marketplace.description).toBe('A claude plugins marketplace with custom plugins');
     expect(marketplace.owner).toEqual({ name: 'Dev Person' });
     expect(marketplace.plugins).toEqual([
-      { name: 'example-basics', source: './plugins/example-basics', description: 'A collection of agents and skills for every project.' },
+      {
+        name: 'example-basics',
+        source: './plugins/example-basics',
+        description: 'A collection of agents and skills for every project.',
+      },
     ]);
   });
 
   it('never throws on invalid JSON, returning a minimal valid object with no parseErrors field', () => {
     const content = readFixture('t6-marketplace-invalid.json');
-    expect(() => parsePluginMarketplace(content, '/Users/dev/proj/.claude-plugin/marketplace.json')).not.toThrow();
+    expect(() =>
+      parsePluginMarketplace(content, '/Users/dev/proj/.claude-plugin/marketplace.json'),
+    ).not.toThrow();
 
-    const marketplace = parsePluginMarketplace(content, '/Users/dev/proj/.claude-plugin/marketplace.json');
+    const marketplace = parsePluginMarketplace(
+      content,
+      '/Users/dev/proj/.claude-plugin/marketplace.json',
+    );
     expect(marketplace.kind).toBe('plugin-marketplace');
     expect(marketplace.plugins).toEqual([]);
     // Falls back to the marketplace's containing directory name.
@@ -418,12 +434,18 @@ describe('parsePluginMarketplace', () => {
     });
 
     it('falls back to the last path segment when sourcePath has no .claude-plugin directory', () => {
-      const marketplace = parsePluginMarketplace(JSON.stringify({}), '/home/testuser/projects/orbit-tracker/marketplace.json');
+      const marketplace = parsePluginMarketplace(
+        JSON.stringify({}),
+        '/home/testuser/projects/orbit-tracker/marketplace.json',
+      );
       expect(marketplace.name).toBe('marketplace.json');
     });
 
     it('falls back to the last path segment when .claude-plugin is the FIRST path segment (pluginDirIdx === 0 edge case)', () => {
-      const marketplace = parsePluginMarketplace(JSON.stringify({}), '.claude-plugin/marketplace.json');
+      const marketplace = parsePluginMarketplace(
+        JSON.stringify({}),
+        '.claude-plugin/marketplace.json',
+      );
       // pluginDirIdx (0) is not > 0, so the "containing directory" branch
       // must NOT fire here -- it must fall through to the last-segment
       // fallback, same as the no-.claude-plugin case above.
@@ -451,10 +473,14 @@ describe('parsePluginMarketplace', () => {
   });
 
   it('mirrors owner.name, but leaves `owner` unset (not `{}`) when the owner object has no name', () => {
-    const withName = parsePluginMarketplace(JSON.stringify({ name: 'nimbus-market', owner: { name: 'Synthetic Owner' } }));
+    const withName = parsePluginMarketplace(
+      JSON.stringify({ name: 'nimbus-market', owner: { name: 'Synthetic Owner' } }),
+    );
     expect(withName.owner).toEqual({ name: 'Synthetic Owner' });
 
-    const withoutName = parsePluginMarketplace(JSON.stringify({ name: 'nimbus-market', owner: {} }));
+    const withoutName = parsePluginMarketplace(
+      JSON.stringify({ name: 'nimbus-market', owner: {} }),
+    );
     expect('owner' in withoutName).toBe(false);
     expect(withoutName.owner).toBeUndefined();
   });

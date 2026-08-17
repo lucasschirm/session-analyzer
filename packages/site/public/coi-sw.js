@@ -5,16 +5,18 @@
 
 self.addEventListener('install', () => self.skipWaiting());
 
-self.addEventListener('activate', (event) =>
-  event.waitUntil(self.clients.claim())
-);
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'deregister') {
     self.registration
       .unregister()
       .then(() => self.clients.matchAll())
-      .then((clients) => clients.forEach((client) => client.navigate(client.url)));
+      .then((clients) =>
+        clients.forEach((client) => {
+          client.navigate(client.url);
+        }),
+      );
   }
 });
 
@@ -36,6 +38,6 @@ self.addEventListener('fetch', (event) => {
           headers,
         });
       })
-      .catch((error) => console.error('coi-sw fetch failed:', error))
+      .catch((error) => console.error('coi-sw fetch failed:', error)),
   );
 });

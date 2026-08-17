@@ -15,11 +15,15 @@
 
 import type { ClaudeScope, ParseError } from '../types/common.js';
 import type { SkillDefinition } from '../types/config.js';
+import { makeParseError } from '../utils/errors.js';
 import { parseFrontmatter } from '../utils/frontmatter.js';
 import { stripBom } from '../utils/text.js';
-import { makeParseError } from '../utils/errors.js';
 
-export function parseSkillDefinition(content: string, sourcePath?: string, scope?: ClaudeScope): SkillDefinition {
+export function parseSkillDefinition(
+  content: string,
+  sourcePath?: string,
+  scope?: ClaudeScope,
+): SkillDefinition {
   const stripped = stripBom(content ?? '');
   const { frontmatter, body } = parseFrontmatter(stripped);
   const parseErrors: ParseError[] = [];
@@ -56,11 +60,13 @@ export function parseSkillDefinition(content: string, sourcePath?: string, scope
     );
   }
 
-  const description = typeof frontmatter.description === 'string' ? frontmatter.description : undefined;
+  const description =
+    typeof frontmatter.description === 'string' ? frontmatter.description : undefined;
   // `allowed-tools` is the more common/specific real key (see file header);
   // a bare `tools` is accepted as a fallback for the rarer real files that
   // use it instead.
-  const allowedToolsRaw = 'allowed-tools' in frontmatter ? frontmatter['allowed-tools'] : frontmatter.tools;
+  const allowedToolsRaw =
+    'allowed-tools' in frontmatter ? frontmatter['allowed-tools'] : frontmatter.tools;
   const allowedTools = normalizeToolsField(allowedToolsRaw);
   const pluginPrefix = derivePluginPrefix(name, sourcePath);
 
@@ -116,7 +122,8 @@ function inferScopeFromPath(sourcePath: string | undefined): ClaudeScope {
   if (!sourcePath) return 'unknown';
   const normalized = sourcePath.replace(/\\/g, '/');
   if (/(^|\/)plugins\//.test(normalized)) return 'plugin';
-  if (/^~\/\.claude\//.test(normalized) || /(^|\/)(Users|home)\/[^/]+\/\.claude\//.test(normalized)) return 'user';
+  if (/^~\/\.claude\//.test(normalized) || /(^|\/)(Users|home)\/[^/]+\/\.claude\//.test(normalized))
+    return 'user';
   if (/(^|\/)\.claude\//.test(normalized)) return 'project';
   return 'unknown';
 }

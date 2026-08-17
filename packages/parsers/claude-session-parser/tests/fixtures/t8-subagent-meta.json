@@ -1,1 +1,7 @@
-{"agentType":"general-purpose","description":"Summarize the contents of the example directory","toolUseId":"toolu_01ABCDEFGHIJKLMNOPQRSTUV","spawnDepth":1,"model":"haiku"}
+{
+  "agentType": "general-purpose",
+  "description": "Summarize the contents of the example directory",
+  "toolUseId": "toolu_01ABCDEFGHIJKLMNOPQRSTUV",
+  "spawnDepth": 1,
+  "model": "haiku"
+}
