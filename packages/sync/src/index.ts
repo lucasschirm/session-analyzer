@@ -1,5 +1,6 @@
 export * from './allowlist.js';
 export * from './artifact.js';
+export * from './cli/index.js';
 export * from './config/index.js';
 export * from './discovery/index.js';
 export * from './errors.js';
@@ -13,5 +14,6 @@ export * from './session.js';
 export * from './state/index.js';
 export * from './storage/index.js';
 export * from './sync-run.js';
+export * from './telemetry/index.js';
 export * from './versions.js';
 export * from './watcher.js';
