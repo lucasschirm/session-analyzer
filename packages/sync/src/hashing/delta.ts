@@ -7,8 +7,8 @@ import type {
   ManifestArtifact,
 } from '../artifact.js';
 import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
-import type { SyncManifest } from '../manifest.js';
-import { MANIFEST_SCHEMA_VERSION } from '../manifest.js';
+import type { SyncManifest } from '../manifest/index.js';
+import { MANIFEST_SCHEMA_VERSION } from '../versions.js';
 import type { SessionData } from '../session.js';
 import {
   getArtifactRecord,

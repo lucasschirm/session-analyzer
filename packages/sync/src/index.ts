@@ -6,7 +6,7 @@ export * from './errors.js';
 export * from './harness.js';
 export * from './hashing/index.js';
 export * from './limits.js';
-export * from './manifest.js';
+export * from './manifest/index.js';
 export * from './privacy.js';
 export * from './sanitization/index.js';
 export * from './session.js';
