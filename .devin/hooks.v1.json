@@ -1,0 +1,14 @@
+{
+  "SessionStart": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "\"$DEVIN_PROJECT_DIR\"/.devin/hooks/sync-agents-symlinks.sh",
+          "timeout": 15,
+          "statusMessage": "Syncing .agents/ symlinks"
+        }
+      ]
+    }
+  ]
+}
