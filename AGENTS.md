@@ -56,30 +56,46 @@ The application ingests, parses, and generates statistics for session files from
 *   **Transcripts:** Chat-like message view rendered via `marked` + sanitized with `dompurify`.
 
 ## Project Structure
-This repo is a pnpm workspace monorepo. Today it holds a single app package,
-`packages/site/`; a future, separately-designed effort will extract parser
-packages into `packages/parsers/*`.
+This repo is a pnpm workspace monorepo. It currently contains three package
+areas: the dashboard app, publishable parsers, the session sync engine, and a
+Claude Code plugin that bundles the sync engine.
+
 ```
 /workspace
 ├── packages/
-│   └── site/                 # The dashboard app (package name: "site")
-│       ├── src/
-│       │   ├── components/       # Lit web components (one per file)
-│       │   ├── db/               # SQLite WASM database manager, db-worker, db-client
-│       │   ├── lib/              # Markdown rendering + sanitization
-│       │   ├── pages/            # Route-level components (home, project, session, indicator)
-│       │   ├── types/            # TypeScript type definitions
-│       │   └── workers/          # Web Worker for session parsing + client helper
-│       ├── tests/
-│       │   ├── unit/             # Vitest unit tests
-│       │   └── e2e/              # Playwright E2E tests + fixture session files
-│       ├── public/               # coi-sw.js (COOP/COEP for GitHub Pages), .nojekyll
-│       ├── index.html            # Entry HTML file (dark theme variables)
-│       ├── package.json          # App dependencies and scripts
-│       ├── tsconfig.json         # Extends root tsconfig.base.json, adds path aliases
-│       ├── vite.config.ts        # Vite build configuration (COOP/COEP headers, ES workers)
-│       ├── vitest.config.ts      # Vitest test configuration (coverage thresholds)
-│       └── playwright.config.ts  # Playwright E2E configuration (chromium)
+│   ├── site/                 # The dashboard app (package name: "site")
+│   │   ├── src/
+│   │   │   ├── components/       # Lit web components (one per file)
+│   │   │   ├── db/               # SQLite WASM database manager, db-worker, db-client
+│   │   │   ├── lib/              # Markdown rendering + sanitization
+│   │   │   ├── pages/            # Route-level components (home, project, session, indicator)
+│   │   │   ├── types/            # TypeScript type definitions
+│   │   │   └── workers/          # Web Worker for session parsing + client helper
+│   │   ├── tests/
+│   │   │   ├── unit/             # Vitest unit tests
+│   │   │   └── e2e/              # Playwright E2E tests + fixture session files
+│   │   ├── public/               # coi-sw.js (COOP/COEP for GitHub Pages), .nojekyll
+│   │   ├── index.html            # Entry HTML file (dark theme variables)
+│   │   ├── package.json          # App dependencies and scripts
+│   │   ├── tsconfig.json         # Extends root tsconfig.base.json, adds path aliases
+│   │   ├── vite.config.ts        # Vite build configuration (COOP/COEP headers, ES workers)
+│   │   ├── vitest.config.ts      # Vitest test configuration (coverage thresholds)
+│   │   └── playwright.config.ts  # Playwright E2E configuration (chromium)
+│   ├── parsers/
+│   │   └── claude-session-parser/  # @lucasschirm/sal-claude-session-parser
+│   │       ├── src/                # Pure, dependency-free Claude Code parser
+│   │       └── tests/              # Parser unit tests
+│   ├── sync/                       # @lucasschirm/sal-sync
+│   │   ├── src/                    # Session data sync engine (harness-agnostic)
+│   │   └── tests/                  # Sync engine unit tests
+│   └── plugins/
+│       └── claude-session-sync/    # @lucasschirm/claude-session-sync
+│           ├── .claude-plugin/     # Claude Code plugin manifest
+│           ├── bin/                # Single-file esbuild bundles (generated)
+│           ├── hooks/              # Claude Code hooks/hooks.json
+│           ├── src/                # Plugin entry points and Claude-specific mapping
+│           ├── build.mjs           # esbuild bundling script
+│           └── tests/              # Plugin unit tests (including packaging)
 ├── .github/workflows/    # GitHub Actions CI/CD
 ├── package.json          # Root workspace package (private, passthrough scripts, husky)
 ├── pnpm-workspace.yaml    # Workspace package globs
