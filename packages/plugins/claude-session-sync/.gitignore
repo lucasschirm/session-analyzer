@@ -1,1 +1,1 @@
-bin/
+# Build artifacts — bin/ is committed (single-file esbuild bundles)

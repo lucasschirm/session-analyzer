@@ -45,6 +45,7 @@ async function main(): Promise<number> {
       const dataDir = getDataDir(process.env);
       const record = zeroRun('manual', 'unknown', 'capture');
       record.errors = ['SYNC_INTERNAL_ERROR'];
+      record.errorDetails = [{ code: 'SYNC_INTERNAL_ERROR', message }];
       await emitTelemetry(
         dataDir,
         buildTelemetryRecord({

@@ -72,7 +72,15 @@ export function mapS3Error(err: unknown): StorageError {
   }
 
   const statusSuffix = status !== undefined ? ` (HTTP ${status})` : '';
-  const message = `${code}: ${SYNC_ERROR_CATALOG[code].description}${statusSuffix}`;
+  const baseMessage = `${code}: ${SYNC_ERROR_CATALOG[code].description}${statusSuffix}`;
+  // Include the underlying error message for debugging, except for auth errors
+  // where the AWS SDK message may contain credentials or sensitive signing info.
+  const underlying = err instanceof Error ? err.message : '';
+  const underlyingSuffix =
+    underlying && underlying !== baseMessage && code !== 'SYNC_AUTH_FAILED'
+      ? `: ${underlying}`
+      : '';
+  const message = `${baseMessage}${underlyingSuffix}`;
   return new StorageError(code, message, retryable, err);
 }
 

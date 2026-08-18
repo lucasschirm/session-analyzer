@@ -541,6 +541,14 @@ export async function runFullSync(options: RunFullSyncOptions): Promise<RunFullS
       deltaResult.errors.push(code);
     }
   }
+  for (const error of discovery.errors) {
+    deltaResult.errorDetails = deltaResult.errorDetails ?? [];
+    if (
+      !deltaResult.errorDetails.some((d) => d.code === error.code && d.message === error.message)
+    ) {
+      deltaResult.errorDetails.push({ code: error.code, message: error.message });
+    }
+  }
 
   deltaResult.discoveryDurationMs = discoveryDuration;
   deltaResult.sanitizationDurationMs = sanitizationDuration;
@@ -724,11 +732,16 @@ export async function runSessionEndUploadLoop(options: {
     } catch (err) {
       run.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveStorageError(err);
+      const message = err instanceof Error ? err.message : String(err);
       recordArtifactFailure(state, artifact, code);
       run.filesFailed += 1;
       run.errors = run.errors ?? [];
       if (!run.errors.includes(code)) {
         run.errors.push(code);
+      }
+      run.errorDetails = run.errorDetails ?? [];
+      if (!run.errorDetails.some((d) => d.code === code && d.message === message)) {
+        run.errorDetails.push({ code, message });
       }
       failed.push(artifact);
     }

@@ -245,11 +245,16 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
     } catch (err) {
       result.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveErrorCode(err);
+      const message = err instanceof Error ? err.message : String(err);
       recordArtifactFailure(state, item.artifact, code);
       result.filesFailed += 1;
       result.failed.push(item.artifact);
       if (!result.errors.includes(code)) {
         result.errors.push(code);
+      }
+      result.errorDetails = result.errorDetails ?? [];
+      if (!result.errorDetails.some((d) => d.code === code && d.message === message)) {
+        result.errorDetails.push({ code, message });
       }
     }
   }
@@ -283,11 +288,16 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
     } catch (err) {
       result.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveErrorCode(err);
+      const message = err instanceof Error ? err.message : String(err);
       recordArtifactFailure(state, manifestArtifact, code);
       result.filesFailed += 1;
       result.failed.push(manifestArtifact);
       if (!result.errors.includes(code)) {
         result.errors.push(code);
+      }
+      result.errorDetails = result.errorDetails ?? [];
+      if (!result.errorDetails.some((d) => d.code === code && d.message === message)) {
+        result.errorDetails.push({ code, message });
       }
     }
     result.manifest = manifest;
