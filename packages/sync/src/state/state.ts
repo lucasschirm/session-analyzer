@@ -78,7 +78,9 @@ export async function writeFileAtomic(filePath: string, data: string): Promise<v
   const dir = path.dirname(filePath);
   await fsp.mkdir(dir, { recursive: true });
 
-  const tempPath = `${filePath}.tmp`;
+  // Use a unique temp file per call so concurrent writes to the same target
+  // do not clobber each other's temp file (which would cause ENOENT on rename).
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   let handle: fsp.FileHandle | undefined;
   try {
     handle = await fsp.open(tempPath, 'w', 0o644);
