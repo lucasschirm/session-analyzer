@@ -32,6 +32,10 @@ function runBin(
       // Give the child process a moment to attach its stdin listeners before
       // closing the pipe, so small inputs are not lost before readStdin() runs.
       setTimeout(() => child.stdin.end(), 100);
+    } else {
+      // Close stdin immediately so readStdin() receives an empty input
+      // instead of waiting forever for data that will never arrive.
+      child.stdin.end();
     }
 
     child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));

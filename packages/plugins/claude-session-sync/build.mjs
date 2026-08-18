@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { build as esbuildBuild } from 'esbuild';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
-const syncPackageRoot = resolve(packageRoot, '..', 'sync');
+const syncPackageRoot = resolve(packageRoot, '..', '..', 'sync');
 const binDir = resolve(packageRoot, 'bin');
 
 const FORBIDDEN_PACKAGE = '@lucasschirm/sal-claude-session-parser';
