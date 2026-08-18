@@ -1,7 +1,7 @@
 {
   "name": "@lucasschirm/claude-session-sync",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "license": "ISC",
   "description": "Claude Code plugin adapter for the @lucasschirm/sal-sync session data sync engine.",
