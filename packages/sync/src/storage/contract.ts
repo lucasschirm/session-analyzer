@@ -77,14 +77,43 @@ export interface HeadObjectResult {
 }
 
 /**
+ * Input for a storage LIST operation. When `sessionId` is omitted, all objects
+ * under `<projectId>/` are listed; when provided, only objects under
+ * `<projectId>/<sessionId>/`.
+ */
+export interface ListObjectsInput {
+  projectId: string;
+  sessionId?: string;
+}
+
+/**
+ * A single object entry returned by `listObjects`. `key` is the full, decoded
+ * object key (e.g. `my-project/sess-1/session/transcript.jsonl`).
+ */
+export interface ListObjectEntry {
+  key: string;
+  size?: number;
+  lastModified?: Date;
+  etag?: string;
+}
+
+/**
+ * Result of a successful LIST.
+ */
+export interface ListObjectsResult {
+  objects: ListObjectEntry[];
+}
+
+/**
  * Storage-agnostic adapter contract. Implementations must support `putObject`;
- * `getObject` and `headObject` are optional conveniences for callers that need
- * them.
+ * `getObject`, `headObject`, and `listObjects` are optional conveniences for
+ * callers that need them (e.g. the standalone CLI).
  */
 export interface StorageAdapter {
   putObject(input: PutObjectInput): Promise<PutObjectResult>;
   getObject?(input: GetObjectInput): Promise<GetObjectResult | undefined>;
   headObject?(input: HeadObjectInput): Promise<HeadObjectResult | undefined>;
+  listObjects?(input: ListObjectsInput): Promise<ListObjectsResult>;
 }
 
 /**

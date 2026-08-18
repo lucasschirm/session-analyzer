@@ -149,6 +149,120 @@ bin/session-start        # SessionStart hook entry point
 bin/session-end          # SessionEnd hook entry point
 bin/hook                 # PreCompact/PostCompact/Stop/StopFailure/SubagentStop
 bin/transcript-watcher   # Detached watcher process spawned by session-start
+bin/claude-sync          # Standalone CLI for manual sync/list/download
+```
+
+## Standalone CLI
+
+In addition to the Claude Code hooks, this package ships a standalone CLI
+binary (`claude-sync`) that lets you manually upload, list, and download
+sessions from S3 storage. It's useful for backfilling historical sessions,
+inspecting what's been synced, or restoring sessions to a new machine.
+
+### Installation
+
+The CLI is included in the same npm package. You can run it via `npx` without
+installing anything:
+
+```bash
+npx @lucasschirm/claude-session-sync sync
+```
+
+Or install it globally for a shorter `claude-sync` command:
+
+```bash
+npm install -g @lucasschirm/claude-session-sync
+claude-sync sync
+```
+
+### Commands
+
+#### `sync`
+
+Upload all local Claude Code sessions for the current project to S3.
+
+```bash
+claude-sync sync
+```
+
+From the project directory, the CLI:
+
+1. Finds the corresponding Claude Code project folder in `~/.claude/projects/`.
+2. Lists all local `.jsonl` transcript files.
+3. For each session, checks if it already exists in S3 — if so, skips it.
+4. The first session uploaded captures workspace + global + session config.
+   Subsequent sessions capture only session-scoped transcripts (config is
+   uploaded once).
+5. Prints a per-session summary and a total.
+
+#### `list`
+
+List all sessions uploaded for the current project in S3.
+
+```bash
+claude-sync list
+```
+
+Outputs a human-readable table:
+
+```
+SESSION ID                              FILES  SIZE        LAST MODIFIED
+-------------------------------------------------------------------------
+d1acf718-cd8d-4c1d-84fd-b074d231995b    43     21.1 MB     2026-08-18 19:36
+test-summary-001                        8      119.6 KB    2026-08-18 19:35
+
+2 session(s), 51 files, 21.2 MB total
+```
+
+#### `download`
+
+Download session files from S3 to a local directory.
+
+```bash
+# Download a specific session
+claude-sync download --session-id=<session-id> --output=<dir>
+
+# Download all sessions for the project
+claude-sync download all --output=<dir>
+```
+
+Files are restored to `<output>/<projectId>/<sessionId>/<scope>/<relativePath>`.
+
+### Configuration
+
+The CLI reads configuration from environment variables, falling back to
+`.claude/settings.local.json` `env` key for any variables not set in the
+process environment. This means you can configure it once in
+`.claude/settings.local.json` and the CLI will pick it up automatically.
+
+See the [Configuration](#configuration) section below for the full list of
+required and optional variables.
+
+If required variables are missing, the CLI prints an error with example
+`export` commands and a `.claude/settings.local.json` template:
+
+```
+Error: required configuration is missing or incomplete.
+
+The following environment variables must be set:
+  SAL_PROJECT_ID — Unique identifier for the project.
+  ...
+
+Set them via environment variables before running the CLI:
+
+  export SAL_PROJECT_ID=session-analyzer
+  export SAL_STORAGE_TYPE=s3
+  ...
+  npx @lucasschirm/claude-session-sync sync
+
+Or add them to .claude/settings.local.json:
+
+{
+  "env": {
+    "SAL_PROJECT_ID": "session-analyzer",
+    ...
+  }
+}
 ```
 
 ### Updating
@@ -340,6 +454,14 @@ packages/plugins/claude-session-sync/
 │   ├── session-start.ts     # SessionStart entry point
 │   ├── session-end.ts       # SessionEnd entry point
 │   ├── transcript-watcher.ts # Detached watcher spawner
+│   ├── cli.ts               # Standalone CLI entry point (claude-sync)
+│   ├── cli/                 # CLI command modules
+│   │   ├── env.ts           # Environment resolution (process.env + settings.local.json)
+│   │   ├── config.ts        # Config validation with example error messages
+│   │   ├── project.ts       # Claude project folder resolution
+│   │   ├── sync-command.ts  # "sync" command
+│   │   ├── list-command.ts  # "list" command
+│   │   └── download-command.ts # "download" command
 │   └── index.ts             # Public API barrel
 ├── bin/                     # Built executables (esbuild single-file bundles)
 ├── build.mjs                # esbuild bundling script

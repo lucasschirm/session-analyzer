@@ -25,7 +25,7 @@ function normalizeSlashes(input: string): string {
   return input.replace(/\\/g, '/').replace(/\/+/g, '/');
 }
 
-function encodeKeySegment(segment: string): string {
+export function encodeKeySegment(segment: string): string {
   return encodeURIComponent(segment);
 }
 
@@ -74,4 +74,46 @@ export function buildObjectKey(
   }
 
   return encoded;
+}
+
+/**
+ * Parse a decoded object key back into its components.
+ *
+ * Keys follow the layout:
+ *   `<projectId>/<sessionId>/manifest.json`
+ *   `<projectId>/<sessionId>/<scope>/<relativePath>`
+ *
+ * Returns `undefined` if the key does not match the expected layout.
+ */
+export function parseObjectKey(key: string):
+  | {
+      projectId: string;
+      sessionId: string;
+      scope: 'manifest' | import('../artifact.js').ArtifactScope;
+      relativePath: string;
+    }
+  | undefined {
+  if (!key) return undefined;
+  const normalized = normalizeSlashes(key).replace(/^\//, '').replace(/\/$/, '');
+  const segments = normalized.split('/').filter((part) => part !== '');
+  if (segments.length < 3) return undefined;
+
+  const projectId = decodeURIComponent(segments[0] as string);
+  const sessionId = decodeURIComponent(segments[1] as string);
+  const third = segments[2] as string;
+
+  // manifest.json lives at <projectId>/<sessionId>/manifest.json
+  if (third === 'manifest.json' && segments.length === 3) {
+    return { projectId, sessionId, scope: 'manifest', relativePath: 'manifest.json' };
+  }
+
+  if (!VALID_SCOPES.has(third)) {
+    return undefined;
+  }
+
+  const scope = third as 'manifest' | import('../artifact.js').ArtifactScope;
+  const rest = segments.slice(3).map(decodeURIComponent).join('/');
+  if (!rest) return undefined;
+
+  return { projectId, sessionId, scope, relativePath: rest };
 }
