@@ -22,6 +22,7 @@ export interface SyncRunResult {
   bytesChanged: number;
   bytesUploaded: number;
   errors?: SyncErrorCode[];
+  errorDetails?: Array<{ code: SyncErrorCode; message: string }>;
 }
 
 export interface SyncPerformanceTelemetry {
