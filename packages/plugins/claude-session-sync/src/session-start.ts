@@ -3,8 +3,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import type { CliOptions, WatcherHandle, WatcherSpawner } from '@lucasschirm/sal-sync';
-import { sessionStart } from '@lucasschirm/sal-sync';
+import {
+  buildTelemetryRecord,
+  type CliOptions,
+  emitTelemetry,
+  getDataDir,
+  sessionStart,
+  type WatcherHandle,
+  type WatcherSpawner,
+  zeroRun,
+} from '@lucasschirm/sal-sync';
 import { parseClaudeHookInput, readStdin, toHarnessSession, toSyncInput } from './claude.js';
 
 export interface SessionStartRunOptions extends CliOptions {
@@ -85,7 +93,25 @@ async function main(): Promise<number> {
   try {
     const raw = await readStdin();
     return await runSessionStart(raw, { env: process.env });
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`claude-session-sync session-start error: ${message}\n`);
+    try {
+      const dataDir = getDataDir(process.env);
+      const record = zeroRun('session-start', 'unknown', 'session-start');
+      record.errors = ['SYNC_INTERNAL_ERROR'];
+      await emitTelemetry(
+        dataDir,
+        buildTelemetryRecord({
+          run: record,
+          sessionId: 'unknown',
+          command: 'session-start',
+          diagnostics: { fatalError: message },
+        }),
+      );
+    } catch {
+      // Best effort — don't mask the original error.
+    }
     return 0;
   }
 }

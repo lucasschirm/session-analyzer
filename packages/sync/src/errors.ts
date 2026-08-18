@@ -11,7 +11,8 @@ export type SyncErrorCode =
   | 'SYNC_FILE_COUNT_EXCEEDED'
   | 'SYNC_JSON_PARSE_FAILED'
   | 'SYNC_STATE_CORRUPT'
-  | 'SYNC_WATCHER_ERROR';
+  | 'SYNC_WATCHER_ERROR'
+  | 'SYNC_INTERNAL_ERROR';
 
 export type SyncErrorCategory = 'retryable' | 'non-retryable' | 'context-dependent';
 
@@ -86,6 +87,11 @@ export const SYNC_ERROR_CATALOG: Record<SyncErrorCode, SyncErrorMeta> = {
     code: 'SYNC_WATCHER_ERROR',
     category: 'retryable',
     description: 'The transcript watcher encountered a transient error.',
+  },
+  SYNC_INTERNAL_ERROR: {
+    code: 'SYNC_INTERNAL_ERROR',
+    category: 'non-retryable',
+    description: 'An unexpected internal error escaped the sync pipeline.',
   },
 };
 
