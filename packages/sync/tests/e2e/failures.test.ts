@@ -82,8 +82,8 @@ function baseEnv(): Record<string, string> {
     SAL_STORAGE_BUCKET: 'test-bucket',
     SAL_STORAGE_ENDPOINT: 'http://localhost:4566',
     SAL_STORAGE_REGION: 'us-east-1',
-    SAL_STORAGE_ID: 'AKIAIOSFODNN7EXAMPLE',
-    SAL_STORAGE_SECRET: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    SAL_STORAGE_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
+    SAL_STORAGE_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
     SAL_SYNC_TIMEOUT: '5000',
     SAL_SESSION_END_BUDGET_MS: '5000',
     SAL_HOOK_UPLOAD_TIMEOUT: '5000',
@@ -179,8 +179,8 @@ describe('sync E2E failure modes', () => {
 
   it('exits 0 and records auth failure when storage credentials are missing', async () => {
     const env = envForFixture(fixture, {
-      SAL_STORAGE_ID: undefined,
-      SAL_STORAGE_SECRET: undefined,
+      SAL_STORAGE_ACCESS_KEY_ID: undefined,
+      SAL_STORAGE_SECRET_ACCESS_KEY: undefined,
     });
     const result = await capture({
       dataDir: fixture.dataDir,

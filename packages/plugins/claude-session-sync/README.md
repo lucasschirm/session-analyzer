@@ -188,8 +188,8 @@ shell before launching `claude`.
 | `SAL_STORAGE_TYPE`   | Storage backend. Currently only `s3` is supported.    |
 | `SAL_STORAGE_BUCKET` | S3 bucket name.                                       |
 | `SAL_STORAGE_REGION` | AWS region (e.g. `us-east-1`).                        |
-| `SAL_STORAGE_ID`     | AWS access key ID.                                    |
-| `SAL_STORAGE_SECRET` | AWS secret access key.                                |
+| `SAL_STORAGE_ACCESS_KEY_ID`     | AWS access key ID.                                    |
+| `SAL_STORAGE_SECRET_ACCESS_KEY` | AWS secret access key.                                |
 
 ### Optional
 
@@ -232,8 +232,8 @@ Edit `~/.claude/settings.json`:
     "SAL_STORAGE_TYPE": "s3",
     "SAL_STORAGE_BUCKET": "my-session-bucket",
     "SAL_STORAGE_REGION": "us-east-1",
-    "SAL_STORAGE_ID": "AKIAIOSFODNN7EXAMPLE",
-    "SAL_STORAGE_SECRET": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    "SAL_STORAGE_ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE",
+    "SAL_STORAGE_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
   },
   "enabledPlugins": {
     "claude-session-sync@session-analyzer": true
@@ -253,8 +253,8 @@ gitignored by default, so credentials stay local):
     "SAL_STORAGE_TYPE": "s3",
     "SAL_STORAGE_BUCKET": "my-session-bucket",
     "SAL_STORAGE_REGION": "us-east-1",
-    "SAL_STORAGE_ID": "AKIAIOSFODNN7EXAMPLE",
-    "SAL_STORAGE_SECRET": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "SAL_STORAGE_ACCESS_KEY_ID": "AKIAIOSFODNN7EXAMPLE",
+    "SAL_STORAGE_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     "SAL_STORAGE_ENDPOINT": "http://localhost:4566"
   }
 }
@@ -275,8 +275,8 @@ export SAL_PROJECT_ID="my-app"
 export SAL_STORAGE_TYPE="s3"
 export SAL_STORAGE_BUCKET="my-session-bucket"
 export SAL_STORAGE_REGION="us-east-1"
-export SAL_STORAGE_ID="AKIAIOSFODNN7EXAMPLE"
-export SAL_STORAGE_SECRET="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+export SAL_STORAGE_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"
+export SAL_STORAGE_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 claude
 ```
 
@@ -293,8 +293,8 @@ For local testing without a real AWS account, run
     "SAL_STORAGE_BUCKET": "sal-sessions",
     "SAL_STORAGE_REGION": "us-east-1",
     "SAL_STORAGE_ENDPOINT": "http://localhost:4566",
-    "SAL_STORAGE_ID": "test",
-    "SAL_STORAGE_SECRET": "test"
+    "SAL_STORAGE_ACCESS_KEY_ID": "test",
+    "SAL_STORAGE_SECRET_ACCESS_KEY": "test"
   }
 }
 ```
