@@ -1,0 +1,98 @@
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
+import { fileURLToPath } from 'node:url';
+import type { CliOptions, WatcherHandle, WatcherSpawner } from '@lucasschirm/sal-sync';
+import { sessionStart } from '@lucasschirm/sal-sync';
+import { parseClaudeHookInput, readStdin, toHarnessSession, toSyncInput } from './claude.js';
+
+export interface SessionStartRunOptions extends CliOptions {
+  watcherPath?: string;
+}
+
+export function getTranscriptWatcherPath(): string {
+  const envPath = process.env.SAL_CLAUDE_WATCHER_PATH;
+  if (envPath) {
+    return path.resolve(envPath);
+  }
+
+  const currentFile = fileURLToPath(import.meta.url);
+  const currentDir = path.dirname(currentFile);
+
+  const candidates = ['transcript-watcher.js', 'transcript-watcher', 'transcript-watcher.mjs'];
+  for (const rel of ['.', '..']) {
+    for (const name of candidates) {
+      const candidate = path.resolve(currentDir, rel, name);
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return path.resolve(currentDir, '..', 'bin', 'transcript-watcher');
+}
+
+function createDefaultSpawnWatcher(watcherPath: string): WatcherSpawner {
+  return (args: string[]) => {
+    const child = spawn(process.execPath, [watcherPath, ...args], {
+      detached: true,
+      stdio: 'ignore',
+    });
+
+    const handle: WatcherHandle = {
+      unref: () => {
+        child.unref();
+      },
+      pid: child.pid ?? undefined,
+      on: (event, listener) => {
+        child.on(event, listener as () => void);
+        return handle;
+      },
+    };
+
+    return handle;
+  };
+}
+
+export async function runSessionStart(
+  raw: unknown,
+  options: SessionStartRunOptions = {},
+): Promise<number> {
+  const parsed = parseClaudeHookInput(raw);
+  if (!parsed.ok) {
+    return 0;
+  }
+
+  const session = toHarnessSession(parsed.input);
+  session.startedAt = session.startedAt ?? new Date().toISOString();
+  const syncInput = toSyncInput(session, 'session-start');
+
+  const spawner =
+    options.spawnWatcher ??
+    createDefaultSpawnWatcher(options.watcherPath ?? getTranscriptWatcherPath());
+
+  const result = await sessionStart({
+    ...options,
+    input: syncInput,
+    spawnWatcher: spawner,
+  });
+
+  return result.exitCode;
+}
+
+async function main(): Promise<number> {
+  try {
+    const raw = await readStdin();
+    return await runSessionStart(raw, { env: process.env });
+  } catch {
+    return 0;
+  }
+}
+
+if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().then(
+    (code) => process.exit(code),
+    () => process.exit(0),
+  );
+}
