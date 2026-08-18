@@ -12,5 +12,8 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "claude-session-sync@session-analyzer": true
   }
 }
