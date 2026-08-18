@@ -54,26 +54,91 @@ are stripped. See the full [privacy policy](../../sync/POLICY.md).
 
 ## Installation
 
-### From the marketplace
+The plugin is distributed through the `session-analyzer` marketplace, which is
+hosted in this repository at
+[`.claude-plugin/marketplace.json`](../../../.claude-plugin/marketplace.json).
+Installation is a two-step process: first add the marketplace, then install
+the plugin.
+
+### Step 1 — Add the marketplace
+
+You can add the marketplace from GitHub, a git URL, or a local clone.
+
+#### From GitHub (recommended)
+
+Use the `owner/repo` shorthand:
+
+```bash
+claude plugin marketplace add lucasschirm/session-analyzer
+```
+
+Pin to a specific branch or tag with `@ref`:
+
+```bash
+claude plugin marketplace add lucasschirm/session-analyzer@feature/claude-session-sync
+```
+
+#### From a git URL
+
+For non-GitHub hosts or explicit HTTPS cloning:
+
+```bash
+claude plugin marketplace add https://github.com/lucasschirm/session-analyzer.git
+```
+
+#### From a local clone (for development)
+
+If you have this repo cloned locally:
+
+```bash
+claude plugin marketplace add ./path/to/session-analyzer
+```
+
+#### Marketplace scope
+
+The `--scope` flag controls who sees the marketplace declaration:
+
+| Scope     | Setting file                   | Shared with team? |
+| --------- | ------------------------------ | ----------------- |
+| `user`    | `~/.claude/settings.json`      | No (personal)     |
+| `project` | `.claude/settings.json`        | Yes (committed)   |
+| `local`   | `.claude/settings.local.json`  | No (gitignored)   |
+
+```bash
+# Share the marketplace with your team
+claude plugin marketplace add lucasschirm/session-analyzer --scope project
+```
+
+### Step 2 — Install the plugin
+
+Once the marketplace is added, install the plugin:
 
 ```bash
 claude plugin install claude-session-sync@session-analyzer
 ```
 
-Choose a scope:
+Or from inside an interactive Claude Code session:
 
-- `--scope user` (default) — available in all your projects.
-- `--scope project` — shared with your team via `.claude/settings.json`.
-- `--scope local` — only you, in this project (gitignored).
+```
+/plugin install claude-session-sync@session-analyzer
+```
+
+The install command opens a details view where you select an installation
+scope (user, project, or local — same semantics as above). After installing,
+run `/reload-plugins` if prompted.
 
 ### From source (local development)
+
+For local development, build the plugin bundle first, then add the marketplace
+from your local clone:
 
 ```bash
 # Build the plugin bundle (esbuild single-file executables)
 pnpm --filter @lucasschirm/claude-session-sync build
 
-# Install from the local marketplace
-claude plugin install claude-session-sync@session-analyzer --source ./packages/plugins/claude-session-sync
+# Add the local marketplace and install
+claude plugin marketplace add .
+claude plugin install claude-session-sync@session-analyzer
 ```
 
 The build produces self-contained executables in `bin/` (no `node_modules`
@@ -84,6 +149,29 @@ bin/session-start        # SessionStart hook entry point
 bin/session-end          # SessionEnd hook entry point
 bin/hook                 # PreCompact/PostCompact/Stop/StopFailure/SubagentStop
 bin/transcript-watcher   # Detached watcher process spawned by session-start
+```
+
+### Updating
+
+To pull the latest version from the marketplace:
+
+```bash
+claude plugin marketplace update session-analyzer
+claude plugin update claude-session-sync@session-analyzer
+```
+
+Or inside an interactive session:
+
+```
+/plugin marketplace update session-analyzer
+/plugin update claude-session-sync@session-analyzer
+```
+
+### Uninstalling
+
+```bash
+claude plugin uninstall claude-session-sync@session-analyzer
+claude plugin marketplace remove session-analyzer
 ```
 
 ## Configuration
