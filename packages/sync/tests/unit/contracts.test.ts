@@ -252,6 +252,7 @@ describe('stable error codes', () => {
     'SYNC_JSON_PARSE_FAILED',
     'SYNC_STATE_CORRUPT',
     'SYNC_WATCHER_ERROR',
+    'SYNC_INTERNAL_ERROR',
   ];
 
   it('contains all documented error codes', () => {

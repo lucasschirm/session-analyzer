@@ -1,7 +1,13 @@
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import type { CliOptions } from '@lucasschirm/sal-sync';
-import { sessionEnd } from '@lucasschirm/sal-sync';
+import {
+  buildTelemetryRecord,
+  type CliOptions,
+  emitTelemetry,
+  getDataDir,
+  sessionEnd,
+  zeroRun,
+} from '@lucasschirm/sal-sync';
 import { parseClaudeHookInput, readStdin, toHarnessSession, toSyncInput } from './claude.js';
 
 export async function runSessionEnd(raw: unknown, options: CliOptions = {}): Promise<number> {
@@ -29,7 +35,25 @@ async function main(): Promise<number> {
   try {
     const raw = await readStdin();
     return await runSessionEnd(raw, { env: process.env });
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`claude-session-sync session-end error: ${message}\n`);
+    try {
+      const dataDir = getDataDir(process.env);
+      const record = zeroRun('session-end', 'unknown', 'session-end');
+      record.errors = ['SYNC_INTERNAL_ERROR'];
+      await emitTelemetry(
+        dataDir,
+        buildTelemetryRecord({
+          run: record,
+          sessionId: 'unknown',
+          command: 'session-end',
+          diagnostics: { fatalError: message },
+        }),
+      );
+    } catch {
+      // Best effort — don't mask the original error.
+    }
     return 0;
   }
 }

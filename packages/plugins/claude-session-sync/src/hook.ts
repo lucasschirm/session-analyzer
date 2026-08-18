@@ -1,7 +1,13 @@
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import type { CliOptions } from '@lucasschirm/sal-sync';
-import { capture } from '@lucasschirm/sal-sync';
+import {
+  buildTelemetryRecord,
+  type CliOptions,
+  capture,
+  emitTelemetry,
+  getDataDir,
+  zeroRun,
+} from '@lucasschirm/sal-sync';
 import {
   claudeEventToSyncTrigger,
   parseClaudeHookInput,
@@ -32,7 +38,25 @@ async function main(): Promise<number> {
   try {
     const raw = await readStdin();
     return await runHook(raw, { env: process.env });
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`claude-session-sync hook error: ${message}\n`);
+    try {
+      const dataDir = getDataDir(process.env);
+      const record = zeroRun('manual', 'unknown', 'capture');
+      record.errors = ['SYNC_INTERNAL_ERROR'];
+      await emitTelemetry(
+        dataDir,
+        buildTelemetryRecord({
+          run: record,
+          sessionId: 'unknown',
+          command: 'capture',
+          diagnostics: { fatalError: message },
+        }),
+      );
+    } catch {
+      // Best effort — don't mask the original error.
+    }
     return 0;
   }
 }
