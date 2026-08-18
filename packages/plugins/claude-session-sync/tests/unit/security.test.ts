@@ -421,9 +421,9 @@ describe('plugin manifest and hooks use minimum required surface', () => {
     expect(manifest.name).toBe('claude-session-sync');
     expect(manifest.version).toBeDefined();
     expect(manifest.description).toBeDefined();
-    expect(manifest.hooks).toBe('hooks/hooks.json');
-    // The manifest does not declare any additional permissions/capabilities.
-    expect(Object.keys(manifest).sort()).toEqual(['description', 'hooks', 'name', 'version']);
+    // hooks/hooks.json is the default location auto-discovered by Claude Code;
+    // the manifest does not need to declare it explicitly.
+    expect(Object.keys(manifest).sort()).toEqual(['author', 'description', 'name', 'version']);
   });
 
   it('hooks.json only invokes bundled plugin executables with fixed arguments', () => {

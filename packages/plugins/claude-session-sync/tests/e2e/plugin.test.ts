@@ -190,7 +190,6 @@ describe('Claude Code plugin E2E', () => {
     expect(manifest).toMatchObject({
       name: 'claude-session-sync',
       version: expect.any(String),
-      hooks: 'hooks/hooks.json',
     });
   });
 

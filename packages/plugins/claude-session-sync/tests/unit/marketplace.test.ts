@@ -166,7 +166,8 @@ describe('marketplace registry', () => {
     expect(typeof manifest.version).toBe('string');
     expect(manifest.version.length).toBeGreaterThan(0);
     expect(typeof manifest.description).toBe('string');
-    expect(typeof manifest.hooks).toBe('string');
+    // hooks/hooks.json is the default location auto-discovered by Claude Code.
+    expect(existsSync(resolve(pluginRoot, 'hooks/hooks.json'))).toBe(true);
   });
 });
 
