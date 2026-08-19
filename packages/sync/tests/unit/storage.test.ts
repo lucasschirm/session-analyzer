@@ -43,7 +43,7 @@ function makeInput(overrides: Partial<PutObjectInput> = {}): PutObjectInput {
   return {
     projectId: 'proj-1',
     sessionId: 'sess-1',
-    scope: 'workspace',
+    scope: 'session',
     relativePath: '.claude/settings.json',
     body: textBody('hello world'),
     ...overrides,
@@ -162,21 +162,30 @@ describe('buildObjectKey', () => {
     ).toBe('p/s/session/transcript.jsonl');
   });
 
-  it('builds workspace artifact keys', () => {
-    expect(buildObjectKey(makeInput({ scope: 'workspace' }))).toBe(
-      'proj-1/sess-1/workspace/.claude/settings.json',
-    );
+  it('builds workspace artifact keys as global/cas/<hash>', () => {
+    const hash = 'a'.repeat(64);
+    expect(
+      buildObjectKey({
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        scope: 'workspace',
+        relativePath: '.claude/settings.json',
+        contentSha256: hash,
+      }),
+    ).toBe(`global/cas/${hash}`);
   });
 
-  it('builds global artifact keys with tilde paths', () => {
+  it('builds global artifact keys as global/cas/<hash>', () => {
+    const hash = 'b'.repeat(64);
     expect(
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
         scope: 'global',
         relativePath: '~/.claude/settings.json',
+        contentSha256: hash,
       }),
-    ).toBe('p/s/global/~/.claude/settings.json');
+    ).toBe(`global/cas/${hash}`);
   });
 
   it('builds runtime artifact keys', () => {
@@ -206,10 +215,10 @@ describe('buildObjectKey', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: 'foo bar/baz:qux',
       }),
-    ).toBe('p/s/workspace/foo%20bar/baz%3Aqux');
+    ).toBe('p/s/session/foo%20bar/baz%3Aqux');
   });
 
   it('collapses and normalizes slashes and backslashes', () => {
@@ -217,10 +226,10 @@ describe('buildObjectKey', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: 'a\\b//c',
       }),
-    ).toBe('p/s/workspace/a/b/c');
+    ).toBe('p/s/session/a/b/c');
   });
 
   it('strips leading and trailing slashes', () => {
@@ -228,10 +237,10 @@ describe('buildObjectKey', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: './.claude/settings.json/',
       }),
-    ).toBe('p/s/workspace/.claude/settings.json');
+    ).toBe('p/s/session/.claude/settings.json');
   });
 
   it('rejects absolute unix paths', () => {
@@ -260,13 +269,35 @@ describe('buildObjectKey', () => {
     );
   });
 
+  it('rejects missing contentSha256 for workspace scope', () => {
+    expect(() =>
+      buildObjectKey({
+        projectId: 'p',
+        sessionId: 's',
+        scope: 'workspace',
+        relativePath: 'file.txt',
+      }),
+    ).toThrow(StorageError);
+  });
+
+  it('rejects missing contentSha256 for global scope', () => {
+    expect(() =>
+      buildObjectKey({
+        projectId: 'p',
+        sessionId: 's',
+        scope: 'global',
+        relativePath: 'file.txt',
+      }),
+    ).toThrow(StorageError);
+  });
+
   it('rejects keys that exceed S3 maximum length', () => {
     const longProjectId = 'a'.repeat(1024);
     expect(() =>
       buildObjectKey({
         projectId: longProjectId,
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: 'file.txt',
       }),
     ).toThrow(StorageError);
@@ -276,7 +307,15 @@ describe('buildObjectKey', () => {
     const scopes: StorageObjectScope[] = ['session', 'workspace', 'global', 'runtime', 'manifest'];
     for (const scope of scopes) {
       const relativePath = scope === 'manifest' ? 'manifest.json' : 'subpath/file.txt';
-      const key = buildObjectKey({ projectId: 'p', sessionId: 's', scope, relativePath });
+      const contentSha256 =
+        scope === 'workspace' || scope === 'global' ? 'a'.repeat(64) : undefined;
+      const key = buildObjectKey({
+        projectId: 'p',
+        sessionId: 's',
+        scope,
+        relativePath,
+        contentSha256,
+      });
       expect(key.startsWith('/')).toBe(false);
       expect(key.includes('/../')).toBe(false);
       expect(key.includes('//')).toBe(false);
@@ -380,7 +419,7 @@ describe('InMemoryStorageAdapter', () => {
     const adapter: StorageAdapter = new InMemoryStorageAdapter();
     const input = makeInput({ relativePath: 'file.txt' });
     const result = await adapter.putObject(input);
-    expect(result.key).toBe('proj-1/sess-1/workspace/file.txt');
+    expect(result.key).toBe('proj-1/sess-1/session/file.txt');
     expect(result.sha256).toBe(sha256Hex(input.body));
 
     const head = await adapter.headObject?.(input);
@@ -476,13 +515,13 @@ describe('S3StorageAdapter', () => {
     const input = makeInput();
     const result = await adapter.putObject(input);
 
-    expect(result.key).toBe('proj-1/sess-1/workspace/.claude/settings.json');
+    expect(result.key).toBe('proj-1/sess-1/session/.claude/settings.json');
     expect(result.sha256).toBe(sha256Hex(input.body));
 
     expect(sendSpy).toHaveBeenCalledTimes(1);
     const command = sendSpy.mock.calls[0][0] as PutObjectCommand;
     expect(command.input.Bucket).toBe('my-bucket');
-    expect(command.input.Key).toBe('proj-1/sess-1/workspace/.claude/settings.json');
+    expect(command.input.Key).toBe('proj-1/sess-1/session/.claude/settings.json');
     expect(command.input.Body).toBe(input.body);
     expect(command.input.Metadata).toEqual({
       sha256: sha256Hex(input.body),
@@ -680,6 +719,33 @@ describe('parseObjectKey', () => {
     expect(parseObjectKey('')).toBeUndefined();
   });
 
+  it('parses a CAS flat key', () => {
+    const hash = 'a'.repeat(64);
+    expect(parseObjectKey(`global/cas/${hash}`)).toEqual({
+      projectId: '',
+      sessionId: '',
+      scope: 'cas',
+      relativePath: hash,
+      contentSha256: hash,
+    });
+  });
+
+  it('parses a CAS flat key with uppercase hash', () => {
+    const hash = 'A'.repeat(64);
+    expect(parseObjectKey(`global/cas/${hash}`)).toEqual({
+      projectId: '',
+      sessionId: '',
+      scope: 'cas',
+      relativePath: hash.toLowerCase(),
+      contentSha256: hash.toLowerCase(),
+    });
+  });
+
+  it('returns undefined for CAS keys with a malformed hash', () => {
+    expect(parseObjectKey('global/cas/not-a-hash')).toBeUndefined();
+    expect(parseObjectKey('global/cas/abc')).toBeUndefined();
+  });
+
   it('round-trips with buildObjectKey', () => {
     const inputs: Array<{
       projectId: string;
@@ -689,24 +755,31 @@ describe('parseObjectKey', () => {
     }> = [
       { projectId: 'p', sessionId: 's', scope: 'manifest', relativePath: 'manifest.json' },
       { projectId: 'p', sessionId: 's', scope: 'session', relativePath: 'transcript.jsonl' },
-      {
-        projectId: 'p',
-        sessionId: 's',
-        scope: 'workspace',
-        relativePath: '.claude/settings.json',
-      },
-      {
-        projectId: 'my project',
-        sessionId: 'sess:1',
-        scope: 'global',
-        relativePath: '~/.claude/agents/reviewer.md',
-      },
+      { projectId: 'p', sessionId: 's', scope: 'runtime', relativePath: 'telemetry.json' },
     ];
     for (const input of inputs) {
       const key = buildObjectKey(input);
       const parsed = parseObjectKey(key);
       expect(parsed).toEqual(input);
     }
+  });
+
+  it('round-trips CAS flat keys with buildObjectKey', () => {
+    const hash = 'a'.repeat(64);
+    const key = buildObjectKey({
+      projectId: 'p',
+      sessionId: 's',
+      scope: 'workspace',
+      relativePath: '.claude/settings.json',
+      contentSha256: hash,
+    });
+    expect(parseObjectKey(key)).toEqual({
+      projectId: '',
+      sessionId: '',
+      scope: 'cas',
+      relativePath: hash,
+      contentSha256: hash,
+    });
   });
 });
 
@@ -743,7 +816,7 @@ describe('S3StorageAdapter getObject/headObject/listObjects', () => {
 
     const command = sendSpy.mock.calls[0][0] as GetObjectCommand;
     expect(command.input.Bucket).toBe('my-bucket');
-    expect(command.input.Key).toBe('proj-1/sess-1/workspace/file.json');
+    expect(command.input.Key).toBe('proj-1/sess-1/session/file.json');
   });
 
   it('getObject returns undefined for 404', async () => {
@@ -773,7 +846,7 @@ describe('S3StorageAdapter getObject/headObject/listObjects', () => {
 
     const command = sendSpy.mock.calls[0][0] as HeadObjectCommand;
     expect(command.input.Bucket).toBe('my-bucket');
-    expect(command.input.Key).toBe('proj-1/sess-1/workspace/file.json');
+    expect(command.input.Key).toBe('proj-1/sess-1/session/file.json');
   });
 
   it('headObject returns undefined for 404', async () => {
