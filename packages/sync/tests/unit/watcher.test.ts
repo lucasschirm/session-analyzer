@@ -179,10 +179,10 @@ describe('TranscriptWatcher', () => {
     // Let initial scan complete before appending.
     await sleep(50);
     await appendFile(transcriptPath, '{"type":"message"}\n');
-    await sleep(200);
+    await sleep(400);
 
     await appendFile(transcriptPath, '{"type":"tool"}\n');
-    await sleep(200);
+    await sleep(400);
 
     await watcher.stop();
     await startPromise.catch(() => {});
@@ -224,7 +224,7 @@ describe('TranscriptWatcher', () => {
     await sleep(50);
 
     await appendFile(agentPath, '{"type":"subagent"}\n');
-    await sleep(200);
+    await sleep(400);
 
     await watcher.stop();
     await startPromise.catch(() => {});

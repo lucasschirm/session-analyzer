@@ -23,10 +23,34 @@ export async function runSessionEnd(raw: unknown, options: CliOptions = {}): Pro
   const syncInput = toSyncInput(session, 'session-end');
   syncInput.reason = session.endReason;
 
+  // Write a start message so the user sees activity before the upload completes.
+  // If the hook times out, at least this will have been written.
+  process.stderr.write('claude-session-sync: uploading session data...\n');
+
   const result = await sessionEnd({
     ...options,
     input: syncInput,
   });
+
+  // Surface a summary to stderr so the user sees it in Claude Code.
+  // SessionEnd hooks show stderr to the user.
+  const run = result.run;
+  if (run) {
+    const parts: string[] = [];
+    if (run.filesUploaded > 0) parts.push(`${run.filesUploaded} files uploaded`);
+    if (run.filesSkipped > 0) parts.push(`${run.filesSkipped} files skipped (unchanged)`);
+    if (run.filesFailed > 0) parts.push(`${run.filesFailed} files failed`);
+    if (result.budgetExhausted) parts.push('budget exhausted (some uploads may be incomplete)');
+
+    if (parts.length > 0) {
+      process.stderr.write(`claude-session-sync: ${parts.join(', ')}.\n`);
+    }
+
+    if (run.errors && run.errors.length > 0) {
+      const errorSummary = run.errors.join(', ');
+      process.stderr.write(`claude-session-sync: errors: ${errorSummary}.\n`);
+    }
+  }
 
   return result.exitCode;
 }
