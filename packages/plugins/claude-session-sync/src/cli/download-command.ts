@@ -318,6 +318,12 @@ async function downloadSession(
   }
 }
 
+/**
+ * Discover a project's sessions by filtering a full `listObjects({ projectId })`
+ * result for manifest-scope entries, rather than adding a dedicated
+ * manifest-pattern list API to `StorageAdapter` — this keeps the adapter
+ * surface unchanged since manifest keys are unaffected by the CAS layout.
+ */
 async function discoverSessionIds(
   storageAdapter: StorageAdapter,
   projectId: string,
@@ -387,7 +393,9 @@ async function downloadSessionList(
     );
     if (result.missingManifest) {
       failed += 1;
-      errors.push(`manifest not found for session ${sessionId}`);
+      const message = `manifest not found for session ${sessionId}`;
+      errors.push(message);
+      stdout.write(`[fail] ${sessionId} — ${message}\n`);
       continue;
     }
     downloaded += result.downloaded;
