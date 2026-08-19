@@ -1,6 +1,10 @@
 import process from 'node:process';
 
-import { buildStorageAdapterFromStorage, type StorageAdapter } from '@lucasschirm/sal-sync';
+import {
+  buildStorageAdapterFromStorage,
+  CAS_NAMESPACE_ROOT,
+  type StorageAdapter,
+} from '@lucasschirm/sal-sync';
 
 import { validateStorageConfig } from './config.js';
 import { resolveCliEnv } from './env.js';
@@ -65,6 +69,11 @@ export function parseRemoveArgs(argv: string[]): RemoveArgsResult {
 
   if (projectId === undefined) {
     return { error: 'Error: remove requires a project id, e.g. `remove my-project`.' };
+  }
+  if (projectId === CAS_NAMESPACE_ROOT) {
+    return {
+      error: `Error: "${CAS_NAMESPACE_ROOT}" is reserved for shared content-addressed storage and cannot be removed.`,
+    };
   }
 
   return { projectId, sessionId, confirmed };

@@ -114,16 +114,34 @@ function artifactGetObjectInput(artifact: ManifestArtifact): GetObjectInput {
   return base;
 }
 
+/**
+ * Build the local download path for an artifact, and verify it stays inside
+ * `output`. `relativePath` (and, in principle, `projectId`/`sessionId`) come
+ * from a manifest fetched from remote storage — a malicious or corrupted
+ * manifest containing `../` segments must not be able to write outside the
+ * requested output directory. Returns `undefined` if it would.
+ */
 function buildLocalPath(
   output: string,
   projectId: string,
   sessionId: string,
   scope: string,
   relativePath: string,
-): string {
-  return scope === 'manifest'
-    ? path.join(output, projectId, sessionId, relativePath)
-    : path.join(output, projectId, sessionId, scope, relativePath);
+): string | undefined {
+  const localPath =
+    scope === 'manifest'
+      ? path.join(output, projectId, sessionId, relativePath)
+      : path.join(output, projectId, sessionId, scope, relativePath);
+
+  const resolvedOutput = path.resolve(output);
+  const resolvedLocalPath = path.resolve(localPath);
+  if (
+    resolvedLocalPath !== resolvedOutput &&
+    !resolvedLocalPath.startsWith(`${resolvedOutput}${path.sep}`)
+  ) {
+    return undefined;
+  }
+  return localPath;
 }
 
 interface DownloadResult {
@@ -167,6 +185,9 @@ async function downloadArtifact(
     artifact.scope,
     artifact.relativePath,
   );
+  if (!localPath) {
+    return { ok: false, bytes: 0, key, error: 'manifest relativePath escapes output directory' };
+  }
 
   const body = await fetchArtifactBody(storageAdapter, artifact, getInput, casCache);
   if (!body) {
@@ -204,6 +225,9 @@ async function downloadManifest(
   }
 
   const localPath = buildLocalPath(output, projectId, sessionId, 'manifest', 'manifest.json');
+  if (!localPath) {
+    return { ok: false, bytes: 0, error: 'manifest path escapes output directory' };
+  }
   await fsp.mkdir(path.dirname(localPath), { recursive: true });
   await fsp.writeFile(localPath, result.body);
 

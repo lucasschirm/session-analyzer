@@ -537,4 +537,28 @@ describe.skipIf(!process.env.SAL_S3_TEST_ENDPOINT)('S3 storage integration', () 
     expect(remaining.objects).toHaveLength(1);
     expect(remaining.objects[0]?.key).toContain('sess-b');
   });
+
+  it('rejects deleteObjects for projectId "global", the reserved CAS namespace root', async () => {
+    const adapter = new S3StorageAdapter(makeS3Config(endpoint), { retries: 0 });
+
+    // A CAS object shared by some other project/session.
+    const shared = await adapter.putObject({
+      projectId: 'some-other-project',
+      sessionId: 'some-other-session',
+      scope: 'workspace',
+      relativePath: 'CLAUDE.md',
+      body: Buffer.from('shared across projects', 'utf8'),
+      contentSha256: sha256Hex('shared across projects'),
+    });
+    expect(shared.key.startsWith('global/cas/')).toBe(true);
+
+    await expect(adapter.deleteObjects({ projectId: 'global' })).rejects.toMatchObject({
+      code: 'SYNC_STORAGE_ERROR',
+      retryable: false,
+    });
+
+    if (server) {
+      expect(server.getStoredBody(shared.key)).toBeDefined();
+    }
+  });
 });

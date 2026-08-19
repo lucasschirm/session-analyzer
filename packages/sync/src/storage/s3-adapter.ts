@@ -31,7 +31,7 @@ import {
   type StorageAdapterOptions,
   StorageError,
 } from './contract.js';
-import { buildObjectKey, encodeKeySegment } from './object-key.js';
+import { buildObjectKey, CAS_NAMESPACE_ROOT, CAS_PREFIX, encodeKeySegment } from './object-key.js';
 import {
   calculateRetryDelay,
   isRetryableError,
@@ -304,10 +304,23 @@ export class S3StorageAdapter implements StorageAdapter {
 
   /**
    * Delete every object under `<projectId>/` (or `<projectId>/<sessionId>/`
-   * when `sessionId` is given). Never touches `global/cas/<hash>` objects —
-   * `buildScopePrefix` only ever produces project-scoped prefixes.
+   * when `sessionId` is given).
+   *
+   * `projectId: 'global'` is rejected outright: its prefix (`global/`) is
+   * lexically indistinguishable from the reserved `global/cas/<hash>` CAS
+   * namespace, so deleting it would risk deleting content shared by other
+   * projects/sessions. As defense in depth, any key actually returned under
+   * `global/cas/` is filtered out before deletion regardless of prefix.
    */
   async deleteObjects(input: DeleteObjectsInput): Promise<DeleteObjectsResult> {
+    if (input.projectId === CAS_NAMESPACE_ROOT) {
+      throw new StorageError(
+        'SYNC_STORAGE_ERROR',
+        `${SYNC_ERROR_CATALOG.SYNC_STORAGE_ERROR.description} (projectId "${CAS_NAMESPACE_ROOT}" is reserved for content-addressed storage and cannot be deleted)`,
+        false,
+      );
+    }
+
     const prefix = buildScopePrefix(input);
     if (!prefix) {
       throw new StorageError(
@@ -320,7 +333,7 @@ export class S3StorageAdapter implements StorageAdapter {
     const rawKeys: string[] = [];
     for await (const page of this.listRawPages(prefix)) {
       for (const obj of page) {
-        if (obj.Key) rawKeys.push(obj.Key);
+        if (obj.Key && !obj.Key.startsWith(`${CAS_PREFIX}/`)) rawKeys.push(obj.Key);
       }
     }
 

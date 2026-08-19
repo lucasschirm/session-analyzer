@@ -66,6 +66,14 @@ describe('parseRemoveArgs', () => {
     expect('error' in result).toBe(true);
   });
 
+  it('rejects "global" as a project id, since it is the reserved CAS namespace root', () => {
+    const result = parseRemoveArgs(['global', '--yes']);
+    expect('error' in result).toBe(true);
+    if ('error' in result) {
+      expect(result.error).toContain('reserved');
+    }
+  });
+
   it('errors on more than one project id', () => {
     const result = parseRemoveArgs(['proj-1', 'proj-2']);
     expect('error' in result).toBe(true);

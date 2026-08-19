@@ -4,7 +4,17 @@ import type { PutObjectInput, StorageObjectScope } from './contract.js';
 import { StorageError } from './contract.js';
 
 const S3_KEY_MAX_BYTES = 1024;
-const CAS_PREFIX = 'global/cas';
+
+/**
+ * The reserved flat namespace content-addressed `workspace`/`global` objects
+ * live under. `'global'` is therefore not a usable `projectId` — a project
+ * literally named `global` would collide with this prefix and make its own
+ * objects and the shared CAS namespace lexically indistinguishable by prefix.
+ */
+export const CAS_PREFIX = 'global/cas';
+
+/** The first path segment of {@link CAS_PREFIX} — a reserved `projectId`. */
+export const CAS_NAMESPACE_ROOT = CAS_PREFIX.split('/')[0] as string;
 const SHA256_HEX_LENGTH = 64;
 
 const VALID_SCOPES = new Set<string>(['session', 'workspace', 'global', 'runtime', 'manifest']);

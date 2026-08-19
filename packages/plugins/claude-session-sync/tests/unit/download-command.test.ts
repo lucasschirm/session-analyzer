@@ -271,6 +271,47 @@ describe('runDownloadCommand', () => {
     expect(workspaceGet?.[0].contentSha256).toBe(workspace.sha256);
   });
 
+  it('refuses to write outside the output directory for a manifest with a traversal relativePath', async () => {
+    // A CAS-scoped (workspace/global) artifact's relativePath is never
+    // validated by buildObjectKey (the remote key is derived purely from
+    // contentSha256), so a malicious/corrupted manifest can smuggle `../`
+    // segments through to the local file path — buildLocalPath must catch it.
+    const evilBody = textBody('evil payload\n');
+    const evil = makeArtifact('sess-a', 'workspace', '../../../../evil.txt', evilBody);
+    const manifest = makeManifest('sess-a', [evil]);
+    const manifestBody = textBody(JSON.stringify(manifest));
+
+    const entries = [
+      makeStoredEntry({
+        projectId: 'proj-1',
+        sessionId: 'sess-a',
+        scope: 'manifest',
+        relativePath: 'manifest.json',
+        body: manifestBody,
+      }),
+      makeStoredEntry({
+        projectId: 'proj-1',
+        sessionId: 'sess-a',
+        scope: 'workspace',
+        relativePath: '../../../../evil.txt',
+        body: evilBody,
+        contentSha256: evil.sha256,
+      }),
+    ];
+
+    const adapter = makeStorageAdapter(entries);
+    const io = makeStdio();
+    const result = await runDownloadCommand(['--session-id=sess-a', `--output=${tmpDir}`], {
+      env: validEnv,
+      storageAdapter: adapter,
+      ...io,
+    });
+
+    expect(result).toBe(1);
+    expect(io.stdoutStr()).toContain('escapes output directory');
+    await expect(fsp.access(path.join(path.dirname(tmpDir), 'evil.txt'))).rejects.toThrow();
+  });
+
   it('fails with exit 1 when the requested manifest is missing', async () => {
     const io = makeStdio();
     const result = await runDownloadCommand(['--session-id=sess-missing', `--output=${tmpDir}`], {
