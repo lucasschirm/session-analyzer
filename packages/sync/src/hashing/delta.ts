@@ -43,6 +43,29 @@ export interface HashResult {
 
 export type ArtifactUploader = (artifact: ArtifactIdentity, content: string) => Promise<void>;
 
+export interface UploadWithHeadSkipOptions {
+  storageAdapter: StorageAdapter | undefined;
+  artifact: ArtifactIdentity;
+  content: string;
+  uploader: ArtifactUploader;
+  isCold: boolean;
+}
+
+export async function uploadWithHeadSkip(options: UploadWithHeadSkipOptions): Promise<void> {
+  const isCas = options.artifact.scope === 'workspace' || options.artifact.scope === 'global';
+  if (options.isCold && isCas && options.storageAdapter?.headObject) {
+    const head = await options.storageAdapter.headObject({
+      projectId: options.artifact.projectId,
+      sessionId: options.artifact.sessionId,
+      scope: options.artifact.scope,
+      relativePath: options.artifact.relativePath,
+      contentSha256: options.artifact.sha256,
+    });
+    if (head) return;
+  }
+  await options.uploader(options.artifact, options.content);
+}
+
 export type TriggerScope = 'bulk' | 'watcher-delta' | 'hash-filtered' | 'session-end-final';
 
 export function getTriggerScope(trigger: SyncTrigger): TriggerScope {
@@ -242,28 +265,17 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
   for (const item of changed) {
     const record = getArtifactRecord(state, item.artifact);
     const isCold = record === undefined || record.lastUploadedHash === undefined;
-    const isCas = item.artifact.scope === 'workspace' || item.artifact.scope === 'global';
     recordArtifactUploading(state, item.artifact);
     const uploadStart = Date.now();
     try {
-      let alreadyUploaded = false;
-      if (isCold && isCas && storageAdapter?.headObject) {
-        const head = await storageAdapter.headObject({
-          projectId: item.artifact.projectId,
-          sessionId: item.artifact.sessionId,
-          scope: item.artifact.scope,
-          relativePath: item.artifact.relativePath,
-          contentSha256: item.artifact.sha256,
-        });
-        if (head) {
-          recordArtifactUploaded(state, item.artifact);
-          alreadyUploaded = true;
-        }
-      }
-      if (!alreadyUploaded) {
-        await uploader(item.artifact, item.sanitized);
-        recordArtifactUploaded(state, item.artifact);
-      }
+      await uploadWithHeadSkip({
+        storageAdapter,
+        artifact: item.artifact,
+        content: item.sanitized,
+        uploader,
+        isCold,
+      });
+      recordArtifactUploaded(state, item.artifact);
       result.uploadDurationMs += Date.now() - uploadStart;
       result.filesUploaded += 1;
       result.bytesUploaded += item.size;

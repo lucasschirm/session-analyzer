@@ -1,11 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ArtifactCandidate, ArtifactIdentity, StorageAdapter } from '../../src/index.js';
+import type {
+  ArtifactCandidate,
+  ArtifactIdentity,
+  CandidateResult,
+  StorageAdapter,
+  SyncConfig,
+} from '../../src/index.js';
 import {
   createEmptySyncState,
   getArtifactRecord,
+  hashCandidate,
   processDelta,
   recordArtifactUploaded,
+  runSessionEndUploadLoop,
   sha256Hex,
 } from '../../src/index.js';
 
@@ -181,5 +189,46 @@ describe('processDelta HEAD skip', () => {
     expect(headObject).not.toHaveBeenCalled();
     expect(putObject).toHaveBeenCalledTimes(1);
     expect(result.filesUploaded).toBe(1);
+  });
+});
+
+describe('runSessionEndUploadLoop HEAD skip', () => {
+  it('skips PUT and records uploaded when a cold-start CAS artifact already exists remotely', async () => {
+    const state = createEmptySyncState();
+    const { adapter, headObject, putObject } = makeStorage({ headResult: { contentLength: 5 } });
+    const candidate = makeCandidate();
+    const hashed = hashCandidate(candidate);
+    const candidateResults: CandidateResult[] = [
+      { candidate, sha256: hashed.artifact.sha256, size: hashed.size },
+    ];
+
+    const result = await runSessionEndUploadLoop({
+      state,
+      candidateResults,
+      storageAdapter: adapter,
+      config: {
+        timeouts: { syncTimeoutMs: 5000, hookUploadTimeoutMs: 5000, sessionEndBudgetMs: 30000 },
+      } as unknown as SyncConfig,
+      deadline: Date.now() + 10000,
+      start: Date.now(),
+    });
+
+    expect(headObject).toHaveBeenCalledTimes(1);
+    expect(headObject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        scope: 'workspace',
+        relativePath: 'CLAUDE.md',
+        contentSha256: hashed.artifact.sha256,
+      }),
+    );
+    expect(putObject).not.toHaveBeenCalled();
+    expect(result.uploaded).toHaveLength(1);
+    expect(result.run.filesUploaded).toBe(1);
+
+    const record = getArtifactRecord(state, result.uploaded[0]);
+    expect(record?.status).toBe('uploaded');
+    expect(record?.lastUploadedHash).toBe(result.uploaded[0].sha256);
   });
 });
