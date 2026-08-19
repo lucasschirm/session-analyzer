@@ -18,6 +18,7 @@ import {
   recordArtifactUploading,
   type SyncState,
 } from '../state/index.js';
+import type { StorageAdapter } from '../storage/contract.js';
 import type { SyncRun, SyncTrigger } from '../sync-run.js';
 import { DEFAULT_PLUGIN_VERSION, MANIFEST_SCHEMA_VERSION, SYNC_VERSION } from '../versions.js';
 import { type ArtifactSanitizer, selectSanitizer } from './sanitize.js';
@@ -62,6 +63,7 @@ export interface ProcessDeltaOptions {
   trigger: SyncTrigger;
   candidates: ArtifactCandidate[];
   uploader: ArtifactUploader;
+  storageAdapter?: StorageAdapter;
   targetRelativePath?: string;
   session?: SessionData;
   pluginVersion?: string;
@@ -178,6 +180,7 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
     trigger,
     candidates,
     uploader,
+    storageAdapter,
     targetRelativePath,
     session,
     pluginVersion,
@@ -237,11 +240,30 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
   }
 
   for (const item of changed) {
+    const record = getArtifactRecord(state, item.artifact);
+    const isCold = record === undefined || record.lastUploadedHash === undefined;
+    const isCas = item.artifact.scope === 'workspace' || item.artifact.scope === 'global';
     recordArtifactUploading(state, item.artifact);
     const uploadStart = Date.now();
     try {
-      await uploader(item.artifact, item.sanitized);
-      recordArtifactUploaded(state, item.artifact);
+      let alreadyUploaded = false;
+      if (isCold && isCas && storageAdapter?.headObject) {
+        const head = await storageAdapter.headObject({
+          projectId: item.artifact.projectId,
+          sessionId: item.artifact.sessionId,
+          scope: item.artifact.scope,
+          relativePath: item.artifact.relativePath,
+          contentSha256: item.artifact.sha256,
+        });
+        if (head) {
+          recordArtifactUploaded(state, item.artifact);
+          alreadyUploaded = true;
+        }
+      }
+      if (!alreadyUploaded) {
+        await uploader(item.artifact, item.sanitized);
+        recordArtifactUploaded(state, item.artifact);
+      }
       result.uploadDurationMs += Date.now() - uploadStart;
       result.filesUploaded += 1;
       result.bytesUploaded += item.size;

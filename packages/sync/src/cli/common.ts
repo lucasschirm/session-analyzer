@@ -539,6 +539,7 @@ export async function runFullSync(options: RunFullSyncOptions): Promise<RunFullS
       trigger: options.trigger,
       candidates,
       uploader,
+      storageAdapter: options.storageAdapter,
       session: options.session,
       pluginVersion: options.pluginVersion ?? DEFAULT_PLUGIN_VERSION,
       transcriptsCaptured: options.config.captureTranscripts,
@@ -725,18 +726,36 @@ export async function runSessionEndUploadLoop(options: {
       continue;
     }
 
+    const isCold = record === undefined || record.lastUploadedHash === undefined;
+    const isCas = artifact.scope === 'workspace' || artifact.scope === 'global';
     recordArtifactUploading(state, artifact);
     const remaining = Math.max(0, deadline - Date.now());
     const timeoutMs = Math.min(config.timeouts.syncTimeoutMs, remaining);
     const uploadStart = Date.now();
     try {
-      await putArtifactWithTimeout(
-        storageAdapter,
-        artifact,
-        resultItem.candidate.content,
-        timeoutMs,
-      );
-      recordArtifactUploaded(state, artifact);
+      let alreadyUploaded = false;
+      if (isCold && isCas && storageAdapter.headObject) {
+        const head = await storageAdapter.headObject({
+          projectId: artifact.projectId,
+          sessionId: artifact.sessionId,
+          scope: artifact.scope,
+          relativePath: artifact.relativePath,
+          contentSha256: artifact.sha256,
+        });
+        if (head) {
+          recordArtifactUploaded(state, artifact);
+          alreadyUploaded = true;
+        }
+      }
+      if (!alreadyUploaded) {
+        await putArtifactWithTimeout(
+          storageAdapter,
+          artifact,
+          resultItem.candidate.content,
+          timeoutMs,
+        );
+        recordArtifactUploaded(state, artifact);
+      }
       run.filesUploaded += 1;
       run.bytesUploaded += resultItem.size;
       run.uploadDurationMs += Date.now() - uploadStart;

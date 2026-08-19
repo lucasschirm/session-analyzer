@@ -56,13 +56,16 @@ export interface GetObjectResult {
 }
 
 /**
- * Input for a storage HEAD operation.
+ * Input for a storage HEAD operation. The `contentSha256` field is required for
+ * content-addressed `workspace` and `global` objects so the CAS key can be
+ * derived.
  */
 export interface HeadObjectInput {
   projectId: string;
   sessionId: string;
   scope: StorageObjectScope;
   relativePath: string;
+  contentSha256?: string;
 }
 
 /**
