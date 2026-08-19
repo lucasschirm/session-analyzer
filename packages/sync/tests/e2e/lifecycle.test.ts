@@ -152,7 +152,7 @@ async function writeWorkspace(workspaceDir: string): Promise<void> {
   await mkdir(path.join(workspaceDir, '.claude', 'agents'), { recursive: true });
   await mkdir(path.join(workspaceDir, '.claude', 'skills'), { recursive: true });
   await mkdir(path.join(workspaceDir, '.claude', 'rules'), { recursive: true });
-  await mkdir(path.join(workspaceDir, 'subagents'), { recursive: true });
+  await mkdir(path.join(workspaceDir, 'sess-e2e', 'subagents'), { recursive: true });
 
   await writeFile(
     path.join(workspaceDir, 'CLAUDE.md'),
@@ -209,7 +209,7 @@ async function writeWorkspace(workspaceDir: string): Promise<void> {
   );
 
   await writeFile(
-    path.join(workspaceDir, 'subagents', 'agent-1.jsonl'),
+    path.join(workspaceDir, 'sess-e2e', 'subagents', 'agent-1.jsonl'),
     `${JSON.stringify({ type: 'message', role: 'assistant', content: 'subagent line' })}\n`,
   );
 }
@@ -369,7 +369,7 @@ describe('sync E2E lifecycle', () => {
       '.claude/skills/skill.json',
       '.claude/rules/rule.json',
       'transcript.jsonl',
-      'subagents/agent-1.jsonl',
+      'sess-e2e/subagents/agent-1.jsonl',
     ]);
     const uploadedPaths = new Set(
       storage.calls

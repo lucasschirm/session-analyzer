@@ -427,12 +427,12 @@ describe('watcher boundary enforcement', () => {
   });
 
   it('matcher rejects paths outside the transcript directory', () => {
-    const matcher = createWatcherMatcher(transcriptDir);
+    const matcher = createWatcherMatcher(transcriptDir, 'sess-1');
 
-    expect(isPathWatched(matcher, path.join(transcriptDir, 'transcript.jsonl'))).toBe(true);
-    expect(isPathWatched(matcher, path.join(transcriptDir, 'subagents', 'agent-1.jsonl'))).toBe(
-      true,
-    );
+    expect(isPathWatched(matcher, path.join(transcriptDir, 'sess-1.jsonl'))).toBe(true);
+    expect(
+      isPathWatched(matcher, path.join(transcriptDir, 'sess-1', 'subagents', 'agent-1.jsonl')),
+    ).toBe(true);
 
     const outside = path.join(transcriptDir, '..', 'evil.jsonl');
     expect(isPathWatched(matcher, outside)).toBe(false);
@@ -447,7 +447,7 @@ describe('watcher boundary enforcement', () => {
     const linkPath = path.join(transcriptDir, 'link.jsonl');
     fs.symlinkSync(outsideFile, linkPath);
 
-    const matcher = createWatcherMatcher(transcriptDir);
+    const matcher = createWatcherMatcher(transcriptDir, 'sess-1');
     expect(isPathWatched(matcher, linkPath)).toBe(false);
     expect(getWatchedRelativePath(matcher, linkPath)).toBeUndefined();
 
@@ -457,7 +457,7 @@ describe('watcher boundary enforcement', () => {
   it('TranscriptWatcher does not upload files outside the transcript directory', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-sec-watcher-data-'));
     const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-sec-watcher-out2-'));
-    const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
+    const transcriptPath = path.join(transcriptDir, 'sess-1.jsonl');
     await fsp.writeFile(transcriptPath, '');
 
     const outsideFile = path.join(outsideDir, 'leaked.jsonl');
@@ -487,7 +487,7 @@ describe('watcher boundary enforcement', () => {
     await startPromise.catch(() => {});
 
     const sessionCalls = storage.calls.filter((c) => c.scope === 'session');
-    expect(sessionCalls.some((c) => c.relativePath === 'transcript.jsonl')).toBe(true);
+    expect(sessionCalls.some((c) => c.relativePath === 'sess-1.jsonl')).toBe(true);
     expect(sessionCalls.some((c) => c.relativePath === 'link.jsonl')).toBe(false);
 
     fs.rmSync(dataDir, { recursive: true, force: true });

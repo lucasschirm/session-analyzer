@@ -89,15 +89,20 @@ describe('matcher', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('accepts the transcript jsonl and subagent jsonls', () => {
-    const matcher = createWatcherMatcher(tempDir);
+  it('accepts the session transcript and per-session subagent files', () => {
+    const matcher = createWatcherMatcher(tempDir, 'sess-1');
 
-    expect(isPathWatched(matcher, path.join(tempDir, 'transcript.jsonl'))).toBe(true);
-    expect(isPathWatched(matcher, path.join(tempDir, 'subagents', 'agent-1.jsonl'))).toBe(true);
+    expect(isPathWatched(matcher, path.join(tempDir, 'sess-1.jsonl'))).toBe(true);
+    expect(isPathWatched(matcher, path.join(tempDir, 'sess-1', 'subagents', 'agent-1.jsonl'))).toBe(
+      true,
+    );
+    expect(
+      isPathWatched(matcher, path.join(tempDir, 'sess-1', 'subagents', 'agent-1.meta.json')),
+    ).toBe(true);
   });
 
   it('rejects files outside the session transcript directory', () => {
-    const matcher = createWatcherMatcher(tempDir);
+    const matcher = createWatcherMatcher(tempDir, 'sess-1');
     const outside = path.join(tempDir, '..', 'evil.jsonl');
 
     expect(isPathWatched(matcher, outside)).toBe(false);
@@ -112,7 +117,7 @@ describe('matcher', () => {
     const linkPath = path.join(tempDir, 'link.jsonl');
     fs.symlinkSync(outsideFile, linkPath);
 
-    const matcher = createWatcherMatcher(tempDir);
+    const matcher = createWatcherMatcher(tempDir, 'sess-1');
 
     expect(isPathWatched(matcher, linkPath)).toBe(false);
     expect(getWatchedRelativePath(matcher, linkPath)).toBeUndefined();
@@ -120,14 +125,22 @@ describe('matcher', () => {
     fs.rmSync(outsideDir, { recursive: true, force: true });
   });
 
-  it('rejects non-watched filenames', () => {
-    const matcher = createWatcherMatcher(tempDir);
+  it('rejects non-watched and sibling-session filenames', () => {
+    const matcher = createWatcherMatcher(tempDir, 'sess-1');
 
     expect(isPathWatched(matcher, path.join(tempDir, 'config.json'))).toBe(false);
-    expect(isPathWatched(matcher, path.join(tempDir, 'subagents', 'agent-1.txt'))).toBe(false);
+    expect(isPathWatched(matcher, path.join(tempDir, 'sess-2.jsonl'))).toBe(false);
+    expect(isPathWatched(matcher, path.join(tempDir, 'sess-2', 'subagents', 'agent-1.jsonl'))).toBe(
+      false,
+    );
+    expect(isPathWatched(matcher, path.join(tempDir, 'sess-1', 'subagents', 'agent-1.txt'))).toBe(
+      false,
+    );
     expect(isPathWatched(matcher, path.join(tempDir, 'deep', 'subagents', 'agent-1.jsonl'))).toBe(
       false,
     );
+    // A sibling session's flat subagents directory should be rejected.
+    expect(isPathWatched(matcher, path.join(tempDir, 'subagents', 'agent-1.jsonl'))).toBe(false);
   });
 });
 
@@ -139,7 +152,7 @@ describe('TranscriptWatcher', () => {
   beforeEach(async () => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-watcher-data-'));
     transcriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-watcher-tx-'));
-    transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
+    transcriptPath = path.join(transcriptDir, 'sess-1.jsonl');
     await fsp.writeFile(transcriptPath, '');
   });
 
@@ -188,7 +201,7 @@ describe('TranscriptWatcher', () => {
     await startPromise.catch(() => {});
 
     const transcriptCalls = storage.calls.filter(
-      (call) => call.scope === 'session' && call.relativePath === 'transcript.jsonl',
+      (call) => call.scope === 'session' && call.relativePath === 'sess-1.jsonl',
     );
 
     expect(transcriptCalls.length).toBeGreaterThanOrEqual(2);
@@ -199,11 +212,11 @@ describe('TranscriptWatcher', () => {
     const offsets = JSON.parse(await fsp.readFile(offsetsPath, 'utf8')) as {
       offsets: Record<string, { offset: number; lastProcessedSize: number }>;
     };
-    expect(offsets.offsets['transcript.jsonl'].offset).toBeGreaterThan(0);
+    expect(offsets.offsets['sess-1.jsonl'].offset).toBeGreaterThan(0);
   });
 
-  it('uploads subagent transcript deltas', async () => {
-    const subagentsDir = path.join(transcriptDir, 'subagents');
+  it('uploads per-session subagent transcript deltas', async () => {
+    const subagentsDir = path.join(transcriptDir, 'sess-1', 'subagents');
     await fsp.mkdir(subagentsDir, { recursive: true });
     const agentPath = path.join(subagentsDir, 'agent-1.jsonl');
     await fsp.writeFile(agentPath, '');
@@ -230,7 +243,7 @@ describe('TranscriptWatcher', () => {
     await startPromise.catch(() => {});
 
     const agentCalls = storage.calls.filter(
-      (call) => call.relativePath === 'subagents/agent-1.jsonl',
+      (call) => call.relativePath === 'sess-1/subagents/agent-1.jsonl',
     );
     expect(agentCalls.length).toBeGreaterThanOrEqual(1);
     expect(agentCalls[0]?.content).toBe('{"type":"subagent"}\n');
@@ -303,7 +316,7 @@ describe('TranscriptWatcher', () => {
     await watcher.stop();
     await startPromise.catch(() => {});
 
-    const calls = storage.calls.filter((call) => call.relativePath === 'transcript.jsonl');
+    const calls = storage.calls.filter((call) => call.relativePath === 'sess-1.jsonl');
     expect(calls.length).toBeGreaterThanOrEqual(1);
     expect(calls.some((call) => call.content.includes('"type":"final"'))).toBe(true);
     expect(fs.existsSync(getWatcherPidPath(dataDir, 'sess-1'))).toBe(false);
@@ -341,7 +354,7 @@ describe('watchTranscripts', () => {
   it('returns the running watcher promise', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-watch-fn-'));
     const txDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-watch-tx-'));
-    const txPath = path.join(txDir, 'transcript.jsonl');
+    const txPath = path.join(txDir, 'sess-fn.jsonl');
     fs.writeFileSync(txPath, '');
 
     const env = baseEnv({ SAL_CAPTURE_TRANSCRIPTS: 'false' });

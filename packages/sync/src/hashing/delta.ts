@@ -148,6 +148,9 @@ export function buildSessionManifest(
   artifacts: ManifestArtifact[],
   options?: { pluginVersion?: string; transcriptsCaptured?: boolean },
 ): SyncManifest {
+  // The main transcript is always the first session-scoped artifact discovered
+  // (discoverSession adds the exact transcriptPath before any subagents).
+  const mainTranscript = artifacts.find((a) => a.scope === 'session');
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     projectId: session.projectId,
@@ -162,6 +165,7 @@ export function buildSessionManifest(
     syncVersion: SYNC_VERSION,
     pluginVersion: options?.pluginVersion ?? DEFAULT_PLUGIN_VERSION,
     transcriptsCaptured: options?.transcriptsCaptured ?? true,
+    mainTranscriptRelativePath: mainTranscript?.relativePath,
     artifacts,
     syncRuns: [run],
   };

@@ -4,12 +4,17 @@ import path from 'node:path';
 import { isPathWithinRoot } from '../discovery/paths.js';
 import {
   DEFAULT_WATCHER_MATCHER,
-  WATCHER_ALLOWED_PATTERNS,
+  WATCHER_SUBAGENT_META_PATTERN,
+  WATCHER_SUBAGENT_TRANSCRIPTS_PATTERN,
   type WatcherMatcher,
 } from './contract.js';
 
 export type { WatcherMatcher };
-export { DEFAULT_WATCHER_MATCHER, WATCHER_ALLOWED_PATTERNS };
+export {
+  DEFAULT_WATCHER_MATCHER,
+  WATCHER_SUBAGENT_META_PATTERN,
+  WATCHER_SUBAGENT_TRANSCRIPTS_PATTERN,
+};
 
 /**
  * Convert a simple glob pattern (using `*` and `?`) into a regular expression.
@@ -36,15 +41,23 @@ export function globToRegExp(pattern: string): RegExp {
   return new RegExp(regex);
 }
 
+function patternsForSession(sessionId: string): readonly string[] {
+  return [
+    `${sessionId}.jsonl`,
+    `${sessionId}/${WATCHER_SUBAGENT_TRANSCRIPTS_PATTERN}`,
+    `${sessionId}/${WATCHER_SUBAGENT_META_PATTERN}`,
+  ];
+}
+
 /**
  * Build a matcher that watches only files beneath `baseDirectory` which match
- * the supplied relative patterns.
+ * the supplied relative patterns. For session-specific discovery, provide a
+ * `sessionId`; patterns are then limited to that session's transcript and
+ * per-session `subagents/` directory.
  */
-export function createWatcherMatcher(
-  baseDirectory: string,
-  allowedRelativePatterns: readonly string[] = WATCHER_ALLOWED_PATTERNS,
-): WatcherMatcher {
+export function createWatcherMatcher(baseDirectory: string, sessionId?: string): WatcherMatcher {
   const resolved = path.resolve(baseDirectory);
+  const allowedRelativePatterns = sessionId ? patternsForSession(sessionId) : [];
   try {
     return {
       baseDirectory: fs.realpathSync(resolved),
