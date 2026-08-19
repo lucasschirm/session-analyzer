@@ -687,21 +687,21 @@ describe('parseObjectKey', () => {
       scope: StorageObjectScope;
       relativePath: string;
     }> = [
-        { projectId: 'p', sessionId: 's', scope: 'manifest', relativePath: 'manifest.json' },
-        { projectId: 'p', sessionId: 's', scope: 'session', relativePath: 'transcript.jsonl' },
-        {
-          projectId: 'p',
-          sessionId: 's',
-          scope: 'workspace',
-          relativePath: '.claude/settings.json',
-        },
-        {
-          projectId: 'my project',
-          sessionId: 'sess:1',
-          scope: 'global',
-          relativePath: '~/.claude/agents/reviewer.md',
-        },
-      ];
+      { projectId: 'p', sessionId: 's', scope: 'manifest', relativePath: 'manifest.json' },
+      { projectId: 'p', sessionId: 's', scope: 'session', relativePath: 'transcript.jsonl' },
+      {
+        projectId: 'p',
+        sessionId: 's',
+        scope: 'workspace',
+        relativePath: '.claude/settings.json',
+      },
+      {
+        projectId: 'my project',
+        sessionId: 'sess:1',
+        scope: 'global',
+        relativePath: '~/.claude/agents/reviewer.md',
+      },
+    ];
     for (const input of inputs) {
       const key = buildObjectKey(input);
       const parsed = parseObjectKey(key);

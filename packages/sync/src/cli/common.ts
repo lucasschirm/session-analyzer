@@ -485,7 +485,7 @@ export function buildUploader(context: {
       }, context.timeoutMs);
       // If the put wins the race, the timeout promise is abandoned; the timer
       // should not keep the process alive.
-      putPromise.finally(() => clearTimeout(timer)).catch(() => { });
+      putPromise.finally(() => clearTimeout(timer)).catch(() => {});
     });
     await Promise.race([putPromise, timeoutPromise]);
   };
@@ -656,7 +656,7 @@ export async function putArtifactWithTimeout(
         new StorageError('SYNC_NETWORK_TIMEOUT', `Upload timed out after ${timeoutMs}ms`, true),
       );
     }, timeoutMs);
-    putPromise.finally(() => clearTimeout(timer)).catch(() => { });
+    putPromise.finally(() => clearTimeout(timer)).catch(() => {});
   });
   await Promise.race([putPromise, timeoutPromise]);
 }

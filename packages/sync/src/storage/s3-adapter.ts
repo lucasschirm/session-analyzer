@@ -128,10 +128,10 @@ export class S3StorageAdapter implements StorageAdapter {
     const credentials =
       config.accessKeyId && config.secretAccessKey
         ? {
-          accessKeyId: config.accessKeyId,
-          secretAccessKey: config.secretAccessKey,
-          ...(config.sessionToken ? { sessionToken: config.sessionToken } : {}),
-        }
+            accessKeyId: config.accessKeyId,
+            secretAccessKey: config.secretAccessKey,
+            ...(config.sessionToken ? { sessionToken: config.sessionToken } : {}),
+          }
         : undefined;
 
     this.client = new S3Client({
