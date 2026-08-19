@@ -99,6 +99,9 @@ function buildLocalPath(
 ): string | undefined {
   if (!parsed) return undefined;
   const { projectId, sessionId, scope, relativePath } = parsed;
+  if (projectId === undefined || sessionId === undefined) {
+    return undefined;
+  }
   if (scope === 'manifest') {
     return path.join(output, projectId, sessionId, relativePath);
   }
@@ -117,6 +120,14 @@ async function downloadObject(
   const parsed = parseObjectKey(entry.key);
   if (!parsed) {
     return { ok: false, bytes: 0, error: `could not parse key: ${entry.key}` };
+  }
+
+  if (parsed.projectId === undefined || parsed.sessionId === undefined) {
+    return {
+      ok: false,
+      bytes: 0,
+      error: `CAS object keys are not supported for download: ${entry.key}`,
+    };
   }
 
   const localPath = buildLocalPath(output, parsed);

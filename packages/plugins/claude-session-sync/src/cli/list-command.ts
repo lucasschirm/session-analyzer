@@ -47,21 +47,12 @@ function normalizePath(value: string): string {
   return value.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\//, '').replace(/\/$/, '');
 }
 
-function projectIdFromKey(key: string): string | undefined {
-  const parsed = parseObjectKey(key);
-  if (parsed) return parsed.projectId;
-  const first = key.split('/')[0];
-  if (!first) return undefined;
-  try {
-    return decodeURIComponent(first);
-  } catch {
-    return first;
-  }
-}
-
 function sessionRelativeKey(key: string): string | undefined {
   const parsed = parseObjectKey(key);
   if (!parsed) return undefined;
+  if (parsed.projectId === undefined || parsed.sessionId === undefined) {
+    return undefined;
+  }
   if (parsed.scope === 'manifest') {
     return 'manifest.json';
   }
@@ -177,8 +168,9 @@ function groupByProject(objects: ListObjectEntry[]): Map<string, ProjectSummary>
 
   for (const obj of objects) {
     const parsed = parseObjectKey(obj.key);
-    const projectId = parsed?.projectId ?? projectIdFromKey(obj.key);
-    if (!projectId) continue;
+    const projectId = parsed?.projectId;
+    const sessionId = parsed?.sessionId;
+    if (!projectId || !sessionId) continue;
 
     if (!projects.has(projectId)) {
       projects.set(projectId, {
@@ -198,7 +190,6 @@ function groupByProject(objects: ListObjectEntry[]): Map<string, ProjectSummary>
       project.lastModified = obj.lastModified;
     }
 
-    const sessionId = parsed?.sessionId ?? 'unknown';
     const sessions = sessionsByProject.get(projectId) as Map<string, SessionSummary>;
     if (!sessions.has(sessionId)) {
       sessions.set(sessionId, {

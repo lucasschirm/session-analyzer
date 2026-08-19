@@ -722,8 +722,8 @@ describe('parseObjectKey', () => {
   it('parses a CAS flat key', () => {
     const hash = 'a'.repeat(64);
     expect(parseObjectKey(`global/cas/${hash}`)).toEqual({
-      projectId: '',
-      sessionId: '',
+      projectId: undefined,
+      sessionId: undefined,
       scope: 'cas',
       relativePath: hash,
       contentSha256: hash,
@@ -733,8 +733,8 @@ describe('parseObjectKey', () => {
   it('parses a CAS flat key with uppercase hash', () => {
     const hash = 'A'.repeat(64);
     expect(parseObjectKey(`global/cas/${hash}`)).toEqual({
-      projectId: '',
-      sessionId: '',
+      projectId: undefined,
+      sessionId: undefined,
       scope: 'cas',
       relativePath: hash.toLowerCase(),
       contentSha256: hash.toLowerCase(),
@@ -744,6 +744,15 @@ describe('parseObjectKey', () => {
   it('returns undefined for CAS keys with a malformed hash', () => {
     expect(parseObjectKey('global/cas/not-a-hash')).toBeUndefined();
     expect(parseObjectKey('global/cas/abc')).toBeUndefined();
+  });
+
+  it('parses a 3-segment key that looks like CAS but has a non-hash third segment as legacy', () => {
+    expect(parseObjectKey('global/cas/manifest.json')).toEqual({
+      projectId: 'global',
+      sessionId: 'cas',
+      scope: 'manifest',
+      relativePath: 'manifest.json',
+    });
   });
 
   it('round-trips with buildObjectKey', () => {
@@ -774,8 +783,8 @@ describe('parseObjectKey', () => {
       contentSha256: hash,
     });
     expect(parseObjectKey(key)).toEqual({
-      projectId: '',
-      sessionId: '',
+      projectId: undefined,
+      sessionId: undefined,
       scope: 'cas',
       relativePath: hash,
       contentSha256: hash,

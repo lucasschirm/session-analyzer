@@ -44,9 +44,17 @@ export function encodeKeySegment(segment: string): string {
   return encodeURIComponent(segment);
 }
 
+/**
+ * Components of a parsed storage object key.
+ *
+ * For a content-addressed key `global/cas/<sha256>` the `scope` is the literal
+ * `'cas'`, `projectId` and `sessionId` are `undefined` (CAS objects are not
+ * tied to a single project/session), and both `relativePath` and
+ * `contentSha256` carry the lowercase hex hash.
+ */
 export interface ParsedObjectKey {
-  projectId: string;
-  sessionId: string;
+  projectId: string | undefined;
+  sessionId: string | undefined;
   scope: StorageObjectScope | 'cas';
   relativePath: string;
   contentSha256?: string;
@@ -140,8 +148,8 @@ function parseCasKeySegments(segments: string[]): ParsedObjectKey | undefined {
   if (!isSha256Hex(hash)) return undefined;
   const normalized = hash.toLowerCase();
   return {
-    projectId: '',
-    sessionId: '',
+    projectId: undefined,
+    sessionId: undefined,
     scope: 'cas',
     relativePath: normalized,
     contentSha256: normalized,
@@ -192,7 +200,8 @@ export function parseObjectKey(key: string): ParsedObjectKey | undefined {
   const second = decodeURIComponent(segments[1] as string);
 
   if (first === 'global' && second === 'cas' && segments.length === 3) {
-    return parseCasKeySegments(segments);
+    const casParsed = parseCasKeySegments(segments);
+    if (casParsed) return casParsed;
   }
 
   return parseLegacyKeySegments(segments);
