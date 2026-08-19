@@ -58,8 +58,9 @@ class InMemoryStorageAdapter implements StorageAdapter {
       }
     }
 
-    const key = buildObjectKey(input);
     const actualSha256 = sha256Hex(Buffer.from(input.body).toString('utf8'));
+    const keyInput = { ...input, contentSha256: input.contentSha256 ?? actualSha256 };
+    const key = buildObjectKey(keyInput);
     if (input.contentSha256 && input.contentSha256 !== actualSha256) {
       throw new StorageError(
         'SYNC_STORAGE_ERROR',
@@ -68,7 +69,7 @@ class InMemoryStorageAdapter implements StorageAdapter {
       );
     }
 
-    this.calls.push(input);
+    this.calls.push(keyInput);
     this.objects.set(key, {
       body: input.body,
       sha256: actualSha256,
@@ -106,7 +107,12 @@ class InMemoryStorageAdapter implements StorageAdapter {
   getStoredContent(relativePath: string, scope: PutObjectInput['scope']): string | undefined {
     const projectId = 'proj-e2e';
     const sessionId = 'sess-e2e';
-    const key = buildObjectKey({ projectId, sessionId, scope, relativePath });
+    const put = this.calls.find(
+      (call) => call.relativePath === relativePath && call.scope === scope,
+    );
+    if (!put) return undefined;
+    const contentSha256 = put.contentSha256;
+    const key = buildObjectKey({ projectId, sessionId, scope, relativePath, contentSha256 });
     const existing = this.objects.get(key);
     if (!existing) return undefined;
     return Buffer.from(existing.body).toString('utf8');

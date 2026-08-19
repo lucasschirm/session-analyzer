@@ -524,7 +524,7 @@ describe('Claude Code plugin E2E', () => {
       expect(exitCode).toBe(0);
 
       const keys = server.listKeys();
-      expect(keys.some((k) => k.includes('workspace/CLAUDE.md'))).toBe(true);
+      expect(keys.some((k) => k.startsWith('global/cas/'))).toBe(true);
       expect(keys.some((k) => k.includes('session/transcript.jsonl'))).toBe(true);
     });
   });

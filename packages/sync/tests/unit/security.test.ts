@@ -257,7 +257,7 @@ describe('object key path traversal prevention', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: '/etc/passwd',
       }),
     ).toThrow(StorageError);
@@ -268,7 +268,7 @@ describe('object key path traversal prevention', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: 'C:\\Windows\\secret.ini',
       }),
     ).toThrow(StorageError);
@@ -279,7 +279,7 @@ describe('object key path traversal prevention', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: 'foo/../../bar',
       }),
     ).toThrow(StorageError);
@@ -289,10 +289,10 @@ describe('object key path traversal prevention', () => {
     const key = buildObjectKey({
       projectId: 'p',
       sessionId: 's',
-      scope: 'workspace',
+      scope: 'session',
       relativePath: 'foo/..%2F..%2Fbar',
     });
-    expect(key).toBe('p/s/workspace/foo/..%252F..%252Fbar');
+    expect(key).toBe('p/s/session/foo/..%252F..%252Fbar');
     expect(key).not.toContain('/../');
   });
 
@@ -301,7 +301,7 @@ describe('object key path traversal prevention', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: '',
       }),
     ).toThrow(StorageError);
