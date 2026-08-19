@@ -170,7 +170,7 @@ describe('buildManifest', () => {
     });
     const subagentArtifact = makeArtifact({
       scope: 'session',
-      relativePath: 'sess-1/subagents/agent-1.jsonl',
+      relativePath: 'subagents/agent-1.jsonl',
       sha256: 'agent-hash',
     });
 

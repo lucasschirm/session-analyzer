@@ -85,8 +85,7 @@ class InMemoryStorageAdapter implements StorageAdapter {
     if (!existing) return undefined;
     return {
       body: existing.body,
-      sha256: existing.sha256,
-      etag: existing.etag,
+      etag: `"${existing.sha256}"`,
       contentType: existing.contentType,
       metadata: existing.metadata,
     };
@@ -98,8 +97,7 @@ class InMemoryStorageAdapter implements StorageAdapter {
     if (!existing) return undefined;
     return {
       contentLength: existing.body.length,
-      sha256: existing.sha256,
-      etag: existing.etag,
+      etag: `"${existing.sha256}"`,
       contentType: existing.contentType,
       metadata: existing.metadata,
     };
@@ -369,7 +367,7 @@ describe('sync E2E lifecycle', () => {
       '.claude/skills/skill.json',
       '.claude/rules/rule.json',
       'transcript.jsonl',
-      'sess-e2e/subagents/agent-1.jsonl',
+      'subagents/agent-1.jsonl',
     ]);
     const uploadedPaths = new Set(
       storage.calls

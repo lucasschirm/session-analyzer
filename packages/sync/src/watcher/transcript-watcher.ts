@@ -17,7 +17,12 @@ import {
   StorageError,
 } from '../storage/index.js';
 
-import { createWatcherMatcher, getWatchedRelativePath, isPathWatched } from './matcher.js';
+import {
+  createWatcherMatcher,
+  getWatchedRelativePath,
+  isPathWatched,
+  toStorageRelativePath,
+} from './matcher.js';
 import {
   getWatcherStatePath,
   readWatcherOffsets,
@@ -594,6 +599,11 @@ export class TranscriptWatcher {
     const sanitizer = selectSanitizer(relativePath, 'session');
     const sanitized = sanitizer(delta);
 
+    // Convert the filesystem-relative path (which includes the <sessionId>/
+    // prefix) to a storage-relative path so the sessionId is not repeated in
+    // the S3 key.
+    const storageRelativePath = toStorageRelativePath(this.sessionId, relativePath);
+
     try {
       const result = await this.stateStore.withState((state) =>
         processDelta({
@@ -604,22 +614,22 @@ export class TranscriptWatcher {
               projectId: config.projectId,
               sessionId: this.sessionId,
               scope: 'session',
-              relativePath,
+              relativePath: storageRelativePath,
               content: sanitized,
               sanitizer: (content) => content,
             },
           ],
           uploader,
-          targetRelativePath: relativePath,
+          targetRelativePath: storageRelativePath,
           transcriptsCaptured: true,
         }),
       );
 
       const uploaded = result.uploaded.some(
-        (a) => a.scope === 'session' && a.relativePath === relativePath,
+        (a) => a.scope === 'session' && a.relativePath === storageRelativePath,
       );
       const failed = result.failed.some(
-        (a) => a.scope === 'session' && a.relativePath === relativePath,
+        (a) => a.scope === 'session' && a.relativePath === storageRelativePath,
       );
 
       if (uploaded) {

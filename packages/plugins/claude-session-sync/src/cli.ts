@@ -13,6 +13,7 @@ Usage:
 
 Commands:
   sync                                    Upload all local sessions to S3
+  sync --force                            Re-upload all sessions, ignoring local state
   list                                    List all projects in storage
   list --current                          List sessions for the current project (SAL_PROJECT_ID)
   list <project-id>                       List sessions for a project
@@ -65,7 +66,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   switch (command) {
     case 'sync':
-      return runSyncCommand();
+      return runSyncCommand({ force: rest.includes('--force') || rest.includes('-f') });
     case 'list':
       return runListCommand(rest);
     case 'download':

@@ -519,7 +519,7 @@ describe('runListCommand', () => {
     expect(output).toContain('2 session(s), 3 files');
   });
 
-  it('lists files in a session', async () => {
+  it('lists direct children of a session (non-recursive)', async () => {
     const objects = [
       { key: 'proj-1/sess-a/manifest.json', size: 100, lastModified: new Date('2026-01-02') },
       {
@@ -527,6 +527,7 @@ describe('runListCommand', () => {
         size: 200,
         lastModified: new Date('2026-01-02'),
       },
+      { key: 'proj-1/sess-a/session/subagents/agent-x.jsonl', size: 80 },
       { key: 'proj-1/sess-a/workspace/package.json', size: 50 },
     ] as ListObjectEntry[];
     const stdout: string[] = [];
@@ -542,16 +543,24 @@ describe('runListCommand', () => {
     });
     expect(result).toBe(0);
     const output = stdout.join('');
+    // Direct file: manifest.json
     expect(output).toContain('manifest.json');
-    expect(output).toContain('session/transcript.jsonl');
-    expect(output).toContain('workspace/package.json');
-    expect(output).toContain('3 file(s)');
+    // Folders aggregated, not their contents
+    expect(output).toContain('session/');
+    expect(output).toContain('workspace/');
+    expect(output).not.toContain('session/transcript.jsonl');
+    expect(output).not.toContain('session/subagents/agent-x.jsonl');
+    expect(output).not.toContain('workspace/package.json');
+    // Summary: 1 direct file, 2 folders, 4 total files
+    expect(output).toContain('1 file(s), 2 folder(s), 4 total file(s)');
   });
 
-  it('filters files by --path', async () => {
+  it('filters files by --path (non-recursive under the path)', async () => {
     const objects = [
       { key: 'proj-1/sess-a/manifest.json', size: 100 },
       { key: 'proj-1/sess-a/session/transcript.jsonl', size: 200 },
+      { key: 'proj-1/sess-a/session/subagents/agent-x.jsonl', size: 80 },
+      { key: 'proj-1/sess-a/session/subagents/agent-x.meta.json', size: 20 },
       { key: 'proj-1/sess-a/workspace/package.json', size: 50 },
     ] as ListObjectEntry[];
     const stdout: string[] = [];
@@ -567,9 +576,14 @@ describe('runListCommand', () => {
     });
     expect(result).toBe(0);
     const output = stdout.join('');
-    expect(output).toContain('session/transcript.jsonl');
+    // Direct child file under session/
+    expect(output).toContain('transcript.jsonl');
+    // Subfolder under session/ aggregated
+    expect(output).toContain('subagents/');
+    expect(output).not.toContain('subagents/agent-x.jsonl');
+    // Outside the filter
     expect(output).not.toContain('manifest.json');
-    expect(output).not.toContain('workspace/package.json');
+    expect(output).not.toContain('workspace/');
   });
 
   it('requires SAL_PROJECT_ID for --current', async () => {

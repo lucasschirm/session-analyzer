@@ -34,6 +34,7 @@ export interface SyncCommandOptions {
   storageAdapter?: CliOptions['storageAdapter'];
   stdout?: NodeJS.WritableStream;
   stderr?: NodeJS.WritableStream;
+  force?: boolean;
 }
 
 interface SessionSyncOutcome {
@@ -227,6 +228,7 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
   const cwd = options.cwd ?? process.cwd();
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
+  const force = options.force ?? false;
 
   const env = options.env ?? (await resolveCliEnv(cwd));
   const validation = validateCliConfig(env, cwd);
@@ -258,6 +260,17 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
   }
 
   const dataDir = env.SAL_DATA_DIR ?? path.join(os.homedir(), '.sal-sync');
+
+  if (force) {
+    const stateStore = new StateStore(dataDir);
+    await stateStore.ensureDirectories();
+    const removed = await stateStore.clearArtifactsForProject(config.projectId);
+    if (removed > 0) {
+      stdout.write(
+        `[force] Cleared ${removed} local state record(s) for project "${config.projectId}".\n\n`,
+      );
+    }
+  }
 
   stdout.write(`Syncing ${sessions.length} session(s) for project "${config.projectId}"...\n\n`);
 

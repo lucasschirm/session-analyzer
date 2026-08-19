@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { MAIN_TRANSCRIPT_STORAGE_NAME } from '../discovery/core.js';
 import { isPathWithinRoot } from '../discovery/paths.js';
 import {
   DEFAULT_WATCHER_MATCHER,
@@ -132,4 +133,30 @@ export function getWatchedRelativePath(
 /** Quick boolean check for whether a file path should be watched. */
 export function isPathWatched(matcher: WatcherMatcher, filePath: string): boolean {
   return getWatchedRelativePath(matcher, filePath) !== undefined;
+}
+
+/**
+ * Convert a filesystem-relative path (relative to the watcher base directory,
+ * including the `<sessionId>/` prefix) into a storage-relative path that does
+ * not repeat the sessionId in the S3 key.
+ *
+ *   `<sessionId>.jsonl`                         → `transcript.jsonl`
+ *   `<sessionId>/subagents/agent-xxx.jsonl`     → `subagents/agent-xxx.jsonl`
+ *   `<sessionId>/subagents/agent-xxx.meta.json` → `subagents/agent-xxx.meta.json`
+ */
+export function toStorageRelativePath(sessionId: string, fileRelativePath: string): string {
+  const normalized = fileRelativePath.replace(/\\/g, '/');
+
+  // Main transcript: <sessionId>.jsonl → transcript.jsonl
+  if (normalized === `${sessionId}.jsonl`) {
+    return MAIN_TRANSCRIPT_STORAGE_NAME;
+  }
+
+  // Per-session supplementary files: strip the `<sessionId>/` prefix.
+  const sessionPrefix = `${sessionId}/`;
+  if (normalized.startsWith(sessionPrefix)) {
+    return normalized.slice(sessionPrefix.length);
+  }
+
+  return normalized;
 }

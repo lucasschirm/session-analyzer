@@ -1,13 +1,13 @@
 {
   "name": "@lucasschirm/claude-session-sync",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": false,
   "type": "module",
   "license": "ISC",
   "description": "Claude Code plugin adapter for the @lucasschirm/sal-sync session data sync engine.",
   "bin": {
-    "claude-sync": "./bin/claude-sync",
-    "claude-session-sync": "./bin/claude-sync"
+    "claude-sync": "bin/claude-sync",
+    "claude-session-sync": "bin/claude-sync"
   },
   "files": [
     ".claude-plugin",

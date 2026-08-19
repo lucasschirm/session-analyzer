@@ -30,6 +30,15 @@ export function makeDiscoveryContext(limits?: SyncLimits): DiscoveryContext {
 const SUBAGENT_TRANSCRIPTS_PATTERN = 'subagents/*.jsonl';
 const SUBAGENT_META_PATTERN = 'subagents/*.meta.json';
 
+/**
+ * Storage-relative name for the main transcript file within the `session` scope.
+ *
+ * The on-disk filename is `<sessionId>.jsonl`, but the S3 key already includes
+ * the sessionId at `<projectId>/<sessionId>/session/...`, so we use a fixed
+ * name to avoid repeating the sessionId in the key.
+ */
+export const MAIN_TRANSCRIPT_STORAGE_NAME = 'transcript.jsonl';
+
 export async function runSessionDiscovery(
   context: DiscoveryContext,
   input: SessionDiscoveryInput,
@@ -42,30 +51,32 @@ export async function runSessionDiscovery(
   const transcriptDir = path.dirname(resolvedTranscriptPath);
 
   // Capture the exact main transcript file; never glob *.jsonl from the project dir.
+  // Use a fixed storage name so the sessionId is not repeated in the S3 key.
   await context.addFile(
     resolvedTranscriptPath,
     transcriptDir,
     'session',
     input.projectId,
     input.sessionId,
+    MAIN_TRANSCRIPT_STORAGE_NAME,
   );
 
   if (context.stopped) {
     return;
   }
 
-  // Per-session supplementary directory: <transcriptDir>/<sessionId>/subagents/
-  const subagentTranscriptPattern = path
-    .join(input.sessionId, SUBAGENT_TRANSCRIPTS_PATTERN)
-    .replace(/\\/g, '/');
-  const subagentMetaPattern = path.join(input.sessionId, SUBAGENT_META_PATTERN).replace(/\\/g, '/');
+  // Per-session supplementary directory: <transcriptDir>/<sessionId>/
+  // Use the per-session directory as the root so relativePaths don't include
+  // the sessionId prefix (e.g. "subagents/agent-xxx.jsonl" instead of
+  // "<sessionId>/subagents/agent-xxx.jsonl").
+  const sessionDir = path.join(transcriptDir, input.sessionId);
 
   await discoverFromPattern(
     context,
     {
-      root: transcriptDir,
-      relativePattern: subagentTranscriptPattern,
-      original: subagentTranscriptPattern,
+      root: sessionDir,
+      relativePattern: SUBAGENT_TRANSCRIPTS_PATTERN,
+      original: SUBAGENT_TRANSCRIPTS_PATTERN,
     },
     'session',
     input.projectId,
@@ -78,7 +89,7 @@ export async function runSessionDiscovery(
 
   await discoverFromPattern(
     context,
-    { root: transcriptDir, relativePattern: subagentMetaPattern, original: subagentMetaPattern },
+    { root: sessionDir, relativePattern: SUBAGENT_META_PATTERN, original: SUBAGENT_META_PATTERN },
     'session',
     input.projectId,
     input.sessionId,

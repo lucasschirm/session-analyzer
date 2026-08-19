@@ -487,7 +487,7 @@ describe('watcher boundary enforcement', () => {
     await startPromise.catch(() => {});
 
     const sessionCalls = storage.calls.filter((c) => c.scope === 'session');
-    expect(sessionCalls.some((c) => c.relativePath === 'sess-1.jsonl')).toBe(true);
+    expect(sessionCalls.some((c) => c.relativePath === 'transcript.jsonl')).toBe(true);
     expect(sessionCalls.some((c) => c.relativePath === 'link.jsonl')).toBe(false);
 
     fs.rmSync(dataDir, { recursive: true, force: true });

@@ -201,7 +201,7 @@ describe('TranscriptWatcher', () => {
     await startPromise.catch(() => {});
 
     const transcriptCalls = storage.calls.filter(
-      (call) => call.scope === 'session' && call.relativePath === 'sess-1.jsonl',
+      (call) => call.scope === 'session' && call.relativePath === 'transcript.jsonl',
     );
 
     expect(transcriptCalls.length).toBeGreaterThanOrEqual(2);
@@ -243,7 +243,7 @@ describe('TranscriptWatcher', () => {
     await startPromise.catch(() => {});
 
     const agentCalls = storage.calls.filter(
-      (call) => call.relativePath === 'sess-1/subagents/agent-1.jsonl',
+      (call) => call.relativePath === 'subagents/agent-1.jsonl',
     );
     expect(agentCalls.length).toBeGreaterThanOrEqual(1);
     expect(agentCalls[0]?.content).toBe('{"type":"subagent"}\n');
@@ -316,7 +316,7 @@ describe('TranscriptWatcher', () => {
     await watcher.stop();
     await startPromise.catch(() => {});
 
-    const calls = storage.calls.filter((call) => call.relativePath === 'sess-1.jsonl');
+    const calls = storage.calls.filter((call) => call.relativePath === 'transcript.jsonl');
     expect(calls.length).toBeGreaterThanOrEqual(1);
     expect(calls.some((call) => call.content.includes('"type":"final"'))).toBe(true);
     expect(fs.existsSync(getWatcherPidPath(dataDir, 'sess-1'))).toBe(false);

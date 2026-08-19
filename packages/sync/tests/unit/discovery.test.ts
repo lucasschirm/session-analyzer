@@ -380,7 +380,7 @@ describe('discoverSession', () => {
     });
 
     const relativePaths = result.artifacts.map((a) => a.relativePath).sort();
-    expect(relativePaths).toEqual(['sess-1.jsonl', 'sess-1/subagents/agent-1.jsonl']);
+    expect(relativePaths).toEqual(['subagents/agent-1.jsonl', 'transcript.jsonl']);
   });
 
   it('discovers per-session subagent .meta.json sidecars', async () => {
@@ -398,9 +398,9 @@ describe('discoverSession', () => {
 
     const relativePaths = result.artifacts.map((a) => a.relativePath).sort();
     expect(relativePaths).toEqual([
-      'sess-1.jsonl',
-      'sess-1/subagents/agent-1.jsonl',
-      'sess-1/subagents/agent-1.meta.json',
+      'subagents/agent-1.jsonl',
+      'subagents/agent-1.meta.json',
+      'transcript.jsonl',
     ]);
   });
 
@@ -416,7 +416,7 @@ describe('discoverSession', () => {
     });
 
     const relativePaths = result.artifacts.map((a) => a.relativePath);
-    expect(relativePaths).toEqual(['sess-1.jsonl']);
+    expect(relativePaths).toEqual(['transcript.jsonl']);
     expect(relativePaths).not.toContain('sess-2.jsonl');
   });
 
@@ -433,8 +433,8 @@ describe('discoverSession', () => {
     });
 
     const relativePaths = result.artifacts.map((a) => a.relativePath);
-    expect(relativePaths).toContain('sess-1/subagents/agent-1.jsonl');
-    expect(relativePaths).not.toContain('sess-2/subagents/agent-2.jsonl');
+    expect(relativePaths).toContain('subagents/agent-1.jsonl');
+    expect(relativePaths).not.toContain('subagents/agent-2.jsonl');
   });
 
   it('does not confuse .claude/agents with runtime subagent transcripts', async () => {

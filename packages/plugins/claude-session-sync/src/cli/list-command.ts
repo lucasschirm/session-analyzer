@@ -257,21 +257,67 @@ function groupBySession(objects: ListObjectEntry[]): Map<string, SessionSummary>
   return sessions;
 }
 
-function listSessionFiles(
-  objects: ListObjectEntry[],
-  filterPath?: string,
-): { key: string; size?: number; lastModified?: Date }[] {
-  const result: { key: string; size?: number; lastModified?: Date }[] = [];
+interface ListEntry {
+  key: string;
+  size?: number;
+  lastModified?: Date;
+  isPrefix?: boolean;
+  fileCount?: number;
+}
+
+function listSessionFiles(objects: ListObjectEntry[], filterPath?: string): ListEntry[] {
+  const normalizedFilter = filterPath !== undefined ? normalizePath(filterPath) : undefined;
+  const direct = new Map<string, ListEntry>();
+  const prefixAggregates = new Map<
+    string,
+    { size: number; fileCount: number; lastModified?: Date }
+  >();
+
   for (const obj of objects) {
     const relative = sessionRelativeKey(obj.key);
     if (!relative) continue;
-    if (filterPath !== undefined) {
-      const normalizedFilter = normalizePath(filterPath);
-      if (relative !== normalizedFilter && !relative.startsWith(`${normalizedFilter}/`)) {
+
+    // If a filter path is given, only consider keys under it (or equal to it).
+    let rest = relative;
+    if (normalizedFilter !== undefined) {
+      if (relative === normalizedFilter) {
+        // Exact file match — show as a direct file.
+        direct.set(relative, { key: relative, size: obj.size, lastModified: obj.lastModified });
         continue;
       }
+      if (!relative.startsWith(`${normalizedFilter}/`)) continue;
+      rest = relative.slice(`${normalizedFilter}/`.length);
     }
-    result.push({ key: relative, size: obj.size, lastModified: obj.lastModified });
+
+    const slashIdx = rest.indexOf('/');
+    if (slashIdx === -1) {
+      // Direct file child.
+      direct.set(rest, { key: rest, size: obj.size, lastModified: obj.lastModified });
+    } else {
+      // Nested under a subfolder — aggregate under the first segment.
+      const prefix = rest.slice(0, slashIdx);
+      const agg = prefixAggregates.get(prefix) ?? { size: 0, fileCount: 0 };
+      agg.size += obj.size ?? 0;
+      agg.fileCount += 1;
+      if (obj.lastModified && (!agg.lastModified || obj.lastModified > agg.lastModified)) {
+        agg.lastModified = obj.lastModified;
+      }
+      prefixAggregates.set(prefix, agg);
+    }
+  }
+
+  const result: ListEntry[] = [];
+  for (const [_key, entry] of direct) {
+    result.push(entry);
+  }
+  for (const [prefix, agg] of prefixAggregates) {
+    result.push({
+      key: `${prefix}/`,
+      size: agg.size,
+      lastModified: agg.lastModified,
+      isPrefix: true,
+      fileCount: agg.fileCount,
+    });
   }
   return result.sort((a, b) => a.key.localeCompare(b.key));
 }
@@ -463,9 +509,9 @@ export async function runListCommand(
     case 'session':
     case 'path': {
       const filterPath = args.mode === 'path' ? args.path : undefined;
-      const files = listSessionFiles(result.objects, filterPath);
+      const entries = listSessionFiles(result.objects, filterPath);
       const sessionId = args.sessionId;
-      if (files.length === 0) {
+      if (entries.length === 0) {
         if (filterPath !== undefined) {
           stdout.write(
             `No files found for "${filterPath}" in session "${sessionId}" of project "${projectId}".\n`,
@@ -476,29 +522,45 @@ export async function runListCommand(
         return 0;
       }
 
-      const keyWidth = Math.max(16, ...files.map((f) => f.key.length));
+      const keyWidth = Math.max(16, ...entries.map((f) => f.key.length));
       const sizeWidth = 10;
+      const filesWidth = 5;
       const dateWidth = 16;
 
       const header =
         `${padRight('KEY', keyWidth)}  ` +
         `${padRight('SIZE', sizeWidth)}  ` +
+        `${padRight('FILES', filesWidth)}  ` +
         `${padRight('LAST MODIFIED', dateWidth)}`;
       stdout.write(`${header}\n`);
       stdout.write(`${'-'.repeat(header.length)}\n`);
 
       let totalBytes = 0;
-      for (const f of files) {
+      let totalFiles = 0;
+      let prefixCount = 0;
+      let fileCount = 0;
+      for (const f of entries) {
+        const filesStr = f.isPrefix ? String(f.fileCount ?? 0) : '-';
         stdout.write(
           `${padRight(f.key, keyWidth)}  ` +
             `${padRight(formatBytes(f.size ?? 0), sizeWidth)}  ` +
+            `${padRight(filesStr, filesWidth)}  ` +
             `${padRight(formatDate(f.lastModified), dateWidth)}\n`,
         );
         totalBytes += f.size ?? 0;
+        if (f.isPrefix) {
+          prefixCount += 1;
+          totalFiles += f.fileCount ?? 0;
+        } else {
+          fileCount += 1;
+          totalFiles += 1;
+        }
       }
 
       stdout.write('\n');
-      stdout.write(`${files.length} file(s), ${formatBytes(totalBytes)} total\n`);
+      stdout.write(
+        `${fileCount} file(s), ${prefixCount} folder(s), ${totalFiles} total file(s), ${formatBytes(totalBytes)} total\n`,
+      );
       return 0;
     }
   }

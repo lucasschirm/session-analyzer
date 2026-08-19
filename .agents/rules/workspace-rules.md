@@ -15,12 +15,12 @@
  - Never assume your fixes worked. When possible always validate it locally.
 
 # Linting
-  - Aways fix any linting errors. Related or not to the current session.
-  - Do not use @ts-ignore or @ts-expect-error.
+ - Aways fix any linting errors. Related or not to the current session.
+ - Do not use @ts-ignore or @ts-expect-error.
+ - Biome should be a workspace dependency.
+ - All packages should use Biome for linting and formatting.
+ - Biome configuration should be shared across all packages.
+ - Each package can have its own Biome configuration, but it should extend the workspace configuration.
 
-# Linting
-
- - Biome should be a workspace dependency
- - All packages should use Biome for linting and formatting
- - Biome configuration should be shared across all packages
- - Each package can have its own Biome configuration, but it should extend the workspace configuration
+# Before completing any task
+ - Aways run "pnpm verify" from the workspace root directory and fix any test or linting errors.

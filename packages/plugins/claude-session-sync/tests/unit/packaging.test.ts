@@ -113,8 +113,8 @@ describe('plugin packaging', () => {
   it('declares both claude-sync and claude-session-sync bin aliases', () => {
     const pkg = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'));
     expect(pkg.bin).toBeDefined();
-    expect(pkg.bin['claude-sync']).toBe('./bin/claude-sync');
-    expect(pkg.bin['claude-session-sync']).toBe('./bin/claude-sync');
+    expect(pkg.bin['claude-sync']).toBe('bin/claude-sync');
+    expect(pkg.bin['claude-session-sync']).toBe('bin/claude-sync');
   });
 
   it('claude-sync --version prints the package version', () => {
