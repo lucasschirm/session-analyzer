@@ -12,7 +12,9 @@ import {
   parseListArgs,
   resolveClaudeProjectDir,
   resolveCliEnv,
+  runDownloadCommand,
   runListCommand,
+  runSyncCommand,
   validateCliConfig,
   validateStorageConfig,
 } from '../../src/index.js';
@@ -616,5 +618,446 @@ describe('runListCommand', () => {
     });
     expect(result).toBe(1);
     expect(stderr.join('')).toContain('SAL_STORAGE_TYPE');
+  });
+});
+
+describe('runSyncCommand', () => {
+  const validEnv = {
+    SAL_PROJECT_ID: 'proj-1',
+    SAL_STORAGE_TYPE: 's3',
+    SAL_STORAGE_BUCKET: 'my-bucket',
+    SAL_STORAGE_REGION: 'us-east-1',
+    SAL_STORAGE_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
+    SAL_STORAGE_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+  };
+
+  function makeAdapter(
+    objects: ListObjectEntry[] = [],
+    putFn?: (input: { body: Uint8Array; relativePath: string }) => Promise<{ key: string }>,
+  ): StorageAdapter {
+    return {
+      putObject: vi.fn(
+        putFn ??
+          (async (input: { body: Uint8Array; relativePath: string }) => ({
+            key: `proj-1/sess-x/${input.relativePath}`,
+          })),
+      ),
+      listObjects: vi.fn().mockResolvedValue({ objects }),
+    } as unknown as StorageAdapter;
+  }
+
+  function makeStdio() {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    return {
+      stdout: {
+        write: (s: string) => {
+          stdout.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+      stderr: {
+        write: (s: string) => {
+          stderr.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+      stdoutStr: () => stdout.join(''),
+      stderrStr: () => stderr.join(''),
+    };
+  }
+
+  it('fails when storage config is missing', async () => {
+    const io = makeStdio();
+    const result = await runSyncCommand({ env: {}, ...io });
+    expect(result).toBe(1);
+    expect(io.stderrStr()).toContain('SAL_STORAGE_TYPE');
+  });
+
+  it('fails when no Claude project folder is found', async () => {
+    const io = makeStdio();
+    const result = await runSyncCommand({
+      cwd: '/nonexistent/path/that/does/not/exist',
+      env: validEnv,
+      storageAdapter: makeAdapter(),
+      ...io,
+    });
+    expect(result).toBe(1);
+    expect(io.stderrStr()).toContain('could not find');
+  });
+
+  it('returns 0 when no local sessions are found', async () => {
+    const tmpDir = makeTmpDir();
+    const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
+    await fsp.mkdir(claudeDir, { recursive: true });
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    try {
+      const io = makeStdio();
+      const result = await runSyncCommand({
+        cwd: tmpDir,
+        env: { ...validEnv, SAL_DATA_DIR: path.join(tmpDir, 'sal-data') },
+        storageAdapter: makeAdapter(),
+        ...io,
+      });
+      expect(result).toBe(0);
+      expect(io.stdoutStr()).toContain('No local sessions found');
+    } finally {
+      process.env.HOME = oldHome;
+    }
+  });
+
+  it('skips sessions that already exist in storage', async () => {
+    const tmpDir = makeTmpDir();
+    const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
+    await fsp.mkdir(claudeDir, { recursive: true });
+    await fsp.writeFile(path.join(claudeDir, 'sess-a.jsonl'), '{"type":"message"}\n');
+
+    const adapter = makeAdapter([{ key: 'proj-1/sess-a/manifest.json', size: 100 }]);
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    try {
+      const io = makeStdio();
+      const result = await runSyncCommand({
+        cwd: tmpDir,
+        env: { ...validEnv, SAL_DATA_DIR: path.join(tmpDir, 'sal-data') },
+        storageAdapter: adapter,
+        ...io,
+      });
+      expect(result).toBe(0);
+      expect(io.stdoutStr()).toContain('[skip] session sess-a');
+      expect(io.stdoutStr()).toContain('1 already synced');
+    } finally {
+      process.env.HOME = oldHome;
+    }
+  });
+
+  it('fails when storage adapter does not support listObjects', async () => {
+    const tmpDir = makeTmpDir();
+    const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
+    await fsp.mkdir(claudeDir, { recursive: true });
+    await fsp.writeFile(path.join(claudeDir, 'sess-a.jsonl'), '{"type":"message"}\n');
+
+    const adapter = {
+      putObject: vi.fn(),
+    } as unknown as StorageAdapter;
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    try {
+      const io = makeStdio();
+      const result = await runSyncCommand({
+        cwd: tmpDir,
+        env: { ...validEnv, SAL_DATA_DIR: path.join(tmpDir, 'sal-data') },
+        storageAdapter: adapter,
+        ...io,
+      });
+      expect(result).toBe(1);
+      expect(io.stderrStr()).toContain('does not support listing');
+    } finally {
+      process.env.HOME = oldHome;
+    }
+  });
+
+  it('prints force message when --force clears state', async () => {
+    const tmpDir = makeTmpDir();
+    const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
+    await fsp.mkdir(claudeDir, { recursive: true });
+    await fsp.writeFile(path.join(claudeDir, 'sess-a.jsonl'), '{"type":"message"}\n');
+
+    const adapter = makeAdapter([{ key: 'proj-1/sess-a/manifest.json', size: 100 }]);
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    try {
+      const io = makeStdio();
+      const result = await runSyncCommand({
+        cwd: tmpDir,
+        env: { ...validEnv, SAL_DATA_DIR: path.join(tmpDir, 'sal-data') },
+        storageAdapter: adapter,
+        force: true,
+        ...io,
+      });
+      expect(result).toBe(0);
+      // With force, the session should still be skipped because it exists in storage.
+      expect(io.stdoutStr()).toContain('[skip] session sess-a');
+    } finally {
+      process.env.HOME = oldHome;
+    }
+  });
+
+  it('uploads a new session with full scope sync', async () => {
+    const tmpDir = makeTmpDir();
+    const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
+    await fsp.mkdir(claudeDir, { recursive: true });
+    await fsp.writeFile(
+      path.join(claudeDir, 'sess-new.jsonl'),
+      '{"type":"message_start","message":{"id":"1","model":"claude","content":[]}}\n',
+    );
+
+    const putCalls: string[] = [];
+    const adapter: StorageAdapter = {
+      putObject: vi.fn(async (input: { body: Uint8Array; relativePath: string }) => {
+        putCalls.push(input.relativePath);
+        return { key: `proj-1/sess-new/${input.relativePath}` };
+      }),
+      listObjects: vi.fn().mockResolvedValue({ objects: [] }),
+    } as unknown as StorageAdapter;
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    try {
+      const io = makeStdio();
+      const result = await runSyncCommand({
+        cwd: tmpDir,
+        env: { ...validEnv, SAL_DATA_DIR: path.join(tmpDir, 'sal-data') },
+        storageAdapter: adapter,
+        ...io,
+      });
+      expect(result).toBe(0);
+      expect(io.stdoutStr()).toContain('[ok]   session sess-new');
+      expect(putCalls.length).toBeGreaterThan(0);
+    } finally {
+      process.env.HOME = oldHome;
+    }
+  });
+
+  it('handles sync errors gracefully and returns 1', async () => {
+    const tmpDir = makeTmpDir();
+    const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
+    await fsp.mkdir(claudeDir, { recursive: true });
+    await fsp.writeFile(path.join(claudeDir, 'sess-err.jsonl'), '{"type":"message_start"}\n');
+
+    const adapter: StorageAdapter = {
+      putObject: vi.fn().mockRejectedValue(new Error('network failure')),
+      listObjects: vi.fn().mockResolvedValue({ objects: [] }),
+    } as unknown as StorageAdapter;
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    try {
+      const io = makeStdio();
+      const result = await runSyncCommand({
+        cwd: tmpDir,
+        env: { ...validEnv, SAL_DATA_DIR: path.join(tmpDir, 'sal-data') },
+        storageAdapter: adapter,
+        ...io,
+      });
+      expect(result).toBe(1);
+      expect(io.stdoutStr()).toContain('[fail] session sess-err');
+    } finally {
+      process.env.HOME = oldHome;
+    }
+  });
+
+  it('uploads multiple sessions, first full then session-only', async () => {
+    const tmpDir = makeTmpDir();
+    const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
+    await fsp.mkdir(claudeDir, { recursive: true });
+    await fsp.writeFile(
+      path.join(claudeDir, 'sess-a.jsonl'),
+      '{"type":"message_start","message":{"id":"1","model":"claude","content":[]}}\n',
+    );
+    await fsp.writeFile(
+      path.join(claudeDir, 'sess-b.jsonl'),
+      '{"type":"message_start","message":{"id":"2","model":"claude","content":[]}}\n',
+    );
+
+    const putCalls: string[] = [];
+    const adapter: StorageAdapter = {
+      putObject: vi.fn(async (input: { body: Uint8Array; relativePath: string }) => {
+        putCalls.push(input.relativePath);
+        return { key: `proj-1/${input.relativePath}` };
+      }),
+      listObjects: vi.fn().mockResolvedValue({ objects: [] }),
+    } as unknown as StorageAdapter;
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    try {
+      const io = makeStdio();
+      const result = await runSyncCommand({
+        cwd: tmpDir,
+        env: { ...validEnv, SAL_DATA_DIR: path.join(tmpDir, 'sal-data') },
+        storageAdapter: adapter,
+        ...io,
+      });
+      expect(result).toBe(0);
+      expect(io.stdoutStr()).toContain('[ok]   session sess-a');
+      expect(io.stdoutStr()).toContain('[ok]   session sess-b');
+    } finally {
+      process.env.HOME = oldHome;
+    }
+  });
+});
+
+describe('runDownloadCommand', () => {
+  const validEnv = {
+    SAL_PROJECT_ID: 'proj-1',
+    SAL_STORAGE_TYPE: 's3',
+    SAL_STORAGE_BUCKET: 'my-bucket',
+    SAL_STORAGE_REGION: 'us-east-1',
+    SAL_STORAGE_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
+    SAL_STORAGE_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+  };
+
+  function makeAdapter(
+    objects: ListObjectEntry[],
+    getObjectFn?: (input: {
+      projectId: string;
+      sessionId: string;
+      scope: string;
+      relativePath: string;
+    }) => Promise<{ body: Uint8Array } | undefined>,
+  ): StorageAdapter {
+    return {
+      putObject: vi.fn(),
+      listObjects: vi.fn().mockResolvedValue({ objects }),
+      getObject: vi.fn(getObjectFn ?? (async () => ({ body: new Uint8Array([1, 2, 3]) }))),
+    } as unknown as StorageAdapter;
+  }
+
+  function makeStdio() {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    return {
+      stdout: {
+        write: (s: string) => {
+          stdout.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+      stderr: {
+        write: (s: string) => {
+          stderr.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+      stdoutStr: () => stdout.join(''),
+      stderrStr: () => stderr.join(''),
+    };
+  }
+
+  it('fails when args are missing', async () => {
+    const io = makeStdio();
+    const result = await runDownloadCommand([], {
+      env: validEnv,
+      storageAdapter: makeAdapter([]),
+      ...io,
+    });
+    expect(result).toBe(1);
+    expect(io.stderrStr()).toContain('Usage:');
+  });
+
+  it('fails when storage config is missing', async () => {
+    const io = makeStdio();
+    const result = await runDownloadCommand(['--session-id=abc', '--output=/tmp/out'], {
+      env: {},
+      storageAdapter: makeAdapter([]),
+      ...io,
+    });
+    expect(result).toBe(1);
+    expect(io.stderrStr()).toContain('SAL_STORAGE_TYPE');
+  });
+
+  it('fails when adapter lacks getObject', async () => {
+    const io = makeStdio();
+    const adapter = {
+      putObject: vi.fn(),
+      listObjects: vi.fn().mockResolvedValue({ objects: [] }),
+    } as unknown as StorageAdapter;
+    const result = await runDownloadCommand(['--session-id=abc', '--output=/tmp/out'], {
+      env: validEnv,
+      storageAdapter: adapter,
+      ...io,
+    });
+    expect(result).toBe(1);
+    expect(io.stderrStr()).toContain('does not support');
+  });
+
+  it('returns 0 when no objects found for session', async () => {
+    const io = makeStdio();
+    const result = await runDownloadCommand(['--session-id=abc', '--output=/tmp/out'], {
+      env: validEnv,
+      storageAdapter: makeAdapter([]),
+      ...io,
+    });
+    expect(result).toBe(0);
+    expect(io.stdoutStr()).toContain('No objects found');
+  });
+
+  it('returns 0 when no objects found for all', async () => {
+    const io = makeStdio();
+    const result = await runDownloadCommand(['all', '--output=/tmp/out'], {
+      env: validEnv,
+      storageAdapter: makeAdapter([]),
+      ...io,
+    });
+    expect(result).toBe(0);
+    expect(io.stdoutStr()).toContain('No objects found');
+  });
+
+  it('downloads objects to local directory', async () => {
+    const tmpDir = makeTmpDir();
+    const objects: ListObjectEntry[] = [
+      { key: 'proj-1/sess-a/manifest.json', size: 3 },
+      { key: 'proj-1/sess-a/session/transcript.jsonl', size: 3 },
+    ];
+    const io = makeStdio();
+    const result = await runDownloadCommand(['--session-id=sess-a', `--output=${tmpDir}`], {
+      env: validEnv,
+      storageAdapter: makeAdapter(objects),
+      ...io,
+    });
+    expect(result).toBe(0);
+    expect(io.stdoutStr()).toContain('[download]');
+    expect(io.stdoutStr()).toContain('Downloaded 2 file(s)');
+  });
+
+  it('handles download errors gracefully', async () => {
+    const tmpDir = makeTmpDir();
+    const objects: ListObjectEntry[] = [{ key: 'proj-1/sess-a/manifest.json', size: 3 }];
+    const adapter = makeAdapter(objects, async () => undefined);
+    const io = makeStdio();
+    const result = await runDownloadCommand(['--session-id=sess-a', `--output=${tmpDir}`], {
+      env: validEnv,
+      storageAdapter: adapter,
+      ...io,
+    });
+    expect(result).toBe(1);
+    expect(io.stdoutStr()).toContain('[fail]');
+    expect(io.stdoutStr()).toContain('object not found');
+  });
+
+  it('handles listObjects errors', async () => {
+    const tmpDir = makeTmpDir();
+    const adapter = {
+      putObject: vi.fn(),
+      listObjects: vi.fn().mockRejectedValue(new Error('network error')),
+      getObject: vi.fn(),
+    } as unknown as StorageAdapter;
+    const io = makeStdio();
+    const result = await runDownloadCommand(['--session-id=sess-a', `--output=${tmpDir}`], {
+      env: validEnv,
+      storageAdapter: adapter,
+      ...io,
+    });
+    expect(result).toBe(1);
+    expect(io.stderrStr()).toContain('Error listing objects');
+  });
+
+  it('handles unparseable keys', async () => {
+    const tmpDir = makeTmpDir();
+    const objects: ListObjectEntry[] = [{ key: 'not-a-valid-key', size: 3 }];
+    const io = makeStdio();
+    const result = await runDownloadCommand(['--session-id=sess-a', `--output=${tmpDir}`], {
+      env: validEnv,
+      storageAdapter: makeAdapter(objects),
+      ...io,
+    });
+    expect(result).toBe(1);
+    expect(io.stdoutStr()).toContain('[fail]');
   });
 });
