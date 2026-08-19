@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { runDownloadCommand } from './cli/download-command.js';
 import { runListCommand } from './cli/list-command.js';
+import { runRemoveCommand } from './cli/remove-command.js';
 import { runSyncCommand } from './cli/sync-command.js';
 
 const HELP_TEXT = `claude-sync — manually sync Claude Code sessions to S3 storage
@@ -24,6 +25,11 @@ Commands:
   download --session-id=<id> --output=<dir>
                                           Download a specific session
   download all --output=<dir>             Download all sessions for this project
+  remove <project-id>                     Dry run: list what would be removed for a project
+  remove <project-id> --yes               Remove all objects for a project (never touches
+                                          shared global/cas/ content-addressed files)
+  remove <project-id> --session=<id> --yes
+                                          Remove all objects for a single session
 
 Options:
   -v, --version                           Print version and exit
@@ -71,6 +77,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return runListCommand(rest);
     case 'download':
       return runDownloadCommand(rest);
+    case 'remove':
+      return runRemoveCommand(rest);
     default:
       process.stderr.write(`Unknown command: ${command}\n\n`);
       process.stderr.write(HELP_TEXT);

@@ -9,6 +9,7 @@ export {
   listLocalSessions,
   resolveClaudeProjectDir,
 } from './cli/project.js';
+export { parseRemoveArgs, runRemoveCommand } from './cli/remove-command.js';
 export { runSyncCommand } from './cli/sync-command.js';
 // Standalone CLI (claude-sync)
 export { main as cliMain } from './cli.js';

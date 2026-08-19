@@ -112,15 +112,38 @@ export interface ListObjectsResult {
 }
 
 /**
+ * Input for a bulk DELETE operation, scoped the same way as `ListObjectsInput`:
+ * `sessionId` omitted deletes every object under `<projectId>/`; `sessionId`
+ * provided deletes only objects under `<projectId>/<sessionId>/`. Never
+ * touches content-addressed `global/cas/<hash>` objects, since those are
+ * shared across projects/sessions and are not prefixed by `projectId`.
+ */
+export interface DeleteObjectsInput {
+  projectId: string;
+  sessionId?: string;
+}
+
+/**
+ * Result of a bulk DELETE. `deletedKeys` lists every key actually removed;
+ * `errors` carries a key/message pair for any deletion that failed without
+ * aborting the rest of the batch.
+ */
+export interface DeleteObjectsResult {
+  deletedKeys: string[];
+  errors: Array<{ key: string; message: string }>;
+}
+
+/**
  * Storage-agnostic adapter contract. Implementations must support `putObject`;
- * `getObject`, `headObject`, and `listObjects` are optional conveniences for
- * callers that need them (e.g. the standalone CLI).
+ * `getObject`, `headObject`, `listObjects`, and `deleteObjects` are optional
+ * conveniences for callers that need them (e.g. the standalone CLI).
  */
 export interface StorageAdapter {
   putObject(input: PutObjectInput): Promise<PutObjectResult>;
   getObject?(input: GetObjectInput): Promise<GetObjectResult | undefined>;
   headObject?(input: HeadObjectInput): Promise<HeadObjectResult | undefined>;
   listObjects?(input: ListObjectsInput): Promise<ListObjectsResult>;
+  deleteObjects?(input: DeleteObjectsInput): Promise<DeleteObjectsResult>;
 }
 
 /**

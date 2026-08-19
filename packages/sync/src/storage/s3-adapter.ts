@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
+  DeleteObjectsCommand,
+  type DeleteObjectsCommandOutput,
   GetObjectCommand,
   type GetObjectCommandOutput,
   HeadObjectCommand,
@@ -14,6 +16,8 @@ import {
 import type { StorageConfig } from '../config/contract.js';
 import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
 import {
+  type DeleteObjectsInput,
+  type DeleteObjectsResult,
   type GetObjectInput,
   type GetObjectResult,
   type HeadObjectInput,
@@ -49,6 +53,18 @@ interface AwsErrorLike {
 
 function toAwsErrorLike(err: unknown): AwsErrorLike {
   return err as AwsErrorLike;
+}
+
+/**
+ * Build the `<projectId>/` or `<projectId>/<sessionId>/` prefix shared by
+ * `listObjects` and `deleteObjects`. Never resolves to a prefix that would
+ * match `global/cas/` objects, since those are not scoped to a project.
+ */
+function buildScopePrefix(input: { projectId?: string; sessionId?: string }): string {
+  if (!input.projectId) return '';
+  const projectSegment = encodeKeySegment(input.projectId);
+  if (!input.sessionId) return `${projectSegment}/`;
+  return `${projectSegment}/${encodeKeySegment(input.sessionId)}/`;
 }
 
 /**
@@ -241,15 +257,28 @@ export class S3StorageAdapter implements StorageAdapter {
   }
 
   async listObjects(input: ListObjectsInput): Promise<ListObjectsResult> {
-    const prefix = input.projectId
-      ? input.sessionId
-        ? `${encodeKeySegment(input.projectId)}/${encodeKeySegment(input.sessionId)}/`
-        : `${encodeKeySegment(input.projectId)}/`
-      : '';
-
+    const prefix = buildScopePrefix(input);
     const entries: ListObjectEntry[] = [];
-    let continuationToken: string | undefined;
 
+    for await (const page of this.listRawPages(prefix)) {
+      for (const obj of page) {
+        if (!obj.Key) continue;
+        entries.push({
+          key: decodeURIComponent(obj.Key),
+          size: obj.Size,
+          lastModified: obj.LastModified,
+          etag: obj.ETag,
+        });
+      }
+    }
+
+    return { objects: entries };
+  }
+
+  private async *listRawPages(
+    prefix: string,
+  ): AsyncGenerator<NonNullable<ListObjectsV2CommandOutput['Contents']>> {
+    let continuationToken: string | undefined;
     do {
       const command = new ListObjectsV2Command({
         Bucket: this.bucket,
@@ -268,20 +297,77 @@ export class S3StorageAdapter implements StorageAdapter {
         throw mapS3Error(err);
       }
 
-      for (const obj of output.Contents ?? []) {
-        if (!obj.Key) continue;
-        entries.push({
-          key: decodeURIComponent(obj.Key),
-          size: obj.Size,
-          lastModified: obj.LastModified,
-          etag: obj.ETag,
-        });
-      }
-
+      yield output.Contents ?? [];
       continuationToken = output.IsTruncated ? output.NextContinuationToken : undefined;
     } while (continuationToken);
+  }
 
-    return { objects: entries };
+  /**
+   * Delete every object under `<projectId>/` (or `<projectId>/<sessionId>/`
+   * when `sessionId` is given). Never touches `global/cas/<hash>` objects —
+   * `buildScopePrefix` only ever produces project-scoped prefixes.
+   */
+  async deleteObjects(input: DeleteObjectsInput): Promise<DeleteObjectsResult> {
+    const prefix = buildScopePrefix(input);
+    if (!prefix) {
+      throw new StorageError(
+        'SYNC_STORAGE_ERROR',
+        `${SYNC_ERROR_CATALOG.SYNC_STORAGE_ERROR.description} (projectId is required to delete objects)`,
+        false,
+      );
+    }
+
+    const rawKeys: string[] = [];
+    for await (const page of this.listRawPages(prefix)) {
+      for (const obj of page) {
+        if (obj.Key) rawKeys.push(obj.Key);
+      }
+    }
+
+    return this.deleteRawKeys(rawKeys);
+  }
+
+  private async deleteRawKeys(rawKeys: string[]): Promise<DeleteObjectsResult> {
+    const deletedKeys: string[] = [];
+    const errors: Array<{ key: string; message: string }> = [];
+    const BATCH_SIZE = 1000;
+
+    for (let i = 0; i < rawKeys.length; i += BATCH_SIZE) {
+      const batch = await this.deleteBatch(rawKeys.slice(i, i + BATCH_SIZE));
+      deletedKeys.push(...batch.deletedKeys);
+      errors.push(...batch.errors);
+    }
+
+    return { deletedKeys, errors };
+  }
+
+  private async deleteBatch(rawKeys: string[]): Promise<DeleteObjectsResult> {
+    const command = new DeleteObjectsCommand({
+      Bucket: this.bucket,
+      Delete: { Objects: rawKeys.map((Key) => ({ Key })), Quiet: false },
+    });
+
+    let output: DeleteObjectsCommandOutput;
+    try {
+      output = await withRetry(
+        async () => this.client.send(command),
+        isRetryableError,
+        this.retryOptions,
+      );
+    } catch (err) {
+      throw mapS3Error(err);
+    }
+
+    const deletedKeys = (output.Deleted ?? [])
+      .map((d) => d.Key)
+      .filter((k): k is string => Boolean(k))
+      .map(decodeURIComponent);
+    const errors = (output.Errors ?? []).map((e) => ({
+      key: e.Key ? decodeURIComponent(e.Key) : 'unknown',
+      message: e.Message ?? 'unknown error',
+    }));
+
+    return { deletedKeys, errors };
   }
 }
 
