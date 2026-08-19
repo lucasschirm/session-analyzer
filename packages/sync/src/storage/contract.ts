@@ -35,13 +35,16 @@ export interface PutObjectResult {
 }
 
 /**
- * Input for a storage GET operation.
+ * Input for a storage GET operation. The `contentSha256` field is required for
+ * content-addressed `workspace` and `global` objects so the CAS key can be
+ * derived.
  */
 export interface GetObjectInput {
   projectId: string;
   sessionId: string;
   scope: StorageObjectScope;
   relativePath: string;
+  contentSha256?: string;
 }
 
 /**
