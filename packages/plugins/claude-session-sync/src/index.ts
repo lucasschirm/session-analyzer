@@ -1,8 +1,8 @@
 export * from './claude.js';
-export { validateCliConfig } from './cli/config.js';
+export { validateCliConfig, validateStorageConfig } from './cli/config.js';
 export { parseDownloadArgs, runDownloadCommand } from './cli/download-command.js';
 export { resolveCliEnv } from './cli/env.js';
-export { runListCommand } from './cli/list-command.js';
+export { parseListArgs, runListCommand } from './cli/list-command.js';
 export {
   decodeProjectFolder,
   encodeProjectFolder,

@@ -13,7 +13,13 @@ Usage:
 
 Commands:
   sync                                    Upload all local sessions to S3
-  list                                    List all sessions uploaded for this project
+  list                                    List all projects in storage
+  list --current                          List sessions for the current project (SAL_PROJECT_ID)
+  list <project-id>                       List sessions for a project
+  list <project-id> --session=<session-id>
+                                          List files in a session
+  list <project-id> --session=<session-id> --path=<path>
+                                          List files under a session sub-path
   download --session-id=<id> --output=<dir>
                                           Download a specific session
   download all --output=<dir>             Download all sessions for this project
@@ -23,7 +29,7 @@ Options:
   -h, --help                              Print this help and exit
 
 Environment:
-  SAL_PROJECT_ID                          Project identifier (required)
+  SAL_PROJECT_ID                          Project identifier (required only for --current)
   SAL_STORAGE_TYPE                        Storage backend (required, currently "s3")
   SAL_STORAGE_BUCKET                      S3 bucket name (required)
   SAL_STORAGE_REGION                      AWS region (required)
@@ -61,7 +67,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     case 'sync':
       return runSyncCommand();
     case 'list':
-      return runListCommand();
+      return runListCommand(rest);
     case 'download':
       return runDownloadCommand(rest);
     default:

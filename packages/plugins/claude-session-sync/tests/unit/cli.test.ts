@@ -1,6 +1,7 @@
 import * as fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import type { ListObjectEntry, StorageAdapter } from '@lucasschirm/sal-sync';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -8,9 +9,12 @@ import {
   encodeProjectFolder,
   listLocalSessions,
   parseDownloadArgs,
+  parseListArgs,
   resolveClaudeProjectDir,
   resolveCliEnv,
+  runListCommand,
   validateCliConfig,
+  validateStorageConfig,
 } from '../../src/index.js';
 
 function makeTmpDir(): string {
@@ -364,5 +368,239 @@ describe('CLI main entry', () => {
       stdoutSpy.mockRestore();
       stderrSpy.mockRestore();
     }
+  });
+});
+
+describe('validateStorageConfig', () => {
+  const validStorageEnv = {
+    SAL_STORAGE_TYPE: 's3',
+    SAL_STORAGE_BUCKET: 'my-bucket',
+    SAL_STORAGE_REGION: 'us-east-1',
+    SAL_STORAGE_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
+    SAL_STORAGE_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+  };
+
+  it('succeeds without SAL_PROJECT_ID', () => {
+    const result = validateStorageConfig(validStorageEnv);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+    expect(result.storage.type).toBe('s3');
+    expect(result.storage.bucket).toBe('my-bucket');
+    expect(result.retries).toBe(3);
+  });
+
+  it('fails when storage type is missing', () => {
+    const result = validateStorageConfig({});
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.errorMessage).toContain('SAL_STORAGE_TYPE');
+    expect(result.errorMessage).not.toContain('SAL_PROJECT_ID');
+  });
+});
+
+describe('parseListArgs', () => {
+  it('parses bare list as all-projects', () => {
+    expect(parseListArgs([])).toEqual({ mode: 'all-projects' });
+  });
+
+  it('parses --current', () => {
+    expect(parseListArgs(['--current'])).toEqual({ mode: 'current' });
+  });
+
+  it('parses a positional project id', () => {
+    expect(parseListArgs(['proj-1'])).toEqual({ mode: 'project', projectId: 'proj-1' });
+  });
+
+  it('parses project with --session', () => {
+    expect(parseListArgs(['proj-1', '--session=sess-a'])).toEqual({
+      mode: 'session',
+      projectId: 'proj-1',
+      sessionId: 'sess-a',
+    });
+  });
+
+  it('parses project with --session and --path', () => {
+    expect(parseListArgs(['proj-1', '--session', 'sess-a', '--path', 'session/configs'])).toEqual({
+      mode: 'path',
+      projectId: 'proj-1',
+      sessionId: 'sess-a',
+      path: 'session/configs',
+    });
+  });
+
+  it('rejects --current with a project id', () => {
+    const result = parseListArgs(['--current', 'proj-1']);
+    expect('error' in result).toBe(true);
+  });
+
+  it('rejects --path without --session', () => {
+    const result = parseListArgs(['proj-1', '--path=session']);
+    expect('error' in result).toBe(true);
+  });
+
+  it('rejects unknown options', () => {
+    const result = parseListArgs(['--unknown']);
+    expect('error' in result).toBe(true);
+  });
+});
+
+describe('runListCommand', () => {
+  const validEnv = {
+    SAL_PROJECT_ID: 'proj-1',
+    SAL_STORAGE_TYPE: 's3',
+    SAL_STORAGE_BUCKET: 'my-bucket',
+    SAL_STORAGE_REGION: 'us-east-1',
+    SAL_STORAGE_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
+    SAL_STORAGE_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+  };
+
+  function makeAdapter(objects: ListObjectEntry[]): StorageAdapter {
+    return {
+      putObject: vi.fn(),
+      listObjects: vi.fn().mockResolvedValue({ objects }),
+    } as unknown as StorageAdapter;
+  }
+
+  it('lists all projects', async () => {
+    const objects = [
+      { key: 'proj-1/sess-a/manifest.json', size: 100, lastModified: new Date('2026-01-02') },
+      {
+        key: 'proj-2/sess-b/session/transcript.jsonl',
+        size: 200,
+        lastModified: new Date('2026-01-01'),
+      },
+    ] as ListObjectEntry[];
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const result = await runListCommand([], {
+      env: validEnv,
+      storageAdapter: makeAdapter(objects),
+      stdout: {
+        write: (s: string) => {
+          stdout.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+      stderr: {
+        write: (s: string) => {
+          stderr.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+    });
+    expect(result).toBe(0);
+    const output = stdout.join('');
+    expect(output).toContain('proj-1');
+    expect(output).toContain('proj-2');
+    expect(output).toContain('2 project(s), 2 files');
+  });
+
+  it('lists sessions for a project', async () => {
+    const objects = [
+      { key: 'proj-1/sess-a/manifest.json', size: 100, lastModified: new Date('2026-01-02') },
+      { key: 'proj-1/sess-a/session/transcript.jsonl', size: 200 },
+      { key: 'proj-1/sess-b/manifest.json', size: 50, lastModified: new Date('2026-01-01') },
+    ] as ListObjectEntry[];
+    const stdout: string[] = [];
+    const result = await runListCommand(['proj-1'], {
+      env: validEnv,
+      storageAdapter: makeAdapter(objects),
+      stdout: {
+        write: (s: string) => {
+          stdout.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+    });
+    expect(result).toBe(0);
+    const output = stdout.join('');
+    expect(output).toContain('sess-a');
+    expect(output).toContain('sess-b');
+    expect(output).toContain('2 session(s), 3 files');
+  });
+
+  it('lists files in a session', async () => {
+    const objects = [
+      { key: 'proj-1/sess-a/manifest.json', size: 100, lastModified: new Date('2026-01-02') },
+      {
+        key: 'proj-1/sess-a/session/transcript.jsonl',
+        size: 200,
+        lastModified: new Date('2026-01-02'),
+      },
+      { key: 'proj-1/sess-a/workspace/package.json', size: 50 },
+    ] as ListObjectEntry[];
+    const stdout: string[] = [];
+    const result = await runListCommand(['proj-1', '--session=sess-a'], {
+      env: validEnv,
+      storageAdapter: makeAdapter(objects),
+      stdout: {
+        write: (s: string) => {
+          stdout.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+    });
+    expect(result).toBe(0);
+    const output = stdout.join('');
+    expect(output).toContain('manifest.json');
+    expect(output).toContain('session/transcript.jsonl');
+    expect(output).toContain('workspace/package.json');
+    expect(output).toContain('3 file(s)');
+  });
+
+  it('filters files by --path', async () => {
+    const objects = [
+      { key: 'proj-1/sess-a/manifest.json', size: 100 },
+      { key: 'proj-1/sess-a/session/transcript.jsonl', size: 200 },
+      { key: 'proj-1/sess-a/workspace/package.json', size: 50 },
+    ] as ListObjectEntry[];
+    const stdout: string[] = [];
+    const result = await runListCommand(['proj-1', '--session', 'sess-a', '--path', 'session/'], {
+      env: validEnv,
+      storageAdapter: makeAdapter(objects),
+      stdout: {
+        write: (s: string) => {
+          stdout.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+    });
+    expect(result).toBe(0);
+    const output = stdout.join('');
+    expect(output).toContain('session/transcript.jsonl');
+    expect(output).not.toContain('manifest.json');
+    expect(output).not.toContain('workspace/package.json');
+  });
+
+  it('requires SAL_PROJECT_ID for --current', async () => {
+    const stderr: string[] = [];
+    const result = await runListCommand(['--current'], {
+      env: {},
+      stdout: { write: () => true } as unknown as NodeJS.WritableStream,
+      stderr: {
+        write: (s: string) => {
+          stderr.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+    });
+    expect(result).toBe(1);
+    expect(stderr.join('')).toContain('SAL_PROJECT_ID');
+  });
+
+  it('fails when storage config is missing', async () => {
+    const stderr: string[] = [];
+    const result = await runListCommand([], {
+      env: {},
+      stdout: { write: () => true } as unknown as NodeJS.WritableStream,
+      stderr: {
+        write: (s: string) => {
+          stderr.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+    });
+    expect(result).toBe(1);
+    expect(stderr.join('')).toContain('SAL_STORAGE_TYPE');
   });
 });

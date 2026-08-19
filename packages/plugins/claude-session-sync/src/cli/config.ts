@@ -1,7 +1,14 @@
 import path from 'node:path';
 import process from 'node:process';
 
-import { type LoadConfigResult, loadConfig, type SyncConfig } from '@lucasschirm/sal-sync';
+import {
+  type LoadConfigResult,
+  type LoadStorageConfigResult,
+  loadConfig,
+  loadStorageConfig,
+  type StorageConfig,
+  type SyncConfig,
+} from '@lucasschirm/sal-sync';
 
 /** A required environment variable that is missing or invalid. */
 export interface MissingVar {
@@ -45,6 +52,10 @@ const REQUIRED_VARS: MissingVar[] = [
     example: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
   },
 ];
+
+const STORAGE_REQUIRED_VARS: MissingVar[] = REQUIRED_VARS.filter(
+  (v) => v.name !== 'SAL_PROJECT_ID',
+);
 
 export interface ValidateConfigResult {
   ok: boolean;
@@ -130,5 +141,82 @@ export function validateCliConfig(
   return {
     ok: false,
     errorMessage: 'Configuration is invalid. Check your SAL_* environment variables.',
+  };
+}
+
+export type ValidateStorageConfigResult =
+  | { ok: true; storage: StorageConfig; retries: number }
+  | { ok: false; missing?: MissingVar[]; errorMessage?: string };
+
+function buildMissingStorageError(missing: MissingVar[]): string {
+  const lines: string[] = [];
+  lines.push('Error: required storage configuration is missing or incomplete.');
+  lines.push('');
+  lines.push('The following environment variables must be set:');
+
+  for (const v of missing) {
+    lines.push(`  ${v.name} — ${v.description}`);
+  }
+
+  lines.push('');
+  lines.push('Set them via environment variables before running the CLI:');
+  lines.push('');
+
+  const exportLines = missing.map((v) => {
+    return `  export ${v.name}=${v.example}`;
+  });
+  exportLines.push('  npx @lucasschirm/claude-session-sync list');
+  lines.push(exportLines.join('\n'));
+
+  lines.push('');
+  lines.push('Or add them to .claude/settings.local.json:');
+  lines.push('');
+  const envEntries = missing.map((v) => {
+    return `    "${v.name}": "${v.example}"`;
+  });
+  lines.push('{');
+  lines.push('  "env": {');
+  lines.push(envEntries.join(',\n'));
+  lines.push('  }');
+  lines.push('}');
+
+  return lines.join('\n');
+}
+
+/**
+ * Validate the merged environment for storage-only commands (e.g. `list` against
+ * a specific project or session). Does not require `SAL_PROJECT_ID`.
+ *
+ * @param env - the merged environment (process.env + settings.local.json)
+ */
+export function validateStorageConfig(
+  env: Record<string, string | undefined>,
+): ValidateStorageConfigResult {
+  const missing = STORAGE_REQUIRED_VARS.filter((v) => {
+    const value = env[v.name];
+    return value === undefined || value.trim() === '';
+  });
+
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      missing,
+      errorMessage: buildMissingStorageError(missing),
+    };
+  }
+
+  const result: LoadStorageConfigResult = loadStorageConfig(env);
+
+  if (result.ok) {
+    return {
+      ok: true,
+      storage: result.config.storage,
+      retries: result.config.retries,
+    };
+  }
+
+  return {
+    ok: false,
+    errorMessage: result.error.message,
   };
 }

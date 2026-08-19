@@ -11,7 +11,7 @@ import type {
   ArtifactStatus,
   ManifestArtifact,
 } from '../artifact.js';
-import { loadConfig, type SyncConfig } from '../config/index.js';
+import { loadConfig, type StorageConfig, type SyncConfig } from '../config/index.js';
 import { type DiscoveryResult, discover } from '../discovery/index.js';
 import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
 import {
@@ -36,7 +36,12 @@ import {
   type SyncState,
 } from '../state/index.js';
 import type { PutObjectInput } from '../storage/index.js';
-import { S3StorageAdapter, type StorageAdapter, StorageError } from '../storage/index.js';
+import {
+  S3StorageAdapter,
+  type StorageAdapter,
+  type StorageAdapterOptions,
+  StorageError,
+} from '../storage/index.js';
 import type { SyncRun, SyncTrigger } from '../sync-run.js';
 import { DEFAULT_PLUGIN_VERSION, UNKNOWN_HARNESS_VERSION } from '../versions.js';
 
@@ -365,12 +370,19 @@ export function normalizeTrigger(value: unknown): SyncTrigger {
 }
 
 export function buildStorageAdapter(config: SyncConfig): StorageAdapter {
-  if (config.storage.type === 's3') {
-    return new S3StorageAdapter(config.storage, { retries: config.retries });
+  return buildStorageAdapterFromStorage(config.storage, { retries: config.retries });
+}
+
+export function buildStorageAdapterFromStorage(
+  storage: StorageConfig,
+  options?: StorageAdapterOptions,
+): StorageAdapter {
+  if (storage.type === 's3') {
+    return new S3StorageAdapter(storage, options);
   }
   throw new StorageError(
     'SYNC_CONFIG_MISSING',
-    `${SYNC_ERROR_CATALOG.SYNC_CONFIG_MISSING.description} (unsupported storage type: ${config.storage.type})`,
+    `${SYNC_ERROR_CATALOG.SYNC_CONFIG_MISSING.description} (unsupported storage type: ${storage.type})`,
     false,
   );
 }
@@ -473,7 +485,7 @@ export function buildUploader(context: {
       }, context.timeoutMs);
       // If the put wins the race, the timeout promise is abandoned; the timer
       // should not keep the process alive.
-      putPromise.finally(() => clearTimeout(timer)).catch(() => {});
+      putPromise.finally(() => clearTimeout(timer)).catch(() => { });
     });
     await Promise.race([putPromise, timeoutPromise]);
   };
@@ -644,7 +656,7 @@ export async function putArtifactWithTimeout(
         new StorageError('SYNC_NETWORK_TIMEOUT', `Upload timed out after ${timeoutMs}ms`, true),
       );
     }, timeoutMs);
-    putPromise.finally(() => clearTimeout(timer)).catch(() => {});
+    putPromise.finally(() => clearTimeout(timer)).catch(() => { });
   });
   await Promise.race([putPromise, timeoutPromise]);
 }

@@ -197,13 +197,37 @@ From the project directory, the CLI:
 
 #### `list`
 
-List all sessions uploaded for the current project in S3.
+List objects in the configured storage. Supports five forms:
 
 ```bash
+# List all projects in storage
 claude-sync list
+
+# List sessions for the current project (requires SAL_PROJECT_ID)
+claude-sync list --current
+
+# List sessions for a specific project
+claude-sync list <project-id>
+
+# List files in a session
+claude-sync list <project-id> --session=<session-id>
+
+# List files under a session sub-path
+claude-sync list <project-id> --session=<session-id> --path=<path>
 ```
 
-Outputs a human-readable table:
+`--path` is relative to the session folder. For example, `--path=session` lists all files under the `session/` scope, and `--path=session/configs` lists files under that sub-path.
+
+Examples:
+
+```
+PROJECT ID        SESSIONS  FILES  SIZE       LAST MODIFIED
+-------------------------------------------------------------------------
+session-analyzer  12        410    84.3 MB    2026-08-18 19:36
+my-other-project  3         18     2.1 MB     2026-08-17 10:11
+
+2 project(s), 410 files, 86.4 MB total
+```
 
 ```
 SESSION ID                              FILES  SIZE        LAST MODIFIED
@@ -212,6 +236,16 @@ d1acf718-cd8d-4c1d-84fd-b074d231995b    43     21.1 MB     2026-08-18 19:36
 test-summary-001                        8      119.6 KB    2026-08-18 19:35
 
 2 session(s), 51 files, 21.2 MB total
+```
+
+```
+KEY                                     SIZE       LAST MODIFIED
+-------------------------------------------------------------------------
+manifest.json                           2.4 KB     2026-08-18 19:36
+session/transcript.jsonl                1.1 MB     2026-08-18 19:36
+workspace/package.json                  3.2 KB     2026-08-18 19:35
+
+3 file(s), 1.1 MB total
 ```
 
 #### `download`

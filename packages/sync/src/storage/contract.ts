@@ -77,12 +77,13 @@ export interface HeadObjectResult {
 }
 
 /**
- * Input for a storage LIST operation. When `sessionId` is omitted, all objects
- * under `<projectId>/` are listed; when provided, only objects under
- * `<projectId>/<sessionId>/`.
+ * Input for a storage LIST operation. When `projectId` is omitted, all objects
+ * in the bucket are listed; when `projectId` is provided but `sessionId` is
+ * omitted, all objects under `<projectId>/` are listed; when `sessionId` is
+ * provided, only objects under `<projectId>/<sessionId>/`.
  */
 export interface ListObjectsInput {
-  projectId: string;
+  projectId?: string;
   sessionId?: string;
 }
 

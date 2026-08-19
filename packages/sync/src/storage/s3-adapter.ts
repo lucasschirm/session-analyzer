@@ -128,10 +128,10 @@ export class S3StorageAdapter implements StorageAdapter {
     const credentials =
       config.accessKeyId && config.secretAccessKey
         ? {
-            accessKeyId: config.accessKeyId,
-            secretAccessKey: config.secretAccessKey,
-            ...(config.sessionToken ? { sessionToken: config.sessionToken } : {}),
-          }
+          accessKeyId: config.accessKeyId,
+          secretAccessKey: config.secretAccessKey,
+          ...(config.sessionToken ? { sessionToken: config.sessionToken } : {}),
+        }
         : undefined;
 
     this.client = new S3Client({
@@ -241,9 +241,11 @@ export class S3StorageAdapter implements StorageAdapter {
   }
 
   async listObjects(input: ListObjectsInput): Promise<ListObjectsResult> {
-    const prefix = input.sessionId
-      ? `${encodeKeySegment(input.projectId)}/${encodeKeySegment(input.sessionId)}/`
-      : `${encodeKeySegment(input.projectId)}/`;
+    const prefix = input.projectId
+      ? input.sessionId
+        ? `${encodeKeySegment(input.projectId)}/${encodeKeySegment(input.sessionId)}/`
+        : `${encodeKeySegment(input.projectId)}/`
+      : '';
 
     const entries: ListObjectEntry[] = [];
     let continuationToken: string | undefined;

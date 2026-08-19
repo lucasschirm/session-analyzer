@@ -4,6 +4,7 @@ import {
   DEFAULT_SYNC_RETRIES,
   DEFAULT_SYNC_TIMEOUTS,
   loadConfig,
+  loadStorageConfig,
 } from '../../src/index.js';
 
 describe('loadConfig', () => {
@@ -190,5 +191,56 @@ describe('loadConfig', () => {
     expect(result.config.projectId).toBe('process-proj');
 
     vi.unstubAllEnvs();
+  });
+});
+
+describe('loadStorageConfig', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const storageEnv: Record<string, string | undefined> = {
+    SAL_STORAGE_TYPE: 's3',
+    SAL_STORAGE_BUCKET: 'my-bucket',
+    SAL_STORAGE_REGION: 'us-east-1',
+    SAL_STORAGE_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
+    SAL_STORAGE_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+  };
+
+  it('succeeds without SAL_PROJECT_ID', () => {
+    const result = loadStorageConfig(storageEnv);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+    expect(result.config.storage.type).toBe('s3');
+    expect(result.config.storage.bucket).toBe('my-bucket');
+    expect(result.config.retries).toBe(DEFAULT_SYNC_RETRIES);
+  });
+
+  it('rejects missing SAL_STORAGE_TYPE', () => {
+    const result = loadStorageConfig({ ...storageEnv, SAL_STORAGE_TYPE: undefined });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error.code).toBe('SYNC_CONFIG_MISSING');
+  });
+
+  it('rejects unknown SAL_STORAGE_TYPE', () => {
+    const result = loadStorageConfig({ ...storageEnv, SAL_STORAGE_TYPE: 'ftp' });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error.code).toBe('SYNC_CONFIG_MISSING');
+  });
+
+  it('rejects invalid retry count', () => {
+    const result = loadStorageConfig({ ...storageEnv, SAL_SYNC_RETRIES: '-3' });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error.code).toBe('SYNC_CONFIG_MISSING');
+  });
+
+  it('ignores SAL_SYNC_DISABLED', () => {
+    const result = loadStorageConfig({ ...storageEnv, SAL_SYNC_DISABLED: 'true' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+    expect(result.config.storage.type).toBe('s3');
   });
 });

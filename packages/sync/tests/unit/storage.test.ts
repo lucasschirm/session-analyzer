@@ -687,21 +687,21 @@ describe('parseObjectKey', () => {
       scope: StorageObjectScope;
       relativePath: string;
     }> = [
-      { projectId: 'p', sessionId: 's', scope: 'manifest', relativePath: 'manifest.json' },
-      { projectId: 'p', sessionId: 's', scope: 'session', relativePath: 'transcript.jsonl' },
-      {
-        projectId: 'p',
-        sessionId: 's',
-        scope: 'workspace',
-        relativePath: '.claude/settings.json',
-      },
-      {
-        projectId: 'my project',
-        sessionId: 'sess:1',
-        scope: 'global',
-        relativePath: '~/.claude/agents/reviewer.md',
-      },
-    ];
+        { projectId: 'p', sessionId: 's', scope: 'manifest', relativePath: 'manifest.json' },
+        { projectId: 'p', sessionId: 's', scope: 'session', relativePath: 'transcript.jsonl' },
+        {
+          projectId: 'p',
+          sessionId: 's',
+          scope: 'workspace',
+          relativePath: '.claude/settings.json',
+        },
+        {
+          projectId: 'my project',
+          sessionId: 'sess:1',
+          scope: 'global',
+          relativePath: '~/.claude/agents/reviewer.md',
+        },
+      ];
     for (const input of inputs) {
       const key = buildObjectKey(input);
       const parsed = parseObjectKey(key);
@@ -862,5 +862,23 @@ describe('S3StorageAdapter getObject/headObject/listObjects', () => {
     const adapter = new S3StorageAdapter(baseConfig, { retries: 0 });
     const result = await adapter.listObjects?.({ projectId: 'my project' });
     expect(result?.objects[0]?.key).toBe('my project/sess-a/session/file.json');
+  });
+
+  it('listObjects lists all objects when projectId is omitted', async () => {
+    sendSpy.mockResolvedValueOnce({
+      Contents: [
+        { Key: 'proj-1/sess-a/manifest.json', Size: 100 },
+        { Key: 'proj-2/sess-b/session/transcript.jsonl', Size: 200 },
+      ],
+      IsTruncated: false,
+    } as never);
+
+    const adapter = new S3StorageAdapter(baseConfig, { retries: 0 });
+    const result = await adapter.listObjects?.({});
+
+    expect(result?.objects).toHaveLength(2);
+
+    const command = sendSpy.mock.calls[0][0] as ListObjectsV2Command;
+    expect(command.input.Prefix).toBe('');
   });
 });
