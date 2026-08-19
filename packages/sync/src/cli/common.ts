@@ -20,6 +20,7 @@ import {
   hashCandidate,
   processDelta,
   selectSanitizer,
+  uploadWithHeadSkip,
 } from '../hashing/index.js';
 import { ManifestGenerator, type SyncManifest } from '../manifest/index.js';
 import { DEFAULT_SANITIZATION_POLICY, sanitizeJson } from '../sanitization/index.js';
@@ -539,6 +540,7 @@ export async function runFullSync(options: RunFullSyncOptions): Promise<RunFullS
       trigger: options.trigger,
       candidates,
       uploader,
+      storageAdapter: options.storageAdapter,
       session: options.session,
       pluginVersion: options.pluginVersion ?? DEFAULT_PLUGIN_VERSION,
       transcriptsCaptured: options.config.captureTranscripts,
@@ -725,17 +727,20 @@ export async function runSessionEndUploadLoop(options: {
       continue;
     }
 
+    const isCold = record === undefined || record.lastUploadedHash === undefined;
     recordArtifactUploading(state, artifact);
     const remaining = Math.max(0, deadline - Date.now());
     const timeoutMs = Math.min(config.timeouts.syncTimeoutMs, remaining);
     const uploadStart = Date.now();
     try {
-      await putArtifactWithTimeout(
+      await uploadWithHeadSkip({
         storageAdapter,
         artifact,
-        resultItem.candidate.content,
-        timeoutMs,
-      );
+        content: resultItem.candidate.content,
+        uploader: (a: ArtifactIdentity, c: string) =>
+          putArtifactWithTimeout(storageAdapter, a, c, timeoutMs),
+        isCold,
+      });
       recordArtifactUploaded(state, artifact);
       run.filesUploaded += 1;
       run.bytesUploaded += resultItem.size;

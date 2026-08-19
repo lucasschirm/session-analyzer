@@ -18,6 +18,7 @@ import {
   recordArtifactUploading,
   type SyncState,
 } from '../state/index.js';
+import type { StorageAdapter } from '../storage/contract.js';
 import type { SyncRun, SyncTrigger } from '../sync-run.js';
 import { DEFAULT_PLUGIN_VERSION, MANIFEST_SCHEMA_VERSION, SYNC_VERSION } from '../versions.js';
 import { type ArtifactSanitizer, selectSanitizer } from './sanitize.js';
@@ -42,6 +43,29 @@ export interface HashResult {
 
 export type ArtifactUploader = (artifact: ArtifactIdentity, content: string) => Promise<void>;
 
+export interface UploadWithHeadSkipOptions {
+  storageAdapter: StorageAdapter | undefined;
+  artifact: ArtifactIdentity;
+  content: string;
+  uploader: ArtifactUploader;
+  isCold: boolean;
+}
+
+export async function uploadWithHeadSkip(options: UploadWithHeadSkipOptions): Promise<void> {
+  const isCas = options.artifact.scope === 'workspace' || options.artifact.scope === 'global';
+  if (options.isCold && isCas && options.storageAdapter?.headObject) {
+    const head = await options.storageAdapter.headObject({
+      projectId: options.artifact.projectId,
+      sessionId: options.artifact.sessionId,
+      scope: options.artifact.scope,
+      relativePath: options.artifact.relativePath,
+      contentSha256: options.artifact.sha256,
+    });
+    if (head) return;
+  }
+  await options.uploader(options.artifact, options.content);
+}
+
 export type TriggerScope = 'bulk' | 'watcher-delta' | 'hash-filtered' | 'session-end-final';
 
 export function getTriggerScope(trigger: SyncTrigger): TriggerScope {
@@ -62,6 +86,7 @@ export interface ProcessDeltaOptions {
   trigger: SyncTrigger;
   candidates: ArtifactCandidate[];
   uploader: ArtifactUploader;
+  storageAdapter?: StorageAdapter;
   targetRelativePath?: string;
   session?: SessionData;
   pluginVersion?: string;
@@ -178,6 +203,7 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
     trigger,
     candidates,
     uploader,
+    storageAdapter,
     targetRelativePath,
     session,
     pluginVersion,
@@ -237,10 +263,18 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
   }
 
   for (const item of changed) {
+    const record = getArtifactRecord(state, item.artifact);
+    const isCold = record === undefined || record.lastUploadedHash === undefined;
     recordArtifactUploading(state, item.artifact);
     const uploadStart = Date.now();
     try {
-      await uploader(item.artifact, item.sanitized);
+      await uploadWithHeadSkip({
+        storageAdapter,
+        artifact: item.artifact,
+        content: item.sanitized,
+        uploader,
+        isCold,
+      });
       recordArtifactUploaded(state, item.artifact);
       result.uploadDurationMs += Date.now() - uploadStart;
       result.filesUploaded += 1;
