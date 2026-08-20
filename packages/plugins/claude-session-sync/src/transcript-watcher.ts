@@ -1,6 +1,6 @@
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 import { type CliOptions, watch, watchTranscripts } from '@lucasschirm/sal-sync';
+import { isMainModule } from './is-main-module.js';
 
 export async function runTranscriptWatcher(options: CliOptions = {}): Promise<number> {
   const result = await watch({
@@ -18,7 +18,7 @@ async function main(): Promise<number> {
   }
 }
 
-if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   main().then(
     (code) => process.exit(code),
     () => process.exit(1),

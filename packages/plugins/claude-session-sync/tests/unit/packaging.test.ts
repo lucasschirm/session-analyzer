@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -147,5 +147,22 @@ describe('plugin packaging', () => {
       encoding: 'utf8',
     });
     expect(output).toContain('claude-sync');
+  });
+
+  it('runs correctly when invoked through a symlink, as npm install -g does', () => {
+    const tempRoot = mkdtempSync(resolve(packageRoot, 'tests', 'symlink-'));
+    const linkPath = resolve(tempRoot, 'claude-sync');
+    symlinkSync(resolve(binDir, 'claude-sync'), linkPath);
+
+    try {
+      const output = execFileSync(process.execPath, [linkPath, '--help'], {
+        timeout: 5000,
+        encoding: 'utf8',
+      });
+      expect(output).toContain('claude-sync');
+      expect(output).toContain('SAL_PROJECT_ID');
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });

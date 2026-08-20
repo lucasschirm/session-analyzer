@@ -214,6 +214,102 @@ describe('resolveCliEnv', () => {
     expect(env.SAL_NUMBER).toBeUndefined();
     expect(env.SAL_OBJECT).toBeUndefined();
   });
+
+  it('fills in missing vars from settings.json when settings.local.json is absent', async () => {
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.json'),
+      JSON.stringify({
+        env: {
+          SAL_STORAGE_TYPE: 's3',
+          SAL_STORAGE_REGION: 'us-east-1',
+        },
+      }),
+    );
+
+    const env = await resolveCliEnv(tmpCwd, {});
+    expect(env.SAL_STORAGE_TYPE).toBe('s3');
+    expect(env.SAL_STORAGE_REGION).toBe('us-east-1');
+  });
+
+  it('settings.local.json takes precedence over settings.json for the same key', async () => {
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.local.json'),
+      JSON.stringify({ env: { SAL_PROJECT_ID: 'from-local' } }),
+    );
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.json'),
+      JSON.stringify({ env: { SAL_PROJECT_ID: 'from-shared' } }),
+    );
+
+    const env = await resolveCliEnv(tmpCwd, {});
+    expect(env.SAL_PROJECT_ID).toBe('from-local');
+  });
+
+  it('merges vars across process env, settings.local.json, and settings.json', async () => {
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.local.json'),
+      JSON.stringify({ env: { SAL_STORAGE_ACCESS_KEY_ID: 'from-local' } }),
+    );
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.json'),
+      JSON.stringify({
+        env: {
+          SAL_STORAGE_TYPE: 's3',
+          SAL_STORAGE_ACCESS_KEY_ID: 'ignored-because-local-wins',
+        },
+      }),
+    );
+
+    const env = await resolveCliEnv(tmpCwd, { SAL_PROJECT_ID: 'from-process' });
+    expect(env.SAL_PROJECT_ID).toBe('from-process');
+    expect(env.SAL_STORAGE_ACCESS_KEY_ID).toBe('from-local');
+    expect(env.SAL_STORAGE_TYPE).toBe('s3');
+  });
+
+  it('handles a malformed settings.json gracefully', async () => {
+    await fsp.writeFile(path.join(tmpCwd, '.claude', 'settings.json'), 'not valid json');
+
+    const env = await resolveCliEnv(tmpCwd, { FOO: 'bar' });
+    expect(env.FOO).toBe('bar');
+  });
+
+  it('never reads credentials or the storage endpoint from settings.json', async () => {
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.json'),
+      JSON.stringify({
+        env: {
+          SAL_STORAGE_ENDPOINT: 'https://attacker.example.com',
+          SAL_STORAGE_ACCESS_KEY_ID: 'attacker-key',
+          SAL_STORAGE_SECRET_ACCESS_KEY: 'attacker-secret',
+          SAL_STORAGE_BUCKET: 'shared-bucket',
+        },
+      }),
+    );
+
+    const env = await resolveCliEnv(tmpCwd, {});
+    expect(env.SAL_STORAGE_ENDPOINT).toBeUndefined();
+    expect(env.SAL_STORAGE_ACCESS_KEY_ID).toBeUndefined();
+    expect(env.SAL_STORAGE_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(env.SAL_STORAGE_BUCKET).toBe('shared-bucket');
+  });
+
+  it('still allows credentials and endpoint from settings.local.json', async () => {
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.local.json'),
+      JSON.stringify({
+        env: {
+          SAL_STORAGE_ENDPOINT: 'https://my-real-endpoint.example.com',
+          SAL_STORAGE_ACCESS_KEY_ID: 'my-key',
+          SAL_STORAGE_SECRET_ACCESS_KEY: 'my-secret',
+        },
+      }),
+    );
+
+    const env = await resolveCliEnv(tmpCwd, {});
+    expect(env.SAL_STORAGE_ENDPOINT).toBe('https://my-real-endpoint.example.com');
+    expect(env.SAL_STORAGE_ACCESS_KEY_ID).toBe('my-key');
+    expect(env.SAL_STORAGE_SECRET_ACCESS_KEY).toBe('my-secret');
+  });
 });
 
 describe('validateCliConfig', () => {
