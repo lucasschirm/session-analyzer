@@ -214,6 +214,64 @@ describe('resolveCliEnv', () => {
     expect(env.SAL_NUMBER).toBeUndefined();
     expect(env.SAL_OBJECT).toBeUndefined();
   });
+
+  it('fills in missing vars from settings.json when settings.local.json is absent', async () => {
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.json'),
+      JSON.stringify({
+        env: {
+          SAL_STORAGE_TYPE: 's3',
+          SAL_STORAGE_REGION: 'us-east-1',
+        },
+      }),
+    );
+
+    const env = await resolveCliEnv(tmpCwd, {});
+    expect(env.SAL_STORAGE_TYPE).toBe('s3');
+    expect(env.SAL_STORAGE_REGION).toBe('us-east-1');
+  });
+
+  it('settings.local.json takes precedence over settings.json for the same key', async () => {
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.local.json'),
+      JSON.stringify({ env: { SAL_PROJECT_ID: 'from-local' } }),
+    );
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.json'),
+      JSON.stringify({ env: { SAL_PROJECT_ID: 'from-shared' } }),
+    );
+
+    const env = await resolveCliEnv(tmpCwd, {});
+    expect(env.SAL_PROJECT_ID).toBe('from-local');
+  });
+
+  it('merges vars across process env, settings.local.json, and settings.json', async () => {
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.local.json'),
+      JSON.stringify({ env: { SAL_STORAGE_ACCESS_KEY_ID: 'from-local' } }),
+    );
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.json'),
+      JSON.stringify({
+        env: {
+          SAL_STORAGE_TYPE: 's3',
+          SAL_STORAGE_ACCESS_KEY_ID: 'ignored-because-local-wins',
+        },
+      }),
+    );
+
+    const env = await resolveCliEnv(tmpCwd, { SAL_PROJECT_ID: 'from-process' });
+    expect(env.SAL_PROJECT_ID).toBe('from-process');
+    expect(env.SAL_STORAGE_ACCESS_KEY_ID).toBe('from-local');
+    expect(env.SAL_STORAGE_TYPE).toBe('s3');
+  });
+
+  it('handles a malformed settings.json gracefully', async () => {
+    await fsp.writeFile(path.join(tmpCwd, '.claude', 'settings.json'), 'not valid json');
+
+    const env = await resolveCliEnv(tmpCwd, { FOO: 'bar' });
+    expect(env.FOO).toBe('bar');
+  });
 });
 
 describe('validateCliConfig', () => {

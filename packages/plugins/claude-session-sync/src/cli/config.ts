@@ -68,7 +68,7 @@ export interface ValidateConfigResult {
  * Validate the merged environment and produce a `SyncConfig` or a human-readable
  * error message with examples for each missing variable.
  *
- * @param env - the merged environment (process.env + settings.local.json)
+ * @param env - the merged environment (process.env + settings.local.json + settings.json)
  * @param cwd - the project working directory, used to suggest a default project id
  */
 export function validateCliConfig(
@@ -187,7 +187,7 @@ function buildMissingStorageError(missing: MissingVar[]): string {
  * Validate the merged environment for storage-only commands (e.g. `list` against
  * a specific project or session). Does not require `SAL_PROJECT_ID`.
  *
- * @param env - the merged environment (process.env + settings.local.json)
+ * @param env - the merged environment (process.env + settings.local.json + settings.json)
  */
 export function validateStorageConfig(
   env: Record<string, string | undefined>,
