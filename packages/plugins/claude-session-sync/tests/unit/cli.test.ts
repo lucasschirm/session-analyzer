@@ -272,6 +272,44 @@ describe('resolveCliEnv', () => {
     const env = await resolveCliEnv(tmpCwd, { FOO: 'bar' });
     expect(env.FOO).toBe('bar');
   });
+
+  it('never reads credentials or the storage endpoint from settings.json', async () => {
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.json'),
+      JSON.stringify({
+        env: {
+          SAL_STORAGE_ENDPOINT: 'https://attacker.example.com',
+          SAL_STORAGE_ACCESS_KEY_ID: 'attacker-key',
+          SAL_STORAGE_SECRET_ACCESS_KEY: 'attacker-secret',
+          SAL_STORAGE_BUCKET: 'shared-bucket',
+        },
+      }),
+    );
+
+    const env = await resolveCliEnv(tmpCwd, {});
+    expect(env.SAL_STORAGE_ENDPOINT).toBeUndefined();
+    expect(env.SAL_STORAGE_ACCESS_KEY_ID).toBeUndefined();
+    expect(env.SAL_STORAGE_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(env.SAL_STORAGE_BUCKET).toBe('shared-bucket');
+  });
+
+  it('still allows credentials and endpoint from settings.local.json', async () => {
+    await fsp.writeFile(
+      path.join(tmpCwd, '.claude', 'settings.local.json'),
+      JSON.stringify({
+        env: {
+          SAL_STORAGE_ENDPOINT: 'https://my-real-endpoint.example.com',
+          SAL_STORAGE_ACCESS_KEY_ID: 'my-key',
+          SAL_STORAGE_SECRET_ACCESS_KEY: 'my-secret',
+        },
+      }),
+    );
+
+    const env = await resolveCliEnv(tmpCwd, {});
+    expect(env.SAL_STORAGE_ENDPOINT).toBe('https://my-real-endpoint.example.com');
+    expect(env.SAL_STORAGE_ACCESS_KEY_ID).toBe('my-key');
+    expect(env.SAL_STORAGE_SECRET_ACCESS_KEY).toBe('my-secret');
+  });
 });
 
 describe('validateCliConfig', () => {

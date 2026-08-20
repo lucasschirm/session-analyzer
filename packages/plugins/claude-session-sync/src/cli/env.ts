@@ -3,6 +3,21 @@ import path from 'node:path';
 
 const SETTINGS_FILENAMES = ['settings.local.json', 'settings.json'];
 
+/**
+ * `.claude/settings.json` is typically committed to git, unlike
+ * `settings.local.json`. Credentials and the storage endpoint must never be
+ * sourced from a file anyone with commit/PR access can edit — a malicious
+ * SAL_STORAGE_ENDPOINT there could silently redirect session uploads (and
+ * the requester's real credentials) to an attacker-controlled server. These
+ * keys are only ever honored from process.env or settings.local.json.
+ */
+const SHARED_SETTINGS_BLOCKLIST = new Set([
+  'SAL_STORAGE_ENDPOINT',
+  'SAL_STORAGE_ACCESS_KEY_ID',
+  'SAL_STORAGE_SECRET_ACCESS_KEY',
+]);
+const EMPTY_BLOCKLIST: ReadonlySet<string> = new Set();
+
 async function readSettingsEnv(settingsPath: string): Promise<Record<string, unknown> | undefined> {
   try {
     const raw = await fsp.readFile(settingsPath, 'utf8');
@@ -24,10 +39,12 @@ async function readSettingsEnv(settingsPath: string): Promise<Record<string, unk
 function fillMissing(
   merged: Record<string, string | undefined>,
   settingsEnv: Record<string, unknown> | undefined,
+  blocklist: ReadonlySet<string>,
 ): void {
   if (!settingsEnv) return;
   for (const [key, value] of Object.entries(settingsEnv)) {
     if (typeof value !== 'string') continue;
+    if (blocklist.has(key)) continue;
     if (merged[key] === undefined || merged[key] === '') {
       merged[key] = value;
     }
@@ -41,6 +58,9 @@ function fillMissing(
  * missing, the CLI looks for `${cwd}/.claude/settings.local.json` and merges
  * in its `env` key; any variable still missing after that is filled in from
  * `${cwd}/.claude/settings.json` (project-wide settings shared by the team).
+ * Credentials and the storage endpoint are never read from settings.json,
+ * since that file is typically committed to git — see
+ * {@link SHARED_SETTINGS_BLOCKLIST}.
  *
  * @param cwd - the project working directory (defaults to `process.cwd()`)
  * @param processEnv - the raw process environment (defaults to `process.env`)
@@ -54,7 +74,8 @@ export async function resolveCliEnv(
 
   for (const filename of SETTINGS_FILENAMES) {
     const settingsEnv = await readSettingsEnv(path.join(cwd, '.claude', filename));
-    fillMissing(merged, settingsEnv);
+    const blocklist = filename === 'settings.json' ? SHARED_SETTINGS_BLOCKLIST : EMPTY_BLOCKLIST;
+    fillMissing(merged, settingsEnv, blocklist);
   }
 
   return merged;
