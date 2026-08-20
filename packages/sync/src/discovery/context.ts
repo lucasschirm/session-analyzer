@@ -41,6 +41,7 @@ export class DiscoveryContext {
     scope: ArtifactScope,
     projectId: string,
     sessionId: string,
+    storageRelativePath?: string,
   ): Promise<AddFileResult> {
     if (this.stopped) {
       return 'stopped';
@@ -61,7 +62,8 @@ export class DiscoveryContext {
     }
 
     const size = validated.stat.size;
-    const relativePath = validated.relativePath ?? path.relative(root, resolvedPath);
+    const relativePath =
+      storageRelativePath ?? validated.relativePath ?? path.relative(root, resolvedPath);
     const maxFileBytes =
       scope === 'session' ? this.limits.maxTranscriptBytes : this.limits.maxFileBytes;
 

@@ -14,9 +14,6 @@ export interface CaptureAllowlist {
   global: AllowlistEntry[];
 }
 
-export const SESSION_TRANSCRIPTS_PATTERN = '*.jsonl';
-export const SESSION_SUBAGENT_TRANSCRIPTS_PATTERN = 'subagents/*.jsonl';
-
 export const WORKSPACE_ALLOWLIST_PATTERNS: readonly string[] = [
   'CLAUDE.md',
   '.mcp.json',
@@ -36,10 +33,9 @@ export const GLOBAL_ALLOWLIST_PATTERNS: readonly string[] = [
 
 export const CAPTURE_ALLOWLIST: CaptureAllowlist = {
   version: CAPTURE_ALLOWLIST_VERSION,
-  session: [
-    { scope: 'session', pattern: SESSION_TRANSCRIPTS_PATTERN },
-    { scope: 'session', pattern: SESSION_SUBAGENT_TRANSCRIPTS_PATTERN },
-  ],
+  // Session discovery is handled directly by discoverSession() using the exact
+  // transcriptPath and the session's per-session supplementary directory.
+  session: [],
   workspace: WORKSPACE_ALLOWLIST_PATTERNS.map((pattern) => ({ scope: 'workspace', pattern })),
   global: GLOBAL_ALLOWLIST_PATTERNS.map((pattern) => ({ scope: 'global', pattern })),
 };

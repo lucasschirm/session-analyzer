@@ -34,7 +34,6 @@ import {
   type SyncRun,
   TELEMETRY_INCLUDES_RAW_EXCEPTIONS,
   UNKNOWN_HARNESS_VERSION,
-  WATCHER_ALLOWED_PATTERNS,
   WATCHER_MATCHER_VERSION,
 } from '../../src/index.js';
 
@@ -45,10 +44,10 @@ function typeCheck<T>(_value: T) {
 describe('versions', () => {
   it('exposes schema and package version constants', () => {
     expect(SYNC_SCHEMA_VERSION).toBe(1);
-    expect(MANIFEST_SCHEMA_VERSION).toBe(1);
-    expect(CAPTURE_ALLOWLIST_VERSION).toBe(1);
+    expect(MANIFEST_SCHEMA_VERSION).toBe(2);
+    expect(CAPTURE_ALLOWLIST_VERSION).toBe(2);
     expect(SANITIZATION_POLICY_VERSION).toBe(1);
-    expect(WATCHER_MATCHER_VERSION).toBe(1);
+    expect(WATCHER_MATCHER_VERSION).toBe(2);
     expect(SYNC_VERSION).toBe('0.1.0');
     expect(UNKNOWN_HARNESS_VERSION).toBe('unknown');
     expect(DEFAULT_PLUGIN_VERSION).toBe('unknown');
@@ -184,7 +183,7 @@ describe('capture allowlist', () => {
     expect(CAPTURE_ALLOWLIST.version).toBe(CAPTURE_ALLOWLIST_VERSION);
 
     const sessionPatterns = CAPTURE_ALLOWLIST.session.map((entry) => entry.pattern);
-    expect(sessionPatterns).toEqual(['*.jsonl', 'subagents/*.jsonl']);
+    expect(sessionPatterns).toEqual([]);
 
     const workspacePatterns = CAPTURE_ALLOWLIST.workspace.map((entry) => entry.pattern);
     expect(workspacePatterns).toEqual([
@@ -274,9 +273,10 @@ describe('stable error codes', () => {
 });
 
 describe('watcher matcher schema', () => {
-  it('only permits transcript JSONL patterns beneath the base directory', () => {
-    expect(WATCHER_ALLOWED_PATTERNS).toEqual(['*.jsonl', 'subagents/*.jsonl']);
-    expect(DEFAULT_WATCHER_MATCHER.allowedRelativePatterns).toEqual(WATCHER_ALLOWED_PATTERNS);
+  it('requires a session id to build a matcher', () => {
+    expect(DEFAULT_WATCHER_MATCHER.allowedRelativePatterns).toEqual([]);
+    // Matcher patterns are session-scoped and constructed at runtime by
+    // createWatcherMatcher(baseDirectory, sessionId).
   });
 });
 

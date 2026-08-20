@@ -4,7 +4,7 @@ import { CAPTURE_ALLOWLIST } from '../allowlist.js';
 import type { ArtifactScope } from '../artifact.js';
 import { DEFAULT_SYNC_LIMITS, type SyncLimits } from '../limits.js';
 import { DiscoveryContext } from './context.js';
-import type { DiscoveryInput, DiscoveryResult } from './contract.js';
+import type { DiscoveryInput, DiscoveryResult, SessionDiscoveryInput } from './contract.js';
 import { discoverFromPattern, type ExpandedPattern, expandAllowlist } from './glob.js';
 import { getHomeDir, resolveClaudeConfigDir } from './paths.js';
 
@@ -25,6 +25,75 @@ export async function runScopeDiscovery(
 
 export function makeDiscoveryContext(limits?: SyncLimits): DiscoveryContext {
   return new DiscoveryContext(limits ?? DEFAULT_SYNC_LIMITS);
+}
+
+const SUBAGENT_TRANSCRIPTS_PATTERN = 'subagents/*.jsonl';
+const SUBAGENT_META_PATTERN = 'subagents/*.meta.json';
+
+/**
+ * Storage-relative name for the main transcript file within the `session` scope.
+ *
+ * The on-disk filename is `<sessionId>.jsonl`, but the S3 key already includes
+ * the sessionId at `<projectId>/<sessionId>/session/...`, so we use a fixed
+ * name to avoid repeating the sessionId in the key.
+ */
+export const MAIN_TRANSCRIPT_STORAGE_NAME = 'transcript.jsonl';
+
+export async function runSessionDiscovery(
+  context: DiscoveryContext,
+  input: SessionDiscoveryInput,
+): Promise<void> {
+  if (input.captureTranscripts === false || !input.transcriptPath) {
+    return;
+  }
+
+  const resolvedTranscriptPath = path.resolve(input.transcriptPath);
+  const transcriptDir = path.dirname(resolvedTranscriptPath);
+
+  // Capture the exact main transcript file; never glob *.jsonl from the project dir.
+  // Use a fixed storage name so the sessionId is not repeated in the S3 key.
+  await context.addFile(
+    resolvedTranscriptPath,
+    transcriptDir,
+    'session',
+    input.projectId,
+    input.sessionId,
+    MAIN_TRANSCRIPT_STORAGE_NAME,
+  );
+
+  if (context.stopped) {
+    return;
+  }
+
+  // Per-session supplementary directory: <transcriptDir>/<sessionId>/
+  // Use the per-session directory as the root so relativePaths don't include
+  // the sessionId prefix (e.g. "subagents/agent-xxx.jsonl" instead of
+  // "<sessionId>/subagents/agent-xxx.jsonl").
+  const sessionDir = path.join(transcriptDir, input.sessionId);
+
+  await discoverFromPattern(
+    context,
+    {
+      root: sessionDir,
+      relativePattern: SUBAGENT_TRANSCRIPTS_PATTERN,
+      original: SUBAGENT_TRANSCRIPTS_PATTERN,
+    },
+    'session',
+    input.projectId,
+    input.sessionId,
+  );
+
+  if (context.stopped) {
+    return;
+  }
+
+  await discoverFromPattern(
+    context,
+    { root: sessionDir, relativePattern: SUBAGENT_META_PATTERN, original: SUBAGENT_META_PATTERN },
+    'session',
+    input.projectId,
+    input.sessionId,
+  );
 }
 
 export async function discover(input: DiscoveryInput): Promise<DiscoveryResult> {
@@ -52,9 +121,7 @@ export async function discover(input: DiscoveryInput): Promise<DiscoveryResult> 
   }
 
   if (!context.stopped && input.transcriptPath && input.captureTranscripts !== false) {
-    const transcriptDir = path.dirname(path.resolve(input.transcriptPath));
-    const sessionPatterns = expandAllowlist(CAPTURE_ALLOWLIST.session, '', '', transcriptDir);
-    await runScopeDiscovery(context, 'session', sessionPatterns, input.projectId, input.sessionId);
+    await runSessionDiscovery(context, input);
   }
 
   return context.toResult();

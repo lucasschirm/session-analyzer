@@ -367,9 +367,9 @@ describe('discoverSession', () => {
     fs.rmSync(transcriptDir, { recursive: true, force: true });
   });
 
-  it('discovers the main transcript and subagent transcripts', async () => {
-    const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
-    const subagentDir = path.join(transcriptDir, 'subagents');
+  it('discovers the exact main transcript and per-session subagent transcripts', async () => {
+    const transcriptPath = path.join(transcriptDir, 'sess-1.jsonl');
+    const subagentDir = path.join(transcriptDir, 'sess-1', 'subagents');
     await writeFile(transcriptPath, '{"type":"message"}\n');
     await writeFile(path.join(subagentDir, 'agent-1.jsonl'), '{"type":"message"}\n');
 
@@ -383,8 +383,62 @@ describe('discoverSession', () => {
     expect(relativePaths).toEqual(['subagents/agent-1.jsonl', 'transcript.jsonl']);
   });
 
+  it('discovers per-session subagent .meta.json sidecars', async () => {
+    const transcriptPath = path.join(transcriptDir, 'sess-1.jsonl');
+    const subagentDir = path.join(transcriptDir, 'sess-1', 'subagents');
+    await writeFile(transcriptPath, '{}\n');
+    await writeFile(path.join(subagentDir, 'agent-1.jsonl'), '{"type":"message"}\n');
+    await writeFile(path.join(subagentDir, 'agent-1.meta.json'), '{"toolUseId":"x"}\n');
+
+    const result = await discoverSession({
+      projectId: 'proj-1',
+      sessionId: 'sess-1',
+      transcriptPath,
+    });
+
+    const relativePaths = result.artifacts.map((a) => a.relativePath).sort();
+    expect(relativePaths).toEqual([
+      'subagents/agent-1.jsonl',
+      'subagents/agent-1.meta.json',
+      'transcript.jsonl',
+    ]);
+  });
+
+  it('does not capture sibling session transcripts', async () => {
+    const transcriptPath = path.join(transcriptDir, 'sess-1.jsonl');
+    await writeFile(transcriptPath, '{}\n');
+    await writeFile(path.join(transcriptDir, 'sess-2.jsonl'), '{}\n');
+
+    const result = await discoverSession({
+      projectId: 'proj-1',
+      sessionId: 'sess-1',
+      transcriptPath,
+    });
+
+    const relativePaths = result.artifacts.map((a) => a.relativePath);
+    expect(relativePaths).toEqual(['transcript.jsonl']);
+    expect(relativePaths).not.toContain('sess-2.jsonl');
+  });
+
+  it("does not capture another session's subagents", async () => {
+    const transcriptPath = path.join(transcriptDir, 'sess-1.jsonl');
+    await writeFile(transcriptPath, '{}\n');
+    await writeFile(path.join(transcriptDir, 'sess-1', 'subagents', 'agent-1.jsonl'), '{}\n');
+    await writeFile(path.join(transcriptDir, 'sess-2', 'subagents', 'agent-2.jsonl'), '{}\n');
+
+    const result = await discoverSession({
+      projectId: 'proj-1',
+      sessionId: 'sess-1',
+      transcriptPath,
+    });
+
+    const relativePaths = result.artifacts.map((a) => a.relativePath);
+    expect(relativePaths).toContain('subagents/agent-1.jsonl');
+    expect(relativePaths).not.toContain('subagents/agent-2.jsonl');
+  });
+
   it('does not confuse .claude/agents with runtime subagent transcripts', async () => {
-    const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
+    const transcriptPath = path.join(transcriptDir, 'sess-1.jsonl');
     const agentDir = path.join(transcriptDir, '.claude', 'agents');
     await writeFile(transcriptPath, '{}\n');
     await writeFile(path.join(agentDir, 'agent-def.jsonl'), '{}\n');

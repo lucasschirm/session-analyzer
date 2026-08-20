@@ -51,6 +51,15 @@ export type LoadConfigResult =
   | { ok: true; config: SyncConfig }
   | { ok: false; disabled: true; error?: SyncConfigError };
 
+export interface StorageOnlyConfig {
+  storage: StorageConfig;
+  retries: number;
+}
+
+export type LoadStorageConfigResult =
+  | { ok: true; config: StorageOnlyConfig }
+  | { ok: false; error: SyncConfigError };
+
 const KNOWN_STORAGE_TYPES: readonly string[] = ['s3'];
 
 function envValue(env: ConfigEnv, key: string): string | undefined {
@@ -235,6 +244,23 @@ function parseLimits(env: ConfigEnv): LimitsParseResult {
       maxJsonDepth: maxJsonDepth.value,
       maxJsonlLineBytes: maxJsonlLineBytes.value,
     },
+  };
+}
+
+export function loadStorageConfig(env: ConfigEnv = process.env): LoadStorageConfigResult {
+  const storageResult = parseStorageConfig(env);
+  if ('error' in storageResult) {
+    return { ok: false, error: storageResult.error };
+  }
+
+  const retriesResult = parseRetries(env);
+  if ('error' in retriesResult) {
+    return { ok: false, error: retriesResult.error };
+  }
+
+  return {
+    ok: true,
+    config: { storage: storageResult.config, retries: retriesResult.retries },
   };
 }
 

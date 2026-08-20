@@ -149,6 +149,25 @@ export function getPendingArtifacts(
   );
 }
 
+/**
+ * Remove all artifact records belonging to a given project from the state.
+ *
+ * This is used by `sync --force` to force re-upload of all files when the
+ * remote storage has been wiped but local state still marks artifacts as
+ * uploaded.
+ */
+export function clearArtifactsForProject(state: SyncState, projectId: string): number {
+  let removed = 0;
+  for (const key of Object.keys(state.artifacts)) {
+    const record = state.artifacts[key];
+    if (record && record.projectId === projectId) {
+      delete state.artifacts[key];
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
 function updateArtifactRecord(
   state: SyncState,
   artifact: ArtifactIdentity,
@@ -334,6 +353,17 @@ export class StateStore {
         err,
       );
     }
+  }
+
+  /**
+   * Clear all artifact records for a project from durable state.
+   *
+   * Used by `sync --force` to force re-upload of all files when the remote
+   * storage has been wiped but local state still marks artifacts as uploaded.
+   * Returns the number of records removed.
+   */
+  async clearArtifactsForProject(projectId: string): Promise<number> {
+    return this.withState((state) => clearArtifactsForProject(state, projectId));
   }
 
   private statePath(): string {

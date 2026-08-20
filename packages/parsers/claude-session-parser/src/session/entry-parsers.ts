@@ -507,7 +507,9 @@ function buildCompactMetadata(raw: unknown): CompactMetadata | undefined {
   return metadata;
 }
 
-function buildModelRefusalFallback(raw: Record<string, unknown>): ModelRefusalFallback | undefined {
+function _buildModelRefusalFallback(
+  raw: Record<string, unknown>,
+): ModelRefusalFallback | undefined {
   const originalModel = str(raw, 'originalModel');
   const fallbackModel = str(raw, 'fallbackModel');
   if (originalModel === undefined && fallbackModel === undefined) return undefined;

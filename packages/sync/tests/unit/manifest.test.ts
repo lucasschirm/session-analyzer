@@ -158,6 +158,26 @@ describe('buildManifest', () => {
     expect(manifest.artifacts).toHaveLength(1);
     expect(manifest.artifacts[0].scope).toBe('workspace');
     expect(manifest.artifacts[0].sha256).toBe('workspace-hash');
+    expect(manifest.mainTranscriptRelativePath).toBeUndefined();
+  });
+
+  it('marks the first session-scoped artifact as the main transcript', () => {
+    const state = createEmptySyncState();
+    const sessionArtifact = makeArtifact({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      sha256: 'session-hash',
+    });
+    const subagentArtifact = makeArtifact({
+      scope: 'session',
+      relativePath: 'subagents/agent-1.jsonl',
+      sha256: 'agent-hash',
+    });
+
+    const manifest = buildManifest(makeSession(), [sessionArtifact, subagentArtifact], state, []);
+
+    expect(manifest.mainTranscriptRelativePath).toBe('transcript.jsonl');
+    expect(manifest.artifacts).toHaveLength(2);
   });
 
   it('aggregates per-trigger sync-run metrics', () => {
