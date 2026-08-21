@@ -85,6 +85,7 @@ interface MockCalls {
   replaceSession: ReturnType<typeof vi.fn>;
   updateSessionManifest: ReturnType<typeof vi.fn>;
   setSessionSyncStatus: ReturnType<typeof vi.fn>;
+  upsertSessionFile: ReturnType<typeof vi.fn>;
 }
 
 function makeDbClient(calls: MockCalls, manifest: SyncManifest | null = null): DbClient {
@@ -94,6 +95,7 @@ function makeDbClient(calls: MockCalls, manifest: SyncManifest | null = null): D
   calls.replaceSession.mockResolvedValue(undefined);
   calls.updateSessionManifest.mockResolvedValue(undefined);
   calls.setSessionSyncStatus.mockResolvedValue(undefined);
+  calls.upsertSessionFile.mockResolvedValue(undefined);
 
   return {
     getSession: calls.getSession,
@@ -102,6 +104,7 @@ function makeDbClient(calls: MockCalls, manifest: SyncManifest | null = null): D
     replaceSession: calls.replaceSession,
     updateSessionManifest: calls.updateSessionManifest,
     setSessionSyncStatus: calls.setSessionSyncStatus,
+    upsertSessionFile: calls.upsertSessionFile,
   } as unknown as DbClient;
 }
 
@@ -111,6 +114,7 @@ describe('FileProcessingBridge', () => {
     (payload: string | ArrayBuffer, options: ParseFileOptions) => Promise<ParsedSession>
   >;
   let onFileDownloaded: (sessionId: string, file: DownloadedFile) => Promise<void>;
+  let onSyncComplete: (sessionId: string) => Promise<void>;
   let calls: MockCalls;
 
   beforeEach(() => {
@@ -121,6 +125,7 @@ describe('FileProcessingBridge', () => {
       replaceSession: vi.fn(),
       updateSessionManifest: vi.fn(),
       setSessionSyncStatus: vi.fn(),
+      upsertSessionFile: vi.fn(),
     };
     parse = vi.fn() as Mock<
       (payload: string | ArrayBuffer, options: ParseFileOptions) => Promise<ParsedSession>
@@ -129,10 +134,9 @@ describe('FileProcessingBridge', () => {
 
   function createBridge(manifest: SyncManifest | null = null) {
     dbClient = makeDbClient(calls, manifest);
-    onFileDownloaded = createFileProcessingBridge(
-      dbClient,
-      parse as unknown as typeof parseInWorker,
-    );
+    const bridge = createFileProcessingBridge(dbClient, parse as unknown as typeof parseInWorker);
+    onFileDownloaded = bridge.onFileDownloaded;
+    onSyncComplete = bridge.onSyncComplete;
   }
 
   it('parses the main transcript and upserts the session, reapplying sync columns', async () => {
@@ -392,5 +396,185 @@ describe('FileProcessingBridge', () => {
     await mainPromise;
     await jsonlPromise;
     expect(calls.replaceSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('force-completes a subagent group when an expected sidecar is unchanged and never downloaded', async () => {
+    const main = makeDashboardSession({ id: 'session-1', external_id: 'remote-sess' });
+    const subagent = makeDashboardSession({
+      id: 'sub-1',
+      project_id: 'project-1',
+      title: 'agent-1.jsonl',
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 15,
+    });
+    parse.mockImplementation(async (_, options) =>
+      options.title ? makeParsedSession(main) : makeParsedSession(subagent),
+    );
+    createBridge(
+      makeSyncManifest({
+        artifacts: [
+          makeArtifact('subagents/agent-1.jsonl'),
+          makeArtifact('subagents/agent-1.meta.json'),
+        ],
+      }),
+    );
+
+    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    await onFileDownloaded('session-1', mainFile);
+
+    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonlPromise = onFileDownloaded('session-1', jsonl);
+
+    await Promise.resolve();
+    expect(calls.replaceSession).not.toHaveBeenCalled();
+
+    await onSyncComplete('session-1');
+    await jsonlPromise;
+
+    expect(calls.replaceSession).toHaveBeenCalledTimes(1);
+    const replaced = calls.replaceSession.mock.calls[0][0] as DashboardSession;
+    expect(replaced.subagents).toHaveLength(1);
+    expect(replaced.subagents[0].agent_id).toBe('1');
+    expect(replaced.subagents[0].agent_type).toBeUndefined();
+  });
+
+  it('rejects the subagent download promise when a forced merge fails', async () => {
+    const main = makeDashboardSession({ id: 'session-1', external_id: 'remote-sess' });
+    const subagent = makeDashboardSession({
+      id: 'sub-1',
+      project_id: 'project-1',
+      title: 'agent-1.jsonl',
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 15,
+    });
+    parse.mockImplementation(async (_, options) =>
+      options.title ? makeParsedSession(main) : makeParsedSession(subagent),
+    );
+    createBridge(
+      makeSyncManifest({
+        artifacts: [
+          makeArtifact('subagents/agent-1.jsonl'),
+          makeArtifact('subagents/agent-1.meta.json'),
+        ],
+      }),
+    );
+    calls.replaceSession.mockRejectedValue(new Error('replace failed'));
+
+    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    await onFileDownloaded('session-1', mainFile);
+
+    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonlPromise = onFileDownloaded('session-1', jsonl);
+
+    await Promise.resolve();
+    expect(calls.replaceSession).not.toHaveBeenCalled();
+
+    await onSyncComplete('session-1');
+    await expect(jsonlPromise).rejects.toThrow('replace failed');
+    expect(calls.replaceSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates internal session id tracking to the id returned by upsertSessionByExternalId', async () => {
+    const main = makeDashboardSession({
+      id: 'session-1',
+      external_id: 'remote-sess',
+    });
+    const subagent = makeDashboardSession({
+      id: 'sub-1',
+      project_id: 'project-1',
+      title: 'agent-1.jsonl',
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 15,
+    });
+    parse.mockImplementation(async (_, options) =>
+      options.title ? makeParsedSession(main) : makeParsedSession(subagent),
+    );
+    createBridge(makeSyncManifest({ artifacts: [makeArtifact('subagents/agent-1.jsonl')] }));
+    calls.upsertSessionByExternalId.mockResolvedValue('new-session-id');
+    calls.getSession.mockImplementation((id: string) =>
+      makeDashboardSession({ id, external_id: 'remote-sess' }),
+    );
+
+    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    await onFileDownloaded('session-1', mainFile);
+
+    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    await onFileDownloaded('session-1', jsonl);
+
+    expect(calls.getSession).toHaveBeenCalledWith('new-session-id');
+    expect(calls.replaceSession).toHaveBeenCalledTimes(1);
+    const replaced = calls.replaceSession.mock.calls[0][0] as DashboardSession;
+    expect(replaced.id).toBe('new-session-id');
+    expect(calls.updateSessionManifest).toHaveBeenCalledWith('new-session-id', expect.anything());
+    expect(calls.setSessionSyncStatus).toHaveBeenCalledWith('new-session-id', 'processing');
+  });
+
+  it('upserts session_files records as processed for the main transcript and subagent files', async () => {
+    const main = makeDashboardSession({ id: 'session-1', external_id: 'remote-sess' });
+    const subagent = makeDashboardSession({
+      id: 'sub-1',
+      project_id: 'project-1',
+      title: 'agent-1.jsonl',
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 15,
+    });
+    parse.mockImplementation(async (_, options) =>
+      options.title ? makeParsedSession(main) : makeParsedSession(subagent),
+    );
+    createBridge(
+      makeSyncManifest({
+        artifacts: [
+          makeArtifact('subagents/agent-1.jsonl'),
+          makeArtifact('subagents/agent-1.meta.json'),
+        ],
+      }),
+    );
+
+    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    await onFileDownloaded('session-1', mainFile);
+    expect(calls.upsertSessionFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'session/transcript.jsonl',
+        scope: 'session',
+        status: 'processed',
+      }),
+    );
+
+    const sidecar = makeDownloadedFile(
+      'session/subagents/agent-1.meta.json',
+      '{"agentType":"Research"}',
+    );
+    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    await Promise.all([
+      onFileDownloaded('session-1', sidecar),
+      onFileDownloaded('session-1', jsonl),
+    ]);
+
+    expect(calls.upsertSessionFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'session/subagents/agent-1.jsonl',
+        scope: 'session',
+        status: 'processed',
+      }),
+    );
+    expect(calls.upsertSessionFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'session/subagents/agent-1.meta.json',
+        scope: 'session',
+        status: 'processed',
+      }),
+    );
   });
 });

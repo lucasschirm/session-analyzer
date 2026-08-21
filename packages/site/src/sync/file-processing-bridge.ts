@@ -21,8 +21,9 @@ import {
   parseSubagentMeta,
   type SubagentMeta,
 } from '../lib/subagents';
-import type { DashboardSession, ParsedSession, SyncManifest } from '../types';
+import type { DashboardSession, ParsedSession, SessionFileRecord, SyncManifest } from '../types';
 import type { parseInWorker } from '../workers/parser-client';
+import { generateId } from '../workers/session-builder';
 
 /** A single downloaded file buffer handed to the bridge. */
 export interface DownloadedFile {
@@ -31,6 +32,8 @@ export interface DownloadedFile {
   size: number;
   content: ArrayBuffer;
 }
+
+type SessionFileRecordFile = Pick<DownloadedFile, 'path' | 'hash' | 'size'>;
 
 interface PromiseWithResolvers<T> {
   promise: Promise<T>;
@@ -47,6 +50,8 @@ interface SubagentGroupState {
   agentId: string;
   parsed?: DashboardSession;
   meta?: SubagentMeta;
+  jsonlFile?: SessionFileRecordFile;
+  metaFile?: SessionFileRecordFile;
   jsonlCompletion?: SubagentFileCompletion;
   metaCompletion?: SubagentFileCompletion;
   merged: boolean;
@@ -89,6 +94,12 @@ function isSidecarExpected(manifest: SyncManifest | undefined, agentId: string):
   );
 }
 
+function fileScope(file: string): 'session' | 'workspace' | 'global' | 'runtime' {
+  const scope = file.split('/')[0];
+  if (scope === 'workspace' || scope === 'global' || scope === 'runtime') return scope;
+  return 'session';
+}
+
 /**
  * Creates the `onFileDownloaded` consumer for `SyncManager`.
  *
@@ -99,9 +110,15 @@ function isSidecarExpected(manifest: SyncManifest | undefined, agentId: string):
 export function createFileProcessingBridge(
   db: DbClient,
   parse: typeof parseInWorker,
-): (sessionId: string, file: DownloadedFile) => Promise<void> {
+): {
+  onFileDownloaded: (sessionId: string, file: DownloadedFile) => Promise<void>;
+  onSyncComplete: (sessionId: string) => Promise<void>;
+} {
   const bridge = new FileProcessingBridge(db, parse);
-  return (sessionId, file) => bridge.onFileDownloaded(sessionId, file);
+  return {
+    onFileDownloaded: (sessionId, file) => bridge.onFileDownloaded(sessionId, file),
+    onSyncComplete: (sessionId) => bridge.onSyncComplete(sessionId),
+  };
 }
 
 class FileProcessingBridge {
@@ -114,6 +131,12 @@ class FileProcessingBridge {
 
   onFileDownloaded(sessionId: string, file: DownloadedFile): Promise<void> {
     return this.stateFor(sessionId).then((state) => this.dispatchFile(state, file));
+  }
+
+  onSyncComplete(sessionId: string): Promise<void> {
+    const existing = this.sessions.get(sessionId);
+    if (!existing) return Promise.resolve();
+    return Promise.resolve(existing).then((state) => this.forceCompleteSession(state));
   }
 
   private async stateFor(sessionId: string): Promise<SessionBridgeState> {
@@ -162,7 +185,24 @@ class FileProcessingBridge {
   private async dispatchMainFile(state: SessionBridgeState, file: DownloadedFile): Promise<void> {
     const title = state.manifest?.sessionId ?? file.path;
     const parsed = await this.parse(file.content, { projectId: state.projectId, title });
-    return this.enqueue(state, () => this.processMain(state, parsed));
+    return this.enqueue(state, () => this.processMain(state, file, parsed));
+  }
+
+  private async processMain(
+    state: SessionBridgeState,
+    file: DownloadedFile,
+    parsed: ParsedSession,
+  ): Promise<void> {
+    try {
+      const sessionId = await this.db.upsertSessionByExternalId(parsed.session);
+      state.sessionId = sessionId;
+      await this.reapplySyncState(sessionId, state);
+      await this.upsertSessionFile(sessionId, state.projectId, file);
+      state.resolveMain();
+    } catch (error) {
+      state.rejectMain(error as Error);
+      throw error;
+    }
   }
 
   private async dispatchSubagentFile(
@@ -174,12 +214,16 @@ class FileProcessingBridge {
     if (kind === 'meta') {
       const meta = parseSubagentMeta(new TextDecoder().decode(file.content));
       return new Promise<void>((resolve, reject) => {
-        this.enqueue(state, () => this.updateGroupWithMeta(state, agentId, meta, resolve, reject));
+        this.enqueue(state, () =>
+          this.updateGroupWithMeta(state, agentId, file, meta, resolve, reject),
+        );
       });
     }
     const parsed = await this.parse(file.content, { projectId: state.projectId });
     return new Promise<void>((resolve, reject) => {
-      this.enqueue(state, () => this.updateGroupWithJsonl(state, agentId, parsed, resolve, reject));
+      this.enqueue(state, () =>
+        this.updateGroupWithJsonl(state, agentId, file, parsed, resolve, reject),
+      );
     });
   }
 
@@ -189,26 +233,17 @@ class FileProcessingBridge {
     return next;
   }
 
-  private async processMain(state: SessionBridgeState, parsed: ParsedSession): Promise<void> {
-    try {
-      const sessionId = await this.db.upsertSessionByExternalId(parsed.session);
-      await this.reapplySyncState(sessionId, state);
-      state.resolveMain();
-    } catch (error) {
-      state.rejectMain(error as Error);
-      throw error;
-    }
-  }
-
   private updateGroupWithJsonl(
     state: SessionBridgeState,
     agentId: string,
+    file: DownloadedFile,
     parsed: ParsedSession,
     resolve: () => void,
     reject: (error: Error) => void,
   ): void {
     const group = this.getOrCreateGroup(state, agentId);
     group.parsed = parsed.session;
+    group.jsonlFile = file;
     group.jsonlCompletion = { resolve, reject };
     this.tryMergeGroup(state, group);
   }
@@ -216,12 +251,14 @@ class FileProcessingBridge {
   private updateGroupWithMeta(
     state: SessionBridgeState,
     agentId: string,
+    file: DownloadedFile,
     meta: SubagentMeta,
     resolve: () => void,
     reject: (error: Error) => void,
   ): void {
     const group = this.getOrCreateGroup(state, agentId);
     group.meta = meta;
+    group.metaFile = file;
     group.metaCompletion = { resolve, reject };
     this.tryMergeGroup(state, group);
   }
@@ -235,12 +272,26 @@ class FileProcessingBridge {
     return group;
   }
 
-  private tryMergeGroup(state: SessionBridgeState, group: SubagentGroupState): void {
+  private tryMergeGroup(state: SessionBridgeState, group: SubagentGroupState, force = false): void {
     if (group.merged) return;
     if (group.parsed === undefined) return;
-    if (isSidecarExpected(state.manifest, group.agentId) && group.meta === undefined) return;
+    if (!force && isSidecarExpected(state.manifest, group.agentId) && group.meta === undefined)
+      return;
     group.merged = true;
     state.mergeQueue = state.mergeQueue.then(() => this.mergeSubagentGroup(state, group));
+  }
+
+  private async forceCompleteSession(state: SessionBridgeState): Promise<void> {
+    await state.opQueue;
+    let chain: Promise<unknown> = state.mergeQueue.catch(() => undefined);
+    for (const group of state.groups.values()) {
+      if (group.merged) continue;
+      if (group.parsed === undefined) continue;
+      group.merged = true;
+      chain = chain.then(() => this.mergeSubagentGroup(state, group).catch(() => undefined));
+    }
+    state.mergeQueue = chain as Promise<void>;
+    await chain;
   }
 
   private async mergeSubagentGroup(
@@ -255,6 +306,12 @@ class FileProcessingBridge {
       mergeSubagentIntoSession(session, group.agentId, group.parsed, group.meta ?? {});
       await this.db.replaceSession(session);
       await this.reapplySyncState(state.sessionId, state);
+      if (group.jsonlFile) {
+        await this.upsertSessionFile(state.sessionId, state.projectId, group.jsonlFile);
+      }
+      if (group.metaFile) {
+        await this.upsertSessionFile(state.sessionId, state.projectId, group.metaFile);
+      }
       group.jsonlCompletion?.resolve();
       group.metaCompletion?.resolve();
     } catch (error) {
@@ -262,6 +319,25 @@ class FileProcessingBridge {
       group.metaCompletion?.reject(error as Error);
       throw error;
     }
+  }
+
+  private async upsertSessionFile(
+    sessionId: string,
+    projectId: string,
+    file: SessionFileRecordFile,
+  ): Promise<void> {
+    const record: SessionFileRecord = {
+      id: generateId(),
+      project_id: projectId,
+      session_id: sessionId,
+      path: file.path,
+      scope: fileScope(file.path),
+      sha256: file.hash,
+      size: file.size,
+      status: 'processed',
+      updated_at: Date.now(),
+    };
+    await this.db.upsertSessionFile(record);
   }
 
   private async reapplySyncState(sessionId: string, state: SessionBridgeState): Promise<void> {
