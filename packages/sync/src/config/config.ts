@@ -1,6 +1,7 @@
 import process from 'node:process';
 import type { SyncErrorCode } from '@lucasschirm/sal-sync-core';
 import {
+  CAS_NAMESPACE_ROOT,
   DEFAULT_HOOK_UPLOAD_TIMEOUT_MS,
   DEFAULT_MAX_FILE_BYTES,
   DEFAULT_MAX_FILES,
@@ -36,6 +37,7 @@ import {
   type SyncConfig,
   type SyncLimits,
   type SyncTimeouts,
+  validateProjectId,
 } from '@lucasschirm/sal-sync-core';
 
 export type ConfigEnv = Record<string, string | undefined>;
@@ -245,6 +247,30 @@ function parseLimits(env: ConfigEnv): LimitsParseResult {
   };
 }
 
+function validateResolvedProjectId(projectId: string): SyncConfigError | undefined {
+  try {
+    validateProjectId(projectId);
+    return undefined;
+  } catch (err) {
+    if (projectId === CAS_NAMESPACE_ROOT) {
+      return {
+        code: 'SYNC_CONFIG_MISSING',
+        message: `${ENV_SAL_PROJECT_ID} must not be the reserved value '${CAS_NAMESPACE_ROOT}'.`,
+      };
+    }
+    if (err instanceof Error) {
+      return {
+        code: 'SYNC_CONFIG_MISSING',
+        message: `${ENV_SAL_PROJECT_ID} is invalid: ${err.message}`,
+      };
+    }
+    return {
+      code: 'SYNC_CONFIG_MISSING',
+      message: `${ENV_SAL_PROJECT_ID} is invalid.`,
+    };
+  }
+}
+
 export function loadStorageConfig(env: ConfigEnv = process.env): LoadStorageConfigResult {
   const storageResult = parseStorageConfig(env);
   if ('error' in storageResult) {
@@ -277,6 +303,11 @@ export function loadConfig(env: ConfigEnv = process.env): LoadConfigResult {
         message: `${ENV_SAL_PROJECT_ID} is required.`,
       },
     };
+  }
+
+  const projectIdError = validateResolvedProjectId(projectId);
+  if (projectIdError) {
+    return { ok: false, disabled: true, error: projectIdError };
   }
 
   const storageResult = parseStorageConfig(env);
