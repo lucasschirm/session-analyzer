@@ -199,15 +199,18 @@ export class PasskeyModal extends LitElement {
 
   @query('#passkey-input') private passkeyInput!: HTMLInputElement;
 
+  private webauthnCheckId = 0;
+
   willUpdate(changed: PropertyValues<this>): void {
     if (changed.has('open') && this.open) {
       this.resetState();
     }
   }
 
-  updated(changed: PropertyValues<this>): void {
+  async updated(changed: PropertyValues<this>): Promise<void> {
     if (changed.has('open') && this.open) {
-      this.updateComplete.then(() => this.focusFirstInput());
+      await this.updateComplete;
+      this.focusFirstInput();
     }
     if (changed.has('mode') || changed.has('open')) {
       this.checkWebAuthn();
@@ -230,10 +233,12 @@ export class PasskeyModal extends LitElement {
 
   private async checkWebAuthn(): Promise<void> {
     if (this.mode !== 'unlock' || !this.open) return;
+    const checkId = ++this.webauthnCheckId;
     const [supported, hasCredential] = await Promise.all([
       isWebAuthnPrfSupported(),
       hasDeviceUnlockCredential(),
     ]);
+    if (checkId !== this.webauthnCheckId) return;
     this.webauthnSupported = supported;
     this.hasWebauthnCredential = hasCredential;
   }
