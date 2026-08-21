@@ -1,7 +1,11 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import '../components/connect-modal';
+import '../components/passkey-modal';
 import { dbClient } from '../db/db-client';
 import { HashRouter } from '../router';
+import { isUnlocked } from '../sync/credential-crypto';
+import { syncManager } from '../sync/sync-manager';
 import './home-page';
 import './project-view';
 import './session-dashboard';
@@ -89,6 +93,27 @@ export class AppRoot extends LitElement {
       background: var(--md-sys-color-surface-container, #1f242e);
     }
 
+    .connect-button {
+      background: var(--md-sys-color-surface-container, #1f242e);
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      padding: 7px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.15s ease;
+    }
+
+    .connect-button:hover {
+      background: var(--md-sys-color-surface-container-hover, #262d3a);
+    }
+
+    .sync-progress-slot {
+      min-width: 120px;
+      height: 20px;
+    }
+
     main {
       padding: 24px;
       max-width: 1200px;
@@ -156,12 +181,57 @@ export class AppRoot extends LitElement {
 
   @state() private dbError: string | null = null;
 
+  @state() private connectOpen = false;
+
+  @state() private passkeyOpen = false;
+
+  @state() private passkeyMode: 'create' | 'unlock' = 'create';
+
+  @state() private hasConnections = false;
+
+  @state() private hasPasskey = false;
+
   async firstUpdated(): Promise<void> {
     try {
       this.storage = await dbClient.ensureReady();
+      await syncManager.init();
+      await this.loadSecurityState();
     } catch (error) {
       this.dbError = `Failed to initialize database: ${(error as Error).message}`;
     }
+  }
+
+  private async loadSecurityState(): Promise<void> {
+    const [connections, passkeyState] = await Promise.all([
+      dbClient.getConnections(),
+      dbClient.getPasskeyState(),
+    ]);
+    this.hasConnections = connections.length > 0;
+    this.hasPasskey = passkeyState !== null;
+  }
+
+  private handleConnectClick(): void {
+    if (this.hasConnections && !isUnlocked()) {
+      this.passkeyMode = this.hasPasskey ? 'unlock' : 'create';
+      this.passkeyOpen = true;
+      return;
+    }
+    this.connectOpen = true;
+  }
+
+  private handlePasskeySuccess(): void {
+    this.passkeyOpen = false;
+    this.connectOpen = true;
+  }
+
+  private handlePasskeyClose(): void {
+    this.passkeyOpen = false;
+  }
+
+  private handleConnectClose(): void {
+    this.connectOpen = false;
+    this.passkeyOpen = false;
+    void this.loadSecurityState();
   }
 
   render() {
@@ -169,6 +239,7 @@ export class AppRoot extends LitElement {
       <header>
         <a href="#/" class="logo">Session Analyzer</a>
         <div class="header-right">
+          <div class="sync-progress-slot" aria-hidden="true"></div>
           ${
             this.storage
               ? html`<span class="storage-badge ${this.storage}" title="SQLite storage backend">
@@ -176,6 +247,9 @@ export class AppRoot extends LitElement {
               </span>`
               : ''
           }
+          <button type="button" class="connect-button" @click=${this.handleConnectClick}>
+            Connect
+          </button>
           <nav>
             <a href="#/">Home</a>
           </nav>
@@ -186,6 +260,19 @@ export class AppRoot extends LitElement {
         ${this.dbError ? html`<div class="app-error">${this.dbError}</div>` : ''}
         ${this.router.outlet()}
       </main>
+
+      <connect-modal
+        .open=${this.connectOpen}
+        @modal-close=${this.handleConnectClose}
+      ></connect-modal>
+
+      <passkey-modal
+        .open=${this.passkeyOpen}
+        .mode=${this.passkeyMode}
+        @passkey-created=${this.handlePasskeySuccess}
+        @passkey-unlocked=${this.handlePasskeySuccess}
+        @modal-close=${this.handlePasskeyClose}
+      ></passkey-modal>
     `;
   }
 }

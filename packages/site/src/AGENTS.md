@@ -14,6 +14,8 @@ src/
 │   ├── events-table.ts            # Drill-down data table for indicator details; metadata column supports hover tooltip and click-to-expand full JSON
 │   ├── project-selector.ts        # Project dropdown (input component)
 │   ├── project-modal.ts           # New-project modal (name + description)
+│   ├── passkey-modal.ts           # Passkey create/unlock modal for the credential vault
+│   ├── connect-modal.ts           # S3 connection management modal (list, add, edit, test, sync)
 │   ├── upload-zone.ts             # Drag & drop + file picker upload zone
 │   └── session-transcript.ts      # Chat-like markdown transcript view; optional renderAfter(message) hook lets a parent interleave content (e.g. inline subagent cards) at a point in the timeline; owns the subagent-card styles since renderAfter's template renders inside this component's shadow root
 ├── db/
@@ -26,7 +28,7 @@ src/
 │   ├── format.ts                  # Compact number formatting (K/M/B) with full-number tooltips; estimateTokenCount/formatEstimatedTokens for the ~4-chars/token tool-result estimate (no exact tokenizer available client-side)
 │   └── claude-to-dashboard.ts     # toDashboardSession(native, projectId, title): transforms a `@lucasschirm/sal-claude-session-parser` ClaudeCodeSession into DashboardSession - token accumulation incl. per-model, tool_use/tool_result pairing by id, result_uuid capture, isMeta filtering, compact_boundary -> compactions, task_reminder -> SessionTask, ai-title -> title. Successor to the old inline parseClaudeCode; reuses SessionBuilder from workers/session-builder.ts
 ├── pages/
-│   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap
+│   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap, sync manager init, and Connect entry point
 │   ├── home-page.ts               # Projects CRUD grid + export database
 │   ├── project-view.ts            # Upload zone + search + sessions for one project; Total Tokens card uses compact number formatting with tooltip
 │   ├── session-dashboard.ts       # Metric cards + link to the Session Transcript page; "Total Tokens" card = input+output only (cache tokens excluded - see SessionBuilder.finalize); enriched with token breakdown panel (input/output/cache write/cache read), an estimated Tool Result Tokens panel (~4-chars/token heuristic over tool_result content, % of total input volume), models-used table, top-tools ranked list (Skill/Agent tool calls excluded - see isSkillTool/isAgentTool), skills-used list with parameters, a collapsible Subagents panel ("Show all"), and separate Agents/Skills metric cards (Agent/Skill tool invocation counts, distinct from Sub Agents)
