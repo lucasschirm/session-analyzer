@@ -1,7 +1,7 @@
-import { css, html, LitElement, type TemplateResult } from 'lit';
+import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { isUnlocked } from '../sync/credential-crypto';
-import { type SyncManager, syncManager } from '../sync/sync-manager';
+import { type SyncManager, type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 import type { SessionSyncStatus } from '../types';
 
 import './passkey-modal';
@@ -118,6 +118,33 @@ export class SessionSyncErrorModal extends LitElement {
 
   @state() private passkeyOpen = false;
 
+  @state() private syncSnapshot: SyncManagerSnapshot | null = null;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.syncManager.removeEventListener('change', this.handleSyncChange);
+  }
+
+  willUpdate(changed: PropertyValues): void {
+    if (changed.has('open')) {
+      if (this.open) {
+        this.syncSnapshot = this.syncManager.getSnapshot();
+        this.syncManager.addEventListener('change', this.handleSyncChange);
+      } else {
+        this.syncSnapshot = null;
+        this.syncManager.removeEventListener('change', this.handleSyncChange);
+      }
+    }
+  }
+
+  private handleSyncChange = (event: Event): void => {
+    this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
+  };
+
   private handleOverlayClick(event: MouseEvent): void {
     if (event.target === event.currentTarget) {
       this.close();
@@ -194,7 +221,7 @@ export class SessionSyncErrorModal extends LitElement {
             ? html`
               <button
                 class="primary"
-                ?disabled=${this.syncManager.isReadOnly}
+                ?disabled=${this.syncSnapshot?.readOnly}
                 @click=${this.handleRetryClick}
                 type="button"
               >

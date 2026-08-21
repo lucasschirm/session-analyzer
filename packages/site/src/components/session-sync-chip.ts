@@ -1,5 +1,6 @@
 import { css, html, LitElement, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
 import type { SessionSyncStatus } from '../types';
 
 /**
@@ -155,9 +156,14 @@ export class SessionSyncChip extends LitElement {
     if (!this.status) return html``;
 
     const statusClass = this.displayStatus === 'unknown' ? 'pending' : this.displayStatus;
+    const chipClasses = {
+      chip: true,
+      [statusClass]: true,
+      clickable: this.isClickable,
+    };
     return html`
       <span
-        class="chip ${statusClass} ${this.isClickable ? 'clickable' : ''}"
+        class=${classMap(chipClasses)}
         title=${this.titleText}
         @click=${this.handleClick}
       >

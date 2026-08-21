@@ -1,4 +1,4 @@
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import '../components/metrics-card';
 import '../components/project-sync-indicator';
@@ -139,9 +139,6 @@ export class ProjectView extends LitElement {
     super.connectedCallback();
     this.syncSnapshot = syncManager.getSnapshot();
     syncManager.addEventListener('change', this.handleSyncChange);
-    if (this.projectId) {
-      void this.loadData();
-    }
   }
 
   disconnectedCallback(): void {
@@ -153,9 +150,8 @@ export class ProjectView extends LitElement {
     this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
   };
 
-  updated(changedProperties: Map<string, unknown>): void {
-    super.updated(changedProperties);
-    if (changedProperties.has('projectId') && this.projectId && !this.loadingLock) {
+  willUpdate(changed: PropertyValues): void {
+    if (changed.has('projectId') && this.projectId && !this.loadingLock) {
       void this.loadData();
     }
   }

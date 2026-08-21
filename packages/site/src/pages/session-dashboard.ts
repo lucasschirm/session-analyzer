@@ -1,4 +1,4 @@
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import '../components/metrics-card';
 import '../components/passkey-modal';
@@ -421,7 +421,7 @@ export class SessionDashboard extends LitElement {
     this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
   };
 
-  willUpdate(changed: Map<string, unknown>): void {
+  willUpdate(changed: PropertyValues): void {
     if (changed.has('sessionId') && this.sessionId) {
       void this.loadSession();
     }
@@ -639,7 +639,7 @@ export class SessionDashboard extends LitElement {
   }
 
   private handleRetry(): void {
-    if (syncManager.isReadOnly) return;
+    if (this.syncSnapshot?.readOnly) return;
     if (!isUnlocked()) {
       this.passkeyOpen = true;
       return;
@@ -723,7 +723,7 @@ export class SessionDashboard extends LitElement {
                   ? html`
                     <button
                       class="retry-button"
-                      ?disabled=${syncManager.isReadOnly}
+                      ?disabled=${this.syncSnapshot?.readOnly}
                       @click=${this.handleRetry}
                       type="button"
                     >

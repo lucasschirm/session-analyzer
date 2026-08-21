@@ -1,5 +1,6 @@
 import { css, html, LitElement, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
 import { type SyncManager, type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 
 import './project-sync-status-modal';
@@ -209,10 +210,11 @@ export class SyncProgressBar extends LitElement {
   render(): TemplateResult {
     const totals = this.totals;
     const show = this.shouldShow;
+    const barClasses = { 'progress-bar': true, hidden: !show };
 
     return html`
       <div
-        class="progress-bar ${show ? '' : 'hidden'}"
+        class=${classMap(barClasses)}
         @click=${this.handleBarClick}
         role="status"
         aria-live="polite"

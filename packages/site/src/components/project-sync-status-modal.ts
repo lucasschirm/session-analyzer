@@ -1,5 +1,7 @@
-import { css, html, LitElement, type TemplateResult } from 'lit';
+import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
+import { repeat } from 'lit/directives/repeat.js';
 import { formatCompactNumber, formatFullNumber } from '../lib/format';
 import { type SyncManager, type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 
@@ -202,13 +204,23 @@ export class ProjectSyncStatusModal extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    this.snapshot = this.syncManager.getSnapshot();
-    this.syncManager.addEventListener('change', this.handleChange);
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.syncManager.removeEventListener('change', this.handleChange);
+  }
+
+  willUpdate(changed: PropertyValues): void {
+    if (changed.has('open')) {
+      if (this.open) {
+        this.snapshot = this.syncManager.getSnapshot();
+        this.syncManager.addEventListener('change', this.handleChange);
+      } else {
+        this.snapshot = null;
+        this.syncManager.removeEventListener('change', this.handleChange);
+      }
+    }
   }
 
   private handleChange = (event: Event): void => {
@@ -260,10 +272,11 @@ export class ProjectSyncStatusModal extends LitElement {
 
   private renderSessionRow(session: SessionSnapshot): TemplateResult {
     const status = this.sessionStatus(session);
+    const stateClasses = { 'state-icon': true, [`state-${status}`]: true };
     return html`
       <li class="session-item">
         <span class="session-state">
-          <span class="state-icon state-${status}">
+          <span class=${classMap(stateClasses)}>
             ${this.stateIcon(status)}
           </span>
           <span class="session-id" title=${session.sessionId}>${session.sessionId}</span>
@@ -283,7 +296,11 @@ export class ProjectSyncStatusModal extends LitElement {
   private renderSessions(sessions: SessionSnapshot[]): TemplateResult {
     return html`
       <ul class="session-list">
-        ${sessions.map((session) => this.renderSessionRow(session))}
+        ${repeat(
+          sessions,
+          (session) => session.sessionId,
+          (session) => this.renderSessionRow(session),
+        )}
       </ul>
     `;
   }
@@ -309,7 +326,11 @@ export class ProjectSyncStatusModal extends LitElement {
     if (projects.length === 0) {
       return html`<p class="empty">No active sync for this project.</p>`;
     }
-    return html`${projects.map((project) => this.renderProject(project, sessions))}`;
+    return html`${repeat(
+      projects,
+      (project) => project.projectId,
+      (project) => this.renderProject(project, sessions),
+    )}`;
   }
 
   private renderWarnings(warnings: string[]): TemplateResult {
