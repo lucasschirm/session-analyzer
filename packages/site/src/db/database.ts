@@ -492,18 +492,33 @@ export class DatabaseManager {
 
   /** Inserts a new project record. */
   createProject(project: Project): void {
-    this.requireDb().exec({
-      sql: `INSERT INTO projects (id, name, description, created_at, updated_at, session_count)
-            VALUES (?, ?, ?, ?, ?, ?)`,
-      bind: [
-        project.id,
-        project.name,
-        project.description ?? '',
-        project.created_at,
-        project.updated_at,
-        project.session_count || 0,
-      ],
-    });
+    const sql = `INSERT INTO projects (id, name, description, readable_id, created_at, updated_at, session_count)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`;
+    const bind = [
+      project.id,
+      project.name,
+      project.description ?? '',
+      project.readable_id || null,
+      project.created_at,
+      project.updated_at,
+      project.session_count || 0,
+    ];
+    this.tryExecReadableId(sql, bind);
+  }
+
+  /**
+   * Runs a project write and maps a readable_id unique-index violation to a
+   * user-facing error. Other SQLite errors are rethrown unchanged.
+   */
+  private tryExecReadableId(sql: string, bind: (string | number | null)[]): void {
+    try {
+      this.requireDb().exec({ sql, bind });
+    } catch (error) {
+      if (error instanceof Error && /UNIQUE constraint failed.*readable_id/i.test(error.message)) {
+        throw new Error('This project ID is already in use');
+      }
+      throw error;
+    }
   }
 
   /** Lists all projects, most recently updated first. */
@@ -518,21 +533,25 @@ export class DatabaseManager {
     return row ? rowToProject(row as Record<string, unknown>) : null;
   }
 
-  /** Updates a project's name and/or description. */
-  updateProject(id: string, fields: { name?: string; description?: string }): void {
-    const db = this.requireDb();
+  /** Updates a project's name, description and/or readable id. */
+  updateProject(
+    id: string,
+    fields: { name?: string; description?: string; readable_id?: string },
+  ): void {
     const project = this.getProject(id);
     if (!project) throw new Error(`Project not found: ${id}`);
 
-    db.exec({
-      sql: 'UPDATE projects SET name = ?, description = ?, updated_at = ? WHERE id = ?',
-      bind: [
-        fields.name ?? project.name,
-        fields.description ?? project.description,
-        Date.now(),
-        id,
-      ],
-    });
+    const sql =
+      'UPDATE projects SET name = ?, description = ?, readable_id = ?, updated_at = ? WHERE id = ?';
+    const readableId = (fields.readable_id?.trim() || project.readable_id) ?? null;
+    const bind = [
+      fields.name ?? project.name,
+      fields.description ?? project.description,
+      readableId,
+      Date.now(),
+      id,
+    ];
+    this.tryExecReadableId(sql, bind);
   }
 
   /** Deletes a project and cascades to its sessions and their child rows. */

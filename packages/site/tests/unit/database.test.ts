@@ -173,6 +173,26 @@ describe('DatabaseManager', () => {
       expect(() => manager.updateProject('missing', { name: 'x' })).toThrow('Project not found');
     });
 
+    it('creates and updates a project with a readable_id', () => {
+      const project = makeProject({ readable_id: 'my-project' });
+      manager.createProject(project);
+
+      expect(manager.getProjectByReadableId('my-project')?.id).toBe(project.id);
+
+      manager.updateProject(project.id, { readable_id: 'renamed-project' });
+
+      expect(manager.getProjectByReadableId('my-project')).toBeNull();
+      expect(manager.getProjectByReadableId('renamed-project')?.id).toBe(project.id);
+    });
+
+    it('throws a friendly error for duplicate readable_ids', () => {
+      const a = makeProject({ readable_id: 'duplicate' });
+      const b = makeProject({ readable_id: 'duplicate' });
+      manager.createProject(a);
+
+      expect(() => manager.createProject(b)).toThrow('This project ID is already in use');
+    });
+
     it('deletes projects and cascades to sessions and child rows', () => {
       const project = makeProject();
       manager.createProject(project);

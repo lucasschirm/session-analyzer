@@ -70,7 +70,10 @@ export class DbClient {
     return this.call({ type: 'getProject', projectId }) as Promise<Project | null>;
   }
 
-  updateProject(projectId: string, fields: { name?: string; description?: string }): Promise<void> {
+  updateProject(
+    projectId: string,
+    fields: { name?: string; description?: string; readable_id?: string },
+  ): Promise<void> {
     return this.call({ type: 'updateProject', projectId, fields }) as Promise<void>;
   }
 

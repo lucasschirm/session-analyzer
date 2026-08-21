@@ -26,7 +26,7 @@ export type DbRequest =
       id: number;
       type: 'updateProject';
       projectId: string;
-      fields: { name?: string; description?: string };
+      fields: { name?: string; description?: string; readable_id?: string };
     }
   | { id: number; type: 'deleteProject'; projectId: string }
   | { id: number; type: 'saveSession'; session: DashboardSession }

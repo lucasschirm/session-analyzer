@@ -57,6 +57,9 @@ importers:
       '@lucasschirm/sal-claude-session-parser':
         specifier: workspace:*
         version: link:../parsers/claude-session-parser
+      '@lucasschirm/sal-sync-core':
+        specifier: workspace:*
+        version: link:../sync-core
       '@sqlite.org/sqlite-wasm':
         specifier: 3.53.0-build1
         version: 3.53.0-build1
