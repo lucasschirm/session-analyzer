@@ -4,7 +4,17 @@
  * worker so the UI thread never blocks on database I/O.
  */
 
-import type { DashboardSession, Project } from '../types';
+import type {
+  Connection,
+  DashboardSession,
+  PasskeyState,
+  Project,
+  SessionFileRecord,
+  SessionStub,
+  SessionSyncStatus,
+  StoredS3Credentials,
+  SyncManifest,
+} from '../types';
 
 export type DbRequest =
   | { id: number; type: 'init' }
@@ -27,7 +37,39 @@ export type DbRequest =
   | { id: number; type: 'getSession'; sessionId: string }
   | { id: number; type: 'deleteSession'; sessionId: string }
   | { id: number; type: 'getProjectMetrics'; projectId: string }
-  | { id: number; type: 'exportDatabase' };
+  | { id: number; type: 'exportDatabase' }
+  | { id: number; type: 'createConnection'; connection: Connection }
+  | {
+      id: number;
+      type: 'updateConnection';
+      connectionId: string;
+      fields: Partial<Pick<Connection, 'name' | 'sync_only_new' | 'last_sync_at'>>;
+    }
+  | { id: number; type: 'deleteConnection'; connectionId: string }
+  | { id: number; type: 'getConnections' }
+  | { id: number; type: 'saveS3Credentials'; credentials: StoredS3Credentials }
+  | { id: number; type: 'getS3Credentials'; connectionId: string }
+  | { id: number; type: 'deleteAllCredentials' }
+  | { id: number; type: 'getPasskeyState' }
+  | { id: number; type: 'savePasskeyState'; state: PasskeyState }
+  | { id: number; type: 'getProjectByReadableId'; readableId: string }
+  | { id: number; type: 'setProjectSyncStatus'; projectId: string; status: 'in_sync' | 'syncing' }
+  | { id: number; type: 'backfillReadableIds' }
+  | { id: number; type: 'getSessionBySyncId'; projectId: string; syncSessionId: string }
+  | { id: number; type: 'upsertSessionStub'; stub: SessionStub }
+  | {
+      id: number;
+      type: 'setSessionSyncStatus';
+      sessionId: string;
+      status: SessionSyncStatus;
+      details?: string;
+    }
+  | { id: number; type: 'updateSessionManifest'; sessionId: string; manifest: SyncManifest }
+  | { id: number; type: 'getSyncRunCount'; sessionId: string }
+  | { id: number; type: 'failStaleSessions'; projectId: string; details: string }
+  | { id: number; type: 'reconcileSyncStates'; sessionDetails: string }
+  | { id: number; type: 'getSessionFiles'; sessionId: string }
+  | { id: number; type: 'upsertSessionFile'; file: SessionFileRecord };
 
 export interface DbSuccessResponse {
   id: number;
@@ -38,6 +80,8 @@ export interface DbSuccessResponse {
   bytes?: Uint8Array;
   /** Storage backend reported by init. */
   storage?: 'opfs' | 'memory';
+  /** Reason when init falls back to in-memory (empty/omitted when opfs opens). */
+  fallbackReason?: 'locked' | 'unsupported';
 }
 
 export interface DbErrorResponse {

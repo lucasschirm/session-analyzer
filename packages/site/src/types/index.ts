@@ -156,6 +156,12 @@ export interface Project {
   created_at: number;
   updated_at: number;
   session_count: number;
+  /** URL-safe local slug; mirrors the remote bucket folder name. */
+  readable_id?: string;
+  /** Sync state, when the project is part of an active connection. */
+  sync_status?: ProjectSyncStatus;
+  /** Owning connection, when the project is synced. */
+  connection_id?: string;
 }
 
 export interface SessionMetrics {
@@ -202,4 +208,123 @@ export interface ParserResult {
     total_parsed: number;
     total_errors: number;
   };
+}
+
+/** Project-level sync state: idle (NULL), currently syncing, or fully in sync. */
+export type ProjectSyncStatus = 'in_sync' | 'syncing';
+
+/** Session-level sync state. */
+export type SessionSyncStatus =
+  | 'pending'
+  | 'processing'
+  | 'in_sync'
+  | 'failed'
+  | 'transcript_unavailable';
+
+/**
+ * A remote storage connection (currently S3). One project may reference one
+ * connection through `Project.connection_id`.
+ */
+export interface Connection {
+  id: string;
+  name: string;
+  storage_type: 's3';
+  sync_only_new: boolean;
+  last_sync_at?: number;
+  created_at: number;
+  updated_at: number;
+}
+
+/** S3 credential material stored encrypted at rest. */
+export interface StoredS3Credentials {
+  connection_id: string;
+  region: string;
+  endpoint?: string;
+  bucket: string;
+  access_key_id: string;
+  secret_access_key_ct: string;
+  secret_access_key_iv: string;
+  session_token_ct?: string;
+  session_token_iv?: string;
+  created_at: number;
+  updated_at: number;
+}
+
+/** Singleton passkey-backed vault state, constrained to row id = 1. */
+export interface PasskeyState {
+  id: 1;
+  kdf_salt: string;
+  verifier_iv: string;
+  verifier_ct: string;
+  webauthn_credential_id?: string;
+  webauthn_wrapped_key?: string;
+  webauthn_expires_at?: number;
+  created_at: number;
+}
+
+/**
+ * Minimal local structural stand-in for the SyncManifest type that will
+ * eventually be imported from @lucasschirm/sal-sync-core. It contains only
+ * the fields needed to write the sync mirror columns on `sessions`.
+ */
+export interface SyncManifest {
+  sessionId: string;
+  schemaVersion: number;
+  harness?: string;
+  harnessVersion?: string;
+  model?: string;
+  startedAt?: string;
+  endedAt?: string;
+  durationMs?: number;
+  endReason?: string;
+  syncVersion?: string;
+  pluginVersion?: string;
+  transcriptsCaptured?: number | boolean;
+  mainTranscriptRelativePath?: string;
+  artifacts: unknown[];
+  syncRuns: unknown[];
+}
+
+/**
+ * A placeholder session created from a sync manifest before its transcript has
+ * been downloaded and parsed. All metric columns default to 0 when written.
+ */
+export interface SessionStub {
+  id: string;
+  project_id: string;
+  source: string;
+  title: string;
+  started_at: string;
+  ended_at: string;
+  sync_session_id: string;
+  sync_status: 'pending';
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_tokens?: number;
+  cache_read_tokens?: number;
+  total_tokens?: number;
+  cost_usd?: number;
+  model?: string;
+  model_usage?: string;
+  tasks?: string;
+  external_id?: string;
+  subagents?: string;
+  context_compactions?: number;
+  total_turns?: number;
+  files_read?: number;
+  files_written?: number;
+  agent_invocations?: number;
+}
+
+/** A file record for downloaded/processed session-scope artifacts. */
+export interface SessionFileRecord {
+  id: string;
+  project_id: string;
+  session_id: string;
+  path: string;
+  scope: 'session' | 'workspace' | 'global' | 'runtime';
+  sha256: string;
+  size: number;
+  status: 'downloaded' | 'processed' | 'failed';
+  updated_at: number;
 }

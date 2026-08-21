@@ -3,25 +3,35 @@
  *
  * Wraps the sqlite3 oo1 API with parameterized queries. Runs inside the
  * database Web Worker where the OPFS VFS is available (sqlite3.oo1.OpfsDb);
- * falls back to an in-memory database when OPFS is unavailable. All SQL uses
- * bound parameters - user-controlled values are never interpolated into SQL.
+ * falls back to an in-memory database when OPFS is unavailable or already
+ * locked by another browser tab. All SQL uses bound parameters - user-
+ * controlled values are never interpolated into SQL.
  */
 
 import type { Database } from '@sqlite.org/sqlite-wasm';
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import type {
+  Connection,
   DashboardSession,
   ModelTokenUsage,
+  PasskeyState,
   Project,
+  ProjectSyncStatus,
   SessionEvent,
+  SessionFileRecord,
   SessionMetrics,
+  SessionStub,
+  SessionSyncStatus,
   SessionTask,
+  StoredS3Credentials,
   SubagentUsage,
+  SyncManifest,
   ToolExecution,
   TranscriptMessage,
 } from '../types';
 
 export type StorageBackend = 'opfs' | 'memory';
+export type FallbackReason = 'locked' | 'unsupported';
 
 interface SessionRow {
   id: string;
@@ -81,28 +91,183 @@ interface ToolExecutionRow {
   result_uuid: string | null;
 }
 
+interface CapiLike {
+  readonly SQLITE_BUSY: number;
+  readonly SQLITE_IOERR: number;
+  readonly SQLITE_LOCKED: number;
+}
+
+const COLUMN_MIGRATIONS = [
+  'ALTER TABLE sessions ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE sessions ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE sessions ADD COLUMN model_usage TEXT',
+  'ALTER TABLE sessions ADD COLUMN tasks TEXT',
+  'ALTER TABLE sessions ADD COLUMN external_id TEXT',
+  'ALTER TABLE sessions ADD COLUMN subagents TEXT',
+  'ALTER TABLE tool_executions ADD COLUMN parameters TEXT',
+  'ALTER TABLE tool_executions ADD COLUMN result TEXT',
+  'ALTER TABLE tool_executions ADD COLUMN result_uuid TEXT',
+  'ALTER TABLE session_messages ADD COLUMN uuid TEXT',
+  'ALTER TABLE session_messages ADD COLUMN parent_uuid TEXT',
+  'ALTER TABLE projects ADD COLUMN readable_id TEXT',
+  'ALTER TABLE projects ADD COLUMN sync_status TEXT',
+  'ALTER TABLE projects ADD COLUMN connection_id TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_session_id TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_status TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_details TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_schema_version INTEGER',
+  'ALTER TABLE sessions ADD COLUMN sync_harness TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_harness_version TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_manifest_model TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_started_at TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_ended_at TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_duration_ms INTEGER',
+  'ALTER TABLE sessions ADD COLUMN sync_end_reason TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_engine_version TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_plugin_version TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_transcripts_captured INTEGER',
+  'ALTER TABLE sessions ADD COLUMN sync_main_transcript_relative_path TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_artifacts TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_runs TEXT',
+] as const;
+
+/**
+ * Detects an OPFS file-locked error from the sqlite-wasm opener. The exact
+ * exception varies by browser and sqlite-wasm release: it may surface as an
+ * SQLite3Error with resultCode SQLITE_BUSY/SQLITE_IOERR/SQLITE_LOCKED, a
+ * wrapped DOMException named NoModificationAllowedError, or an I/O error whose
+ * message mentions locking. We treat any of those as "already open elsewhere".
+ */
+function isOpfsLockedError(error: unknown, capi: CapiLike): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { resultCode?: unknown; name?: unknown; message?: unknown; cause?: unknown };
+  const resultCode = typeof e.resultCode === 'number' ? e.resultCode : undefined;
+  if (resultCode !== undefined) {
+    const primary = resultCode & 0xff;
+    if (
+      primary === capi.SQLITE_BUSY ||
+      primary === capi.SQLITE_LOCKED ||
+      primary === capi.SQLITE_IOERR
+    ) {
+      return true;
+    }
+  }
+  const message = String(e.message ?? '');
+  if (
+    /NoModificationAllowedError|Access Handles cannot|busy|locked|already in use/i.test(message)
+  ) {
+    return true;
+  }
+  const cause = e.cause;
+  if (cause && typeof cause === 'object') {
+    const c = cause as { name?: unknown; message?: unknown };
+    const causeMessage = String(c.message ?? '');
+    const causeName = String(c.name ?? '');
+    if (
+      /NoModificationAllowedError|Access Handles cannot|busy|locked|already in use/i.test(
+        causeMessage,
+      )
+    ) {
+      return true;
+    }
+    if (causeName === 'NoModificationAllowedError' || causeName === 'InvalidStateError')
+      return true;
+  }
+  const name = String(e.name ?? '');
+  return name === 'NoModificationAllowedError' || name === 'InvalidStateError';
+}
+
+/** Parses an ISO-8601 or numeric timestamp string into milliseconds. */
+function parseTimestamp(value: string | number): number {
+  if (typeof value === 'number') return value;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? Number(value) || 0 : parsed;
+}
+
+function safeJsonParse<T>(value: string): T | undefined {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+function safeJsonParseArray<T>(value: string): T[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function safeJsonStringify(value: unknown[]): string | null {
+  return value.length > 0 ? JSON.stringify(value) : null;
+}
+
+function safeJsonLength(value: string | null | undefined): number {
+  if (!value) return 0;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function isProjectSyncStatus(value: unknown): value is ProjectSyncStatus {
+  return value === 'in_sync' || value === 'syncing';
+}
+
+/** Slugifies a project name and resolves collisions with the supplied set. */
+function generateReadableId(name: string, used: Set<string>): string {
+  const base =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '') || 'project';
+  if (!used.has(base)) return base;
+  let counter = 2;
+  while (used.has(`${base}-${counter}`)) counter++;
+  return `${base}-${counter}`;
+}
+
 export class DatabaseManager {
   private db: Database | null = null;
-  private sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | null = null;
+  protected sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | null = null;
   storage: StorageBackend = 'memory';
+  fallbackReason?: FallbackReason;
 
   /**
    * Initializes the SQLite WASM runtime and opens the database.
-   * Uses OPFS persistence when the VFS is available (worker context with
-   * SharedArrayBuffer), otherwise falls back to an in-memory database.
+   * Uses OPFS persistence when the VFS is available. If the OPFS file is
+   * already locked by another tab, or OPFS is unsupported, falls back to an
+   * in-memory database and records the reason on `fallbackReason`.
    */
   async initialize(filename = '/session-analyzer.sqlite3'): Promise<StorageBackend> {
     if (this.db) return this.storage;
 
-    this.sqlite3 = await sqlite3InitModule();
+    if (!this.sqlite3) this.sqlite3 = await sqlite3InitModule();
     const sqlite3 = this.sqlite3;
 
     if (sqlite3.oo1.OpfsDb) {
-      this.db = new sqlite3.oo1.OpfsDb(filename, 'c');
-      this.storage = 'opfs';
+      try {
+        this.db = new sqlite3.oo1.OpfsDb(filename, 'c');
+        this.storage = 'opfs';
+      } catch (error) {
+        if (isOpfsLockedError(error, sqlite3.capi)) {
+          this.fallbackReason = 'locked';
+        } else {
+          throw error;
+        }
+        this.db = new sqlite3.oo1.DB(':memory:', 'c');
+        this.storage = 'memory';
+      }
     } else {
       this.db = new sqlite3.oo1.DB(':memory:', 'c');
       this.storage = 'memory';
+      this.fallbackReason = 'unsupported';
     }
 
     this.db.exec('PRAGMA foreign_keys = ON;');
@@ -121,36 +286,42 @@ export class DatabaseManager {
    */
   private migrate(): void {
     const db = this.requireDb();
-    const alterations = [
-      'ALTER TABLE sessions ADD COLUMN cache_creation_tokens INTEGER NOT NULL DEFAULT 0',
-      'ALTER TABLE sessions ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0',
-      'ALTER TABLE sessions ADD COLUMN model_usage TEXT',
-      'ALTER TABLE sessions ADD COLUMN tasks TEXT',
-      'ALTER TABLE sessions ADD COLUMN external_id TEXT',
-      'ALTER TABLE sessions ADD COLUMN subagents TEXT',
-      'ALTER TABLE tool_executions ADD COLUMN parameters TEXT',
-      'ALTER TABLE tool_executions ADD COLUMN result TEXT',
-      'ALTER TABLE tool_executions ADD COLUMN result_uuid TEXT',
-      'ALTER TABLE session_messages ADD COLUMN uuid TEXT',
-      'ALTER TABLE session_messages ADD COLUMN parent_uuid TEXT',
-    ];
-    for (const sql of alterations) {
+    for (const sql of COLUMN_MIGRATIONS) {
       try {
         db.exec(sql);
       } catch (error) {
         if (!/duplicate column name/i.test((error as Error).message)) throw error;
       }
     }
+    this.createSyncIndexes(db);
+    this.backfillReadableIds();
+  }
 
-    // Run after the alterations above so `external_id` is guaranteed to
-    // exist on both fresh databases (added in createTables) and databases
-    // upgraded by this migration.
+  private createSyncIndexes(db: Database): void {
     db.exec(
       'CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(project_id, external_id)',
     );
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_readable_id ON projects(readable_id)');
+    db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_sessions_sync_session ON sessions(project_id, sync_session_id)',
+    );
+    db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_sync_status ON sessions(sync_status)');
   }
 
   private createTables(): void {
+    this.createProjectsTable();
+    this.createSessionsTable();
+    this.createToolExecutionsTable();
+    this.createSessionEventsTable();
+    this.createSessionMessagesTable();
+    this.createConnectionsTable();
+    this.createS3CredentialsTable();
+    this.createPasskeyStateTable();
+    this.createSessionFilesTable();
+    this.createIndexes();
+  }
+
+  private createProjectsTable(): void {
     this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
@@ -160,7 +331,11 @@ export class DatabaseManager {
         updated_at INTEGER NOT NULL,
         session_count INTEGER NOT NULL DEFAULT 0
       );
+    `);
+  }
 
+  private createSessionsTable(): void {
+    this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL,
@@ -186,7 +361,11 @@ export class DatabaseManager {
         agent_invocations INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
+    `);
+  }
 
+  private createToolExecutionsTable(): void {
+    this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS tool_executions (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -201,7 +380,11 @@ export class DatabaseManager {
         result_uuid TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
+    `);
+  }
 
+  private createSessionEventsTable(): void {
+    this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS session_events (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -211,7 +394,11 @@ export class DatabaseManager {
         metadata TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
+    `);
+  }
 
+  private createSessionMessagesTable(): void {
+    this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS session_messages (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -222,13 +409,84 @@ export class DatabaseManager {
         parent_uuid TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
-
-      CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
-      CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id);
-      CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id);
-      CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id);
     `);
+  }
+
+  private createConnectionsTable(): void {
+    this.requireDb().exec(`
+      CREATE TABLE IF NOT EXISTS connections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        storage_type TEXT NOT NULL,
+        sync_only_new INTEGER NOT NULL DEFAULT 0,
+        last_sync_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+  }
+
+  private createS3CredentialsTable(): void {
+    this.requireDb().exec(`
+      CREATE TABLE IF NOT EXISTS connection_s3_credentials (
+        connection_id TEXT PRIMARY KEY REFERENCES connections(id) ON DELETE CASCADE,
+        region TEXT NOT NULL,
+        endpoint TEXT,
+        bucket TEXT NOT NULL,
+        access_key_id TEXT NOT NULL,
+        secret_access_key_ct TEXT NOT NULL,
+        secret_access_key_iv TEXT NOT NULL,
+        session_token_ct TEXT,
+        session_token_iv TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+  }
+
+  private createPasskeyStateTable(): void {
+    this.requireDb().exec(`
+      CREATE TABLE IF NOT EXISTS passkey_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        kdf_salt TEXT NOT NULL,
+        verifier_iv TEXT NOT NULL,
+        verifier_ct TEXT NOT NULL,
+        webauthn_credential_id TEXT,
+        webauthn_wrapped_key TEXT,
+        webauthn_expires_at INTEGER,
+        created_at INTEGER NOT NULL
+      );
+    `);
+  }
+
+  private createSessionFilesTable(): void {
+    this.requireDb().exec(`
+      CREATE TABLE IF NOT EXISTS session_files (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (session_id, path)
+      );
+    `);
+  }
+
+  private createIndexes(): void {
+    const db = this.requireDb();
+    db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC)');
+    db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id)',
+    );
+    db.exec('CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id)');
+    db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id)',
+    );
   }
 
   private requireDb(): Database {
@@ -238,6 +496,7 @@ export class DatabaseManager {
 
   // ==================== Project operations ====================
 
+  /** Inserts a new project record. */
   createProject(project: Project): void {
     this.requireDb().exec({
       sql: `INSERT INTO projects (id, name, description, created_at, updated_at, session_count)
@@ -253,16 +512,19 @@ export class DatabaseManager {
     });
   }
 
+  /** Lists all projects, most recently updated first. */
   getProjects(): Project[] {
     const rows = this.requireDb().selectObjects('SELECT * FROM projects ORDER BY updated_at DESC');
-    return rows.map(rowToProject);
+    return rows.map((row) => rowToProject(row as Record<string, unknown>));
   }
 
+  /** Loads a single project by its primary id. */
   getProject(id: string): Project | null {
     const row = this.requireDb().selectObject('SELECT * FROM projects WHERE id = ?', [id]);
-    return row ? rowToProject(row) : null;
+    return row ? rowToProject(row as Record<string, unknown>) : null;
   }
 
+  /** Updates a project's name and/or description. */
   updateProject(id: string, fields: { name?: string; description?: string }): void {
     const db = this.requireDb();
     const project = this.getProject(id);
@@ -296,6 +558,187 @@ export class DatabaseManager {
     this.requireDb().exec({
       sql: 'UPDATE projects SET updated_at = ? WHERE id = ?',
       bind: [Date.now(), projectId],
+    });
+  }
+
+  /** Looks up a project by its local readable id (URL-safe slug). */
+  getProjectByReadableId(readableId: string): Project | null {
+    const row = this.requireDb().selectObject('SELECT * FROM projects WHERE readable_id = ?', [
+      readableId,
+    ]);
+    return row ? rowToProject(row as Record<string, unknown>) : null;
+  }
+
+  /** Sets the sync state of a project. */
+  setProjectSyncStatus(projectId: string, status: ProjectSyncStatus): void {
+    this.requireDb().exec({
+      sql: 'UPDATE projects SET sync_status = ? WHERE id = ?',
+      bind: [status, projectId],
+    });
+  }
+
+  /**
+   * Generates and assigns readable ids to any projects that do not yet have
+   * one. Existing readable ids are never reassigned. Collision handling uses a
+   * deterministic `-2`, `-3`, ... suffix scheme.
+   */
+  backfillReadableIds(): void {
+    const db = this.requireDb();
+    const rows = db.selectObjects(
+      'SELECT id, name, readable_id FROM projects ORDER BY created_at ASC',
+    ) as unknown as { id: string; name: string; readable_id: string | null }[];
+    const used = new Set<string>();
+    for (const row of rows) {
+      if (row.readable_id) used.add(row.readable_id);
+    }
+    for (const row of rows) {
+      if (row.readable_id) continue;
+      const slug = generateReadableId(row.name, used);
+      db.exec({
+        sql: 'UPDATE projects SET readable_id = ?, updated_at = ? WHERE id = ?',
+        bind: [slug, Date.now(), row.id],
+      });
+      used.add(slug);
+    }
+  }
+
+  // ==================== Connection operations ====================
+
+  /** Creates a new S3 storage connection. */
+  createConnection(connection: Connection): void {
+    this.requireDb().exec({
+      sql: `INSERT INTO connections (id, name, storage_type, sync_only_new, last_sync_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      bind: [
+        connection.id,
+        connection.name,
+        connection.storage_type,
+        connection.sync_only_new ? 1 : 0,
+        connection.last_sync_at ?? null,
+        connection.created_at,
+        connection.updated_at,
+      ],
+    });
+  }
+
+  /** Updates the mutable fields of an existing connection. */
+  updateConnection(
+    connectionId: string,
+    fields: Partial<Pick<Connection, 'name' | 'sync_only_new' | 'last_sync_at'>>,
+  ): void {
+    const existing = this.getConnection(connectionId);
+    if (!existing) throw new Error(`Connection not found: ${connectionId}`);
+    const db = this.requireDb();
+    db.exec({
+      sql: 'UPDATE connections SET name = ?, sync_only_new = ?, last_sync_at = ?, updated_at = ? WHERE id = ?',
+      bind: [
+        fields.name ?? existing.name,
+        fields.sync_only_new === undefined
+          ? Number(existing.sync_only_new)
+          : Number(fields.sync_only_new),
+        fields.last_sync_at ?? existing.last_sync_at ?? null,
+        Date.now(),
+        connectionId,
+      ],
+    });
+  }
+
+  /** Deletes a connection; S3 credentials cascade. */
+  deleteConnection(connectionId: string): void {
+    this.requireDb().exec({
+      sql: 'DELETE FROM connections WHERE id = ?',
+      bind: [connectionId],
+    });
+  }
+
+  /** Lists all connections, newest first. */
+  getConnections(): Connection[] {
+    const rows = this.requireDb().selectObjects(
+      'SELECT * FROM connections ORDER BY created_at DESC',
+    );
+    return rows.map((row) => rowToConnection(row as Record<string, unknown>));
+  }
+
+  private getConnection(id: string): Connection | null {
+    const row = this.requireDb().selectObject('SELECT * FROM connections WHERE id = ?', [id]);
+    return row ? rowToConnection(row as Record<string, unknown>) : null;
+  }
+
+  /** Stores (or replaces) encrypted S3 credentials for a connection. */
+  saveS3Credentials(credentials: StoredS3Credentials): void {
+    this.requireDb().exec({
+      sql: `INSERT INTO connection_s3_credentials (
+        connection_id, region, endpoint, bucket, access_key_id,
+        secret_access_key_ct, secret_access_key_iv, session_token_ct, session_token_iv,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(connection_id) DO UPDATE SET
+        region = excluded.region, endpoint = excluded.endpoint, bucket = excluded.bucket,
+        access_key_id = excluded.access_key_id, secret_access_key_ct = excluded.secret_access_key_ct,
+        secret_access_key_iv = excluded.secret_access_key_iv, session_token_ct = excluded.session_token_ct,
+        session_token_iv = excluded.session_token_iv, updated_at = excluded.updated_at`,
+      bind: [
+        credentials.connection_id,
+        credentials.region,
+        credentials.endpoint ?? null,
+        credentials.bucket,
+        credentials.access_key_id,
+        credentials.secret_access_key_ct,
+        credentials.secret_access_key_iv,
+        credentials.session_token_ct ?? null,
+        credentials.session_token_iv ?? null,
+        credentials.created_at,
+        credentials.updated_at,
+      ],
+    });
+  }
+
+  /** Returns the encrypted S3 credentials for a connection, if any. */
+  getS3Credentials(connectionId: string): StoredS3Credentials | null {
+    const row = this.requireDb().selectObject(
+      'SELECT * FROM connection_s3_credentials WHERE connection_id = ?',
+      [connectionId],
+    );
+    return row ? rowToS3Credentials(row as Record<string, unknown>) : null;
+  }
+
+  /** Wipes all stored S3 credentials and passkey state (forgot-passkey flow). */
+  deleteAllCredentials(): void {
+    const db = this.requireDb();
+    db.exec('DELETE FROM connection_s3_credentials');
+    db.exec('DELETE FROM passkey_state');
+  }
+
+  // ==================== Passkey operations ====================
+
+  /** Returns the singleton passkey vault state, if one exists. */
+  getPasskeyState(): PasskeyState | null {
+    const row = this.requireDb().selectObject('SELECT * FROM passkey_state WHERE id = 1');
+    return row ? rowToPasskeyState(row as Record<string, unknown>) : null;
+  }
+
+  /** Saves or replaces the singleton passkey vault state. */
+  savePasskeyState(state: PasskeyState): void {
+    this.requireDb().exec({
+      sql: `INSERT INTO passkey_state (
+        id, kdf_salt, verifier_iv, verifier_ct, webauthn_credential_id,
+        webauthn_wrapped_key, webauthn_expires_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        kdf_salt = excluded.kdf_salt, verifier_iv = excluded.verifier_iv,
+        verifier_ct = excluded.verifier_ct, webauthn_credential_id = excluded.webauthn_credential_id,
+        webauthn_wrapped_key = excluded.webauthn_wrapped_key,
+        webauthn_expires_at = excluded.webauthn_expires_at, created_at = excluded.created_at`,
+      bind: [
+        state.id,
+        state.kdf_salt,
+        state.verifier_iv,
+        state.verifier_ct,
+        state.webauthn_credential_id ?? null,
+        state.webauthn_wrapped_key ?? null,
+        state.webauthn_expires_at ?? null,
+        state.created_at,
+      ],
     });
   }
 
@@ -501,6 +944,157 @@ export class DatabaseManager {
     return row ? this.hydrateSession(row) : null;
   }
 
+  /** Finds a session by its remote sync id within a project. */
+  getSessionBySyncId(projectId: string, syncSessionId: string): DashboardSession | null {
+    const row = this.requireDb().selectObject(
+      'SELECT id FROM sessions WHERE project_id = ? AND sync_session_id = ?',
+      [projectId, syncSessionId],
+    ) as unknown as { id: string } | undefined;
+    return row ? this.getSession(row.id) : null;
+  }
+
+  /**
+   * Inserts a sync stub or updates an existing session's stub-relevant
+   * columns. Parsed-content columns (metrics, child rows, transcript) are
+   * never overwritten by this call - the contract with the real parse path
+   * is that `sync_session_id`, `sync_status`, and the manifest mirror
+   * columns are left intact when the full parse lands later.
+   */
+  upsertSessionStub(stub: SessionStub): void {
+    const db = this.requireDb();
+    const existingById = db.selectObject('SELECT id FROM sessions WHERE id = ?', [
+      stub.id,
+    ]) as unknown as { id: string } | undefined;
+    if (existingById) {
+      this.updateStubColumns(existingById.id, stub);
+      return;
+    }
+    const existingBySync = db.selectObject(
+      'SELECT id FROM sessions WHERE project_id = ? AND sync_session_id = ?',
+      [stub.project_id, stub.sync_session_id],
+    ) as unknown as { id: string } | undefined;
+    if (existingBySync) {
+      this.updateStubColumns(existingBySync.id, stub);
+      return;
+    }
+    this.insertSessionStub(stub);
+  }
+
+  private insertSessionStub(stub: SessionStub): void {
+    const db = this.requireDb();
+    db.exec({
+      sql: `INSERT INTO sessions (
+        id, project_id, source, title, started_at, ended_at,
+        input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_tokens,
+        cost_usd, model, model_usage, tasks, external_id, subagents,
+        context_compactions, total_turns, files_read, files_written, agent_invocations,
+        sync_session_id, sync_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      bind: [
+        stub.id,
+        stub.project_id,
+        stub.source,
+        stub.title,
+        parseTimestamp(stub.started_at),
+        parseTimestamp(stub.ended_at),
+        stub.input_tokens ?? 0,
+        stub.output_tokens ?? 0,
+        stub.cache_creation_tokens ?? 0,
+        stub.cache_read_tokens ?? 0,
+        stub.total_tokens ?? 0,
+        stub.cost_usd ?? null,
+        stub.model ?? null,
+        stub.model_usage ?? null,
+        stub.tasks ?? null,
+        stub.external_id ?? null,
+        stub.subagents ?? null,
+        stub.context_compactions ?? 0,
+        stub.total_turns ?? 0,
+        stub.files_read ?? 0,
+        stub.files_written ?? 0,
+        stub.agent_invocations ?? 0,
+        stub.sync_session_id,
+        stub.sync_status,
+      ],
+    });
+  }
+
+  private updateStubColumns(sessionId: string, stub: SessionStub): void {
+    this.requireDb().exec({
+      sql: `UPDATE sessions SET
+        source = ?, title = ?, started_at = ?, ended_at = ?, sync_session_id = ?, sync_status = ?
+        WHERE id = ?`,
+      bind: [
+        stub.source,
+        stub.title,
+        parseTimestamp(stub.started_at),
+        parseTimestamp(stub.ended_at),
+        stub.sync_session_id,
+        stub.sync_status,
+        sessionId,
+      ],
+    });
+  }
+
+  /** Updates only the sync status (and optional detail text) of a session. */
+  setSessionSyncStatus(sessionId: string, status: SessionSyncStatus, details?: string): void {
+    this.requireDb().exec({
+      sql: 'UPDATE sessions SET sync_status = ?, sync_details = ? WHERE id = ?',
+      bind: [status, details ?? null, sessionId],
+    });
+  }
+
+  /** Writes all sync mirror columns from a manifest onto a session row. */
+  updateSessionManifest(sessionId: string, manifest: SyncManifest): void {
+    if (!this.getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
+    this.requireDb().exec({
+      sql: `UPDATE sessions SET
+        sync_session_id = ?, sync_schema_version = ?, sync_harness = ?, sync_harness_version = ?,
+        sync_manifest_model = ?, sync_started_at = ?, sync_ended_at = ?, sync_duration_ms = ?,
+        sync_end_reason = ?, sync_engine_version = ?, sync_plugin_version = ?,
+        sync_transcripts_captured = ?, sync_main_transcript_relative_path = ?, sync_artifacts = ?,
+        sync_runs = ?
+        WHERE id = ?`,
+      bind: [
+        manifest.sessionId,
+        manifest.schemaVersion,
+        manifest.harness ?? null,
+        manifest.harnessVersion ?? null,
+        manifest.model ?? null,
+        manifest.startedAt ?? null,
+        manifest.endedAt ?? null,
+        manifest.durationMs ?? null,
+        manifest.endReason ?? null,
+        manifest.syncVersion ?? null,
+        manifest.pluginVersion ?? null,
+        Number(manifest.transcriptsCaptured ?? 0),
+        manifest.mainTranscriptRelativePath ?? null,
+        safeJsonStringify(manifest.artifacts),
+        safeJsonStringify(manifest.syncRuns),
+        sessionId,
+      ],
+    });
+  }
+
+  /** Returns the number of recorded sync runs for a session. */
+  getSyncRunCount(sessionId: string): number {
+    const row = this.requireDb().selectObject('SELECT sync_runs FROM sessions WHERE id = ?', [
+      sessionId,
+    ]) as unknown as { sync_runs: string | null } | undefined;
+    return safeJsonLength(row?.sync_runs);
+  }
+
+  /** Marks every pending/processing session in a project as failed. */
+  failStaleSessions(projectId: string, details: string): void {
+    this.requireDb().exec({
+      sql: `UPDATE sessions
+            SET sync_status = 'failed', sync_details = ?
+            WHERE project_id = ? AND sync_status IN ('pending', 'processing')`,
+      bind: [details, projectId],
+    });
+  }
+
+  /** Deletes a session and decrements the project counter. */
   deleteSession(id: string): void {
     const db = this.requireDb();
     db.transaction(() => {
@@ -586,6 +1180,58 @@ export class DatabaseManager {
     }));
   }
 
+  // ==================== Sync boot reconciliation ====================
+
+  /**
+   * Crash-recovery primitive: set every 'syncing' project to 'in_sync' and
+   * every 'pending'/'processing' session to 'failed'. Runs as one atomic
+   * transaction spanning the whole database.
+   */
+  reconcileSyncStates(sessionDetails: string): void {
+    const db = this.requireDb();
+    db.transaction(() => {
+      db.exec("UPDATE projects SET sync_status = 'in_sync' WHERE sync_status = 'syncing'");
+      db.exec({
+        sql: "UPDATE sessions SET sync_status = 'failed', sync_details = ? WHERE sync_status IN ('pending', 'processing')",
+        bind: [sessionDetails],
+      });
+    });
+  }
+
+  // ==================== Session file operations ====================
+
+  /** Lists all file records for a session, ordered by path. */
+  getSessionFiles(sessionId: string): SessionFileRecord[] {
+    const rows = this.requireDb().selectObjects(
+      'SELECT * FROM session_files WHERE session_id = ? ORDER BY path',
+      [sessionId],
+    );
+    return rows.map((row) => rowToSessionFile(row as Record<string, unknown>));
+  }
+
+  /** Inserts or updates a session file record on the (session_id, path) key. */
+  upsertSessionFile(file: SessionFileRecord): void {
+    this.requireDb().exec({
+      sql: `INSERT INTO session_files (
+        id, project_id, session_id, path, scope, sha256, size, status, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id, path) DO UPDATE SET
+        scope = excluded.scope, sha256 = excluded.sha256, size = excluded.size,
+        status = excluded.status, updated_at = excluded.updated_at`,
+      bind: [
+        file.id,
+        file.project_id,
+        file.session_id,
+        file.path,
+        file.scope,
+        file.sha256,
+        file.size,
+        file.status,
+        file.updated_at,
+      ],
+    });
+  }
+
   // ==================== Metrics ====================
 
   getProjectMetrics(projectId: string): SessionMetrics {
@@ -650,22 +1296,66 @@ function rowToProject(row: Record<string, unknown>): Project {
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
     session_count: Number(row.session_count ?? 0),
+    readable_id: typeof row.readable_id === 'string' ? row.readable_id : undefined,
+    sync_status: isProjectSyncStatus(row.sync_status) ? row.sync_status : undefined,
+    connection_id: typeof row.connection_id === 'string' ? row.connection_id : undefined,
   };
 }
 
-function safeJsonParseArray<T>(value: string): T[] {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) ? (parsed as T[]) : [];
-  } catch {
-    return [];
-  }
+function rowToConnection(row: Record<string, unknown>): Connection {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    storage_type: 's3',
+    sync_only_new: Number(row.sync_only_new) === 1,
+    last_sync_at: typeof row.last_sync_at === 'number' ? row.last_sync_at : undefined,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  };
 }
 
-function safeJsonParse(value: string): Record<string, unknown> | undefined {
-  try {
-    return JSON.parse(value) as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
+function rowToS3Credentials(row: Record<string, unknown>): StoredS3Credentials {
+  return {
+    connection_id: String(row.connection_id),
+    region: String(row.region),
+    endpoint: typeof row.endpoint === 'string' ? row.endpoint : undefined,
+    bucket: String(row.bucket),
+    access_key_id: String(row.access_key_id),
+    secret_access_key_ct: String(row.secret_access_key_ct),
+    secret_access_key_iv: String(row.secret_access_key_iv),
+    session_token_ct: typeof row.session_token_ct === 'string' ? row.session_token_ct : undefined,
+    session_token_iv: typeof row.session_token_iv === 'string' ? row.session_token_iv : undefined,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  };
+}
+
+function rowToPasskeyState(row: Record<string, unknown>): PasskeyState {
+  return {
+    id: 1,
+    kdf_salt: String(row.kdf_salt),
+    verifier_iv: String(row.verifier_iv),
+    verifier_ct: String(row.verifier_ct),
+    webauthn_credential_id:
+      typeof row.webauthn_credential_id === 'string' ? row.webauthn_credential_id : undefined,
+    webauthn_wrapped_key:
+      typeof row.webauthn_wrapped_key === 'string' ? row.webauthn_wrapped_key : undefined,
+    webauthn_expires_at:
+      typeof row.webauthn_expires_at === 'number' ? row.webauthn_expires_at : undefined,
+    created_at: Number(row.created_at),
+  };
+}
+
+function rowToSessionFile(row: Record<string, unknown>): SessionFileRecord {
+  return {
+    id: String(row.id),
+    project_id: String(row.project_id),
+    session_id: String(row.session_id),
+    path: String(row.path),
+    scope: row.scope as SessionFileRecord['scope'],
+    sha256: String(row.sha256),
+    size: Number(row.size),
+    status: row.status as SessionFileRecord['status'],
+    updated_at: Number(row.updated_at),
+  };
 }

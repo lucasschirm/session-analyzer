@@ -5,7 +5,18 @@
  * created lazily on first use so importing this module has no side effects.
  */
 
-import type { DashboardSession, Project, SessionMetrics } from '../types';
+import type {
+  Connection,
+  DashboardSession,
+  PasskeyState,
+  Project,
+  SessionFileRecord,
+  SessionMetrics,
+  SessionStub,
+  SessionSyncStatus,
+  StoredS3Credentials,
+  SyncManifest,
+} from '../types';
 import type { DbRequest, DbRequestPayload, DbResponse } from './db-protocol';
 
 interface PendingCall {
@@ -20,6 +31,8 @@ export class DbClient {
   private pending = new Map<number, PendingCall>();
   private initPromise: Promise<'opfs' | 'memory'> | null = null;
   private createWorker: () => Worker;
+  /** Populated after a successful init when the worker fell back to memory. */
+  fallbackReason?: 'locked' | 'unsupported';
 
   constructor(createWorker?: () => Worker) {
     this.createWorker =
@@ -110,6 +123,114 @@ export class DbClient {
     return this.call({ type: 'exportDatabase' }) as Promise<Uint8Array>;
   }
 
+  // ==================== Connections ====================
+
+  createConnection(connection: Connection): Promise<void> {
+    return this.call({ type: 'createConnection', connection }) as Promise<void>;
+  }
+
+  updateConnection(
+    connectionId: string,
+    fields: Partial<Pick<Connection, 'name' | 'sync_only_new' | 'last_sync_at'>>,
+  ): Promise<void> {
+    return this.call({ type: 'updateConnection', connectionId, fields }) as Promise<void>;
+  }
+
+  deleteConnection(connectionId: string): Promise<void> {
+    return this.call({ type: 'deleteConnection', connectionId }) as Promise<void>;
+  }
+
+  getConnections(): Promise<Connection[]> {
+    return this.call({ type: 'getConnections' }) as Promise<Connection[]>;
+  }
+
+  saveS3Credentials(credentials: StoredS3Credentials): Promise<void> {
+    return this.call({ type: 'saveS3Credentials', credentials }) as Promise<void>;
+  }
+
+  getS3Credentials(connectionId: string): Promise<StoredS3Credentials | null> {
+    return this.call({
+      type: 'getS3Credentials',
+      connectionId,
+    }) as Promise<StoredS3Credentials | null>;
+  }
+
+  deleteAllCredentials(): Promise<void> {
+    return this.call({ type: 'deleteAllCredentials' }) as Promise<void>;
+  }
+
+  // ==================== Passkey ====================
+
+  getPasskeyState(): Promise<PasskeyState | null> {
+    return this.call({ type: 'getPasskeyState' }) as Promise<PasskeyState | null>;
+  }
+
+  savePasskeyState(state: PasskeyState): Promise<void> {
+    return this.call({ type: 'savePasskeyState', state }) as Promise<void>;
+  }
+
+  // ==================== Project sync ====================
+
+  getProjectByReadableId(readableId: string): Promise<Project | null> {
+    return this.call({ type: 'getProjectByReadableId', readableId }) as Promise<Project | null>;
+  }
+
+  setProjectSyncStatus(projectId: string, status: 'in_sync' | 'syncing'): Promise<void> {
+    return this.call({ type: 'setProjectSyncStatus', projectId, status }) as Promise<void>;
+  }
+
+  backfillReadableIds(): Promise<void> {
+    return this.call({ type: 'backfillReadableIds' }) as Promise<void>;
+  }
+
+  // ==================== Session sync ====================
+
+  getSessionBySyncId(projectId: string, syncSessionId: string): Promise<DashboardSession | null> {
+    return this.call({
+      type: 'getSessionBySyncId',
+      projectId,
+      syncSessionId,
+    }) as Promise<DashboardSession | null>;
+  }
+
+  upsertSessionStub(stub: SessionStub): Promise<void> {
+    return this.call({ type: 'upsertSessionStub', stub }) as Promise<void>;
+  }
+
+  setSessionSyncStatus(
+    sessionId: string,
+    status: SessionSyncStatus,
+    details?: string,
+  ): Promise<void> {
+    return this.call({ type: 'setSessionSyncStatus', sessionId, status, details }) as Promise<void>;
+  }
+
+  updateSessionManifest(sessionId: string, manifest: SyncManifest): Promise<void> {
+    return this.call({ type: 'updateSessionManifest', sessionId, manifest }) as Promise<void>;
+  }
+
+  getSyncRunCount(sessionId: string): Promise<number> {
+    return this.call({ type: 'getSyncRunCount', sessionId }) as Promise<number>;
+  }
+
+  failStaleSessions(projectId: string, details: string): Promise<void> {
+    return this.call({ type: 'failStaleSessions', projectId, details }) as Promise<void>;
+  }
+
+  reconcileSyncStates(sessionDetails: string): Promise<void> {
+    return this.call({ type: 'reconcileSyncStates', sessionDetails }) as Promise<void>;
+  }
+
+  // ==================== Session files ====================
+
+  getSessionFiles(sessionId: string): Promise<SessionFileRecord[]> {
+    return this.call({ type: 'getSessionFiles', sessionId }) as Promise<SessionFileRecord[]>;
+  }
+
+  upsertSessionFile(file: SessionFileRecord): Promise<void> {
+    return this.call({ type: 'upsertSessionFile', file }) as Promise<void>;
+  }
+
   /** Exports the SQLite file and triggers a browser download. */
   async exportAndDownload(): Promise<void> {
     const bytes = await this.exportDatabase();
@@ -152,6 +273,7 @@ export class DbClient {
     }
 
     if (pendingCall.requestType === 'init') {
+      this.fallbackReason = response.fallbackReason;
       pendingCall.resolve(response.storage ?? 'memory');
     } else if (pendingCall.requestType === 'exportDatabase') {
       pendingCall.resolve(response.bytes ?? new Uint8Array());
