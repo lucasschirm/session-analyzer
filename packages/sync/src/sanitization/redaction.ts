@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { SyncErrorCode } from '../errors.js';
+import type { SyncErrorCode } from '@lucasschirm/sal-sync-core';
 import type { RedactionAction } from './contract.js';
 
 const DEFAULT_REDACTED = '[REDACTED]';

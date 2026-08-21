@@ -1,16 +1,13 @@
 import process from 'node:process';
-import type { SyncErrorCode } from '../errors.js';
+import type { SyncErrorCode } from '@lucasschirm/sal-sync-core';
 import {
+  DEFAULT_HOOK_UPLOAD_TIMEOUT_MS,
   DEFAULT_MAX_FILE_BYTES,
   DEFAULT_MAX_FILES,
   DEFAULT_MAX_JSON_DEPTH,
   DEFAULT_MAX_JSONL_LINE_BYTES,
   DEFAULT_MAX_TOTAL_BYTES,
   DEFAULT_MAX_TRANSCRIPT_BYTES,
-  type SyncLimits,
-} from '../limits.js';
-import {
-  DEFAULT_HOOK_UPLOAD_TIMEOUT_MS,
   DEFAULT_SESSION_END_BUDGET_MS,
   DEFAULT_SYNC_RETRIES,
   DEFAULT_SYNC_TIMEOUT_MS,
@@ -37,8 +34,9 @@ import {
   type StorageConfig,
   type StorageType,
   type SyncConfig,
+  type SyncLimits,
   type SyncTimeouts,
-} from './contract.js';
+} from '@lucasschirm/sal-sync-core';
 
 export type ConfigEnv = Record<string, string | undefined>;
 

@@ -13,11 +13,14 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3';
 
-import type { StorageConfig } from '../config/contract.js';
-import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
+import type { StorageConfig } from '@lucasschirm/sal-sync-core';
 import {
+  buildObjectKey,
+  CAS_NAMESPACE_ROOT,
+  CAS_PREFIX,
   type DeleteObjectsInput,
   type DeleteObjectsResult,
+  encodeKeySegment,
   type GetObjectInput,
   type GetObjectResult,
   type HeadObjectInput,
@@ -30,8 +33,9 @@ import {
   type StorageAdapter,
   type StorageAdapterOptions,
   StorageError,
-} from './contract.js';
-import { buildObjectKey, CAS_NAMESPACE_ROOT, CAS_PREFIX, encodeKeySegment } from './object-key.js';
+  SYNC_ERROR_CATALOG,
+  type SyncErrorCode,
+} from '@lucasschirm/sal-sync-core';
 import {
   calculateRetryDelay,
   isRetryableError,

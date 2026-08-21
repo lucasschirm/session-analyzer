@@ -1,5 +1,5 @@
-import type { StorageAdapterOptions } from './contract.js';
-import { StorageError } from './contract.js';
+import type { StorageAdapterOptions } from '@lucasschirm/sal-sync-core';
+import { StorageError } from '@lucasschirm/sal-sync-core';
 
 export interface RetryPolicyOptions {
   maxRetries: number;

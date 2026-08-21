@@ -73,7 +73,7 @@ export interface ParsedObjectKey {
 function buildCasKey(contentSha256: string): string {
   const hash = validateCasHash(contentSha256);
   const key = `${CAS_PREFIX}/${hash}`;
-  if (Buffer.byteLength(key, 'utf8') > S3_KEY_MAX_BYTES) {
+  if (new TextEncoder().encode(key).length > S3_KEY_MAX_BYTES) {
     throw storageError('object key exceeds S3 maximum length');
   }
   return key;
@@ -106,7 +106,7 @@ function buildLegacyKey(
   const segments = [projectId, sessionId, ...scopeParts, ...parts];
   const encoded = segments.map(encodeKeySegment).join('/');
 
-  if (Buffer.byteLength(encoded, 'utf8') > S3_KEY_MAX_BYTES) {
+  if (new TextEncoder().encode(encoded).length > S3_KEY_MAX_BYTES) {
     throw storageError('object key exceeds S3 maximum length');
   }
 

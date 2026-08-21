@@ -1,8 +1,7 @@
 import type fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import path from 'node:path';
-import type { AllowlistEntry } from '../allowlist.js';
-import type { ArtifactScope } from '../artifact.js';
+import type { AllowlistEntry, ArtifactScope } from '@lucasschirm/sal-sync-core';
 import type { DiscoveryContext } from './context.js';
 import { isPathWithinRoot, isSymlink, lstatDiscovery } from './paths.js';
 

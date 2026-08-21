@@ -1,4 +1,9 @@
-import { SANITIZATION_POLICY_VERSION } from '../versions.js';
+import {
+  DEFAULT_TRANSCRIPT_CAPTURE_POLICY,
+  SANITIZATION_POLICY_VERSION,
+  TRANSCRIPT_OPT_OUT_ENV_VAR,
+  TRANSCRIPT_OPT_OUT_VALUE,
+} from '@lucasschirm/sal-sync-core';
 
 export type RedactionAction = 'redact' | 'remove' | 'hash';
 
@@ -77,9 +82,7 @@ export const MCP_REDACTION_RULES: readonly McpRedactionRule[] = [
   },
 ];
 
-export const DEFAULT_TRANSCRIPT_CAPTURE_POLICY: TranscriptCapturePolicy = 'raw';
-export const TRANSCRIPT_OPT_OUT_ENV_VAR = 'SAL_CAPTURE_TRANSCRIPTS';
-export const TRANSCRIPT_OPT_OUT_VALUE = 'false';
+export { DEFAULT_TRANSCRIPT_CAPTURE_POLICY, TRANSCRIPT_OPT_OUT_ENV_VAR, TRANSCRIPT_OPT_OUT_VALUE };
 
 export interface SanitizationPolicy {
   version: number;
