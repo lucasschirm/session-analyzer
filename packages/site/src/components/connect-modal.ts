@@ -822,6 +822,11 @@ export class ConnectModal extends LitElement {
     this.pendingAction = '';
   }
 
+  private handlePasskeyForgotten(): void {
+    this.passkeyOpen = false;
+    this.pendingAction = '';
+  }
+
   private addInMemoryConnection(): void {
     const id = generateId();
     const connection = connectionFromForm(this.form, id, Date.now());
@@ -1034,6 +1039,7 @@ export class ConnectModal extends LitElement {
           .mode=${this.passkeyMode}
           @passkey-created=${this.handlePasskeySuccess}
           @passkey-unlocked=${this.handlePasskeySuccess}
+          @passkey-forgotten=${this.handlePasskeyForgotten}
           @modal-close=${this.handlePasskeyClose}
         ></passkey-modal>
       </div>

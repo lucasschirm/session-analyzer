@@ -505,8 +505,8 @@ export class DatabaseManager {
 
   /** Inserts a new project record. */
   createProject(project: Project): void {
-    const sql = `INSERT INTO projects (id, name, description, readable_id, created_at, updated_at, session_count)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`;
+    const sql = `INSERT INTO projects (id, name, description, readable_id, created_at, updated_at, session_count, connection_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
     const bind = [
       project.id,
       project.name,
@@ -515,6 +515,7 @@ export class DatabaseManager {
       project.created_at,
       project.updated_at,
       project.session_count || 0,
+      project.connection_id || null,
     ];
     this.tryExecReadableId(sql, bind);
   }
@@ -1040,15 +1041,22 @@ export class DatabaseManager {
   }
 
   private insertSessionStub(stub: SessionStub): void {
-    this.requireDb().exec({
-      sql: `INSERT INTO sessions (
-        id, project_id, source, title, started_at, ended_at,
-        input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_tokens,
-        cost_usd, model, model_usage, tasks, external_id, subagents,
-        context_compactions, total_turns, files_read, files_written, agent_invocations,
-        sync_session_id, sync_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      bind: DatabaseManager.sessionStubBindParams(stub),
+    const db = this.requireDb();
+    db.transaction(() => {
+      db.exec({
+        sql: `INSERT INTO sessions (
+          id, project_id, source, title, started_at, ended_at,
+          input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_tokens,
+          cost_usd, model, model_usage, tasks, external_id, subagents,
+          context_compactions, total_turns, files_read, files_written, agent_invocations,
+          sync_session_id, sync_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        bind: DatabaseManager.sessionStubBindParams(stub),
+      });
+      db.exec({
+        sql: 'UPDATE projects SET session_count = session_count + 1, updated_at = ? WHERE id = ?',
+        bind: [Date.now(), stub.project_id],
+      });
     });
   }
 

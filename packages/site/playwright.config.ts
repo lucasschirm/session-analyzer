@@ -16,7 +16,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:4173',
+    baseURL: 'http://localhost:4199',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -27,8 +27,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm preview',
-    url: 'http://localhost:4173',
+    command: 'pnpm exec vite preview --port 4199 --strictPort',
+    url: 'http://localhost:4199',
     timeout: 120 * 1000,
     reuseExistingServer: !process.env.CI,
   },

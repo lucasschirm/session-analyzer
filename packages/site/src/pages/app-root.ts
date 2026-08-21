@@ -189,9 +189,10 @@ export class AppRoot extends LitElement {
 
   async firstUpdated(): Promise<void> {
     try {
-      this.storage = await dbClient.ensureReady();
+      const storage = await dbClient.ensureReady();
       await syncManager.init();
       await this.loadSecurityState();
+      this.storage = storage;
     } catch (error) {
       this.dbError = `Failed to initialize database: ${(error as Error).message}`;
     }
@@ -207,8 +208,8 @@ export class AppRoot extends LitElement {
   }
 
   private handleConnectClick(): void {
-    if (this.hasConnections && !isUnlocked()) {
-      this.passkeyMode = this.hasPasskey ? 'unlock' : 'create';
+    if (this.hasConnections && this.hasPasskey && !isUnlocked()) {
+      this.passkeyMode = 'unlock';
       this.passkeyOpen = true;
       return;
     }
@@ -222,6 +223,11 @@ export class AppRoot extends LitElement {
 
   private handlePasskeyClose(): void {
     this.passkeyOpen = false;
+  }
+
+  private handlePasskeyForgotten(): void {
+    this.passkeyOpen = false;
+    void this.loadSecurityState();
   }
 
   private handleConnectClose(): void {
@@ -267,6 +273,7 @@ export class AppRoot extends LitElement {
         .mode=${this.passkeyMode}
         @passkey-created=${this.handlePasskeySuccess}
         @passkey-unlocked=${this.handlePasskeySuccess}
+        @passkey-forgotten=${this.handlePasskeyForgotten}
         @modal-close=${this.handlePasskeyClose}
       ></passkey-modal>
     `;

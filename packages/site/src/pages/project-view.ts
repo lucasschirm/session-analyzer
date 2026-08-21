@@ -147,8 +147,17 @@ export class ProjectView extends LitElement {
   }
 
   private handleSyncChange = (event: Event): void => {
+    const wasRunning = this.isRunActive(this.syncSnapshot);
     this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
+    if (wasRunning && !this.isRunActive(this.syncSnapshot)) {
+      void this.loadData();
+    }
   };
+
+  private isRunActive(snapshot: SyncManagerSnapshot | null): boolean {
+    if (!snapshot?.activeRun) return false;
+    return snapshot.activeRun.state === 'running' || snapshot.activeRun.state === 'queued';
+  }
 
   willUpdate(changed: PropertyValues): void {
     if (changed.has('projectId') && this.projectId && !this.loadingLock) {

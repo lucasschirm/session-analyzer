@@ -146,10 +146,10 @@ export class SessionSyncChip extends LitElement {
     return '';
   }
 
-  private handleClick(): void {
-    if (this.isClickable) {
-      this.dispatchEvent(new CustomEvent('chip-click', { bubbles: true, composed: true }));
-    }
+  private handleClick(event: Event): void {
+    if (!this.isClickable) return;
+    event.stopPropagation();
+    this.dispatchEvent(new CustomEvent('chip-click', { bubbles: true, composed: true }));
   }
 
   render(): TemplateResult {

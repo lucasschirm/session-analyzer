@@ -359,6 +359,7 @@ class FileProcessingBridge {
       group.jsonlCompletion?.resolve();
       group.metaCompletion?.resolve();
     } catch (error) {
+      console.error('mergeSubagentGroup failed for', group.agentId, error);
       group.jsonlCompletion?.reject(error as Error);
       group.metaCompletion?.reject(error as Error);
     }
