@@ -1,5 +1,5 @@
 import { CAS_NAMESPACE_ROOT, validateProjectId } from '@lucasschirm/sal-sync-core';
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, type TemplateResult } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
 
 /**
@@ -235,15 +235,11 @@ export class ProjectModal extends LitElement {
   }
 
   private async loadTakenIds(): Promise<void> {
-    this.isLoadingTaken = true;
-    try {
-      await this.fetchTakenIds();
-    } finally {
-      // fetchTakenIds always sets the final state and isLoadingTaken.
-    }
+    await this.fetchTakenIds();
   }
 
   private async fetchTakenIds(): Promise<void> {
+    this.isLoadingTaken = true;
     const taken = new Set<string>();
     taken.add(CAS_NAMESPACE_ROOT);
     try {
@@ -330,39 +326,35 @@ export class ProjectModal extends LitElement {
     event.preventDefault();
     const name = this.name.trim();
     if (!name) return;
-
     await (this.takenIdsPromise ?? Promise.resolve());
-
     const readableId = this.readableId.trim();
     if (!readableId) {
       this.idError = 'Project ID is required';
       this.idInput?.focus();
       return;
     }
-
     this.idError = this.validateReadableId(readableId);
     if (this.idError) {
       this.idInput?.focus();
       return;
     }
-
     const detail: ProjectCreateEventDetail = {
       name,
       description: this.description.trim(),
       readableId,
     };
-
     if (this.mode === 'edit') {
-      this.dispatchEvent(
-        new CustomEvent<ProjectEditEventDetail>('project-edit', {
-          detail: { ...detail, projectId: this.projectId },
-          bubbles: true,
-          composed: true,
-        }),
-      );
+      this.emitEdit({ ...detail, projectId: this.projectId });
       return;
     }
+    this.emitCreate(detail);
+  }
 
+  private close(): void {
+    this.dispatchEvent(new CustomEvent('modal-close', { bubbles: true, composed: true }));
+  }
+
+  private emitCreate(detail: ProjectCreateEventDetail): void {
     this.dispatchEvent(
       new CustomEvent<ProjectCreateEventDetail>('project-create', {
         detail,
@@ -372,18 +364,83 @@ export class ProjectModal extends LitElement {
     );
   }
 
-  private close(): void {
-    this.dispatchEvent(new CustomEvent('modal-close', { bubbles: true, composed: true }));
+  private emitEdit(detail: ProjectEditEventDetail): void {
+    this.dispatchEvent(
+      new CustomEvent<ProjectEditEventDetail>('project-edit', {
+        detail,
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private renderIdField(): TemplateResult {
+    const idHintId = 'project-id-hint';
+    const errorId = 'project-id-error';
+    const describedBy = this.idError ? `${idHintId} ${errorId}` : idHintId;
+
+    return html`
+      <label for="project-id-input">Project ID</label>
+      <input
+        id="project-id-input"
+        type="text"
+        .value=${this.readableId}
+        pattern="[a-z0-9-]*"
+        ?required=${!this.readonlyId}
+        ?readonly=${this.readonlyId}
+        ?disabled=${this.readonlyId}
+        autocomplete="off"
+        aria-describedby=${describedBy}
+        .aria-invalid=${this.idError ? 'true' : 'false'}
+        @input=${this.handleIdInput}
+      />
+      <p id=${idHintId} class="help-text">
+        Lowercase letters, numbers, and hyphens only.
+      </p>
+      ${this.idError ? html`<p id=${errorId} class="field-error">${this.idError}</p>` : ''}
+    `;
+  }
+
+  private renderNameField(): TemplateResult {
+    return html`
+      <label for="project-name-input">Project name</label>
+      <input
+        id="project-name-input"
+        type="text"
+        .value=${this.name}
+        placeholder="e.g. session-analyzer"
+        required
+        @input=${this.handleNameInput}
+      />
+    `;
+  }
+
+  private renderDescriptionField(): TemplateResult {
+    return html`
+      <label for="project-description-input">Description (optional)</label>
+      <textarea
+        id="project-description-input"
+        .value=${this.description}
+        placeholder="What is this project about?"
+        @input=${this.handleDescriptionInput}
+      ></textarea>
+    `;
+  }
+
+  private renderActions(): TemplateResult {
+    const submitLabel = this.mode === 'edit' ? 'Save Project' : 'Create Project';
+    const disabled = this.name.trim().length === 0 || this.idError !== null || this.isLoadingTaken;
+    return html`
+      <div class="actions">
+        <button type="button" class="secondary" @click=${this.close}>Cancel</button>
+        <button type="submit" class="primary" ?disabled=${disabled}>${submitLabel}</button>
+      </div>
+    `;
   }
 
   render() {
     if (!this.open) return html``;
-
     const title = this.mode === 'edit' ? 'Edit Project' : 'New Project';
-    const submitLabel = this.mode === 'edit' ? 'Save Project' : 'Create Project';
-    const idHintId = 'project-id-hint';
-    const errorId = 'project-id-error';
-    const describedBy = this.idError ? `${idHintId} ${errorId}` : idHintId;
 
     return html`
       <div
@@ -394,55 +451,10 @@ export class ProjectModal extends LitElement {
         <div class="panel" role="dialog" aria-modal="true" aria-label=${title}>
           <h2>${title}</h2>
           <form @submit=${this.handleSubmit}>
-            <label for="project-id-input">Project ID</label>
-            <input
-              id="project-id-input"
-              type="text"
-              .value=${this.readableId}
-              pattern="[a-z0-9-]*"
-              ?required=${!this.readonlyId}
-              ?readonly=${this.readonlyId}
-              ?disabled=${this.readonlyId}
-              autocomplete="off"
-              aria-describedby=${describedBy}
-              .aria-invalid=${this.idError ? 'true' : 'false'}
-              @input=${this.handleIdInput}
-            />
-            <p id=${idHintId} class="help-text">
-              Lowercase letters, numbers, and hyphens only.
-            </p>
-            ${this.idError ? html`<p id=${errorId} class="field-error">${this.idError}</p>` : ''}
-
-            <label for="project-name-input">Project name</label>
-            <input
-              id="project-name-input"
-              type="text"
-              .value=${this.name}
-              placeholder="e.g. session-analyzer"
-              required
-              @input=${this.handleNameInput}
-            />
-
-            <label for="project-description-input">Description (optional)</label>
-            <textarea
-              id="project-description-input"
-              .value=${this.description}
-              placeholder="What is this project about?"
-              @input=${this.handleDescriptionInput}
-            ></textarea>
-
-            <div class="actions">
-              <button type="button" class="secondary" @click=${this.close}>Cancel</button>
-              <button
-                type="submit"
-                class="primary"
-                ?disabled=${
-                  this.name.trim().length === 0 || this.idError !== null || this.isLoadingTaken
-                }
-              >
-                ${submitLabel}
-              </button>
-            </div>
+            ${this.renderIdField()}
+            ${this.renderNameField()}
+            ${this.renderDescriptionField()}
+            ${this.renderActions()}
           </form>
         </div>
       </div>

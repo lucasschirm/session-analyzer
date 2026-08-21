@@ -545,6 +545,76 @@ describe('project-modal', () => {
     overlay.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(closed).toBe(1);
   });
+
+  it('shows a client-side duplicate id error without a DB round-trip', async () => {
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+        getLocalProjectIds: () => Promise.resolve(['taken']),
+      }) as ProjectModal,
+    );
+    await settle(modal);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle(modal);
+
+    const root = shadow(modal);
+    const nameInput = root.querySelector('#project-name-input') as HTMLInputElement;
+    const idInput = root.querySelector('#project-id-input') as HTMLInputElement;
+
+    nameInput.value = 'My Project';
+    nameInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    idInput.value = 'taken';
+    idInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    let created = 0;
+    let edited = 0;
+    modal.addEventListener('project-create', () => created++);
+    modal.addEventListener('project-edit', () => edited++);
+
+    const form = root.querySelector('form') as HTMLFormElement;
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(idInput.value).toBe('taken');
+    expect(root.textContent).toContain('This project ID is already in use');
+    expect((root.querySelector('button.primary') as HTMLButtonElement).disabled).toBe(true);
+    expect(created).toBe(0);
+    expect(edited).toBe(0);
+  });
+
+  it('emits only modal-close when dismissed in sync-discovery mode', async () => {
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+        mode: 'sync-discovery',
+        initialReadableId: 'discovered-folder',
+        readonlyId: true,
+      }) as ProjectModal,
+    );
+    await settle(modal);
+
+    let closed = 0;
+    let created = 0;
+    let edited = 0;
+    modal.addEventListener('modal-close', () => closed++);
+    modal.addEventListener('project-create', () => created++);
+    modal.addEventListener('project-edit', () => edited++);
+
+    const root = shadow(modal);
+    (root.querySelector('button.secondary') as HTMLButtonElement).click();
+    expect(closed).toBe(1);
+    expect(created).toBe(0);
+    expect(edited).toBe(0);
+
+    const overlay = root.querySelector('.project-modal') as HTMLDivElement;
+    overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(closed).toBe(2);
+    expect(created).toBe(0);
+    expect(edited).toBe(0);
+  });
 });
 
 describe('upload-zone', () => {
