@@ -288,28 +288,7 @@ export function loadStorageConfig(env: ConfigEnv = process.env): LoadStorageConf
   };
 }
 
-export function loadConfig(env: ConfigEnv = process.env): LoadConfigResult {
-  if (isTruthy(envValue(env, ENV_SAL_SYNC_DISABLED))) {
-    return { ok: false, disabled: true };
-  }
-
-  const projectId = envValue(env, ENV_SAL_PROJECT_ID);
-  if (projectId === undefined) {
-    return {
-      ok: false,
-      disabled: true,
-      error: {
-        code: 'SYNC_CONFIG_MISSING',
-        message: `${ENV_SAL_PROJECT_ID} is required.`,
-      },
-    };
-  }
-
-  const projectIdError = validateResolvedProjectId(projectId);
-  if (projectIdError) {
-    return { ok: false, disabled: true, error: projectIdError };
-  }
-
+function buildFullConfig(env: ConfigEnv, projectId: string): LoadConfigResult {
   const storageResult = parseStorageConfig(env);
   if ('error' in storageResult) {
     return { ok: false, disabled: true, error: storageResult.error };
@@ -341,4 +320,29 @@ export function loadConfig(env: ConfigEnv = process.env): LoadConfigResult {
   };
 
   return { ok: true, config };
+}
+
+export function loadConfig(env: ConfigEnv = process.env): LoadConfigResult {
+  if (isTruthy(envValue(env, ENV_SAL_SYNC_DISABLED))) {
+    return { ok: false, disabled: true };
+  }
+
+  const projectId = envValue(env, ENV_SAL_PROJECT_ID);
+  if (projectId === undefined) {
+    return {
+      ok: false,
+      disabled: true,
+      error: {
+        code: 'SYNC_CONFIG_MISSING',
+        message: `${ENV_SAL_PROJECT_ID} is required.`,
+      },
+    };
+  }
+
+  const projectIdError = validateResolvedProjectId(projectId);
+  if (projectIdError) {
+    return { ok: false, disabled: true, error: projectIdError };
+  }
+
+  return buildFullConfig(env, projectId);
 }
