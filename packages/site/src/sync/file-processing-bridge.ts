@@ -67,6 +67,7 @@ interface SessionBridgeState {
   rejectMain: (error: Error) => void;
   mergeQueue: Promise<void>;
   groups: Map<string, SubagentGroupState>;
+  inFlightParses: Set<Promise<void>>;
 }
 
 function createPromiseWithResolvers<T>(): PromiseWithResolvers<T> {
@@ -171,6 +172,7 @@ class FileProcessingBridge {
       rejectMain: main.reject,
       mergeQueue: main.promise,
       groups: new Map(),
+      inFlightParses: new Set(),
     };
   }
 
@@ -182,10 +184,14 @@ class FileProcessingBridge {
     return this.dispatchSubagentFile(state, file, classification.agentId, classification.kind);
   }
 
-  private async dispatchMainFile(state: SessionBridgeState, file: DownloadedFile): Promise<void> {
-    const title = state.manifest?.sessionId ?? file.path;
-    const parsed = await this.parse(file.content, { projectId: state.projectId, title });
-    return this.enqueue(state, () => this.processMain(state, file, parsed));
+  private dispatchMainFile(state: SessionBridgeState, file: DownloadedFile): Promise<void> {
+    const dispatch = (async () => {
+      const title = state.manifest?.sessionId ?? file.path;
+      const parsed = await this.parse(file.content, { projectId: state.projectId, title });
+      return this.enqueue(state, () => this.processMain(state, file, parsed));
+    })();
+    this.trackInFlight(state, dispatch);
+    return dispatch;
   }
 
   private async processMain(
@@ -205,7 +211,7 @@ class FileProcessingBridge {
     }
   }
 
-  private async dispatchSubagentFile(
+  private dispatchSubagentFile(
     state: SessionBridgeState,
     file: DownloadedFile,
     agentId: string,
@@ -214,23 +220,36 @@ class FileProcessingBridge {
     if (kind === 'meta') {
       const meta = parseSubagentMeta(new TextDecoder().decode(file.content));
       return new Promise<void>((resolve, reject) => {
-        this.enqueue(state, () =>
+        const dispatch = this.enqueue(state, () =>
           this.updateGroupWithMeta(state, agentId, file, meta, resolve, reject),
         );
+        dispatch.catch(reject);
       });
     }
-    const parsed = await this.parse(file.content, { projectId: state.projectId });
     return new Promise<void>((resolve, reject) => {
-      this.enqueue(state, () =>
-        this.updateGroupWithJsonl(state, agentId, file, parsed, resolve, reject),
-      );
+      const dispatch = (async () => {
+        const parsed = await this.parse(file.content, { projectId: state.projectId });
+        return this.enqueue(state, () =>
+          this.updateGroupWithJsonl(state, agentId, file, parsed, resolve, reject),
+        );
+      })();
+      this.trackInFlight(state, dispatch);
+      dispatch.catch(reject);
     });
   }
 
   private enqueue(state: SessionBridgeState, work: () => Promise<void> | void): Promise<void> {
-    const next = state.opQueue.then(work);
+    const next = state.opQueue.catch(() => undefined).then(work);
     state.opQueue = next;
     return next;
+  }
+
+  private trackInFlight(state: SessionBridgeState, promise: Promise<void>): void {
+    state.inFlightParses.add(promise);
+    promise.then(
+      () => state.inFlightParses.delete(promise),
+      () => state.inFlightParses.delete(promise),
+    );
   }
 
   private updateGroupWithJsonl(
@@ -278,15 +297,32 @@ class FileProcessingBridge {
     if (!force && isSidecarExpected(state.manifest, group.agentId) && group.meta === undefined)
       return;
     group.merged = true;
-    state.mergeQueue = state.mergeQueue.then(() => this.mergeSubagentGroup(state, group));
+    state.mergeQueue = state.mergeQueue
+      .catch(() => undefined)
+      .then(() => this.mergeSubagentGroup(state, group));
   }
 
   private async forceCompleteSession(state: SessionBridgeState): Promise<void> {
-    await state.opQueue;
+    const inFlight = Array.from(state.inFlightParses);
+    await Promise.all([state.opQueue, ...inFlight]);
     let chain: Promise<unknown> = state.mergeQueue.catch(() => undefined);
     for (const group of state.groups.values()) {
       if (group.merged) continue;
-      if (group.parsed === undefined) continue;
+      if (group.parsed === undefined) {
+        if (group.meta !== undefined || group.metaFile !== undefined) {
+          group.merged = true;
+          group.metaCompletion?.resolve();
+          const metaFile = group.metaFile;
+          if (metaFile) {
+            chain = chain.then(() =>
+              this.upsertSessionFile(state.sessionId, state.projectId, metaFile).catch(
+                () => undefined,
+              ),
+            );
+          }
+        }
+        continue;
+      }
       group.merged = true;
       chain = chain.then(() => this.mergeSubagentGroup(state, group).catch(() => undefined));
     }
@@ -317,7 +353,6 @@ class FileProcessingBridge {
     } catch (error) {
       group.jsonlCompletion?.reject(error as Error);
       group.metaCompletion?.reject(error as Error);
-      throw error;
     }
   }
 

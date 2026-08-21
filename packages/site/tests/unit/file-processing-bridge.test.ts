@@ -577,4 +577,123 @@ describe('FileProcessingBridge', () => {
       }),
     );
   });
+
+  it('force-completes a meta-only group when the jsonl sidecar is unchanged and never downloaded', async () => {
+    const main = makeDashboardSession({ id: 'session-1', external_id: 'remote-sess' });
+    const subagent = makeDashboardSession({
+      id: 'sub-1',
+      project_id: 'project-1',
+      title: 'agent-1.jsonl',
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 15,
+    });
+    parse.mockImplementation(async (_, options) =>
+      options.title ? makeParsedSession(main) : makeParsedSession(subagent),
+    );
+    createBridge(
+      makeSyncManifest({
+        artifacts: [
+          makeArtifact('subagents/agent-1.jsonl'),
+          makeArtifact('subagents/agent-1.meta.json'),
+        ],
+      }),
+    );
+
+    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    await onFileDownloaded('session-1', mainFile);
+
+    const sidecar = makeDownloadedFile(
+      'session/subagents/agent-1.meta.json',
+      '{"agentType":"Research"}',
+    );
+    const sidecarPromise = onFileDownloaded('session-1', sidecar);
+
+    await Promise.resolve();
+    expect(calls.replaceSession).not.toHaveBeenCalled();
+
+    await onSyncComplete('session-1');
+    await sidecarPromise;
+
+    expect(calls.replaceSession).not.toHaveBeenCalled();
+    expect(calls.upsertSessionFile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: 'session/subagents/agent-1.meta.json',
+        scope: 'session',
+        status: 'processed',
+      }),
+    );
+  });
+
+  it('completes a subagent group whose parse is still in flight when sync completes', async () => {
+    const main = makeDashboardSession({ id: 'session-1', external_id: 'remote-sess' });
+    const subagent = makeDashboardSession({
+      id: 'sub-1',
+      project_id: 'project-1',
+      title: 'agent-1.jsonl',
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 15,
+    });
+    let resolveSubagent: (value: ParsedSession) => void = () => undefined;
+    const subagentDeferred = new Promise<ParsedSession>((resolve) => {
+      resolveSubagent = resolve;
+    });
+    parse.mockImplementation(async (_, options) =>
+      options.title ? makeParsedSession(main) : subagentDeferred,
+    );
+    createBridge(makeSyncManifest({ artifacts: [makeArtifact('subagents/agent-1.jsonl')] }));
+
+    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    await onFileDownloaded('session-1', mainFile);
+
+    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonlPromise = onFileDownloaded('session-1', jsonl);
+
+    await Promise.resolve();
+    expect(calls.replaceSession).not.toHaveBeenCalled();
+
+    const syncCompletePromise = onSyncComplete('session-1');
+    await Promise.resolve();
+    expect(calls.replaceSession).not.toHaveBeenCalled();
+
+    resolveSubagent(makeParsedSession(subagent));
+    await syncCompletePromise;
+    await jsonlPromise;
+
+    expect(calls.replaceSession).toHaveBeenCalledTimes(1);
+    const replaced = calls.replaceSession.mock.calls[0][0] as DashboardSession;
+    expect(replaced.subagents).toHaveLength(1);
+  });
+
+  it('does not hang on a subagent dispatch after the main transcript opQueue work rejects', async () => {
+    const main = makeDashboardSession({ id: 'session-1', external_id: 'remote-sess' });
+    const subagent = makeDashboardSession({
+      id: 'sub-1',
+      project_id: 'project-1',
+      title: 'agent-1.jsonl',
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 15,
+    });
+    parse.mockImplementation(async (_, options) =>
+      options.title ? makeParsedSession(main) : makeParsedSession(subagent),
+    );
+    createBridge(makeSyncManifest({ artifacts: [makeArtifact('subagents/agent-1.jsonl')] }));
+    calls.upsertSessionByExternalId.mockRejectedValue(new Error('main upsert failed'));
+
+    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    await expect(onFileDownloaded('session-1', mainFile)).rejects.toThrow('main upsert failed');
+
+    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonlPromise = onFileDownloaded('session-1', jsonl);
+
+    await expect(jsonlPromise).rejects.toThrow('main upsert failed');
+  });
 });
