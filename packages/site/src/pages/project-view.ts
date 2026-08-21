@@ -1,5 +1,10 @@
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import '../components/metrics-card';
+import '../components/project-sync-indicator';
+import '../components/project-sync-status-modal';
+import '../components/session-list';
+import '../components/upload-zone';
 import { dbClient } from '../db/db-client';
 import { formatCompactNumber, formatFullNumber } from '../lib/format';
 import {
@@ -9,11 +14,9 @@ import {
   type UploadedFile,
 } from '../lib/subagents';
 import { navigateTo } from '../router';
+import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 import type { DashboardSession, Project } from '../types';
 import { parseInWorker } from '../workers/parser-client';
-import '../components/metrics-card';
-import '../components/session-list';
-import '../components/upload-zone';
 
 /**
  * Project View: session upload + session list for one project.
@@ -126,18 +129,29 @@ export class ProjectView extends LitElement {
 
   @state() private error: string | null = null;
 
+  @state() private syncSnapshot: SyncManagerSnapshot | null = null;
+
+  @state() private syncModalOpen = false;
+
   private loadingLock = false;
 
   connectedCallback(): void {
     super.connectedCallback();
-    if (this.projectId) {
-      void this.loadData();
-    }
+    this.syncSnapshot = syncManager.getSnapshot();
+    syncManager.addEventListener('change', this.handleSyncChange);
   }
 
-  updated(changedProperties: Map<string, unknown>): void {
-    super.updated(changedProperties);
-    if (changedProperties.has('projectId') && this.projectId && !this.loadingLock) {
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    syncManager.removeEventListener('change', this.handleSyncChange);
+  }
+
+  private handleSyncChange = (event: Event): void => {
+    this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
+  };
+
+  willUpdate(changed: PropertyValues): void {
+    if (changed.has('projectId') && this.projectId && !this.loadingLock) {
       void this.loadData();
     }
   }
@@ -255,6 +269,17 @@ export class ProjectView extends LitElement {
     navigateTo(`/sessions/${event.detail.sessionId}`);
   }
 
+  private isProjectSyncing(): boolean {
+    const project = this.project;
+    if (project?.sync_status === 'syncing') return true;
+    const snapshot = this.syncSnapshot;
+    if (!snapshot || !project?.readable_id) return false;
+    return snapshot.projects.some(
+      (p) =>
+        p.projectId === project.readable_id && (p.status === 'running' || p.status === 'queued'),
+    );
+  }
+
   render() {
     if (!this.project && !this.isLoading) {
       return html`
@@ -269,8 +294,21 @@ export class ProjectView extends LitElement {
       <div class="project-view">
         <a class="back-link" href="#/">← Back to Projects</a>
 
-        <div>
-          <h1>${this.project?.name ?? 'Project'}</h1>
+        <div class="project-header">
+          <h1>
+            ${this.project?.name ?? 'Project'}
+            ${
+              this.isProjectSyncing()
+                ? html`
+                  <project-sync-indicator
+                    @indicator-click=${() => {
+                      this.syncModalOpen = true;
+                    }}
+                  ></project-sync-indicator>
+                `
+                : ''
+            }
+          </h1>
           ${
             this.project?.description
               ? html`<p class="project-description">${this.project.description}</p>`
@@ -323,10 +361,19 @@ export class ProjectView extends LitElement {
             : html`
             <session-list
               .sessions=${this.sessions}
+              .project=${this.project}
               @session-click=${this.handleSessionClick}
             ></session-list>
           `
         }
+
+        <project-sync-status-modal
+          .open=${this.syncModalOpen}
+          .projectId=${this.project?.readable_id ?? ''}
+          @modal-close=${() => {
+            this.syncModalOpen = false;
+          }}
+        ></project-sync-status-modal>
       </div>
     `;
   }

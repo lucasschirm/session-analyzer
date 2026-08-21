@@ -39,7 +39,15 @@ const mockSyncManager = vi.hoisted(() => {
       listeners[type] = listeners[type].filter((l) => l !== listener);
     }),
     requestRun: vi.fn(),
-    getSnapshot: vi.fn(() => ({ readOnly: false, activeRun: null, queuedRuns: [] as string[] })),
+    getSnapshot: vi.fn(() => ({
+      initialized: true,
+      readOnly: false,
+      projects: [] as unknown[],
+      sessions: [] as unknown[],
+      warnings: [] as string[],
+      activeRun: null,
+      queuedRuns: [] as unknown[],
+    })),
     emitChange: () => {
       for (const listener of listeners.change ?? []) {
         listener(new Event('change'));
@@ -86,7 +94,15 @@ beforeEach(() => {
   mockDbClient.updateConnection.mockResolvedValue(undefined);
   mockDbClient.saveS3Credentials.mockResolvedValue(undefined);
   mockDbClient.deleteConnection.mockResolvedValue(undefined);
-  mockSyncManager.getSnapshot.mockReturnValue({ readOnly: false, activeRun: null, queuedRuns: [] });
+  mockSyncManager.getSnapshot.mockReturnValue({
+    initialized: true,
+    readOnly: false,
+    projects: [],
+    sessions: [],
+    warnings: [],
+    activeRun: null,
+    queuedRuns: [],
+  });
 });
 
 describe('app-root', () => {
@@ -96,7 +112,7 @@ describe('app-root', () => {
 
     const root = app.shadowRoot as ShadowRoot;
     const headerRight = root.querySelector('.header-right');
-    const progress = root.querySelector('.sync-progress-slot');
+    const progress = root.querySelector('sync-progress-bar');
     const badge = root.querySelector('.storage-badge');
 
     expect(headerRight).not.toBeNull();

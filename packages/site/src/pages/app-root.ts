@@ -2,6 +2,7 @@ import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '../components/connect-modal';
 import '../components/passkey-modal';
+import '../components/sync-progress-bar';
 import { dbClient } from '../db/db-client';
 import { HashRouter } from '../router';
 import { isUnlocked } from '../sync/credential-crypto';
@@ -107,11 +108,6 @@ export class AppRoot extends LitElement {
 
     .connect-button:hover {
       background: var(--md-sys-color-surface-container-hover, #262d3a);
-    }
-
-    .sync-progress-slot {
-      min-width: 120px;
-      height: 20px;
     }
 
     main {
@@ -239,7 +235,7 @@ export class AppRoot extends LitElement {
       <header>
         <a href="#/" class="logo">Session Analyzer</a>
         <div class="header-right">
-          <div class="sync-progress-slot" aria-hidden="true"></div>
+          <sync-progress-bar></sync-progress-bar>
           ${
             this.storage
               ? html`<span class="storage-badge ${this.storage}" title="SQLite storage backend">

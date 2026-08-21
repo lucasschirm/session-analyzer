@@ -17,6 +17,7 @@ import {
 } from '../../src/sync/sync-manager';
 import type {
   SessionSyncMessage,
+  StartMessage,
   SyncMessageFromWorker,
   SyncMessageToWorker,
 } from '../../src/sync/sync-protocol';
@@ -712,6 +713,39 @@ describe('SyncManager', () => {
     expect(start).toBeTruthy();
     expect(start?.type).toBe('START');
     expect((start as { projectId: string }).projectId).toBe(projectId);
+  });
+
+  it('retries a failed session with targetSessionIds and bypasses sync-only-new', async () => {
+    const { syncManager, workers } = createTestManager();
+    const initPromise = syncManager.init();
+    await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+    await initPromise;
+
+    const { connection } = await setupConnectionAndCredentials(dbClient);
+    connection.sync_only_new = true;
+    await dbClient.updateConnection(connection.id, { sync_only_new: true });
+
+    const project = await createLocalProject(
+      dbClient,
+      'Remote Project',
+      'remote-proj',
+      connection.id,
+    );
+    const syncSessionId = 'session-1';
+    const sessionId = await insertSessionStub(dbClient, project.id, syncSessionId, {}, 'failed');
+
+    await syncManager.retrySession(connection.id, 'remote-proj', syncSessionId);
+    await flush();
+
+    expect(workers).toHaveLength(1);
+    const start = workers[0]?.posted.find((m) => m.type === 'START') as StartMessage | undefined;
+    expect(start).toBeTruthy();
+    expect(start?.projectId).toBe('remote-proj');
+    expect(start?.syncOnlyNew).toBe(false);
+    expect(start?.targetSessionIds).toEqual([syncSessionId]);
+
+    const session = await dbClient.getSession(sessionId);
+    expect(session?.sync_status).toBe('pending');
   });
 
   it('creates local projects for missing remote folders and puts a manifest', async () => {
@@ -1789,6 +1823,31 @@ describe('SyncManager', () => {
       expect(file?.id).toBe(fileId);
       expect(file?.sha256).toBe(fileHash);
       expect(file?.project_id).toBe(project.id);
+    });
+  });
+
+  describe('retrySession', () => {
+    it('throws if the vault is locked before retrying a session', async () => {
+      const { syncManager } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const project = await createLocalProject(
+        dbClient,
+        'Remote Project',
+        'remote-proj',
+        connection.id,
+      );
+      const syncSessionId = 'session-1';
+      await insertSessionStub(dbClient, project.id, syncSessionId, {}, 'failed');
+
+      vi.mocked(isUnlocked).mockReturnValue(false);
+
+      await expect(
+        syncManager.retrySession(connection.id, 'remote-proj', syncSessionId),
+      ).rejects.toThrow('Vault is locked');
     });
   });
 });

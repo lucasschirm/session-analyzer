@@ -43,6 +43,12 @@ export interface DashboardSession {
    */
   external_id?: string;
   subagents: SubagentUsage[];
+  /** Remote sync session id, when this session came from a sync run. */
+  sync_session_id?: string;
+  /** Sync status, when this session came from a sync run. */
+  sync_status?: SessionSyncStatus;
+  /** Detail text for a failed sync. */
+  sync_details?: string;
 }
 
 /**
