@@ -628,24 +628,31 @@ export class SyncManager extends EventTarget {
   }
 
   private attachWorkerHandlers(run: SyncRun, project: ProjectSyncState, worker: Worker): void {
+    let messageQueue: Promise<void> = Promise.resolve();
     worker.onmessage = (event: MessageEvent<SyncMessageFromWorker>) => {
-      this.handleWorkerMessage(run, project, worker, event.data).catch((error) =>
-        this.handleWorkerFatal(run, project, worker, error),
-      );
+      messageQueue = messageQueue
+        .then(() =>
+          this.handleWorkerMessage(run, project, worker, event.data).catch((error) =>
+            this.handleWorkerFatal(run, project, worker, error),
+          ),
+        )
+        .catch(() => undefined);
     };
     worker.onerror = (event: ErrorEvent) => {
-      this.handleWorkerFatal(run, project, worker, new Error(event.message));
+      messageQueue = messageQueue
+        .then(() => this.handleWorkerFatal(run, project, worker, new Error(event.message)))
+        .catch(() => undefined);
     };
   }
 
   private buildStartMessage(run: SyncRun, projectId: string): StartMessage {
+    const project = run.projects.get(projectId);
     const config = run.s3Config ?? {
       accessKeyId: '',
       secretAccessKey: '',
       region: '',
       bucket: '',
     };
-    const project = run.projects.get(projectId);
     return {
       type: 'START',
       connectionId: run.connectionId,
@@ -871,6 +878,7 @@ export class SyncManager extends EventTarget {
       started_at: startedAt,
       ended_at: endedAt,
       sync_session_id: sessionId,
+      external_id: sessionId,
       sync_status: 'pending',
     };
   }
