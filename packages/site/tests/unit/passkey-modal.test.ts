@@ -2,7 +2,16 @@ import type { LitElement } from 'lit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PasskeyModal } from '../../src/components/passkey-modal';
 import '../../src/components/passkey-modal';
-import { createPasskey, forgetPasskey, unlock } from '../../src/sync/credential-crypto';
+import {
+  createPasskey,
+  createWebAuthnCredentialAndWrapKey,
+  forgetPasskey,
+  hasDeviceUnlockCredential,
+  isUnlocked,
+  isWebAuthnPrfSupported,
+  unlock,
+  unlockWithWebAuthnDevice,
+} from '../../src/sync/credential-crypto';
 
 vi.mock('../../src/sync/credential-crypto', () => ({
   createPasskey: vi.fn(),
@@ -10,12 +19,19 @@ vi.mock('../../src/sync/credential-crypto', () => ({
   forgetPasskey: vi.fn(),
   isUnlocked: vi.fn(),
   lock: vi.fn(),
-  encryptField: vi.fn(),
-  decryptField: vi.fn(),
+  isWebAuthnPrfSupported: vi.fn(),
+  hasDeviceUnlockCredential: vi.fn(),
+  createWebAuthnCredentialAndWrapKey: vi.fn(),
+  unlockWithWebAuthnDevice: vi.fn(),
 }));
 
 async function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function flushAndUpdate(element: LitElement): Promise<void> {
+  await flush();
+  await element.updateComplete;
 }
 
 async function mount<T extends LitElement>(element: T): Promise<T> {
@@ -35,6 +51,12 @@ function fillInput(root: ShadowRoot, id: string, value: string): void {
   input.dispatchEvent(new Event('input'));
 }
 
+function toggleCheckbox(root: ShadowRoot, id: string, checked: boolean): void {
+  const input = root.querySelector(id) as HTMLInputElement;
+  input.checked = checked;
+  input.dispatchEvent(new Event('change'));
+}
+
 afterEach(() => {
   document.body.innerHTML = '';
 });
@@ -43,6 +65,11 @@ beforeEach(() => {
   vi.mocked(createPasskey).mockResolvedValue(undefined);
   vi.mocked(unlock).mockResolvedValue(false);
   vi.mocked(forgetPasskey).mockResolvedValue(undefined);
+  vi.mocked(isUnlocked).mockReturnValue(false);
+  vi.mocked(isWebAuthnPrfSupported).mockResolvedValue(false);
+  vi.mocked(hasDeviceUnlockCredential).mockResolvedValue(false);
+  vi.mocked(createWebAuthnCredentialAndWrapKey).mockResolvedValue(true);
+  vi.mocked(unlockWithWebAuthnDevice).mockResolvedValue(false);
 });
 
 describe('passkey-modal', () => {
@@ -110,8 +137,7 @@ describe('passkey-modal', () => {
     });
 
     root.querySelector('form')?.dispatchEvent(new Event('submit', { cancelable: true }));
-    await flush();
-    await modal.updateComplete;
+    await flushAndUpdate(modal);
 
     expect(created).toBe(true);
     expect(createPasskey).toHaveBeenCalledWith('longenough1');
@@ -132,8 +158,7 @@ describe('passkey-modal', () => {
     await modal.updateComplete;
 
     root.querySelector('form')?.dispatchEvent(new Event('submit', { cancelable: true }));
-    await flush();
-    await modal.updateComplete;
+    await flushAndUpdate(modal);
 
     expect(root.textContent).toContain('Incorrect passkey');
     expect(unlock).toHaveBeenCalledWith('wrong');
@@ -159,8 +184,7 @@ describe('passkey-modal', () => {
     });
 
     root.querySelector('form')?.dispatchEvent(new Event('submit', { cancelable: true }));
-    await flush();
-    await modal.updateComplete;
+    await flushAndUpdate(modal);
 
     expect(unlocked).toBe(true);
     expect(unlock).toHaveBeenCalledWith('correct');
@@ -176,8 +200,7 @@ describe('passkey-modal', () => {
     const root = shadow(modal);
 
     (root.querySelector('.link') as HTMLButtonElement).click();
-    await flush();
-    await modal.updateComplete;
+    await flushAndUpdate(modal);
 
     expect(modal.mode).toBe('forgot');
     expect(root.textContent).toContain('Delete all saved secrets');
@@ -198,8 +221,7 @@ describe('passkey-modal', () => {
     });
 
     (root.querySelector('.danger') as HTMLButtonElement).click();
-    await flush();
-    await modal.updateComplete;
+    await flushAndUpdate(modal);
 
     expect(forgotten).toBe(true);
     expect(forgetPasskey).toHaveBeenCalled();
@@ -226,5 +248,116 @@ describe('passkey-modal', () => {
 
     overlay.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(closed).toBe(3);
+  });
+
+  describe('WebAuthn PRF opt-in', () => {
+    it('shows the keep-unlocked checkbox when PRF is supported and no device credential exists', async () => {
+      vi.mocked(isWebAuthnPrfSupported).mockResolvedValue(true);
+      vi.mocked(hasDeviceUnlockCredential).mockResolvedValue(false);
+
+      const modal = await mount(
+        Object.assign(document.createElement('passkey-modal'), {
+          open: true,
+          mode: 'unlock',
+        }) as PasskeyModal,
+      );
+      await flushAndUpdate(modal);
+      const root = shadow(modal);
+
+      expect(root.textContent).toContain('Keep this device unlocked for 30 days');
+      expect(root.textContent).not.toContain('Unlock with this device');
+    });
+
+    it('hides the WebAuthn option entirely when PRF is unsupported', async () => {
+      vi.mocked(isWebAuthnPrfSupported).mockResolvedValue(false);
+      vi.mocked(hasDeviceUnlockCredential).mockResolvedValue(false);
+
+      const modal = await mount(
+        Object.assign(document.createElement('passkey-modal'), {
+          open: true,
+          mode: 'unlock',
+        }) as PasskeyModal,
+      );
+      await flushAndUpdate(modal);
+      const root = shadow(modal);
+
+      expect(root.textContent).not.toContain('Keep this device unlocked');
+      expect(root.textContent).not.toContain('Unlock with this device');
+    });
+
+    it('offers device unlock and calls unlockWithWebAuthnDevice on click', async () => {
+      vi.mocked(isWebAuthnPrfSupported).mockResolvedValue(true);
+      vi.mocked(hasDeviceUnlockCredential).mockResolvedValue(true);
+      vi.mocked(unlockWithWebAuthnDevice).mockResolvedValue(true);
+
+      const modal = await mount(
+        Object.assign(document.createElement('passkey-modal'), {
+          open: true,
+          mode: 'unlock',
+        }) as PasskeyModal,
+      );
+      await flushAndUpdate(modal);
+      const root = shadow(modal);
+
+      expect(root.textContent).toContain('Unlock with this device');
+
+      let unlocked = false;
+      modal.addEventListener('passkey-unlocked', () => {
+        unlocked = true;
+      });
+
+      (root.querySelector('.webauthn-prompt button') as HTMLButtonElement).click();
+      await flushAndUpdate(modal);
+
+      expect(unlocked).toBe(true);
+      expect(unlockWithWebAuthnDevice).toHaveBeenCalled();
+    });
+
+    it('falls back to the passkey form silently when device unlock fails', async () => {
+      vi.mocked(isWebAuthnPrfSupported).mockResolvedValue(true);
+      vi.mocked(hasDeviceUnlockCredential).mockResolvedValue(true);
+      vi.mocked(unlockWithWebAuthnDevice).mockResolvedValue(false);
+
+      const modal = await mount(
+        Object.assign(document.createElement('passkey-modal'), {
+          open: true,
+          mode: 'unlock',
+        }) as PasskeyModal,
+      );
+      await flushAndUpdate(modal);
+      const root = shadow(modal);
+
+      (root.querySelector('.webauthn-prompt button') as HTMLButtonElement).click();
+      await flushAndUpdate(modal);
+
+      expect(unlockWithWebAuthnDevice).toHaveBeenCalled();
+      expect(root.querySelector('.webauthn-prompt')).toBeNull();
+      expect(root.querySelector('form')).not.toBeNull();
+    });
+
+    it('calls createWebAuthnCredentialAndWrapKey when the keep-unlocked checkbox is checked', async () => {
+      vi.mocked(isWebAuthnPrfSupported).mockResolvedValue(true);
+      vi.mocked(hasDeviceUnlockCredential).mockResolvedValue(false);
+      vi.mocked(unlock).mockResolvedValueOnce(true);
+
+      const modal = await mount(
+        Object.assign(document.createElement('passkey-modal'), {
+          open: true,
+          mode: 'unlock',
+        }) as PasskeyModal,
+      );
+      await flushAndUpdate(modal);
+      const root = shadow(modal);
+
+      fillInput(root, '#passkey-input', 'correct');
+      toggleCheckbox(root, 'label.checkbox input', true);
+      await modal.updateComplete;
+
+      root.querySelector('form')?.dispatchEvent(new Event('submit', { cancelable: true }));
+      await flushAndUpdate(modal);
+
+      expect(unlock).toHaveBeenCalledWith('correct');
+      expect(createWebAuthnCredentialAndWrapKey).toHaveBeenCalledWith('correct');
+    });
   });
 });

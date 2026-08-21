@@ -43,6 +43,10 @@ const credentialCryptoMock = vi.hoisted(() => ({
   createPasskey: vi.fn(),
   lock: vi.fn(),
   forgetPasskey: vi.fn(),
+  isWebAuthnPrfSupported: vi.fn().mockResolvedValue(false),
+  hasDeviceUnlockCredential: vi.fn().mockResolvedValue(false),
+  createWebAuthnCredentialAndWrapKey: vi.fn().mockResolvedValue(false),
+  unlockWithWebAuthnDevice: vi.fn().mockResolvedValue(false),
 }));
 
 vi.mock('../../src/sync/credential-crypto', () => credentialCryptoMock);
