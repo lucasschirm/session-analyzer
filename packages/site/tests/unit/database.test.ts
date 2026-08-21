@@ -491,9 +491,10 @@ describe('DatabaseManager', () => {
       expect(() => fresh.exportDatabase()).toThrow('Database not initialized');
     });
 
-    it('is idempotent', async () => {
+    it('is idempotent and reports an unsupported fallback on this platform', async () => {
       const storage = await manager.initialize();
       expect(storage).toBe('memory');
+      expect(manager.fallbackReason).toBe('unsupported');
     });
   });
 });

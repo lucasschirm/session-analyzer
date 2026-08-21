@@ -5,7 +5,19 @@
  * created lazily on first use so importing this module has no side effects.
  */
 
-import type { DashboardSession, Project, SessionMetrics } from '../types';
+import type {
+  Connection,
+  DashboardSession,
+  PasskeyState,
+  Project,
+  SessionFileRecord,
+  SessionMetrics,
+  SessionStub,
+  SessionSyncStatus,
+  StoredS3Credentials,
+  SyncManifest,
+} from '../types';
+import type { FallbackReason } from './database';
 import type { DbRequest, DbRequestPayload, DbResponse } from './db-protocol';
 
 interface PendingCall {
@@ -20,6 +32,8 @@ export class DbClient {
   private pending = new Map<number, PendingCall>();
   private initPromise: Promise<'opfs' | 'memory'> | null = null;
   private createWorker: () => Worker;
+  /** Populated after a successful init when the worker fell back to memory. */
+  fallbackReason?: FallbackReason;
 
   constructor(createWorker?: () => Worker) {
     this.createWorker =
@@ -110,6 +124,144 @@ export class DbClient {
     return this.call({ type: 'exportDatabase' }) as Promise<Uint8Array>;
   }
 
+  // ==================== Connections ====================
+
+  /** Creates a new remote storage connection. */
+  createConnection(connection: Connection): Promise<void> {
+    return this.call({ type: 'createConnection', connection }) as Promise<void>;
+  }
+
+  /**
+   * Updates the mutable fields of an existing connection.
+   * Throws if the connection does not exist.
+   */
+  updateConnection(
+    connectionId: string,
+    fields: Partial<Pick<Connection, 'name' | 'sync_only_new' | 'last_sync_at'>>,
+  ): Promise<void> {
+    return this.call({ type: 'updateConnection', connectionId, fields }) as Promise<void>;
+  }
+
+  /** Deletes a connection and its associated S3 credentials. */
+  deleteConnection(connectionId: string): Promise<void> {
+    return this.call({ type: 'deleteConnection', connectionId }) as Promise<void>;
+  }
+
+  /** Lists all connections, newest first. */
+  getConnections(): Promise<Connection[]> {
+    return this.call({ type: 'getConnections' }) as Promise<Connection[]>;
+  }
+
+  /** Stores or replaces encrypted S3 credentials for a connection. */
+  saveS3Credentials(credentials: StoredS3Credentials): Promise<void> {
+    return this.call({ type: 'saveS3Credentials', credentials }) as Promise<void>;
+  }
+
+  /** Returns the encrypted S3 credentials for a connection, if any. */
+  getS3Credentials(connectionId: string): Promise<StoredS3Credentials | null> {
+    return this.call({
+      type: 'getS3Credentials',
+      connectionId,
+    }) as Promise<StoredS3Credentials | null>;
+  }
+
+  /** Wipes all stored S3 credentials and passkey state. */
+  deleteAllCredentials(): Promise<void> {
+    return this.call({ type: 'deleteAllCredentials' }) as Promise<void>;
+  }
+
+  // ==================== Passkey ====================
+
+  /** Returns the singleton passkey vault state, if one exists. */
+  getPasskeyState(): Promise<PasskeyState | null> {
+    return this.call({ type: 'getPasskeyState' }) as Promise<PasskeyState | null>;
+  }
+
+  /** Saves or replaces the singleton passkey vault state. */
+  savePasskeyState(state: PasskeyState): Promise<void> {
+    return this.call({ type: 'savePasskeyState', state }) as Promise<void>;
+  }
+
+  // ==================== Project sync ====================
+
+  /** Looks up a project by its URL-safe readable id. */
+  getProjectByReadableId(readableId: string): Promise<Project | null> {
+    return this.call({ type: 'getProjectByReadableId', readableId }) as Promise<Project | null>;
+  }
+
+  /** Sets the sync state of a project. */
+  setProjectSyncStatus(projectId: string, status: 'in_sync' | 'syncing'): Promise<void> {
+    return this.call({ type: 'setProjectSyncStatus', projectId, status }) as Promise<void>;
+  }
+
+  /** Generates and assigns readable ids for any projects missing one. */
+  backfillReadableIds(): Promise<void> {
+    return this.call({ type: 'backfillReadableIds' }) as Promise<void>;
+  }
+
+  // ==================== Session sync ====================
+
+  /** Finds a session by its remote sync id within a project. */
+  getSessionBySyncId(projectId: string, syncSessionId: string): Promise<DashboardSession | null> {
+    return this.call({
+      type: 'getSessionBySyncId',
+      projectId,
+      syncSessionId,
+    }) as Promise<DashboardSession | null>;
+  }
+
+  /**
+   * Inserts a sync stub or updates an existing session's stub-relevant
+   * columns. Existing parsed rows are never overwritten.
+   */
+  upsertSessionStub(stub: SessionStub): Promise<void> {
+    return this.call({ type: 'upsertSessionStub', stub }) as Promise<void>;
+  }
+
+  /** Updates only the sync status (and optional detail text) of a session. */
+  setSessionSyncStatus(
+    sessionId: string,
+    status: SessionSyncStatus,
+    details?: string,
+  ): Promise<void> {
+    return this.call({ type: 'setSessionSyncStatus', sessionId, status, details }) as Promise<void>;
+  }
+
+  /** Writes all sync mirror columns from a manifest onto a session row. */
+  updateSessionManifest(sessionId: string, manifest: SyncManifest): Promise<void> {
+    return this.call({ type: 'updateSessionManifest', sessionId, manifest }) as Promise<void>;
+  }
+
+  /** Returns the number of recorded sync runs for a session. */
+  getSyncRunCount(sessionId: string): Promise<number> {
+    return this.call({ type: 'getSyncRunCount', sessionId }) as Promise<number>;
+  }
+
+  /** Marks every pending/processing session in a project as failed. */
+  failStaleSessions(projectId: string, details: string): Promise<void> {
+    return this.call({ type: 'failStaleSessions', projectId, details }) as Promise<void>;
+  }
+
+  /**
+   * Crash-recovery primitive: resets any syncing projects and any
+   * pending/processing sessions back to a safe state.
+   */
+  reconcileSyncStates(sessionDetails: string): Promise<void> {
+    return this.call({ type: 'reconcileSyncStates', sessionDetails }) as Promise<void>;
+  }
+
+  // ==================== Session files ====================
+
+  /** Lists all file records for a session, ordered by path. */
+  getSessionFiles(sessionId: string): Promise<SessionFileRecord[]> {
+    return this.call({ type: 'getSessionFiles', sessionId }) as Promise<SessionFileRecord[]>;
+  }
+
+  /** Inserts or updates a session file record on the (session_id, path) key. */
+  upsertSessionFile(file: SessionFileRecord): Promise<void> {
+    return this.call({ type: 'upsertSessionFile', file }) as Promise<void>;
+  }
+
   /** Exports the SQLite file and triggers a browser download. */
   async exportAndDownload(): Promise<void> {
     const bytes = await this.exportDatabase();
@@ -152,6 +304,7 @@ export class DbClient {
     }
 
     if (pendingCall.requestType === 'init') {
+      this.fallbackReason = response.fallbackReason;
       pendingCall.resolve(response.storage ?? 'memory');
     } else if (pendingCall.requestType === 'exportDatabase') {
       pendingCall.resolve(response.bytes ?? new Uint8Array());
