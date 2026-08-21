@@ -176,11 +176,17 @@ function buildListUrl(
   maxKeys: number,
 ): string {
   const url = new URL('', baseUrl);
-  url.searchParams.set('list-type', '2');
-  url.searchParams.set('delimiter', '/');
-  url.searchParams.set('max-keys', String(maxKeys));
-  if (prefix) url.searchParams.set('prefix', prefix);
-  if (continuationToken) url.searchParams.set('continuation-token', continuationToken);
+  const params = new URLSearchParams();
+  params.set('list-type', '2');
+  params.set('delimiter', '/');
+  params.set('max-keys', String(maxKeys));
+  if (continuationToken) params.set('continuation-token', continuationToken);
+  let query = params.toString();
+  // `prefix` is already percent-encoded by callers. URLSearchParams would
+  // re-encode it (e.g. `%20` -> `%2520`), so append it directly to the query
+  // string to guarantee identical encoding to the path-based object URL.
+  if (prefix) query = query ? `${query}&prefix=${prefix}` : `prefix=${prefix}`;
+  url.search = query;
   return url.toString();
 }
 
@@ -212,39 +218,27 @@ function asS3Error(error: unknown): S3Error | undefined {
   return undefined;
 }
 
+function networkError(code: string, message: string, kind: S3ErrorKind): S3Error {
+  return new S3Error({ status: 0, code, message, kind });
+}
+
 function mapNetworkError(error: unknown): S3Error {
   if (error instanceof DOMException && error.name === 'AbortError') {
-    return new S3Error({
-      status: 0,
-      code: 'NetworkTimeout',
-      message: error.message,
-      kind: 'network',
-    });
+    return networkError('NetworkTimeout', error.message, 'network');
   }
   if (error instanceof TypeError) {
     const message = error.message.toLowerCase();
     const isCors = message.includes('cors') || message.includes('failed to fetch');
-    return new S3Error({
-      status: 0,
-      code: isCors ? 'CORSBlocked' : 'NetworkFailure',
-      message: error.message,
-      kind: isCors ? 'cors' : 'network',
-    });
+    return networkError(
+      isCors ? 'CORSBlocked' : 'NetworkFailure',
+      error.message,
+      isCors ? 'cors' : 'network',
+    );
   }
   if (error instanceof Error) {
-    return new S3Error({
-      status: 0,
-      code: 'NetworkFailure',
-      message: error.message,
-      kind: 'network',
-    });
+    return networkError('NetworkFailure', error.message, 'network');
   }
-  return new S3Error({
-    status: 0,
-    code: 'NetworkFailure',
-    message: String(error),
-    kind: 'network',
-  });
+  return networkError('NetworkFailure', String(error), 'network');
 }
 
 function mapStreamError(error: unknown): S3Error {
@@ -292,29 +286,44 @@ class StallWatchdog {
   }
 }
 
+function recordChunk(
+  chunks: Uint8Array[],
+  value: Uint8Array,
+  onProgress: ((bytes: number) => void) | undefined,
+  received: number,
+): number {
+  chunks.push(value);
+  received += value.length;
+  onProgress?.(received);
+  return received;
+}
+
+async function pumpChunks(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  watchdog: StallWatchdog,
+  onProgress: ((bytes: number) => void) | undefined,
+): Promise<Uint8Array[]> {
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await Promise.race([reader.read(), watchdog.start()]);
+    watchdog.clear();
+    if (value) received = recordChunk(chunks, value, onProgress, received);
+    if (done) break;
+  }
+  return chunks;
+}
+
 async function readBodyWithStallWatchdog(
   body: ReadableStream<Uint8Array>,
   onProgress: ((bytes: number) => void) | undefined,
   stallTimeoutMs: number,
 ): Promise<ArrayBuffer> {
   const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
   const watchdog = new StallWatchdog(stallTimeoutMs);
-  let received = 0;
-
-  function recordChunk(value: Uint8Array): void {
-    chunks.push(value);
-    received += value.length;
-    onProgress?.(received);
-  }
-
   try {
-    while (true) {
-      const { done, value } = await Promise.race([reader.read(), watchdog.start()]);
-      watchdog.clear();
-      if (done) break;
-      if (value) recordChunk(value);
-    }
+    const chunks = await pumpChunks(reader, watchdog, onProgress);
+    return concatenateUint8Arrays(chunks);
   } catch (error) {
     throw mapStreamError(error);
   } finally {
@@ -322,7 +331,6 @@ async function readBodyWithStallWatchdog(
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
-  return concatenateUint8Arrays(chunks);
 }
 
 /**
@@ -529,7 +537,9 @@ export class S3FetchClient {
 
   private async streamObjectOnce(key: string, options: S3GetObjectOptions): Promise<ArrayBuffer> {
     const url = this.objectUrl(key).toString();
-    const response = await this.signedFetch(url, { method: 'GET' });
+    const response = await this.withControlPlane((signal) =>
+      this.signedFetch(url, { method: 'GET' }, signal),
+    );
     await this.expectOk(response);
     const body = response.body;
     if (!body) return response.arrayBuffer();

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildObjectKey, encodeKeySegment } from '../../src/index.js';
 import {
@@ -255,7 +255,7 @@ describe('S3FetchClient', () => {
   });
 
   it('listSessionFolders encodes the project prefix and decodes session names', async () => {
-    const projectId = 'my project';
+    const projectId = 'my project?café&test=1';
     const prefix = `${encodeKeySegment(projectId)}/`;
     const xml = listXml([`${prefix}session%3A1/`, `${prefix}session%20two/`], false);
     const mock = vi.fn(createMockFetch([() => new Response(xml, { status: 200 })]));
@@ -263,7 +263,10 @@ describe('S3FetchClient', () => {
     const result = await client.listSessionFolders(projectId);
     expect(result).toEqual(['session:1', 'session two']);
     const request = lastRequest(mock);
-    expect(urlOf(request).searchParams.get('prefix')).toBe(prefix);
+    const url = urlOf(request);
+    expect(url.search).toContain(`prefix=${prefix}`);
+    expect(url.search).not.toContain('%2520');
+    expect(url.search).not.toContain('%253F');
   });
 
   it('streams large downloads and reports incremental progress', async () => {
