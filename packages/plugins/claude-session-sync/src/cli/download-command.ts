@@ -334,7 +334,7 @@ async function downloadSession(
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    stdout.write(`[fail] manifest parse failed: ${message}\n`);
+    stdout.write(`[fail] ${sessionId} — manifest parse failed: ${message}\n`);
     return {
       downloaded: 0,
       failed: 1,
