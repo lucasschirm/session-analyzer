@@ -14,6 +14,8 @@ src/
 │   ├── events-table.ts            # Drill-down data table for indicator details; metadata column supports hover tooltip and click-to-expand full JSON
 │   ├── project-selector.ts        # Project dropdown (input component)
 │   ├── project-modal.ts           # New-project modal (name + description)
+│   ├── passkey-modal.ts           # Passkey create/unlock modal for the credential vault
+│   ├── connect-modal.ts           # S3 connection management modal (list, add, edit, test, sync)
 │   ├── upload-zone.ts             # Drag & drop + file picker upload zone
 │   ├── sync-progress-bar.ts       # Global sync progress bar with live P/S/F counts, queued-run suffix, cancel button, and full sync-status modal
 │   ├── project-sync-status-modal.ts # Per-project and full-run sync status modal with project/session progress and file counts
@@ -31,7 +33,7 @@ src/
 │   ├── format.ts                  # Compact number formatting (K/M/B) with full-number tooltips; estimateTokenCount/formatEstimatedTokens for the ~4-chars/token tool-result estimate (no exact tokenizer available client-side)
 │   └── claude-to-dashboard.ts     # toDashboardSession(native, projectId, title): transforms a `@lucasschirm/sal-claude-session-parser` ClaudeCodeSession into DashboardSession - token accumulation incl. per-model, tool_use/tool_result pairing by id, result_uuid capture, isMeta filtering, compact_boundary -> compactions, task_reminder -> SessionTask, ai-title -> title. Successor to the old inline parseClaudeCode; reuses SessionBuilder from workers/session-builder.ts
 ├── pages/
-│   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap, and sync-manager initialization
+│   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap, sync-manager initialization, and Connect entry point
 │   ├── home-page.ts               # Projects CRUD grid + export database; shows project-sync-indicator during sync
 │   ├── project-view.ts            # Upload zone + search + sessions for one project; Total Tokens card uses compact number formatting with tooltip; shows project-sync-indicator and passes project to session-list
 │   ├── session-dashboard.ts       # Metric cards + link to the Session Transcript page; "Total Tokens" card = input+output only (cache tokens excluded - see SessionBuilder.finalize); enriched with token breakdown panel (input/output/cache write/cache read), an estimated Tool Result Tokens panel (~4-chars/token heuristic over tool_result content, % of total input volume), models-used table, top-tools ranked list (Skill/Agent tool calls excluded - see isSkillTool/isAgentTool), skills-used list with parameters, a collapsible Subagents panel ("Show all"), separate Agents/Skills metric cards (Agent/Skill tool invocation counts, distinct from Sub Agents), and session-sync-chip with retry for failed synced sessions
