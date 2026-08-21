@@ -12,6 +12,7 @@ export * from './project-manifest.js';
 export * from './sanitization/contract.js';
 export * from './session.js';
 export * from './storage/contract.js';
+export * from './storage/fetch-client.js';
 export * from './storage/object-key.js';
 export * from './sync-run.js';
 export * from './versions.js';

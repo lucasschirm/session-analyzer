@@ -28,6 +28,19 @@ function listXml(prefixes: string[], isTruncated: boolean, nextToken?: string): 
   return `<?xml version="1.0"?><ListBucketResult>${trunc}${next}${cp}</ListBucketResult>`;
 }
 
+function objectsXml(
+  objects: Array<{ key: string; size: number }>,
+  isTruncated: boolean,
+  nextToken?: string,
+): string {
+  const contents = objects
+    .map((o) => `<Contents><Key>${o.key}</Key><Size>${o.size}</Size></Contents>`)
+    .join('');
+  const next = nextToken ? `<NextContinuationToken>${nextToken}</NextContinuationToken>` : '';
+  const trunc = `<IsTruncated>${isTruncated}</IsTruncated>`;
+  return `<?xml version="1.0"?><ListBucketResult>${trunc}${next}${contents}</ListBucketResult>`;
+}
+
 function createMockFetch(
   calls: Array<(request: Request, index: number) => Response | Promise<Response>>,
 ): typeof fetch {
@@ -267,6 +280,39 @@ describe('S3FetchClient', () => {
     expect(url.search).toContain(`prefix=${prefix}`);
     expect(url.search).not.toContain('%2520');
     expect(url.search).not.toContain('%253F');
+  });
+
+  it('listSessionObjects encodes the session prefix and returns decoded keys and sizes', async () => {
+    const projectId = 'my project';
+    const sessionId = 'session 1';
+    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/session/`;
+    const key1 = `${prefix}transcript.jsonl`;
+    const key2 = `${prefix}subagents/agent-1.jsonl`;
+    const mock = vi.fn(
+      createMockFetch([
+        () =>
+          new Response(
+            objectsXml(
+              [
+                { key: key1, size: 42 },
+                { key: key2, size: 7 },
+              ],
+              false,
+            ),
+            { status: 200 },
+          ),
+      ]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.listSessionObjects(projectId, sessionId);
+    expect(result).toEqual([
+      { key: key1, size: 42 },
+      { key: key2, size: 7 },
+    ]);
+    const request = lastRequest(mock);
+    const url = urlOf(request);
+    expect(url.search).toContain(`prefix=${prefix}`);
+    expect(url.search).not.toContain('delimiter');
   });
 
   it('streams large downloads and reports incremental progress', async () => {
