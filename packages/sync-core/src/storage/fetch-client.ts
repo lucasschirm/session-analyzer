@@ -90,6 +90,8 @@ export interface S3ListOptions {
   onPage?: (page: S3ListPage) => void | Promise<void>;
   /** Maximum number of keys S3 should return per page. */
   maxKeys?: number;
+  /** Optional abort signal for cancelling in-flight listing requests. */
+  signal?: AbortSignal;
 }
 
 /** Options for {@link S3FetchClient.getObject}. */
@@ -103,6 +105,8 @@ export interface S3GetObjectOptions {
   onProgress?: (bytesReceived: number) => void;
   /** Stall window for streaming downloads; defaults to 15 seconds. */
   stallTimeoutMs?: number;
+  /** Optional abort signal for cancelling in-flight download requests. */
+  signal?: AbortSignal;
 }
 
 /** Options for {@link S3FetchClient.putObject}. */
@@ -393,7 +397,7 @@ export class S3FetchClient {
    */
   async getObject(key: string, options: S3GetObjectOptions = {}): Promise<ArrayBuffer> {
     if (options.streaming) return this.getObjectStreaming(key, options);
-    return this.getObjectControlPlane(key);
+    return this.getObjectControlPlane(key, options);
   }
 
   /**
@@ -438,13 +442,29 @@ export class S3FetchClient {
     throw await s3ErrorFromResponse(response);
   }
 
-  private async withControlPlane<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  private async withControlPlane<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    externalSignal?: AbortSignal,
+  ): Promise<T> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.controlPlaneTimeoutMs);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const externalAborted = externalSignal?.aborted;
+    if (externalAborted) {
+      controller.abort();
+    } else {
+      timeoutId = setTimeout(() => controller.abort(), this.controlPlaneTimeoutMs);
+    }
+    const onExternalAbort = () => controller.abort();
+    if (externalSignal && !externalAborted) {
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
     try {
       return await operation(controller.signal);
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
+      if (externalSignal && !externalAborted) {
+        externalSignal.removeEventListener('abort', onExternalAbort);
+      }
     }
   }
 
@@ -480,8 +500,11 @@ export class S3FetchClient {
     const all: string[] = [];
     let continuationToken: string | undefined;
     const maxKeys = options.maxKeys ?? DEFAULT_MAX_LIST_KEYS;
+    const signal = options.signal;
     do {
-      const page = await this.withRetry(() => this.listPage(prefix, continuationToken, maxKeys));
+      const page = await this.withRetry(() =>
+        this.listPage(prefix, continuationToken, maxKeys, signal),
+      );
       const prefixes = excludeReserved
         ? page.prefixes.filter((p) => !isReservedFolder(p))
         : page.prefixes;
@@ -498,21 +521,27 @@ export class S3FetchClient {
     prefix: string,
     continuationToken: string | undefined,
     maxKeys: number,
+    signal?: AbortSignal,
   ): Promise<S3ListPage> {
     const url = buildListUrl(this.baseUrl, prefix, continuationToken, maxKeys);
-    const response = await this.withControlPlane((signal) =>
-      this.signedFetch(url, { method: 'GET' }, signal),
+    const response = await this.withControlPlane(
+      (s) => this.signedFetch(url, { method: 'GET' }, s),
+      signal,
     );
     await this.expectOk(response);
     const xml = await response.text();
     return parseListObjectsV2Xml(xml);
   }
 
-  private async getObjectControlPlane(key: string): Promise<ArrayBuffer> {
+  private async getObjectControlPlane(
+    key: string,
+    options: S3GetObjectOptions = {},
+  ): Promise<ArrayBuffer> {
     const url = this.objectUrl(key).toString();
     const response = await this.withRetry(async () => {
-      const fetched = await this.withControlPlane((signal) =>
-        this.signedFetch(url, { method: 'GET' }, signal),
+      const fetched = await this.withControlPlane(
+        (signal) => this.signedFetch(url, { method: 'GET' }, signal),
+        options.signal,
       );
       return this.expectOk(fetched);
     });
@@ -537,8 +566,9 @@ export class S3FetchClient {
 
   private async streamObjectOnce(key: string, options: S3GetObjectOptions): Promise<ArrayBuffer> {
     const url = this.objectUrl(key).toString();
-    const response = await this.withControlPlane((signal) =>
-      this.signedFetch(url, { method: 'GET' }, signal),
+    const response = await this.withControlPlane(
+      (signal) => this.signedFetch(url, { method: 'GET' }, signal),
+      options.signal,
     );
     await this.expectOk(response);
     const body = response.body;
