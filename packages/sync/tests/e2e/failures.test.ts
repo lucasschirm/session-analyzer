@@ -194,24 +194,27 @@ describe('sync E2E failure modes', () => {
     expect(result.exitCode).not.toBe(2);
   });
 
-  it('exits 0 and reports filesystem permission failures', async () => {
-    const settingsPath = path.join(fixture.workspaceDir, '.claude', 'settings.json');
-    await chmod(settingsPath, 0o000);
+  it.skipIf(process.getuid?.() === 0)(
+    'exits 0 and reports filesystem permission failures',
+    async () => {
+      const settingsPath = path.join(fixture.workspaceDir, '.claude', 'settings.json');
+      await chmod(settingsPath, 0o000);
 
-    const result = await capture({
-      dataDir: fixture.dataDir,
-      env: envForFixture(fixture),
-      input: hookInput({ cwd: fixture.workspaceDir, transcript_path: fixture.transcriptPath }),
-      storageAdapter: new RecordingStorageAdapter(),
-    });
+      const result = await capture({
+        dataDir: fixture.dataDir,
+        env: envForFixture(fixture),
+        input: hookInput({ cwd: fixture.workspaceDir, transcript_path: fixture.transcriptPath }),
+        storageAdapter: new RecordingStorageAdapter(),
+      });
 
-    // restore permission for cleanup
-    await chmod(settingsPath, 0o644).catch(() => {});
+      // restore permission for cleanup
+      await chmod(settingsPath, 0o644).catch(() => {});
 
-    expect(result.exitCode).toBe(0);
-    expect(result.run?.errors).toContain('SYNC_DISCOVERY_ERROR');
-    expect(result.exitCode).not.toBe(2);
-  });
+      expect(result.exitCode).toBe(0);
+      expect(result.run?.errors).toContain('SYNC_DISCOVERY_ERROR');
+      expect(result.exitCode).not.toBe(2);
+    },
+  );
 
   it('exits 0 and skips when hook JSON is malformed', async () => {
     const result = await capture({
