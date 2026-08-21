@@ -66,6 +66,10 @@ vi.mock('../../src/sync/credential-crypto', () => ({
   lock: vi.fn(),
   encryptField: vi.fn(),
   decryptField: vi.fn(),
+  isWebAuthnPrfSupported: vi.fn().mockResolvedValue(false),
+  hasDeviceUnlockCredential: vi.fn().mockResolvedValue(false),
+  createWebAuthnCredentialAndWrapKey: vi.fn().mockResolvedValue(false),
+  unlockWithWebAuthnDevice: vi.fn().mockResolvedValue(false),
 }));
 
 async function mount<T extends LitElement>(element: T): Promise<T> {

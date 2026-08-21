@@ -1,11 +1,27 @@
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
-import { createPasskey, forgetPasskey, isUnlocked, lock, unlock } from '../sync/credential-crypto';
+import {
+  createPasskey,
+  createWebAuthnCredentialAndWrapKey,
+  forgetPasskey,
+  hasDeviceUnlockCredential,
+  isUnlocked,
+  isWebAuthnPrfSupported,
+  lock,
+  unlock,
+  unlockWithWebAuthnDevice,
+} from '../sync/credential-crypto';
 
 /**
  * Passkey modal: create, unlock, or confirm forgetting the global vault
  * passkey. Emits `passkey-created`, `passkey-unlocked`, and
  * `passkey-forgotten` so parents own navigation and persistence.
+ *
+ * When the browser supports the WebAuthn `prf` extension, the unlock view can
+ * also offer "keep this device unlocked for 30 days" (creates a PRF
+ * credential that wraps the vault key) and, on subsequent loads, an
+ * "Unlock with this device" button that unwraps the vault key without the
+ * passkey.
  */
 @customElement('passkey-modal')
 export class PasskeyModal extends LitElement {
@@ -133,6 +149,32 @@ export class PasskeyModal extends LitElement {
       justify-content: flex-end;
       gap: 8px;
     }
+
+    .webauthn-prompt {
+      margin-bottom: 16px;
+    }
+
+    .webauthn-prompt p {
+      margin-bottom: 12px;
+    }
+
+    .webauthn-prompt button {
+      width: 100%;
+    }
+
+    label.checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-weight: normal;
+      margin-bottom: 16px;
+    }
+
+    label.checkbox input {
+      width: auto;
+      margin-bottom: 0;
+    }
   `;
 
   @property({ type: Boolean, reflect: true }) open = false;
@@ -147,7 +189,17 @@ export class PasskeyModal extends LitElement {
 
   @state() private pending = false;
 
+  @state() private webauthnSupported = false;
+
+  @state() private hasWebauthnCredential = false;
+
+  @state() private keepUnlocked = false;
+
+  @state() private deviceUnlockFailed = false;
+
   @query('#passkey-input') private passkeyInput!: HTMLInputElement;
+
+  private webauthnCheckId = 0;
 
   willUpdate(changed: PropertyValues<this>): void {
     if (changed.has('open') && this.open) {
@@ -155,9 +207,13 @@ export class PasskeyModal extends LitElement {
     }
   }
 
-  updated(changed: PropertyValues<this>): void {
+  async updated(changed: PropertyValues<this>): Promise<void> {
     if (changed.has('open') && this.open) {
-      this.updateComplete.then(() => this.focusFirstInput());
+      await this.updateComplete;
+      this.focusFirstInput();
+    }
+    if (changed.has('mode') || changed.has('open')) {
+      this.checkWebAuthn();
     }
   }
 
@@ -166,9 +222,25 @@ export class PasskeyModal extends LitElement {
     this.confirmPasskey = '';
     this.error = '';
     this.pending = false;
+    this.webauthnSupported = false;
+    this.hasWebauthnCredential = false;
+    this.keepUnlocked = false;
+    this.deviceUnlockFailed = false;
     if (!isUnlocked()) {
       lock();
     }
+  }
+
+  private async checkWebAuthn(): Promise<void> {
+    if (this.mode !== 'unlock' || !this.open) return;
+    const checkId = ++this.webauthnCheckId;
+    const [supported, hasCredential] = await Promise.all([
+      isWebAuthnPrfSupported(),
+      hasDeviceUnlockCredential(),
+    ]);
+    if (checkId !== this.webauthnCheckId) return;
+    this.webauthnSupported = supported;
+    this.hasWebauthnCredential = hasCredential;
   }
 
   private focusFirstInput(): void {
@@ -203,6 +275,10 @@ export class PasskeyModal extends LitElement {
     this.error = '';
   }
 
+  private handleKeepUnlockedChange(event: Event): void {
+    this.keepUnlocked = (event.target as HTMLInputElement).checked;
+  }
+
   private async handleCreateSubmit(event: Event): Promise<void> {
     event.preventDefault();
 
@@ -235,6 +311,9 @@ export class PasskeyModal extends LitElement {
     try {
       const ok = await unlock(this.passkey);
       if (ok) {
+        if (this.webauthnSupported && this.keepUnlocked) {
+          await createWebAuthnCredentialAndWrapKey(this.passkey);
+        }
         this.resetState();
         this.dispatchEvent(new CustomEvent('passkey-unlocked', { bubbles: true, composed: true }));
       } else {
@@ -242,6 +321,23 @@ export class PasskeyModal extends LitElement {
       }
     } catch {
       this.error = 'Could not unlock vault.';
+    } finally {
+      this.pending = false;
+    }
+  }
+
+  private async handleDeviceUnlock(): Promise<void> {
+    this.pending = true;
+    try {
+      const ok = await unlockWithWebAuthnDevice();
+      if (ok) {
+        this.resetState();
+        this.dispatchEvent(new CustomEvent('passkey-unlocked', { bubbles: true, composed: true }));
+      } else {
+        this.deviceUnlockFailed = true;
+      }
+    } catch {
+      this.deviceUnlockFailed = true;
     } finally {
       this.pending = false;
     }
@@ -268,6 +364,14 @@ export class PasskeyModal extends LitElement {
     } finally {
       this.pending = false;
     }
+  }
+
+  private showDeviceUnlock(): boolean {
+    return this.webauthnSupported && this.hasWebauthnCredential && !this.deviceUnlockFailed;
+  }
+
+  private showKeepUnlocked(): boolean {
+    return this.webauthnSupported && !this.hasWebauthnCredential && !this.deviceUnlockFailed;
   }
 
   private renderCreate(): TemplateResult {
@@ -315,6 +419,26 @@ export class PasskeyModal extends LitElement {
   private renderUnlock(): TemplateResult {
     return html`
       <h2>Unlock vault</h2>
+
+      ${
+        this.showDeviceUnlock()
+          ? html`
+            <div class="webauthn-prompt">
+              <p>Unlock with this device (Face ID / Touch ID / Windows Hello).</p>
+              <button
+                type="button"
+                class="primary"
+                ?disabled=${this.pending}
+                @click=${this.handleDeviceUnlock}
+              >
+                Unlock with this device
+              </button>
+            </div>
+            <p>Or enter your passkey below.</p>
+          `
+          : ''
+      }
+
       <form @submit=${this.handleUnlockSubmit}>
         <label for="passkey-input">Passkey</label>
         <input
@@ -325,6 +449,21 @@ export class PasskeyModal extends LitElement {
           required
           autocomplete="current-password"
         />
+
+        ${
+          this.showKeepUnlocked()
+            ? html`
+              <label class="checkbox">
+                <input
+                  type="checkbox"
+                  .checked=${this.keepUnlocked}
+                  @change=${this.handleKeepUnlockedChange}
+                />
+                Keep this device unlocked for 30 days
+              </label>
+            `
+            : ''
+        }
 
         ${this.error ? html`<p class="error">${this.error}</p>` : ''}
 
