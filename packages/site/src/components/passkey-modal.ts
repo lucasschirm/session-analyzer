@@ -1,4 +1,4 @@
-import { css, html, LitElement, type TemplateResult } from 'lit';
+import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
 import { createPasskey, forgetPasskey, isUnlocked, lock, unlock } from '../sync/credential-crypto';
 
@@ -149,14 +149,19 @@ export class PasskeyModal extends LitElement {
 
   @query('#passkey-input') private passkeyInput!: HTMLInputElement;
 
-  updated(changed: Map<string, unknown>): void {
+  willUpdate(changed: PropertyValues<this>): void {
     if (changed.has('open') && this.open) {
-      this.reset();
+      this.resetState();
+    }
+  }
+
+  updated(changed: PropertyValues<this>): void {
+    if (changed.has('open') && this.open) {
       this.updateComplete.then(() => this.focusFirstInput());
     }
   }
 
-  private reset(): void {
+  private resetState(): void {
     this.passkey = '';
     this.confirmPasskey = '';
     this.error = '';
@@ -214,7 +219,7 @@ export class PasskeyModal extends LitElement {
     this.pending = true;
     try {
       await createPasskey(this.passkey);
-      this.reset();
+      this.resetState();
       this.dispatchEvent(new CustomEvent('passkey-created', { bubbles: true, composed: true }));
     } catch {
       this.error = 'Could not create passkey.';
@@ -230,7 +235,7 @@ export class PasskeyModal extends LitElement {
     try {
       const ok = await unlock(this.passkey);
       if (ok) {
-        this.reset();
+        this.resetState();
         this.dispatchEvent(new CustomEvent('passkey-unlocked', { bubbles: true, composed: true }));
       } else {
         this.error = 'Incorrect passkey.';
@@ -244,19 +249,19 @@ export class PasskeyModal extends LitElement {
 
   private handleForgotClick(): void {
     this.mode = 'forgot';
-    this.reset();
+    this.resetState();
   }
 
   private handleForgotCancel(): void {
     this.mode = 'unlock';
-    this.reset();
+    this.resetState();
   }
 
   private async handleForgotConfirm(): Promise<void> {
     this.pending = true;
     try {
       await forgetPasskey();
-      this.reset();
+      this.resetState();
       this.dispatchEvent(new CustomEvent('passkey-forgotten', { bubbles: true, composed: true }));
     } catch {
       this.error = 'Could not forget passkey.';
