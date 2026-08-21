@@ -20,8 +20,20 @@ import type {
   SyncMessageFromWorker,
   SyncMessageToWorker,
 } from '../../src/sync/sync-protocol';
-import type { Connection, StoredS3Credentials } from '../../src/types';
+import type {
+  Connection,
+  Project,
+  SessionFileRecord,
+  SessionStub,
+  StoredS3Credentials,
+} from '../../src/types';
 import { generateId } from '../../src/workers/session-builder';
+
+type SessionWithSync = NonNullable<Awaited<ReturnType<DbClient['getSession']>>> & {
+  sync_status: string;
+  sync_details: string;
+  sync_harness: string;
+};
 
 const credentialCryptoMock = vi.hoisted(() => ({
   isUnlocked: vi.fn(),
@@ -432,17 +444,19 @@ function makeManifest(
     size: number;
     scope?: 'session' | 'workspace' | 'global' | 'runtime';
   }>,
+  mainTranscriptRelativePath = 'transcript.jsonl',
+  harness = 'claude',
 ): SyncManifest {
   return {
     schemaVersion: 2,
     projectId,
     sessionId,
-    harness: 'claude',
+    harness,
     harnessVersion: '1',
     syncVersion: '0.1.0',
     pluginVersion: '0.1.0',
     transcriptsCaptured: true,
-    mainTranscriptRelativePath: 'transcript.jsonl',
+    mainTranscriptRelativePath,
     syncRuns: [
       {
         trigger: 'session-end',
@@ -524,6 +538,75 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 50; i++) {
     await Promise.resolve();
   }
+}
+
+async function createLocalProject(
+  db: DbClient,
+  name: string,
+  readableId: string,
+  connectionId = '',
+): Promise<Project> {
+  const project: Project = {
+    id: generateId(),
+    name,
+    description: '',
+    created_at: Date.now(),
+    updated_at: Date.now(),
+    session_count: 0,
+    readable_id: readableId,
+    connection_id: connectionId,
+  };
+  await db.createProject(project);
+  return project;
+}
+
+async function insertSessionStub(
+  db: DbClient,
+  projectId: string,
+  syncSessionId: string,
+  overrides: Partial<SessionStub> = {},
+  syncStatus?: 'pending' | 'processing' | 'in_sync' | 'failed' | 'transcript_unavailable',
+): Promise<string> {
+  const stub: SessionStub = {
+    id: `sync-${projectId}-${syncSessionId}`,
+    project_id: projectId,
+    source: 'claude',
+    title: syncSessionId,
+    started_at: new Date(1000).toISOString(),
+    ended_at: new Date(2000).toISOString(),
+    sync_session_id: syncSessionId,
+    sync_status: 'pending',
+    ...overrides,
+  };
+  await db.upsertSessionStub(stub);
+  const session = await db.getSessionBySyncId(projectId, syncSessionId);
+  const sessionId = session?.id ?? stub.id;
+  if (syncStatus) {
+    await db.setSessionSyncStatus(sessionId, syncStatus);
+  }
+  return sessionId;
+}
+
+async function insertSessionFile(
+  db: DbClient,
+  projectId: string,
+  sessionId: string,
+  path: string,
+  sha256: string,
+  status: 'downloaded' | 'processed' | 'failed' = 'processed',
+): Promise<void> {
+  const record: SessionFileRecord = {
+    id: generateId(),
+    project_id: projectId,
+    session_id: sessionId,
+    path,
+    scope: 'session',
+    sha256,
+    size: 100,
+    status,
+    updated_at: Date.now(),
+  };
+  await db.upsertSessionFile(record);
 }
 
 beforeAll(async () => {
@@ -963,5 +1046,749 @@ describe('SyncManager', () => {
 
     expect(workers[0]?.terminated).toBe(true);
     expect(syncManager.getSnapshot().activeRun?.state).toBe('cancelled');
+  });
+
+  describe('manifest gate and diff', () => {
+    it('triggers sync when an existing session has a changed file', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const project = await createLocalProject(dbClient, 'Remote Project', 'remote-proj');
+      const sessionId = await insertSessionStub(dbClient, project.id, 'session-1', {}, 'in_sync');
+      const oldHash = hashOf('old');
+      const newHash = hashOf('new');
+      await insertSessionFile(dbClient, project.id, sessionId, 'session/transcript.jsonl', oldHash);
+
+      const projectId = project.readable_id ?? 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(projectId, 'session-1', [
+        { relativePath: 'transcript.jsonl', sha256: newHash, size: 100 },
+      ]);
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      const syncMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC') as
+        | SessionSyncMessage
+        | undefined;
+      expect(syncMessage?.sync).toBe(true);
+      expect(syncMessage?.exists).toBe(true);
+      expect(syncMessage?.filesToDownload).toHaveLength(1);
+      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+      expect(syncMessage?.filesToDownload?.[0]?.hash).toBe(newHash);
+    });
+
+    it('triggers re-sync when an existing session has sync_status failed', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const project = await createLocalProject(dbClient, 'Remote Project', 'remote-proj');
+      const sessionId = await insertSessionStub(dbClient, project.id, 'session-1', {}, 'failed');
+      const fileHash = hashOf('main');
+      await insertSessionFile(
+        dbClient,
+        project.id,
+        sessionId,
+        'session/transcript.jsonl',
+        fileHash,
+        'failed',
+      );
+
+      const projectId = project.readable_id ?? 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(projectId, 'session-1', [
+        { relativePath: 'transcript.jsonl', sha256: fileHash, size: 100 },
+      ]);
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      const syncMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC') as
+        | SessionSyncMessage
+        | undefined;
+      expect(syncMessage?.sync).toBe(true);
+      expect(syncMessage?.exists).toBe(true);
+      expect(syncMessage?.filesToDownload).toHaveLength(1);
+      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+
+      const session = (await dbClient.getSession(sessionId)) as SessionWithSync;
+      expect(session?.sync_status).toBe('pending');
+    });
+
+    it('skips an existing session when syncOnlyNew is true', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      await dbClient.updateConnection(connection.id, { sync_only_new: true });
+      const project = await createLocalProject(dbClient, 'Remote Project', 'remote-proj');
+      await insertSessionStub(dbClient, project.id, 'existing-session', {}, 'in_sync');
+
+      const projectId = project.readable_id ?? 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({ type: 'SESSION_FOUND', projectId, sessionId: 'existing-session' });
+      await flush();
+
+      const continueMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC_CONTINUE');
+      expect(continueMessage).toBeTruthy();
+      expect((continueMessage as { sync: boolean }).sync).toBe(false);
+    });
+
+    it('moves an up-to-date session to in_sync with an empty diff', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const project = await createLocalProject(dbClient, 'Remote Project', 'remote-proj');
+      const sessionId = await insertSessionStub(dbClient, project.id, 'session-1', {}, 'in_sync');
+      const fileHash = hashOf('main');
+      await insertSessionFile(
+        dbClient,
+        project.id,
+        sessionId,
+        'session/transcript.jsonl',
+        fileHash,
+      );
+
+      const projectId = project.readable_id ?? 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(projectId, 'session-1', [
+        { relativePath: 'transcript.jsonl', sha256: fileHash, size: 100 },
+      ]);
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      const syncMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC') as
+        | SessionSyncMessage
+        | undefined;
+      expect(syncMessage?.sync).toBe(false);
+      expect(syncMessage?.exists).toBe(true);
+      expect(syncMessage?.filesToDownload).toEqual([]);
+
+      const session = (await dbClient.getSession(sessionId)) as SessionWithSync;
+      expect(session?.sync_status).toBe('in_sync');
+
+      const files = await dbClient.getSessionFiles(sessionId);
+      const mainFile = files.find((f) => f.path === 'session/transcript.jsonl');
+      expect(mainFile?.project_id).toBe(project.id);
+      expect(mainFile?.status).toBe('processed');
+    });
+
+    it('falls back to worker hashing when an artifact has no usable sha256', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const projectId = 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(projectId, 'session-1', [
+        { relativePath: 'transcript.jsonl', sha256: 'not-a-hash', size: 100 },
+      ]);
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      const syncMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC') as
+        | SessionSyncMessage
+        | undefined;
+      expect(syncMessage?.sync).toBe(true);
+      expect(syncMessage?.exists).toBe(false);
+      expect(syncMessage?.filesToDownload).toBeUndefined();
+    });
+
+    it('includes .meta.json sidecars in the in-scope diff', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const projectId = 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(projectId, 'session-1', [
+        { relativePath: 'transcript.jsonl', sha256: hashOf('main'), size: 100 },
+        { relativePath: 'subagents/agent-1.jsonl', sha256: hashOf('sub'), size: 100 },
+        { relativePath: 'subagents/agent-1.meta.json', sha256: hashOf('meta'), size: 50 },
+      ]);
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      const syncMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC') as
+        | SessionSyncMessage
+        | undefined;
+      expect(syncMessage?.filesToDownload).toHaveLength(3);
+      const paths = syncMessage?.filesToDownload?.map((f) => f.file);
+      expect(paths).toContain('session/subagents/agent-1.jsonl');
+      expect(paths).toContain('session/subagents/agent-1.meta.json');
+    });
+
+    it('flags the artifact whose relativePath matches mainTranscriptRelativePath', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const projectId = 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(
+        projectId,
+        'session-1',
+        [{ relativePath: 'custom/main.jsonl', sha256: hashOf('main'), size: 100 }],
+        'custom/main.jsonl',
+      );
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      const syncMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC') as
+        | SessionSyncMessage
+        | undefined;
+      expect(syncMessage?.filesToDownload).toHaveLength(1);
+      expect(syncMessage?.filesToDownload?.[0]?.isMainTranscript).toBe(true);
+      expect(syncMessage?.filesToDownload?.[0]?.relativePath).toBe('custom/main.jsonl');
+    });
+
+    it('falls back to transcript.jsonl when mainTranscriptRelativePath is absent', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const projectId = 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(
+        projectId,
+        'session-1',
+        [{ relativePath: 'transcript.jsonl', sha256: hashOf('main'), size: 100 }],
+        undefined as unknown as string,
+      );
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      const syncMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC') as
+        | SessionSyncMessage
+        | undefined;
+      expect(syncMessage?.filesToDownload).toHaveLength(1);
+      expect(syncMessage?.filesToDownload?.[0]?.isMainTranscript).toBe(true);
+      expect(syncMessage?.filesToDownload?.[0]?.relativePath).toBe('transcript.jsonl');
+    });
+
+    it('re-downloads a file whose local row matches hash but is not processed', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const project = await createLocalProject(dbClient, 'Remote Project', 'remote-proj');
+      const sessionId = await insertSessionStub(dbClient, project.id, 'session-1', {}, 'in_sync');
+      const fileHash = hashOf('main');
+      await insertSessionFile(
+        dbClient,
+        project.id,
+        sessionId,
+        'session/transcript.jsonl',
+        fileHash,
+        'failed',
+      );
+
+      const projectId = project.readable_id ?? 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(projectId, 'session-1', [
+        { relativePath: 'transcript.jsonl', sha256: fileHash, size: 100 },
+      ]);
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      const syncMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC') as
+        | SessionSyncMessage
+        | undefined;
+      expect(syncMessage?.sync).toBe(true);
+      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+    });
+
+    it('excludes out-of-scope workspace and global artifacts from the diff', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const projectId = 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(projectId, 'session-1', [
+        { relativePath: 'transcript.jsonl', sha256: hashOf('main'), size: 100 },
+        {
+          relativePath: '.claude/settings.json',
+          sha256: hashOf('workspace'),
+          size: 50,
+          scope: 'workspace',
+        },
+        { relativePath: 'cas/notes.json', sha256: hashOf('global'), size: 50, scope: 'global' },
+      ]);
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      const syncMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC') as
+        | SessionSyncMessage
+        | undefined;
+      expect(syncMessage?.filesToDownload).toHaveLength(1);
+      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+
+      const session = syncManager.getSnapshot().sessions[0];
+      expect(session).toBeTruthy();
+    });
+
+    it('does not clobber parsed session fields when a manifest arrives', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const project = await createLocalProject(dbClient, 'Remote Project', 'remote-proj');
+      const sessionId = await insertSessionStub(
+        dbClient,
+        project.id,
+        'session-1',
+        {
+          source: 'claude',
+          title: 'Old Title',
+          total_turns: 42,
+        },
+        'in_sync',
+      );
+
+      const projectId = project.readable_id ?? 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(
+        projectId,
+        'session-1',
+        [{ relativePath: 'transcript.jsonl', sha256: hashOf('main'), size: 100 }],
+        'transcript.jsonl',
+        'opencode',
+      );
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      const session = (await dbClient.getSession(sessionId)) as SessionWithSync;
+      expect(session?.title).toBe('Old Title');
+      expect(session?.source).toBe('claude');
+      expect(session?.total_turns).toBe(42);
+
+      expect(session.sync_harness).toBe('opencode');
+    });
+  });
+
+  describe('worker lifecycle and broadcasts', () => {
+    it('fails pending sessions when a worker finishes without settling them', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const project = await createLocalProject(
+        dbClient,
+        'Remote Project',
+        'remote-proj',
+        connection.id,
+      );
+      await insertSessionStub(dbClient, project.id, 'session-1');
+
+      const projectId = project.readable_id ?? 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      worker.receive({
+        type: 'WORKER_DONE',
+        projectId,
+        synced: 0,
+        failed: 0,
+        skipped: 0,
+      });
+      await flush();
+
+      const session = (await dbClient.getSessionBySyncId(
+        project.id,
+        'session-1',
+      )) as SessionWithSync;
+      expect(session?.sync_status).toBe('failed');
+      expect(session.sync_details).toBe('Failed to process files');
+    });
+
+    it('surfaces NETWORK_OFFLINE in sync details when the connection drops', async () => {
+      const { syncManager, workers, s3, offline } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const project = await createLocalProject(
+        dbClient,
+        'Remote Project',
+        'remote-proj',
+        connection.id,
+      );
+      await insertSessionStub(dbClient, project.id, 'session-1');
+
+      const projectId = project.readable_id ?? 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      offline.dispatchEvent(new Event('offline'));
+      await flush();
+
+      expect(workers[0]?.terminated).toBe(true);
+      expect(syncManager.getSnapshot().activeRun?.state).toBe('cancelled');
+      expect(syncManager.getSnapshot().activeRun?.warnings).toContain(
+        'NETWORK_OFFLINE: Network connection lost',
+      );
+
+      const session = (await dbClient.getSessionBySyncId(
+        project.id,
+        'session-1',
+      )) as SessionWithSync;
+      expect(session?.sync_status).toBe('failed');
+      expect(session.sync_details).toBe('NETWORK_OFFLINE: Network connection lost');
+    });
+
+    it('adopts a leader heartbeat snapshot when initializing late', async () => {
+      const { syncManager: leader, s3: leaderS3 } = createTestManager();
+      const { syncManager: follower } = createTestManager();
+
+      const leaderInit = leader.init();
+      const followerInit = follower.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await Promise.all([leaderInit, followerInit]);
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const projectId = 'p1';
+      const manifestObj = makeProjectManifest(projectId, 'P1');
+      leaderS3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      leader.requestRun(connection.id);
+      await flush();
+
+      // Let the leader's heartbeat fire so the late-joiner receives the
+      // current snapshot (projects, sessions, warnings) rather than the
+      // initial run-started frame.
+      await vi.advanceTimersByTimeAsync(2100);
+      await flush();
+
+      const leaderRun = leader.getSnapshot().activeRun;
+      expect(leaderRun).toBeTruthy();
+
+      const followerSnapshot = follower.getSnapshot();
+      expect(follower.isReadOnly).toBe(true);
+      expect(followerSnapshot.readOnly).toBe(true);
+      expect(followerSnapshot.activeRun?.connectionId).toBe(leaderRun?.connectionId);
+      expect(followerSnapshot.activeRun?.state).toBe(leaderRun?.state);
+      expect(followerSnapshot.projects).toEqual(leader.getSnapshot().projects);
+    });
+
+    it('reuses an existing session_files id on re-download', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const project = await createLocalProject(dbClient, 'Remote Project', 'remote-proj');
+      const sessionId = await insertSessionStub(dbClient, project.id, 'session-1');
+      const fileHash = hashOf('main');
+      const fileId = generateId();
+      const record: SessionFileRecord = {
+        id: fileId,
+        project_id: project.id,
+        session_id: sessionId,
+        path: 'session/transcript.jsonl',
+        scope: 'session',
+        sha256: hashOf('old'),
+        size: 100,
+        status: 'processed',
+        updated_at: Date.now(),
+      };
+      await dbClient.upsertSessionFile(record);
+
+      const projectId = project.readable_id ?? 'remote-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      const manifest = makeManifest(projectId, 'session-1', [
+        { relativePath: 'transcript.jsonl', sha256: fileHash, size: 100 },
+      ]);
+
+      worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+      worker.receive({
+        type: 'SESSION_BATCH_FOUND',
+        projectId,
+        sessionIds: ['session-1'],
+        final: true,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_MANIFEST_READY',
+        projectId,
+        sessionId: 'session-1',
+        manifest,
+      });
+      await flush();
+
+      worker.receive({
+        type: 'SESSION_FILE_DOWNLOADED',
+        projectId,
+        sessionId: 'session-1',
+        file: 'session/transcript.jsonl',
+        hash: fileHash,
+        content: bufferFromText('new content'),
+      });
+      await flush();
+
+      const files = await dbClient.getSessionFiles(sessionId);
+      const file = files.find((f) => f.path === 'session/transcript.jsonl');
+      expect(file?.id).toBe(fileId);
+      expect(file?.sha256).toBe(fileHash);
+      expect(file?.project_id).toBe(project.id);
+    });
   });
 });

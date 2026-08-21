@@ -21,7 +21,13 @@ import {
   type SyncManifest,
 } from '@lucasschirm/sal-sync-core';
 import { type DbClient, dbClient } from '../db/db-client';
-import type { Connection, Project, SessionFileRecord, SessionStub } from '../types';
+import type {
+  Connection,
+  DashboardSession,
+  Project,
+  SessionFileRecord,
+  SessionStub,
+} from '../types';
 import { generateId } from '../workers/session-builder';
 import { decryptField, isUnlocked, unlock } from './credential-crypto';
 import type {
@@ -158,6 +164,7 @@ interface BroadcastMessage {
   snapshot?: SyncManagerSnapshot;
 }
 
+/** Immutable snapshot of sync state shared with UIs and peer tabs over BroadcastChannel. */
 export interface SyncManagerSnapshot {
   initialized: boolean;
   readOnly: boolean;
@@ -322,7 +329,7 @@ export class SyncManager extends EventTarget {
 
   private handleOffline = (): void => {
     if (this.readOnly) return;
-    this.abortActiveRun('Network connection lost');
+    this.abortActiveRun(this.formatSyncDetails('NETWORK_OFFLINE', 'Network connection lost'));
   };
 
   private waitForLeaderHeartbeat(): Promise<void> {
@@ -445,6 +452,7 @@ export class SyncManager extends EventTarget {
         run.warnings.push(
           "project id 'global' is reserved — re-upload under a different SAL_PROJECT_ID",
         );
+        break;
       }
     }
   }
@@ -692,7 +700,7 @@ export class SyncManager extends EventTarget {
   ): Promise<void> {
     const { manifest, sessionId: remoteSessionId } = message;
     const existing = await this.db.getSessionBySyncId(project.localProjectId, remoteSessionId);
-    const stub = this.buildSessionStub(project.localProjectId, remoteSessionId, manifest);
+    const stub = this.buildSessionStub(project.localProjectId, remoteSessionId, manifest, existing);
     await this.db.upsertSessionStub(stub);
 
     const localSession = await this.db.getSessionBySyncId(project.localProjectId, remoteSessionId);
@@ -707,34 +715,37 @@ export class SyncManager extends EventTarget {
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
     const mainArtifact = this.findMainArtifact(manifest, mainPath);
     if (!mainArtifact) {
-      sessionState.syncStatus = 'transcript_unavailable';
-      await this.db.setSessionSyncStatus(
-        localSession.id,
-        'transcript_unavailable',
-        'Main transcript not uploaded',
-      );
-      worker.postMessage(this.buildSyncMessage(remoteSessionId, false, existing !== null, []));
-      this.emitChange();
+      await this.handleTranscriptUnavailable(sessionState, localSession, worker, remoteSessionId);
       return;
     }
 
     const shouldSync = await this.isSyncNeeded(existing, localRunCount, manifest);
     if (!shouldSync) {
-      await this.refreshInScopeSessionFiles(localSession.id, manifest, mainPath);
-      sessionState.syncStatus = 'in_sync';
-      await this.db.setSessionSyncStatus(localSession.id, 'in_sync');
-      worker.postMessage(this.buildSyncMessage(remoteSessionId, false, true, []));
-      this.emitChange();
+      await this.markSessionInSync(
+        sessionState,
+        project,
+        localSession,
+        worker,
+        remoteSessionId,
+        existing !== null,
+        mainPath,
+        manifest,
+      );
       return;
     }
 
     const filesToDownload = await this.computeFilesToDownload(localSession.id, manifest, mainPath);
     if (filesToDownload !== undefined && filesToDownload.length === 0) {
-      await this.refreshInScopeSessionFiles(localSession.id, manifest, mainPath);
-      sessionState.syncStatus = 'in_sync';
-      await this.db.setSessionSyncStatus(localSession.id, 'in_sync');
-      worker.postMessage(this.buildSyncMessage(remoteSessionId, false, true, []));
-      this.emitChange();
+      await this.markSessionInSync(
+        sessionState,
+        project,
+        localSession,
+        worker,
+        remoteSessionId,
+        true,
+        mainPath,
+        manifest,
+      );
       return;
     }
 
@@ -746,21 +757,76 @@ export class SyncManager extends EventTarget {
     this.emitChange();
   }
 
+  private async handleTranscriptUnavailable(
+    sessionState: SessionSyncState,
+    localSession: DashboardSession,
+    worker: Worker,
+    remoteSessionId: string,
+  ): Promise<void> {
+    sessionState.syncStatus = 'transcript_unavailable';
+    await this.db.setSessionSyncStatus(
+      localSession.id,
+      'transcript_unavailable',
+      'Main transcript not uploaded',
+    );
+    worker.postMessage(this.buildSyncMessage(remoteSessionId, false, true, []));
+    this.emitChange();
+  }
+
+  private async markSessionInSync(
+    sessionState: SessionSyncState,
+    project: ProjectSyncState,
+    localSession: DashboardSession,
+    worker: Worker,
+    remoteSessionId: string,
+    exists: boolean,
+    mainPath: string,
+    manifest: SyncManifest,
+  ): Promise<void> {
+    await this.refreshInScopeSessionFiles(
+      project.localProjectId,
+      localSession.id,
+      manifest,
+      mainPath,
+    );
+    sessionState.syncStatus = 'in_sync';
+    await this.db.setSessionSyncStatus(localSession.id, 'in_sync');
+    worker.postMessage(this.buildSyncMessage(remoteSessionId, false, exists, []));
+    this.emitChange();
+  }
+
   private buildSessionStub(
     projectId: string,
     sessionId: string,
     manifest: SyncManifest,
+    existing: DashboardSession | null,
   ): SessionStub {
+    const source = existing?.source ?? manifest.harness ?? 'claude';
+    const title = existing?.title ?? manifest.sessionId;
+    const startedAt =
+      this.stubTimestamp(existing?.started_at) ?? manifest.startedAt ?? new Date().toISOString();
+    const endedAt =
+      this.stubTimestamp(existing?.ended_at) ?? manifest.endedAt ?? new Date().toISOString();
     return {
       id: `sync-${projectId}-${sessionId}`,
       project_id: projectId,
-      source: 'claude',
-      title: manifest.sessionId,
-      started_at: manifest.startedAt ?? new Date().toISOString(),
-      ended_at: manifest.endedAt ?? new Date().toISOString(),
+      source,
+      title,
+      started_at: startedAt,
+      ended_at: endedAt,
       sync_session_id: sessionId,
       sync_status: 'pending',
     };
+  }
+
+  private stubTimestamp(value: number | string | undefined): string | undefined {
+    if (typeof value === 'number' && value > 0) return new Date(value).toISOString();
+    if (typeof value === 'string' && value.length > 0) return value;
+    return undefined;
+  }
+
+  private formatSyncDetails(code: string, message: string): string {
+    return `${code}: ${message}`;
   }
 
   private getOrCreateSessionState(
@@ -868,6 +934,7 @@ export class SyncManager extends EventTarget {
   }
 
   private async refreshInScopeSessionFiles(
+    projectId: string,
     sessionId: string,
     manifest: SyncManifest,
     mainPath: string,
@@ -878,7 +945,7 @@ export class SyncManager extends EventTarget {
       const file = this.artifactToFile(artifact, mainPath);
       const record: SessionFileRecord = {
         id: generateId(),
-        project_id: '',
+        project_id: projectId,
         session_id: sessionId,
         path: file.file,
         scope: 'session',
@@ -989,8 +1056,9 @@ export class SyncManager extends EventTarget {
     session: SessionSyncState,
     message: SessionFileDownloadedMessage,
   ): Promise<void> {
+    const existing = await this.findSessionFile(session.localSessionId, message.file);
     const record: SessionFileRecord = {
-      id: generateId(),
+      id: existing?.id ?? generateId(),
       project_id: project.localProjectId,
       session_id: session.localSessionId,
       path: message.file,
@@ -1121,7 +1189,11 @@ export class SyncManager extends EventTarget {
     session.syncStatus = 'failed';
     session.completeReceived = true;
     project.sessionsFailed++;
-    await this.db.setSessionSyncStatus(session.localSessionId, 'failed', message.error.message);
+    await this.db.setSessionSyncStatus(
+      session.localSessionId,
+      'failed',
+      this.formatSyncDetails(message.error.code, message.error.message),
+    );
     this.emitChange();
   }
 
@@ -1140,8 +1212,9 @@ export class SyncManager extends EventTarget {
     worker: Worker,
     message: WorkerErrorMessage,
   ): Promise<void> {
-    run.warnings.push(`${project.projectId}: ${message.error.message}`);
-    await this.closeWorkerSlot(run, project, worker, message.error.message, true);
+    const details = this.formatSyncDetails(message.error.code, message.error.message);
+    run.warnings.push(`${project.projectId}: ${details}`);
+    await this.closeWorkerSlot(run, project, worker, details, true);
   }
 
   private handleWorkerFatal(
@@ -1150,8 +1223,9 @@ export class SyncManager extends EventTarget {
     worker: Worker,
     error: Error,
   ): void {
-    run.warnings.push(`${project.projectId}: ${error.message}`);
-    this.closeWorkerSlot(run, project, worker, error.message, true).catch(() => undefined);
+    const details = this.formatSyncDetails('WORKER_ERROR', error.message);
+    run.warnings.push(`${project.projectId}: ${details}`);
+    this.closeWorkerSlot(run, project, worker, details, true).catch(() => undefined);
   }
 
   private async closeWorkerSlot(
@@ -1217,6 +1291,7 @@ export class SyncManager extends EventTarget {
     const run = this.activeRun;
     if (!run) return;
     run.cancelled = true;
+    run.warnings.push(details);
 
     for (const worker of run.activeWorkers) {
       worker.postMessage({ type: 'CANCEL' } as SyncMessageToWorker);
@@ -1321,7 +1396,7 @@ export class SyncManager extends EventTarget {
 
   private buildSnapshot(): SyncManagerSnapshot {
     if (this.followerSnapshot && this.readOnly) {
-      return this.followerSnapshot;
+      return { ...this.followerSnapshot, readOnly: true };
     }
     const run = this.activeRun;
     return {
