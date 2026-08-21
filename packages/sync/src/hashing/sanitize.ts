@@ -1,4 +1,4 @@
-import type { ArtifactScope } from '../artifact.js';
+import type { ArtifactScope } from '@lucasschirm/sal-sync-core';
 import {
   DEFAULT_SANITIZATION_POLICY,
   redactSecrets,

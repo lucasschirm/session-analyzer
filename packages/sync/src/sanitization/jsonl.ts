@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_JSONL_LINE_BYTES } from '../limits.js';
+import { DEFAULT_MAX_JSONL_LINE_BYTES } from '@lucasschirm/sal-sync-core';
 import { DEFAULT_SANITIZATION_POLICY, type SanitizationPolicy } from './contract.js';
 import { sanitizeJson } from './json.js';
 import { SanitizationError } from './redaction.js';

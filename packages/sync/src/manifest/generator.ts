@@ -1,19 +1,22 @@
-import type { ArtifactStatus, ManifestArtifact } from '../artifact.js';
-import type { SessionData } from '../session.js';
+import type {
+  ArtifactStatus,
+  ManifestArtifact,
+  SessionData,
+  SyncManifest,
+  SyncRun,
+} from '@lucasschirm/sal-sync-core';
+import {
+  DEFAULT_PLUGIN_VERSION,
+  MANIFEST_SCHEMA_VERSION,
+  SYNC_VERSION,
+  UNKNOWN_HARNESS_VERSION,
+} from '@lucasschirm/sal-sync-core';
 import {
   type ArtifactStateRecord,
   getArtifactRecord,
   isArtifactPending,
   type SyncState,
 } from '../state/index.js';
-import type { SyncRun } from '../sync-run.js';
-import {
-  DEFAULT_PLUGIN_VERSION,
-  MANIFEST_SCHEMA_VERSION,
-  SYNC_VERSION,
-  UNKNOWN_HARNESS_VERSION,
-} from '../versions.js';
-import type { SyncManifest } from './contract.js';
 
 export interface BuildManifestOptions {
   captureTranscripts?: boolean;

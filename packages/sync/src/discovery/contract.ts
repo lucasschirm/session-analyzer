@@ -1,6 +1,4 @@
-import type { ArtifactScope } from '../artifact.js';
-import type { SyncErrorCode } from '../errors.js';
-import type { SyncLimits } from '../limits.js';
+import type { ArtifactScope, SyncErrorCode, SyncLimits } from '@lucasschirm/sal-sync-core';
 
 export interface DiscoveryArtifact {
   projectId: string;

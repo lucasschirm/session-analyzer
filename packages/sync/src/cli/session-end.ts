@@ -1,4 +1,4 @@
-import type { SyncManifest } from '../manifest/index.js';
+import type { SyncManifest } from '@lucasschirm/sal-sync-core';
 import { FileLock, StateStore } from '../state/index.js';
 import {
   buildCandidates,

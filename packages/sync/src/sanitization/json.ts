@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_JSON_DEPTH } from '../limits.js';
+import { DEFAULT_MAX_JSON_DEPTH } from '@lucasschirm/sal-sync-core';
 import {
   DEFAULT_SANITIZATION_POLICY,
   type RedactionAction,

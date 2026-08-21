@@ -1,4 +1,4 @@
-import type { ArtifactIdentity } from '../artifact.js';
+import type { ArtifactIdentity } from '@lucasschirm/sal-sync-core';
 
 export function buildS3ObjectKey(
   artifact: Pick<ArtifactIdentity, 'projectId' | 'sessionId' | 'scope' | 'relativePath'>,

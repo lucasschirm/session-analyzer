@@ -1,8 +1,7 @@
 import * as fsp from 'node:fs/promises';
 import path from 'node:path';
-
+import type { SyncRun } from '@lucasschirm/sal-sync-core';
 import { writeFileAtomic } from '../state/index.js';
-import type { SyncRun } from '../sync-run.js';
 
 type RunLog = Record<string, SyncRun[]>;
 
