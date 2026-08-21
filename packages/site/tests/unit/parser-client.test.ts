@@ -11,10 +11,12 @@ class FakeParserWorker {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   posted: ParseRequest[] = [];
+  transfers: Array<Array<Transferable> | undefined> = [];
   terminated = false;
 
-  postMessage(request: ParseRequest): void {
+  postMessage(request: ParseRequest, transfer?: Array<Transferable>): void {
     this.posted.push(request);
+    this.transfers.push(transfer);
   }
 
   respond(response: ParseResponse | ParseErrorResponse): void {
@@ -120,5 +122,54 @@ describe('parseInWorker timeout safety', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('parseInWorker ArrayBuffer transfer', () => {
+  const encoder = new TextEncoder();
+
+  it('does not pass a transfer list when the payload is a string', async () => {
+    const worker = new FakeParserWorker();
+
+    const promise = parseInWorker('{"type": "message_start"}', {
+      projectId: 'p1',
+      createWorker: () => worker as unknown as Worker,
+    });
+    worker.respond({ type: 'result', result: parsedSession });
+
+    await promise;
+    expect(worker.posted[0].payload).toBe('{"type": "message_start"}');
+    expect(worker.transfers[0]).toBeUndefined();
+  });
+
+  it('transfers an ArrayBuffer payload with postMessage', async () => {
+    const text = '{"type": "message_start"}';
+    const buffer = encoder.encode(text).buffer;
+    const worker = new FakeParserWorker();
+
+    const promise = parseInWorker(buffer, {
+      projectId: 'p1',
+      createWorker: () => worker as unknown as Worker,
+    });
+    worker.respond({ type: 'result', result: parsedSession });
+
+    await promise;
+    expect(worker.posted[0].payload).toBe(buffer);
+    expect(worker.transfers[0]).toEqual([buffer]);
+  });
+
+  it('rejects with the worker error message for an ArrayBuffer payload', async () => {
+    const text = 'bad';
+    const buffer = encoder.encode(text).buffer;
+    const worker = new FakeParserWorker();
+
+    const promise = parseInWorker(buffer, {
+      projectId: 'p1',
+      createWorker: () => worker as unknown as Worker,
+    });
+    worker.respond({ type: 'error', message: 'Invalid buffer' });
+
+    await expect(promise).rejects.toThrow('Invalid buffer');
+    expect(worker.terminated).toBe(true);
   });
 });
