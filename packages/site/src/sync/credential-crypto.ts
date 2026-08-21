@@ -160,9 +160,11 @@ async function importAesKey(material: Uint8Array<ArrayBuffer>): Promise<CryptoKe
 
 async function deriveKey(passkey: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
   const material = await deriveKeyMaterial(passkey, salt);
-  const key = await importAesKey(material);
-  material.fill(0);
-  return key;
+  try {
+    return await importAesKey(material);
+  } finally {
+    material.fill(0);
+  }
 }
 
 async function encryptWithKey(
@@ -316,16 +318,19 @@ async function wrapAndStoreVaultKey(
   const prfKey = await importPrfKey(prfOutput);
   if (!prfKey) return false;
   const material = await deriveKeyMaterial(passkey, base64ToBytes(state.kdf_salt));
-  const wrapped = await wrapKeyWithPrf(prfKey, material, salt);
-  material.fill(0);
-  const updated: PasskeyState = {
-    ...state,
-    webauthn_credential_id: prfCredential.id,
-    webauthn_wrapped_key: serializeWrappedKey(wrapped),
-    webauthn_expires_at: Date.now() + WEBAUTHN_EXPIRY_MS,
-  };
-  await dbClient.savePasskeyState(updated);
-  return true;
+  try {
+    const wrapped = await wrapKeyWithPrf(prfKey, material, salt);
+    const updated: PasskeyState = {
+      ...state,
+      webauthn_credential_id: prfCredential.id,
+      webauthn_wrapped_key: serializeWrappedKey(wrapped),
+      webauthn_expires_at: Date.now() + WEBAUTHN_EXPIRY_MS,
+    };
+    await dbClient.savePasskeyState(updated);
+    return true;
+  } finally {
+    material.fill(0);
+  }
 }
 
 async function getWebAuthnCredentialIdAndWrappedKey(): Promise<{
@@ -334,7 +339,7 @@ async function getWebAuthnCredentialIdAndWrappedKey(): Promise<{
   salt: Uint8Array<ArrayBuffer>;
 } | null> {
   const state = await dbClient.getPasskeyState();
-  if (!state || !hasWebAuthnDeviceUnlock(state)) return null;
+  if (!state || !(await isWebAuthnDeviceUnlockActive(state))) return null;
   const credentialId = base64urlToBytes(state.webauthn_credential_id ?? '');
   if (credentialId.length === 0) return null;
   const wrapped = parseWrappedKey(state.webauthn_wrapped_key ?? '');
@@ -478,12 +483,43 @@ export function hasWebAuthnDeviceUnlock(state: PasskeyState): boolean {
 }
 
 /**
+ * Clears the WebAuthn device-unlock fields from a passkey state row when the
+ * credential is no longer usable. This prevents stale or expired data from
+ * accumulating indefinitely.
+ */
+async function clearInactiveWebAuthnCredential(state: PasskeyState): Promise<void> {
+  if (!state.webauthn_credential_id && !state.webauthn_wrapped_key && !state.webauthn_expires_at) {
+    return;
+  }
+  const cleared: PasskeyState = {
+    ...state,
+    webauthn_credential_id: undefined,
+    webauthn_wrapped_key: undefined,
+    webauthn_expires_at: undefined,
+  };
+  await dbClient.savePasskeyState(cleared);
+}
+
+/**
+ * Returns `true` if the state holds an active, non-expired WebAuthn device
+ * credential. Otherwise clears any stale WebAuthn fields as a side effect and
+ * returns `false`.
+ */
+async function isWebAuthnDeviceUnlockActive(state: PasskeyState): Promise<boolean> {
+  if (hasWebAuthnDeviceUnlock(state)) return true;
+  await clearInactiveWebAuthnCredential(state);
+  return false;
+}
+
+/**
  * Returns whether a non-expired WebAuthn device-unlock credential is stored.
+ * Expired or incomplete credentials are cleared through `savePasskeyState` as
+ * a side effect of the check.
  */
 export async function hasDeviceUnlockCredential(): Promise<boolean> {
   const state = await dbClient.getPasskeyState();
   if (!state) return false;
-  return hasWebAuthnDeviceUnlock(state);
+  return isWebAuthnDeviceUnlockActive(state);
 }
 
 /**
@@ -530,9 +566,12 @@ export async function unlockWithWebAuthnDevice(): Promise<boolean> {
     const prfKey = await importPrfKey(prfOutput);
     if (!prfKey) return false;
     const material = await unwrapKeyWithPrf(prfKey, bundle.wrapped);
-    vaultKey = await importAesKey(material);
-    material.fill(0);
-    return true;
+    try {
+      vaultKey = await importAesKey(material);
+      return true;
+    } finally {
+      material.fill(0);
+    }
   } catch {
     vaultKey = null;
     return false;

@@ -254,7 +254,82 @@ describe('credential-crypto', () => {
       expect(await createWebAuthnCredentialAndWrapKey(passkey)).toBe(false);
     });
 
-    it('silently falls back to the passkey flow when the device credential is expired', async () => {
+    it('falls back gracefully when the wrapped key blob is malformed', async () => {
+      const passkey = 'correcthorsebatterystaple';
+      await createPasskey(passkey);
+      const prfOutput = makePrfOutput();
+      const credentialId = bytesToBase64url(crypto.getRandomValues(new Uint8Array(16)));
+      const credential = makeCredential(prfOutput, credentialId);
+
+      const create = globalThis.navigator.credentials.create as ReturnType<typeof vi.fn>;
+      create.mockResolvedValue(credential);
+
+      await createWebAuthnCredentialAndWrapKey(passkey);
+      expect(mockDb.state?.webauthn_wrapped_key).toBeTruthy();
+
+      if (mockDb.state) {
+        mockDb.state.webauthn_wrapped_key = 'not-valid-base64!!!';
+      }
+
+      const get = globalThis.navigator.credentials.get as ReturnType<typeof vi.fn>;
+      get.mockResolvedValue({
+        id: credentialId,
+        getClientExtensionResults: () => ({ prf: { results: { first: prfOutput } } }),
+      } as unknown as PublicKeyCredential);
+
+      lock();
+      expect(await unlockWithWebAuthnDevice()).toBe(false);
+      expect(isUnlocked()).toBe(false);
+    });
+
+    it('rejects a PRF output that is not 32 bytes', async () => {
+      const passkey = 'correcthorsebatterystaple';
+      await createPasskey(passkey);
+      const prfOutput = makePrfOutput();
+      const credentialId = bytesToBase64url(crypto.getRandomValues(new Uint8Array(16)));
+      const credential = makeCredential(prfOutput, credentialId);
+
+      const create = globalThis.navigator.credentials.create as ReturnType<typeof vi.fn>;
+      create.mockResolvedValue(credential);
+
+      await createWebAuthnCredentialAndWrapKey(passkey);
+
+      const shortPrfOutput = crypto.getRandomValues(new Uint8Array(16));
+      const get = globalThis.navigator.credentials.get as ReturnType<typeof vi.fn>;
+      get.mockResolvedValue({
+        id: credentialId,
+        getClientExtensionResults: () => ({ prf: { results: { first: shortPrfOutput } } }),
+      } as unknown as PublicKeyCredential);
+
+      lock();
+      expect(await unlockWithWebAuthnDevice()).toBe(false);
+      expect(isUnlocked()).toBe(false);
+    });
+
+    it('falls back gracefully when the assertion has no PRF extension result', async () => {
+      const passkey = 'correcthorsebatterystaple';
+      await createPasskey(passkey);
+      const prfOutput = makePrfOutput();
+      const credentialId = bytesToBase64url(crypto.getRandomValues(new Uint8Array(16)));
+      const credential = makeCredential(prfOutput, credentialId);
+
+      const create = globalThis.navigator.credentials.create as ReturnType<typeof vi.fn>;
+      create.mockResolvedValue(credential);
+
+      await createWebAuthnCredentialAndWrapKey(passkey);
+
+      const get = globalThis.navigator.credentials.get as ReturnType<typeof vi.fn>;
+      get.mockResolvedValue({
+        id: credentialId,
+        getClientExtensionResults: () => ({}),
+      } as unknown as PublicKeyCredential);
+
+      lock();
+      expect(await unlockWithWebAuthnDevice()).toBe(false);
+      expect(isUnlocked()).toBe(false);
+    });
+
+    it('silently falls back to the passkey flow and clears expired WebAuthn fields', async () => {
       const passkey = 'correcthorsebatterystaple';
       await createPasskey(passkey);
       const prfOutput = makePrfOutput();
@@ -272,6 +347,11 @@ describe('credential-crypto', () => {
       }
 
       expect(await hasDeviceUnlockCredential()).toBe(false);
+      expect(mockDb.state?.webauthn_credential_id).toBeUndefined();
+      expect(mockDb.state?.webauthn_wrapped_key).toBeUndefined();
+      expect(mockDb.state?.webauthn_expires_at).toBeUndefined();
+      expect(dbClient.savePasskeyState).toHaveBeenCalled();
+
       expect(await unlockWithWebAuthnDevice()).toBe(false);
     });
 
