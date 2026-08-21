@@ -1,15 +1,19 @@
 import {
   type ArtifactScope,
   buildObjectKey,
+  encodeKeySegment,
   type ManifestArtifact,
+  parseObjectKey,
   S3Error,
   type S3GetObjectOptions,
+  type S3ListObjectEntry,
+  type S3ListObjectsOptions,
   type S3ListOptions,
   type S3ListPage,
   type SyncManifest,
   sha256Hex,
 } from '@lucasschirm/sal-sync-core';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   FileToDownload,
   SessionBatchFoundMessage,
@@ -21,14 +25,6 @@ import type {
 import { type S3Client, SessionSyncWorker } from '../../src/workers/session-sync.worker';
 
 const encoder = new TextEncoder();
-
-beforeAll(() => {
-  if (!globalThis.crypto) {
-    (globalThis as { crypto?: Crypto }).crypto = crypto.subtle as unknown as Crypto;
-  } else if (!globalThis.crypto.subtle) {
-    (globalThis.crypto as { subtle?: SubtleCrypto }).subtle = crypto.subtle;
-  }
-});
 
 class MockS3Client implements S3Client {
   private readonly store = new Map<string, ArrayBuffer>();
@@ -46,6 +42,12 @@ class MockS3Client implements S3Client {
   getObjectProgress: Array<{ key: string; bytes: number }> = [];
   listSessionFoldersCalls: Array<{ projectId: string; options?: S3ListOptions }> = [];
   listSessionFoldersPages: S3ListPage[] = [];
+  listSessionObjectsCalls: Array<{
+    projectId: string;
+    sessionId: string;
+    options?: S3ListObjectsOptions;
+  }> = [];
+  listSessionObjectsResult: S3ListObjectEntry[] | undefined;
 
   setAutoResolve(value: boolean): void {
     this._autoResolve = value;
@@ -67,16 +69,8 @@ class MockS3Client implements S3Client {
     this.listSessionFoldersPages = pages;
   }
 
-  headBucket(): Promise<void> {
-    return Promise.resolve();
-  }
-
-  putObject(): Promise<{ etag: string | undefined }> {
-    return Promise.resolve({ etag: 'etag' });
-  }
-
-  listProjectFolders(): Promise<string[]> {
-    return Promise.resolve([]);
+  setListSessionObjectsResult(result: S3ListObjectEntry[]): void {
+    this.listSessionObjectsResult = result;
   }
 
   async listSessionFolders(projectId: string, options?: S3ListOptions): Promise<string[]> {
@@ -92,6 +86,31 @@ class MockS3Client implements S3Client {
       all.push(...page.prefixes);
     }
     return all;
+  }
+
+  async listSessionObjects(
+    projectId: string,
+    sessionId: string,
+    options?: S3ListObjectsOptions,
+  ): Promise<S3ListObjectEntry[]> {
+    this.listSessionObjectsCalls.push({ projectId, sessionId, options });
+    if (options?.signal?.aborted) {
+      throw new DOMException('aborted', 'AbortError');
+    }
+    if (this.listSessionObjectsResult) {
+      return this.listSessionObjectsResult;
+    }
+    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/session/`;
+    const result: S3ListObjectEntry[] = [];
+    for (const [key, buffer] of this.store) {
+      if (key.startsWith(prefix) && !key.endsWith('/')) {
+        const parsed = parseObjectKey(key);
+        if (parsed?.scope === 'session' && parsed.relativePath) {
+          result.push({ key, size: buffer.byteLength });
+        }
+      }
+    }
+    return result;
   }
 
   async getObject(key: string, options?: S3GetObjectOptions): Promise<ArrayBuffer> {
@@ -294,12 +313,16 @@ function startMessage(
   };
 }
 
-function syncMessage(sessionId: string, filesToDownload?: FileToDownload[]): SyncMessageToWorker {
+function syncMessage(
+  sessionId: string,
+  filesToDownload?: FileToDownload[],
+  options?: { sync?: boolean; exists?: boolean },
+): SyncMessageToWorker {
   return {
     type: 'SESSION_SYNC',
     sessionId,
-    sync: true,
-    exists: false,
+    sync: options?.sync ?? true,
+    exists: options?.exists ?? false,
     filesToDownload,
   };
 }
@@ -786,5 +809,161 @@ describe('SessionSyncWorker', () => {
 
     expect(findMessages(posted, 'SESSION_FILE_DOWNLOADED').length).toBe(0);
     expect(client.inFlight).toBe(0);
+  });
+
+  it('stops cleanly on CANCEL when more than FILE_POOL_SIZE files are queued', async () => {
+    client.setAutoResolve(false);
+    const { worker, posted } = createWorker(client);
+    const files: TestFile[] = [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+    ];
+    for (let index = 0; index < 5; index++) {
+      files.push({
+        scope: 'session',
+        relativePath: `subagents/agent-${index}.jsonl`,
+        content: `sub ${index}\n`,
+      });
+    }
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', files);
+    client.putBuffer(
+      manifestKey('proj', 'sess-1'),
+      encoder.encode(JSON.stringify(manifest)).buffer,
+    );
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => client.pendingKeys().includes(manifestKey('proj', 'sess-1')));
+    client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
+
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+    worker.handleMessage(
+      syncMessage(
+        'sess-1',
+        downloads.map(({ content: _content, ...rest }) => rest),
+      ),
+    );
+
+    await vi.waitUntil(() => client.pendingKeys().length === 1);
+    const mainKey = client.pendingKeys()[0];
+    client.resolve(mainKey, client.getBuffer(mainKey));
+    await flush();
+
+    await vi.waitUntil(() => client.pendingKeys().length === 4);
+    expect(client.maxInFlight).toBeLessThanOrEqual(4);
+
+    worker.handleMessage(cancelMessage());
+    await flush();
+
+    await vi.waitUntil(() => client.inFlight === 0);
+    expect(findMessages(posted, 'SESSION_FILE_DOWNLOADED').length).toBe(1);
+  });
+
+  it('honors targetSessionIds and ignores non-target sessions', async () => {
+    client.setListPages([
+      { prefixes: ['sess-a', 'sess-b', 'sess-c'], continuationToken: undefined },
+    ]);
+    client.putBuffer(manifestKey('proj', 'sess-a'), encoder.encode(JSON.stringify({})).buffer);
+    client.putBuffer(manifestKey('proj', 'sess-b'), encoder.encode(JSON.stringify({})).buffer);
+
+    const { worker, posted } = createWorker(client);
+    worker.handleMessage(startMessage('proj', { targetSessionIds: ['sess-b'] }));
+
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    const batches = findMessages(posted, 'SESSION_BATCH_FOUND') as Array<{
+      message: SessionBatchFoundMessage;
+    }>;
+    expect(batches.length).toBe(1);
+    expect(batches[0].message.sessionIds).toEqual(['sess-b']);
+
+    const found = findMessages(posted, 'SESSION_FOUND') as Array<{
+      message: { sessionId: string };
+    }>;
+    expect(found.map((m) => m.message.sessionId)).toEqual(['sess-b']);
+  });
+
+  it('skips a session when SESSION_SYNC has sync:false and exists:false', async () => {
+    client.setListPages([{ prefixes: ['sess-1'], continuationToken: undefined }]);
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    await worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    worker.handleMessage(syncMessage('sess-1', undefined, { sync: false, exists: false }));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    const complete = findOne(posted, 'SESSION_SYNC_COMPLETE') as SessionSyncCompleteMessage;
+    expect(complete.files).toEqual([]);
+
+    const done = findOne(posted, 'WORKER_DONE') as { synced: number; skipped: number };
+    expect(done.synced).toBe(1);
+    expect(done.skipped).toBe(0);
+    expect(client.getCalls).toEqual([manifestKey('proj', 'sess-1')]);
+    expect(client.listSessionObjectsCalls).toHaveLength(0);
+  });
+
+  it('emits an unchanged summary when SESSION_SYNC has sync:false and exists:true', async () => {
+    client.setListPages([{ prefixes: ['sess-1'], continuationToken: undefined }]);
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+      { scope: 'session', relativePath: 'subagents/agent-1.jsonl', content: 'sub line\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    await worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    worker.handleMessage(syncMessage('sess-1', undefined, { sync: false, exists: true }));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    const complete = findOne(posted, 'SESSION_SYNC_COMPLETE') as SessionSyncCompleteMessage;
+    expect(complete.files.length).toBe(2);
+    expect(complete.files.every((f) => f.status === 'unchanged')).toBe(true);
+
+    const done = findOne(posted, 'WORKER_DONE') as { synced: number; skipped: number };
+    expect(done.synced).toBe(1);
+    expect(done.skipped).toBe(0);
+    expect(findMessages(posted, 'SESSION_FILE_DOWNLOADED').length).toBe(0);
+  });
+
+  it('includes session files discovered by S3 listing but missing from the manifest', async () => {
+    client.setListPages([{ prefixes: ['sess-1'], continuationToken: undefined }]);
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    const orphanContent = 'orphan sub line\n';
+    const orphanKey = buildObjectKey({
+      projectId: 'proj',
+      sessionId: 'sess-1',
+      scope: 'session',
+      relativePath: 'subagents/agent-orphan.jsonl',
+    });
+    client.putBuffer(orphanKey, encoder.encode(orphanContent).buffer);
+
+    await worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    worker.handleMessage(syncMessage('sess-1'));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    const fileMessages = findMessages(posted, 'SESSION_FILE_DOWNLOADED') as Array<{
+      message: SessionFileDownloadedMessage;
+    }>;
+    const files = fileMessages.map((m) => m.message.file);
+    expect(files).toContain('session/transcript.jsonl');
+    expect(files).toContain('session/subagents/agent-orphan.jsonl');
+
+    const complete = findOne(posted, 'SESSION_SYNC_COMPLETE') as SessionSyncCompleteMessage;
+    const orphan = complete.files.find((f) => f.file === 'session/subagents/agent-orphan.jsonl');
+    expect(orphan).not.toBeUndefined();
+    expect(orphan?.status).toBe('downloaded');
   });
 });

@@ -80,6 +80,8 @@ export interface S3ClientConfig {
 export interface S3ListPage {
   /** Folder prefixes on this page, with trailing slashes and encoding removed. */
   prefixes: string[];
+  /** Object entries on this page, when the listing is not using a delimiter. */
+  objects?: S3ListObjectEntry[];
   /** Continuation token for the next page, if the listing is truncated. */
   continuationToken?: string;
 }
@@ -119,6 +121,32 @@ export interface S3PutObjectOptions {
 export interface S3PutObjectResult {
   /** ETag header returned by S3, if present. */
   etag?: string;
+}
+
+/** A single object key returned by an object listing. */
+export interface S3ListObjectEntry {
+  /** The raw S3 object key (percent-encoded when it contains special characters). */
+  key: string;
+  /** Object size in bytes, when S3 returns it. */
+  size?: number;
+}
+
+/** A single page of object keys returned by an object listing. */
+export interface S3ListObjectsPage {
+  /** Object entries on this page. */
+  objects: S3ListObjectEntry[];
+  /** Continuation token for the next page, if the listing is truncated. */
+  continuationToken?: string;
+}
+
+/** Options for paginated object listing operations. */
+export interface S3ListObjectsOptions {
+  /** Callback invoked for each page as it arrives, enabling pipeline. */
+  onPage?: (page: S3ListObjectsPage) => void | Promise<void>;
+  /** Maximum number of keys S3 should return per page. */
+  maxKeys?: number;
+  /** Optional abort signal for cancelling in-flight listing requests. */
+  signal?: AbortSignal;
 }
 
 function safeDecode(value: string): string {
@@ -178,11 +206,12 @@ function buildListUrl(
   prefix: string,
   continuationToken: string | undefined,
   maxKeys: number,
+  delimiter?: string,
 ): string {
   const url = new URL('', baseUrl);
   const params = new URLSearchParams();
   params.set('list-type', '2');
-  params.set('delimiter', '/');
+  if (delimiter) params.set('delimiter', delimiter);
   params.set('max-keys', String(maxKeys));
   if (continuationToken) params.set('continuation-token', continuationToken);
   let query = params.toString();
@@ -196,17 +225,32 @@ function buildListUrl(
 
 function parseListObjectsV2Xml(xml: string): S3ListPage {
   const prefixes: string[] = [];
-  const matches = xml.matchAll(
+  const prefixMatches = xml.matchAll(
     /<CommonPrefixes>[\s\S]*?<Prefix>([^<]*)<\/Prefix>[\s\S]*?<\/CommonPrefixes>/g,
   );
-  for (const match of matches) {
+  for (const match of prefixMatches) {
     const prefix = match[1];
     if (prefix !== undefined) prefixes.push(prefix);
+  }
+  const objects: S3ListObjectEntry[] = [];
+  const contentMatches = xml.matchAll(
+    /<Contents>[\s\S]*?<Key>([^<]*)<\/Key>[\s\S]*?<Size>([^<]*)<\/Size>[\s\S]*?<\/Contents>/g,
+  );
+  for (const match of contentMatches) {
+    const key = match[1];
+    const sizeText = match[2];
+    if (key === undefined) continue;
+    const size = sizeText === undefined ? undefined : Number.parseInt(sizeText, 10);
+    objects.push({
+      key,
+      size: Number.isNaN(size) ? undefined : size,
+    });
   }
   const isTruncated = /<IsTruncated>\s*true\s*<\/IsTruncated>/i.test(xml);
   const tokenMatch = xml.match(/<NextContinuationToken>([^<]*)<\/NextContinuationToken>/);
   return {
     prefixes,
+    objects,
     continuationToken: isTruncated ? tokenMatch?.[1] : undefined,
   };
 }
@@ -390,6 +434,22 @@ export class S3FetchClient {
   }
 
   /**
+   * List all objects under a session's `session/` scope.
+   *
+   * Unlike {@link listSessionFolders}, this returns the raw object keys under
+   * `<projectId>/<sessionId>/session/` rather than common prefixes. The keys
+   * can be decoded with {@link parseObjectKey}.
+   */
+  async listSessionObjects(
+    projectId: string,
+    sessionId: string,
+    options: S3ListObjectsOptions = {},
+  ): Promise<S3ListObjectEntry[]> {
+    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/session/`;
+    return this.listObjectPages(prefix, options);
+  }
+
+  /**
    * Download an object by key.
    *
    * Keys are caller-supplied and are not re-encoded. For large transcript
@@ -517,13 +577,52 @@ export class S3FetchClient {
     return all;
   }
 
+  private async listObjectPages(
+    prefix: string,
+    options: S3ListObjectsOptions,
+  ): Promise<S3ListObjectEntry[]> {
+    const all: S3ListObjectEntry[] = [];
+    let continuationToken: string | undefined;
+    const maxKeys = options.maxKeys ?? DEFAULT_MAX_LIST_KEYS;
+    const signal = options.signal;
+    do {
+      const page = await this.withRetry(() =>
+        this.listObjectPage(prefix, continuationToken, maxKeys, signal),
+      );
+      if (options.onPage) await options.onPage(page);
+      all.push(...page.objects);
+      continuationToken = page.continuationToken;
+    } while (continuationToken);
+    return all;
+  }
+
+  private async listObjectPage(
+    prefix: string,
+    continuationToken: string | undefined,
+    maxKeys: number,
+    signal?: AbortSignal,
+  ): Promise<S3ListObjectsPage> {
+    const url = buildListUrl(this.baseUrl, prefix, continuationToken, maxKeys);
+    const response = await this.withControlPlane(
+      (s) => this.signedFetch(url, { method: 'GET' }, s),
+      signal,
+    );
+    await this.expectOk(response);
+    const xml = await response.text();
+    const raw = parseListObjectsV2Xml(xml);
+    return {
+      objects: raw.objects ?? [],
+      continuationToken: raw.continuationToken,
+    };
+  }
+
   private async listPage(
     prefix: string,
     continuationToken: string | undefined,
     maxKeys: number,
     signal?: AbortSignal,
   ): Promise<S3ListPage> {
-    const url = buildListUrl(this.baseUrl, prefix, continuationToken, maxKeys);
+    const url = buildListUrl(this.baseUrl, prefix, continuationToken, maxKeys, '/');
     const response = await this.withControlPlane(
       (s) => this.signedFetch(url, { method: 'GET' }, s),
       signal,

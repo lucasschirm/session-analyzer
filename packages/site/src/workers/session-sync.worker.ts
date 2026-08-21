@@ -13,14 +13,15 @@
 import {
   buildObjectKey,
   type ManifestArtifact,
+  parseObjectKey,
   parseSyncManifest,
   type S3ClientConfig,
   S3FetchClient,
   type S3GetObjectOptions,
+  type S3ListObjectEntry,
+  type S3ListObjectsOptions,
   type S3ListOptions,
   type S3ListPage,
-  type S3PutObjectOptions,
-  type S3PutObjectResult,
   type SyncManifest,
   sha256Hex,
 } from '@lucasschirm/sal-sync-core';
@@ -49,15 +50,13 @@ type PostFn = (message: SyncMessageFromWorker, transfer?: Transferable[]) => voi
  * satisfies this interface; tests can substitute a fake implementation.
  */
 export interface S3Client {
-  headBucket(): Promise<void>;
-  listProjectFolders(options?: S3ListOptions): Promise<string[]>;
   listSessionFolders(projectId: string, options?: S3ListOptions): Promise<string[]>;
+  listSessionObjects(
+    projectId: string,
+    sessionId: string,
+    options?: S3ListObjectsOptions,
+  ): Promise<S3ListObjectEntry[]>;
   getObject(key: string, options?: S3GetObjectOptions): Promise<ArrayBuffer>;
-  putObject(
-    key: string,
-    body: ArrayBuffer | Uint8Array,
-    options?: S3PutObjectOptions,
-  ): Promise<S3PutObjectResult>;
 }
 
 interface SessionSyncDecision {
@@ -201,9 +200,9 @@ export class SessionSyncWorker {
     if (this.cancelled) return;
     const sessionIds = this.filterTargetSessionIds(page.prefixes);
     foundSessionIds.push(...sessionIds);
+    this.markConnected();
     this.emitSessionBatch(sessionIds, page.continuationToken === undefined);
     for (const sessionId of sessionIds) this.queueSession(sessionId);
-    this.markConnected();
   }
 
   private filterTargetSessionIds(sessionIds: string[]): string[] {
@@ -258,7 +257,7 @@ export class SessionSyncWorker {
       if (!decision.sync) {
         this.counts.synced++;
         if (decision.exists) {
-          this.emitUnchangedSummary(sessionId, manifest);
+          await this.emitUnchangedSummary(sessionId, manifest);
         } else {
           this.emitSyncComplete(sessionId, []);
         }
@@ -361,8 +360,8 @@ export class SessionSyncWorker {
     return typeof (error as { code?: unknown }).code === 'string';
   }
 
-  private emitUnchangedSummary(sessionId: string, manifest: SyncManifest): void {
-    const files = this.resolveInScopeFiles(manifest).map((file) => ({
+  private async emitUnchangedSummary(sessionId: string, manifest: SyncManifest): Promise<void> {
+    const files = (await this.resolveInScopeFiles(manifest, sessionId)).map((file) => ({
       ...file,
       status: 'unchanged' as const,
     }));
@@ -375,54 +374,105 @@ export class SessionSyncWorker {
     filesToDownload?: FileToDownload[],
   ): Promise<void> {
     if (this.cancelled) return;
-    const files = this.resolveRequestedFiles(manifest, filesToDownload);
+    const files = await this.resolveRequestedFiles(manifest, filesToDownload, sessionId);
+    if (this.cancelled) return;
     if (files.length === 0) {
       this.emitSyncComplete(sessionId, []);
       this.counts.synced++;
       return;
     }
     const state = this.createSessionState(sessionId, files);
-    const mainFile = files.find((file) => file.isMainTranscript);
-    const otherFiles = files.filter((file) => file !== mainFile);
-    if (this.cancelled) return;
-    if (mainFile) {
-      const result = await this.downloadAndVerifyFile(sessionId, mainFile, state);
+    try {
+      const mainFile = files.find((file) => file.isMainTranscript);
+      const otherFiles = files.filter((file) => file !== mainFile);
       if (this.cancelled) return;
-      if (result.status !== 'downloaded') {
-        this.counts.failed++;
-        this.emitSessionFailed(sessionId, this.downloadErrorCode(result), 'Main transcript failed');
-        return;
+      if (mainFile) {
+        const result = await this.downloadAndVerifyFile(sessionId, mainFile, state);
+        if (this.cancelled) return;
+        if (result.status !== 'downloaded') {
+          this.counts.failed++;
+          this.emitSessionFailed(
+            sessionId,
+            this.downloadErrorCode(result),
+            'Main transcript failed',
+          );
+          return;
+        }
       }
+      if (!this.cancelled) {
+        await this.downloadFilesInPool(sessionId, otherFiles, state);
+      }
+      if (this.cancelled) return;
+      this.emitSyncComplete(sessionId, this.buildFileSummary(state));
+      this.counts.synced++;
+    } finally {
+      this.sessionStates.delete(sessionId);
     }
-    if (!this.cancelled) {
-      await this.downloadFilesInPool(sessionId, otherFiles, state);
-    }
-    if (this.cancelled) return;
-    this.emitSyncComplete(sessionId, this.buildFileSummary(state));
-    this.counts.synced++;
   }
 
-  private resolveRequestedFiles(
+  private async resolveRequestedFiles(
     manifest: SyncManifest,
-    filesToDownload?: FileToDownload[],
-  ): FileToDownload[] {
-    if (filesToDownload === undefined) return this.resolveInScopeFiles(manifest);
+    filesToDownload: FileToDownload[] | undefined,
+    sessionId: string,
+  ): Promise<FileToDownload[]> {
+    if (filesToDownload === undefined) return this.resolveInScopeFiles(manifest, sessionId);
     return filesToDownload;
   }
 
-  private resolveInScopeFiles(manifest: SyncManifest): FileToDownload[] {
+  private async resolveInScopeFiles(
+    manifest: SyncManifest,
+    sessionId: string,
+  ): Promise<FileToDownload[]> {
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
-    return manifest.artifacts
-      .filter((artifact) => this.isInScopeArtifact(artifact, mainPath))
-      .map((artifact) => this.toFileToDownload(artifact, mainPath));
+    const fileMap = new Map<string, FileToDownload>();
+    for (const artifact of manifest.artifacts) {
+      if (this.isInScopeArtifact(artifact, mainPath)) {
+        const file = this.toFileToDownload(artifact, mainPath);
+        fileMap.set(file.file, file);
+      }
+    }
+    await this.reconcileSessionFiles(fileMap, sessionId, mainPath);
+    return [...fileMap.values()];
+  }
+
+  private async reconcileSessionFiles(
+    fileMap: Map<string, FileToDownload>,
+    sessionId: string,
+    mainPath: string,
+  ): Promise<void> {
+    if (!this.client) return;
+    const controller = new AbortController();
+    this.listControllers.add(controller);
+    try {
+      const entries = await this.client.listSessionObjects(this.projectId, sessionId, {
+        signal: controller.signal,
+      });
+      for (const entry of entries) {
+        const parsed = parseObjectKey(entry.key);
+        if (parsed?.scope !== 'session' || !parsed.relativePath) continue;
+        if (!this.isInScopeRelativePath(parsed.relativePath, mainPath)) continue;
+        const file = this.toFileToDownloadFromListing(
+          parsed.relativePath,
+          entry.size ?? 0,
+          mainPath,
+        );
+        if (!fileMap.has(file.file)) fileMap.set(file.file, file);
+      }
+    } finally {
+      this.listControllers.delete(controller);
+    }
   }
 
   private isInScopeArtifact(artifact: ManifestArtifact, mainPath: string): boolean {
     return (
       artifact.scope === 'session' &&
       artifact.status === 'uploaded' &&
-      (artifact.relativePath === mainPath || this.isSubagentFile(artifact.relativePath))
+      this.isInScopeRelativePath(artifact.relativePath, mainPath)
     );
+  }
+
+  private isInScopeRelativePath(relativePath: string, mainPath: string): boolean {
+    return relativePath === mainPath || this.isSubagentFile(relativePath);
   }
 
   private isSubagentFile(relativePath: string): boolean {
@@ -440,6 +490,21 @@ export class SessionSyncWorker {
       hash: artifact.sha256,
       size: artifact.size,
       isMainTranscript: artifact.relativePath === mainPath,
+    };
+  }
+
+  private toFileToDownloadFromListing(
+    relativePath: string,
+    size: number,
+    mainPath: string,
+  ): FileToDownload {
+    return {
+      file: `session/${relativePath}`,
+      scope: 'session',
+      relativePath,
+      hash: '',
+      size,
+      isMainTranscript: relativePath === mainPath,
     };
   }
 
@@ -467,6 +532,10 @@ export class SessionSyncWorker {
 
   private runWithFilePool(tasks: Array<() => Promise<unknown>>): Promise<void> {
     return new Promise((resolve) => {
+      if (tasks.length === 0) {
+        resolve();
+        return;
+      }
       let running = 0;
       let nextIndex = 0;
       let settled = 0;
@@ -478,12 +547,15 @@ export class SessionSyncWorker {
           task().finally(() => {
             running--;
             settled++;
-            if (settled === total) {
+            if (this.cancelled || settled === total) {
               resolve();
               return;
             }
             startNext();
           });
+        }
+        if (this.cancelled) {
+          resolve();
         }
       };
       startNext();
@@ -512,12 +584,14 @@ export class SessionSyncWorker {
         signal: controller.signal,
       });
       if (this.cancelled) return { status: 'failed' };
-      const hash = await sha256Hex(new Uint8Array(buffer));
-      if (hash !== file.hash.toLowerCase()) {
+      const actualHash = await sha256Hex(new Uint8Array(buffer));
+      if (file.hash && actualHash !== file.hash.toLowerCase()) {
+        file.hash = actualHash;
         this.setFileStatus(state, file, 'failed');
         this.emitProgress(sessionId, state);
         return { status: 'hash-mismatch' };
       }
+      file.hash = actualHash;
       this.setFileStatus(state, file, 'downloaded');
       this.emitProgress(sessionId, state);
       this.emitFileDownloaded(sessionId, file, buffer);
@@ -530,6 +604,7 @@ export class SessionSyncWorker {
       return { status: 'failed', code };
     } finally {
       this.fileControllers.delete(file.file);
+      this.fileProgress.delete(file.file);
     }
   }
 
@@ -541,6 +616,7 @@ export class SessionSyncWorker {
     const entry = state.files.find((f) => f.file === file.file);
     if (!entry) return;
     entry.status = status;
+    entry.hash = file.hash;
     if (status === 'downloaded') state.downloadedCount++;
     if (status === 'failed') state.failedCount++;
   }
@@ -705,6 +781,7 @@ export class SessionSyncWorker {
   }
 
   private checkDone(): void {
+    if (this.cancelled) return;
     if (this.doneEmitted) return;
     if (!this.listingComplete) return;
     if (this.sessionsInFlight > 0) return;
