@@ -137,7 +137,11 @@ class FileProcessingBridge {
   onSyncComplete(sessionId: string): Promise<void> {
     const existing = this.sessions.get(sessionId);
     if (!existing) return Promise.resolve();
-    return Promise.resolve(existing).then((state) => this.forceCompleteSession(state));
+    return Promise.resolve(existing)
+      .then((state) => this.forceCompleteSession(state))
+      .finally(() => {
+        this.sessions.delete(sessionId);
+      });
   }
 
   private async stateFor(sessionId: string): Promise<SessionBridgeState> {
@@ -302,25 +306,29 @@ class FileProcessingBridge {
       .then(() => this.mergeSubagentGroup(state, group));
   }
 
+  private forceCompleteMetaOnlyGroup(
+    state: SessionBridgeState,
+    group: SubagentGroupState,
+    chain: Promise<unknown>,
+  ): Promise<unknown> {
+    if (group.meta === undefined && group.metaFile === undefined) return chain;
+    group.merged = true;
+    group.metaCompletion?.resolve();
+    const metaFile = group.metaFile;
+    if (!metaFile) return chain;
+    return chain.then(() =>
+      this.upsertSessionFile(state.sessionId, state.projectId, metaFile).catch(() => undefined),
+    );
+  }
+
   private async forceCompleteSession(state: SessionBridgeState): Promise<void> {
     const inFlight = Array.from(state.inFlightParses);
-    await Promise.all([state.opQueue, ...inFlight]);
+    await Promise.allSettled([state.opQueue, ...inFlight]);
     let chain: Promise<unknown> = state.mergeQueue.catch(() => undefined);
     for (const group of state.groups.values()) {
       if (group.merged) continue;
       if (group.parsed === undefined) {
-        if (group.meta !== undefined || group.metaFile !== undefined) {
-          group.merged = true;
-          group.metaCompletion?.resolve();
-          const metaFile = group.metaFile;
-          if (metaFile) {
-            chain = chain.then(() =>
-              this.upsertSessionFile(state.sessionId, state.projectId, metaFile).catch(
-                () => undefined,
-              ),
-            );
-          }
-        }
+        chain = this.forceCompleteMetaOnlyGroup(state, group, chain);
         continue;
       }
       group.merged = true;

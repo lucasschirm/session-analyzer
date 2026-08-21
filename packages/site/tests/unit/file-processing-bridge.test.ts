@@ -480,6 +480,56 @@ describe('FileProcessingBridge', () => {
     expect(calls.replaceSession).toHaveBeenCalledTimes(1);
   });
 
+  it('continues merging the next subagent group when the first merge fails', async () => {
+    const main = makeDashboardSession({ id: 'session-1', external_id: 'remote-sess' });
+    const subagent1 = makeDashboardSession({
+      id: 'sub-1',
+      project_id: 'project-1',
+      title: 'agent-1.jsonl',
+      input_tokens: 10,
+      output_tokens: 5,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 15,
+    });
+    const subagent2 = makeDashboardSession({
+      id: 'sub-2',
+      project_id: 'project-1',
+      title: 'agent-2.jsonl',
+      input_tokens: 20,
+      output_tokens: 10,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 30,
+    });
+    parse.mockImplementation(async (payload, options) => {
+      if (options.title) return makeParsedSession(main);
+      const text = typeof payload === 'string' ? payload : new TextDecoder().decode(payload);
+      return text === 'subagent-2' ? makeParsedSession(subagent2) : makeParsedSession(subagent1);
+    });
+    createBridge(
+      makeSyncManifest({
+        artifacts: [
+          makeArtifact('subagents/agent-1.jsonl'),
+          makeArtifact('subagents/agent-2.jsonl'),
+        ],
+      }),
+    );
+    calls.replaceSession.mockRejectedValueOnce(new Error('replace failed'));
+
+    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    await onFileDownloaded('session-1', mainFile);
+
+    const jsonl1 = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent-1');
+    const jsonl2 = makeDownloadedFile('session/subagents/agent-2.jsonl', 'subagent-2');
+    const jsonl1Promise = onFileDownloaded('session-1', jsonl1);
+    const jsonl2Promise = onFileDownloaded('session-1', jsonl2);
+
+    await expect(jsonl1Promise).rejects.toThrow('replace failed');
+    await expect(jsonl2Promise).resolves.toBeUndefined();
+    expect(calls.replaceSession).toHaveBeenCalledTimes(2);
+  });
+
   it('updates internal session id tracking to the id returned by upsertSessionByExternalId', async () => {
     const main = makeDashboardSession({
       id: 'session-1',
