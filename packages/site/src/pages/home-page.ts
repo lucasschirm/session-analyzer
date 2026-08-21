@@ -204,10 +204,17 @@ export class HomePage extends LitElement {
     this.modalOpen = false;
   }
 
+  private async getLocalProjectIds(): Promise<string[]> {
+    const projects = await dbClient.getProjects();
+    return projects
+      .map((project) => project.readable_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  }
+
   private async handleProjectCreate(
-    event: CustomEvent<{ name: string; description: string }>,
+    event: CustomEvent<{ name: string; description: string; readableId: string }>,
   ): Promise<void> {
-    const { name, description } = event.detail;
+    const { name, description, readableId } = event.detail;
     const now = Date.now();
     const project: Project = {
       id: `project-${now}-${Math.random().toString(36).slice(2, 8)}`,
@@ -216,6 +223,7 @@ export class HomePage extends LitElement {
       created_at: now,
       updated_at: now,
       session_count: 0,
+      readable_id: readableId,
     };
 
     try {
@@ -316,6 +324,7 @@ export class HomePage extends LitElement {
 
         <project-modal
           .open=${this.modalOpen}
+          .getLocalProjectIds=${this.getLocalProjectIds}
           @project-create=${this.handleProjectCreate}
           @modal-close=${this.closeModal}
         ></project-modal>

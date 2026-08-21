@@ -274,18 +274,69 @@ describe('project-selector', () => {
 });
 
 describe('project-modal', () => {
+  async function settle(modal: ProjectModal): Promise<void> {
+    await modal.updateComplete;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   it('renders nothing while closed', async () => {
     const modal = await mount(document.createElement('project-modal') as ProjectModal);
     expect(shadow(modal).querySelector('.project-modal')).toBeNull();
   });
 
-  it('emits project-create with trimmed values on submit', async () => {
+  it('auto-fills a slug from the name as the user types', async () => {
     const modal = await mount(
       Object.assign(document.createElement('project-modal'), {
         open: true,
       }) as ProjectModal,
     );
-    await modal.updateComplete;
+    await settle(modal);
+    const root = shadow(modal);
+
+    const nameInput = root.querySelector('#project-name-input') as HTMLInputElement;
+    const idInput = root.querySelector('#project-id-input') as HTMLInputElement;
+
+    nameInput.value = 'My Project';
+    nameInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    expect(idInput.value).toBe('my-project');
+  });
+
+  it('does not overwrite a manually edited id when the name changes', async () => {
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+      }) as ProjectModal,
+    );
+    await settle(modal);
+    const root = shadow(modal);
+
+    const nameInput = root.querySelector('#project-name-input') as HTMLInputElement;
+    const idInput = root.querySelector('#project-id-input') as HTMLInputElement;
+
+    nameInput.value = 'My Project';
+    nameInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    idInput.value = 'custom-id';
+    idInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    nameInput.value = 'Other Project';
+    nameInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    expect(idInput.value).toBe('custom-id');
+  });
+
+  it('emits project-create with trimmed values and readable id on submit', async () => {
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+      }) as ProjectModal,
+    );
+    await settle(modal);
     const root = shadow(modal);
 
     const nameInput = root.querySelector('#project-name-input') as HTMLInputElement;
@@ -298,29 +349,165 @@ describe('project-modal', () => {
     nameInput.dispatchEvent(new Event('input'));
     descriptionInput.value = ' Some description ';
     descriptionInput.dispatchEvent(new Event('input'));
-    await modal.updateComplete;
+    await settle(modal);
 
-    let detail: { name: string; description: string } | null = null;
+    let detail: { name: string; description: string; readableId: string } | null = null;
     modal.addEventListener('project-create', (event) => {
-      detail = (event as CustomEvent<{ name: string; description: string }>).detail;
+      detail = (event as CustomEvent<{ name: string; description: string; readableId: string }>)
+        .detail;
     });
 
     const form = root.querySelector('form') as HTMLFormElement;
     form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(detail).toEqual({ name: 'My Project', description: 'Some description' });
+    expect(detail).toEqual({
+      name: 'My Project',
+      description: 'Some description',
+      readableId: 'my-project',
+    });
   });
 
-  it('disables submit while the name is empty', async () => {
+  it('disables submit while the name or id is invalid', async () => {
     const modal = await mount(
       Object.assign(document.createElement('project-modal'), {
         open: true,
       }) as ProjectModal,
     );
-    await modal.updateComplete;
+    await settle(modal);
 
-    const submit = shadow(modal).querySelector('button.primary') as HTMLButtonElement;
+    const root = shadow(modal);
+    const submit = root.querySelector('button.primary') as HTMLButtonElement;
+    const idInput = root.querySelector('#project-id-input') as HTMLInputElement;
     expect(submit.disabled).toBe(true);
+
+    idInput.value = 'invalid id!';
+    idInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    expect(idInput.value).toBe('invalid id!');
+    expect(submit.disabled).toBe(true);
+    expect(root.textContent).toContain('lowercase letters, numbers, and hyphens');
+  });
+
+  it('rejects the reserved id global and treats it as taken by slug generation', async () => {
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+      }) as ProjectModal,
+    );
+    await settle(modal);
+    const root = shadow(modal);
+
+    const nameInput = root.querySelector('#project-name-input') as HTMLInputElement;
+    const idInput = root.querySelector('#project-id-input') as HTMLInputElement;
+
+    nameInput.value = 'global';
+    nameInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    // Slug generation skips the reserved value and auto-suffixes.
+    expect(idInput.value).toBe('global-2');
+    expect(root.textContent).not.toContain('reserved');
+
+    idInput.value = 'global';
+    idInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    expect(root.textContent).toContain('This project ID is reserved');
+  });
+
+  it('deduplicates against local and remote folder names for remote-aware slugs', async () => {
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+        getLocalProjectIds: () => Promise.resolve(['alpha']),
+        getRemoteFolderNames: () => Promise.resolve(['beta']),
+      }) as ProjectModal,
+    );
+    await settle(modal);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await settle(modal);
+
+    const root = shadow(modal);
+    const nameInput = root.querySelector('#project-name-input') as HTMLInputElement;
+    const idInput = root.querySelector('#project-id-input') as HTMLInputElement;
+
+    nameInput.value = 'alpha';
+    nameInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+    expect(idInput.value).toBe('alpha-2');
+
+    nameInput.value = 'beta';
+    nameInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+    expect(idInput.value).toBe('beta-2');
+
+    nameInput.value = 'gamma';
+    nameInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+    expect(idInput.value).toBe('gamma');
+  });
+
+  it('prefills the id read-only in sync-discovery mode', async () => {
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+        mode: 'sync-discovery',
+        initialReadableId: 'discovered-folder',
+        readonlyId: true,
+      }) as ProjectModal,
+    );
+    await settle(modal);
+
+    const root = shadow(modal);
+    const idInput = root.querySelector('#project-id-input') as HTMLInputElement;
+    expect(idInput.value).toBe('discovered-folder');
+    expect(idInput.readOnly || idInput.disabled).toBe(true);
+
+    const nameInput = root.querySelector('#project-name-input') as HTMLInputElement;
+    nameInput.value = 'Discovered Name';
+    nameInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    expect(idInput.value).toBe('discovered-folder');
+  });
+
+  it('emits project-edit with the existing project id in edit mode', async () => {
+    const modal = await mount(
+      Object.assign(document.createElement('project-modal'), {
+        open: true,
+        mode: 'edit',
+        projectId: 'p1',
+        initialName: 'My Project',
+        initialReadableId: 'my-project',
+        initialDescription: 'Original description',
+      }) as ProjectModal,
+    );
+    await settle(modal);
+
+    const root = shadow(modal);
+    const nameInput = root.querySelector('#project-name-input') as HTMLInputElement;
+    nameInput.value = 'Renamed Project';
+    nameInput.dispatchEvent(new Event('input'));
+    await settle(modal);
+
+    let detail: { projectId: string; name: string; readableId: string } | null = null;
+    modal.addEventListener('project-edit', (event) => {
+      detail = (event as CustomEvent<{ projectId: string; name: string; readableId: string }>)
+        .detail;
+    });
+
+    const form = root.querySelector('form') as HTMLFormElement;
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(detail).toEqual({
+      projectId: 'p1',
+      name: 'Renamed Project',
+      description: 'Original description',
+      readableId: 'my-project',
+    });
   });
 
   it('emits modal-close on cancel and overlay click', async () => {
@@ -329,7 +516,7 @@ describe('project-modal', () => {
         open: true,
       }) as ProjectModal,
     );
-    await modal.updateComplete;
+    await settle(modal);
     const root = shadow(modal);
 
     let closed = 0;
@@ -349,7 +536,7 @@ describe('project-modal', () => {
         open: true,
       }) as ProjectModal,
     );
-    await modal.updateComplete;
+    await settle(modal);
 
     let closed = 0;
     modal.addEventListener('modal-close', () => closed++);

@@ -222,7 +222,7 @@ describe('home-page', () => {
     const created = createProject.mock.calls[0][0];
     expect(created.name).toBe('Created');
     expect(created.description).toBe('From modal');
-    expect(getProjects).toHaveBeenCalledTimes(2); // initial + refresh
+    expect(getProjects).toHaveBeenCalledTimes(3); // initial + modal local ids + refresh
   });
 
   it('deletes a project after confirmation', async () => {
