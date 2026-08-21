@@ -240,7 +240,7 @@ describe('discoverWorkspace', () => {
     expect(result.errors[0]?.code).toBe('SYNC_JSON_PARSE_FAILED');
   });
 
-  it('survives a permission error on a directory', async () => {
+  it.skipIf(process.getuid?.() === 0)('survives a permission error on a directory', async () => {
     const agentsDir = path.join(workspace, '.claude', 'agents');
     await writeFile(path.join(agentsDir, 'agent-a.md'), '# agent a');
     fs.chmodSync(agentsDir, 0o000);
