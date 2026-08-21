@@ -438,4 +438,117 @@ describe('connect-modal', () => {
     const created = mockDbClient.createConnection.mock.calls[0][0] as Connection;
     expect(created.sync_only_new).toBe(true);
   });
+
+  it('does not close the connect modal when the inner passkey modal is dismissed', async () => {
+    mockDbClient.getPasskeyState.mockResolvedValue(null);
+
+    const modal = await mount(document.createElement('connect-modal') as ConnectModal);
+    let closed = 0;
+    modal.addEventListener('modal-close', () => closed++);
+    modal.open = true;
+    await flush(modal);
+
+    const root = shadow(modal);
+    (root.querySelector('.primary') as HTMLButtonElement).click();
+    await modal.updateComplete;
+
+    fillInput(root, '#connection-name', 'Persisted S3');
+    fillInput(root, '#connection-region', 'us-east-1');
+    fillInput(root, '#connection-bucket', 'persisted-bucket');
+    fillInput(root, '#connection-access-key', 'AKIAIOSFODNN7EXAMPLE');
+    fillInput(root, '#connection-secret-key', 'secret-key');
+
+    const saveCheckbox = root.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    saveCheckbox.checked = true;
+    saveCheckbox.dispatchEvent(new Event('change'));
+    await modal.updateComplete;
+
+    clickButtonByText(root, 'Save');
+    await flush(modal);
+
+    const passkeyModal = root.querySelector('passkey-modal') as HTMLElement & { open: boolean };
+    expect(passkeyModal.open).toBe(true);
+
+    passkeyModal.dispatchEvent(new CustomEvent('modal-close', { bubbles: true, composed: true }));
+    await flush(modal);
+
+    expect(closed).toBe(0);
+    expect(root.querySelector('.connect-modal')).not.toBeNull();
+  });
+
+  it('blocks saving and shows field errors for an empty form', async () => {
+    const modal = await mount(document.createElement('connect-modal') as ConnectModal);
+    modal.open = true;
+    await flush(modal);
+
+    const root = shadow(modal);
+    (root.querySelector('.primary') as HTMLButtonElement).click();
+    await modal.updateComplete;
+
+    clickButtonByText(root, 'Save');
+    await flush(modal);
+
+    expect(root.textContent).toContain('Fix the highlighted fields before saving.');
+    expect(root.textContent).toContain('Connection name is required');
+    expect(root.textContent).toContain('Region is required');
+    expect(root.textContent).toContain('Bucket is required');
+    expect(root.textContent).toContain('Access key ID is required');
+    expect(root.textContent).toContain('Secret access key is required');
+    expect(mockDbClient.createConnection).not.toHaveBeenCalled();
+    expect(mockDbClient.saveS3Credentials).not.toHaveBeenCalled();
+  });
+
+  it('disables the sync button for in-memory connections with a tooltip', async () => {
+    const modal = await mount(document.createElement('connect-modal') as ConnectModal);
+    modal.open = true;
+    await flush(modal);
+
+    const root = shadow(modal);
+    (root.querySelector('.primary') as HTMLButtonElement).click();
+    await modal.updateComplete;
+
+    fillInput(root, '#connection-name', 'In-Memory S3');
+    fillInput(root, '#connection-region', 'us-east-1');
+    fillInput(root, '#connection-bucket', 'memory-bucket');
+    fillInput(root, '#connection-access-key', 'AKIAIOSFODNN7EXAMPLE');
+    fillInput(root, '#connection-secret-key', 'secret-key');
+
+    clickButtonByText(root, 'Save');
+    await flush(modal);
+
+    const syncButton = Array.from(root.querySelectorAll('button')).find((b) =>
+      b.textContent?.trim().includes('Sync'),
+    ) as HTMLButtonElement;
+    expect(syncButton.disabled).toBe(true);
+    expect(syncButton.title).toBe('Save to local storage to enable sync.');
+  });
+
+  it('closes the modal when the overlay is clicked', async () => {
+    const modal = await mount(document.createElement('connect-modal') as ConnectModal);
+    let closed = 0;
+    modal.addEventListener('modal-close', () => closed++);
+    modal.open = true;
+    await flush(modal);
+
+    const root = shadow(modal);
+    (root.querySelector('.connect-modal') as HTMLElement).click();
+    await flush(modal);
+
+    expect(closed).toBe(1);
+  });
+
+  it('closes the modal when the Escape key is pressed on the overlay', async () => {
+    const modal = await mount(document.createElement('connect-modal') as ConnectModal);
+    let closed = 0;
+    modal.addEventListener('modal-close', () => closed++);
+    modal.open = true;
+    await flush(modal);
+
+    const root = shadow(modal);
+    const overlay = root.querySelector('.connect-modal') as HTMLElement;
+    overlay.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(modal);
+
+    expect(closed).toBe(1);
+  });
 });

@@ -814,7 +814,8 @@ export class ConnectModal extends LitElement {
     if (action === 'sync') this.handleSync();
   }
 
-  private handlePasskeyClose(): void {
+  private handlePasskeyClose(event: Event): void {
+    event.stopPropagation();
     this.passkeyOpen = false;
     this.pendingAction = '';
   }

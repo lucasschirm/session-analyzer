@@ -231,6 +231,7 @@ export class AppRoot extends LitElement {
   private handleConnectClose(): void {
     this.connectOpen = false;
     this.passkeyOpen = false;
+    void this.loadSecurityState();
   }
 
   render() {
@@ -238,6 +239,7 @@ export class AppRoot extends LitElement {
       <header>
         <a href="#/" class="logo">Session Analyzer</a>
         <div class="header-right">
+          <div class="sync-progress-slot" aria-hidden="true"></div>
           ${
             this.storage
               ? html`<span class="storage-badge ${this.storage}" title="SQLite storage backend">
@@ -245,7 +247,6 @@ export class AppRoot extends LitElement {
               </span>`
               : ''
           }
-          <div class="sync-progress-slot" aria-hidden="true"></div>
           <button type="button" class="connect-button" @click=${this.handleConnectClick}>
             Connect
           </button>
