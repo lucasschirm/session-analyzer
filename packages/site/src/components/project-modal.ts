@@ -1,5 +1,5 @@
 import { CAS_NAMESPACE_ROOT, validateProjectId } from '@lucasschirm/sal-sync-core';
-import { css, html, LitElement, type TemplateResult } from 'lit';
+import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
 
 /**
@@ -210,17 +210,22 @@ export class ProjectModal extends LitElement {
 
   @query('#project-name-input') private nameInput!: HTMLInputElement;
 
-  updated(changed: Map<string, unknown>): void {
+  willUpdate(changed: PropertyValues): void {
     if (changed.has('open') && this.open) {
       this.resetFields();
       this.takenIdsPromise = this.loadTakenIds();
-      this.updateComplete.then(() => this.nameInput?.focus());
     }
     if ((changed.has('name') || changed.has('takenIds')) && !this.idManuallyEdited) {
       this.syncSlugFromName();
     }
     if (changed.has('takenIds') || changed.has('readableId')) {
       this.idError = this.validateReadableId(this.readableId);
+    }
+  }
+
+  updated(changed: PropertyValues): void {
+    if (changed.has('open') && this.open) {
+      this.updateComplete.then(() => this.nameInput?.focus());
     }
   }
 
@@ -391,7 +396,7 @@ export class ProjectModal extends LitElement {
         ?disabled=${this.readonlyId}
         autocomplete="off"
         aria-describedby=${describedBy}
-        .aria-invalid=${this.idError ? 'true' : 'false'}
+        aria-invalid=${this.idError ? 'true' : 'false'}
         @input=${this.handleIdInput}
       />
       <p id=${idHintId} class="help-text">
