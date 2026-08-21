@@ -140,6 +140,8 @@ interface ProjectSyncState {
   filesDownloaded: number;
   filesFailed: number;
   bytesReceived: number;
+  /** Optional list of session ids to restrict this project worker to. */
+  targetSessionIds?: string[];
 }
 
 interface SyncRun {
@@ -157,6 +159,10 @@ interface SyncRun {
   warnings: string[];
   syncOnlyNew: boolean;
   cancelled: boolean;
+  /** When set, this run is scoped to a single project and skips full discovery. */
+  targetProjectId?: string;
+  /** When set, bypass the connection's sync-only-new setting. */
+  bypassSyncOnlyNew?: boolean;
 }
 
 interface BroadcastMessage {
@@ -274,6 +280,33 @@ export class SyncManager extends EventTarget {
     if (this.readOnly) return;
     if (this.findRunForConnection(connectionId)) return;
     this.runQueue.push(this.createRun(connectionId));
+    this.processQueue();
+  }
+
+  /**
+   * Retry a single failed session within a project.
+   *
+   * The session is marked `pending` immediately, a one-project run is queued,
+   * and the worker is restricted to `targetSessionIds: [sessionId]` with the
+   * sync-only-new check bypassed.
+   */
+  async retrySession(connectionId: string, projectId: string, sessionId: string): Promise<void> {
+    if (this.readOnly) return;
+    const project = await this.db.getProjectByReadableId(projectId);
+    if (!project) throw new Error(`Project not found: ${projectId}`);
+
+    const localSession = await this.db.getSessionBySyncId(project.id, sessionId);
+    if (!localSession) throw new Error(`Session not found: ${sessionId}`);
+
+    await this.db.setSessionSyncStatus(localSession.id, 'pending');
+
+    const run = this.createRun(connectionId);
+    run.bypassSyncOnlyNew = true;
+    run.targetProjectId = projectId;
+    this.queueProjectForSync(run, projectId, project.id, [sessionId]);
+
+    this.runQueue.push(run);
+    this.emitChange();
     this.processQueue();
   }
 
@@ -396,7 +429,7 @@ export class SyncManager extends EventTarget {
     const connection = await this.getConnection(run.connectionId);
     if (!connection) throw new Error('Connection not found');
     run.connection = connection;
-    run.syncOnlyNew = connection.sync_only_new;
+    run.syncOnlyNew = run.bypassSyncOnlyNew ? false : connection.sync_only_new;
 
     const credentials = await this.resolveS3Credentials(run.connectionId);
     if (!credentials) throw new Error('Could not unlock S3 credentials');
@@ -435,6 +468,10 @@ export class SyncManager extends EventTarget {
   }
 
   private async discoverProjects(run: SyncRun): Promise<void> {
+    if (run.targetProjectId) {
+      // Single-project retry run: the project is already queued by retrySession.
+      return;
+    }
     if (!run.s3Client) return;
     const folders = await run.s3Client.listProjectFolders();
     await this.checkGlobalConflict(run);
@@ -532,7 +569,12 @@ export class SyncManager extends EventTarget {
     return project;
   }
 
-  private queueProjectForSync(run: SyncRun, projectId: string, localProjectId: string): void {
+  private queueProjectForSync(
+    run: SyncRun,
+    projectId: string,
+    localProjectId: string,
+    targetSessionIds?: string[],
+  ): void {
     const state: ProjectSyncState = {
       projectId,
       localProjectId,
@@ -546,6 +588,7 @@ export class SyncManager extends EventTarget {
       filesDownloaded: 0,
       filesFailed: 0,
       bytesReceived: 0,
+      targetSessionIds,
     };
     run.projects.set(projectId, state);
     run.projectQueue.push(projectId);
@@ -591,6 +634,7 @@ export class SyncManager extends EventTarget {
       region: '',
       bucket: '',
     };
+    const project = run.projects.get(projectId);
     return {
       type: 'START',
       connectionId: run.connectionId,
@@ -603,6 +647,7 @@ export class SyncManager extends EventTarget {
       endpoint: config.endpoint,
       region: config.region,
       syncOnlyNew: run.syncOnlyNew,
+      targetSessionIds: project?.targetSessionIds,
     };
   }
 

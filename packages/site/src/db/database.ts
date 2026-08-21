@@ -56,6 +56,9 @@ interface SessionRow {
   files_read: number;
   files_written: number;
   agent_invocations: number;
+  sync_session_id: string | null;
+  sync_status: string | null;
+  sync_details: string | null;
 }
 
 interface EventRow {
@@ -211,6 +214,16 @@ function safeJsonLength(value: string | null | undefined): number {
 
 function isProjectSyncStatus(value: unknown): value is ProjectSyncStatus {
   return value === 'in_sync' || value === 'syncing';
+}
+
+function isSessionSyncStatus(value: unknown): value is SessionSyncStatus {
+  return (
+    value === 'pending' ||
+    value === 'processing' ||
+    value === 'in_sync' ||
+    value === 'failed' ||
+    value === 'transcript_unavailable'
+  );
 }
 
 /** Slugifies a project name and resolves collisions with the supplied set. */
@@ -834,8 +847,9 @@ export class DatabaseManager {
               id, project_id, source, title, started_at, ended_at,
               input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
               total_tokens, cost_usd, model, model_usage, tasks, external_id, subagents,
-              context_compactions, total_turns, files_read, files_written, agent_invocations
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              context_compactions, total_turns, files_read, files_written, agent_invocations,
+              sync_session_id, sync_status, sync_details
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       bind: [
         session.id,
         session.project_id,
@@ -861,6 +875,9 @@ export class DatabaseManager {
         session.files_read ?? 0,
         session.files_written ?? 0,
         session.agent_invocations ?? 0,
+        session.sync_session_id ?? null,
+        session.sync_status ?? null,
+        session.sync_details ?? null,
       ],
     });
   }
@@ -1137,6 +1154,9 @@ export class DatabaseManager {
     const { model_usage, tasks, subagents, ...rest } = row;
     return {
       ...rest,
+      sync_session_id: rest.sync_session_id ?? undefined,
+      sync_status: isSessionSyncStatus(rest.sync_status) ? rest.sync_status : undefined,
+      sync_details: rest.sync_details ?? undefined,
       cache_creation_tokens: rest.cache_creation_tokens ?? 0,
       cache_read_tokens: rest.cache_read_tokens ?? 0,
       cost_usd: rest.cost_usd ?? undefined,

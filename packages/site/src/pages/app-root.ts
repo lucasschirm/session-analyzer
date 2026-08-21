@@ -1,7 +1,9 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import '../components/sync-progress-bar';
 import { dbClient } from '../db/db-client';
 import { HashRouter } from '../router';
+import { syncManager } from '../sync/sync-manager';
 import './home-page';
 import './project-view';
 import './session-dashboard';
@@ -159,6 +161,7 @@ export class AppRoot extends LitElement {
   async firstUpdated(): Promise<void> {
     try {
       this.storage = await dbClient.ensureReady();
+      void syncManager.init();
     } catch (error) {
       this.dbError = `Failed to initialize database: ${(error as Error).message}`;
     }
@@ -169,6 +172,7 @@ export class AppRoot extends LitElement {
       <header>
         <a href="#/" class="logo">Session Analyzer</a>
         <div class="header-right">
+          <sync-progress-bar></sync-progress-bar>
           ${
             this.storage
               ? html`<span class="storage-badge ${this.storage}" title="SQLite storage backend">
