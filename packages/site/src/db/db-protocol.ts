@@ -15,6 +15,7 @@ import type {
   StoredS3Credentials,
   SyncManifest,
 } from '../types';
+import type { FallbackReason } from './database';
 
 export type DbRequest =
   | { id: number; type: 'init' }
@@ -81,7 +82,7 @@ export interface DbSuccessResponse {
   /** Storage backend reported by init. */
   storage?: 'opfs' | 'memory';
   /** Reason when init falls back to in-memory (empty/omitted when opfs opens). */
-  fallbackReason?: 'locked' | 'unsupported';
+  fallbackReason?: FallbackReason;
 }
 
 export interface DbErrorResponse {

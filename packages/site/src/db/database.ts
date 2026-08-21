@@ -131,6 +131,16 @@ const COLUMN_MIGRATIONS = [
   'ALTER TABLE sessions ADD COLUMN sync_runs TEXT',
 ] as const;
 
+const LOCKED_MESSAGE_RE =
+  /NoModificationAllowedError|Access Handles cannot|busy|locked|already in use/i;
+
+function isLockedMessage(name: unknown, message: unknown): boolean {
+  if (typeof message === 'string' && LOCKED_MESSAGE_RE.test(message)) {
+    return true;
+  }
+  return name === 'NoModificationAllowedError' || name === 'InvalidStateError';
+}
+
 /**
  * Detects an OPFS file-locked error from the sqlite-wasm opener. The exact
  * exception varies by browser and sqlite-wasm release: it may surface as an
@@ -152,29 +162,13 @@ function isOpfsLockedError(error: unknown, capi: CapiLike): boolean {
       return true;
     }
   }
-  const message = String(e.message ?? '');
-  if (
-    /NoModificationAllowedError|Access Handles cannot|busy|locked|already in use/i.test(message)
-  ) {
-    return true;
-  }
+  if (isLockedMessage(e.name, e.message)) return true;
   const cause = e.cause;
   if (cause && typeof cause === 'object') {
     const c = cause as { name?: unknown; message?: unknown };
-    const causeMessage = String(c.message ?? '');
-    const causeName = String(c.name ?? '');
-    if (
-      /NoModificationAllowedError|Access Handles cannot|busy|locked|already in use/i.test(
-        causeMessage,
-      )
-    ) {
-      return true;
-    }
-    if (causeName === 'NoModificationAllowedError' || causeName === 'InvalidStateError')
-      return true;
+    if (isLockedMessage(c.name, c.message)) return true;
   }
-  const name = String(e.name ?? '');
-  return name === 'NoModificationAllowedError' || name === 'InvalidStateError';
+  return false;
 }
 
 /** Parses an ISO-8601 or numeric timestamp string into milliseconds. */
@@ -980,9 +974,37 @@ export class DatabaseManager {
     this.insertSessionStub(stub);
   }
 
+  private static sessionStubBindParams(stub: SessionStub): (string | number | null)[] {
+    return [
+      stub.id,
+      stub.project_id,
+      stub.source,
+      stub.title,
+      parseTimestamp(stub.started_at),
+      parseTimestamp(stub.ended_at),
+      stub.input_tokens ?? 0,
+      stub.output_tokens ?? 0,
+      stub.cache_creation_tokens ?? 0,
+      stub.cache_read_tokens ?? 0,
+      stub.total_tokens ?? 0,
+      stub.cost_usd ?? null,
+      stub.model ?? null,
+      stub.model_usage ?? null,
+      stub.tasks ?? null,
+      stub.external_id ?? null,
+      stub.subagents ?? null,
+      stub.context_compactions ?? 0,
+      stub.total_turns ?? 0,
+      stub.files_read ?? 0,
+      stub.files_written ?? 0,
+      stub.agent_invocations ?? 0,
+      stub.sync_session_id,
+      stub.sync_status,
+    ];
+  }
+
   private insertSessionStub(stub: SessionStub): void {
-    const db = this.requireDb();
-    db.exec({
+    this.requireDb().exec({
       sql: `INSERT INTO sessions (
         id, project_id, source, title, started_at, ended_at,
         input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, total_tokens,
@@ -990,32 +1012,7 @@ export class DatabaseManager {
         context_compactions, total_turns, files_read, files_written, agent_invocations,
         sync_session_id, sync_status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      bind: [
-        stub.id,
-        stub.project_id,
-        stub.source,
-        stub.title,
-        parseTimestamp(stub.started_at),
-        parseTimestamp(stub.ended_at),
-        stub.input_tokens ?? 0,
-        stub.output_tokens ?? 0,
-        stub.cache_creation_tokens ?? 0,
-        stub.cache_read_tokens ?? 0,
-        stub.total_tokens ?? 0,
-        stub.cost_usd ?? null,
-        stub.model ?? null,
-        stub.model_usage ?? null,
-        stub.tasks ?? null,
-        stub.external_id ?? null,
-        stub.subagents ?? null,
-        stub.context_compactions ?? 0,
-        stub.total_turns ?? 0,
-        stub.files_read ?? 0,
-        stub.files_written ?? 0,
-        stub.agent_invocations ?? 0,
-        stub.sync_session_id,
-        stub.sync_status,
-      ],
+      bind: DatabaseManager.sessionStubBindParams(stub),
     });
   }
 
@@ -1306,7 +1303,9 @@ function rowToConnection(row: Record<string, unknown>): Connection {
   return {
     id: String(row.id),
     name: String(row.name),
-    storage_type: 's3',
+    storage_type: (typeof row.storage_type === 'string'
+      ? row.storage_type
+      : 's3') as Connection['storage_type'],
     sync_only_new: Number(row.sync_only_new) === 1,
     last_sync_at: typeof row.last_sync_at === 'number' ? row.last_sync_at : undefined,
     created_at: Number(row.created_at),
