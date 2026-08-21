@@ -293,22 +293,18 @@ function buildFullConfig(env: ConfigEnv, projectId: string): LoadConfigResult {
   if ('error' in storageResult) {
     return { ok: false, disabled: true, error: storageResult.error };
   }
-
   const timeoutsResult = parseTimeouts(env);
   if ('error' in timeoutsResult) {
     return { ok: false, disabled: true, error: timeoutsResult.error };
   }
-
   const retriesResult = parseRetries(env);
   if ('error' in retriesResult) {
     return { ok: false, disabled: true, error: retriesResult.error };
   }
-
   const limitsResult = parseLimits(env);
   if ('error' in limitsResult) {
     return { ok: false, disabled: true, error: limitsResult.error };
   }
-
   const config: SyncConfig = {
     projectId,
     disabled: false,
@@ -318,7 +314,6 @@ function buildFullConfig(env: ConfigEnv, projectId: string): LoadConfigResult {
     timeouts: timeoutsResult.timeouts,
     retries: retriesResult.retries,
   };
-
   return { ok: true, config };
 }
 
