@@ -1825,4 +1825,29 @@ describe('SyncManager', () => {
       expect(file?.project_id).toBe(project.id);
     });
   });
+
+  describe('retrySession', () => {
+    it('throws if the vault is locked before retrying a session', async () => {
+      const { syncManager } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const project = await createLocalProject(
+        dbClient,
+        'Remote Project',
+        'remote-proj',
+        connection.id,
+      );
+      const syncSessionId = 'session-1';
+      await insertSessionStub(dbClient, project.id, syncSessionId, {}, 'failed');
+
+      vi.mocked(isUnlocked).mockReturnValue(false);
+
+      await expect(
+        syncManager.retrySession(connection.id, 'remote-proj', syncSessionId),
+      ).rejects.toThrow('Vault is locked');
+    });
+  });
 });

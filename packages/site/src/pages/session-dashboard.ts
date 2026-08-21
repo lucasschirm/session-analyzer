@@ -1,6 +1,7 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import '../components/metrics-card';
+import '../components/passkey-modal';
 import '../components/session-sync-chip';
 import '../components/session-sync-error-modal';
 import '../components/upload-zone';
@@ -18,6 +19,7 @@ import {
   type UploadedFile,
 } from '../lib/subagents';
 import { navigateTo } from '../router';
+import { isUnlocked } from '../sync/credential-crypto';
 import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 import type { DashboardSession, IndicatorKey, Project, SessionTask, ToolExecution } from '../types';
 import { parseInWorker } from '../workers/parser-client';
@@ -402,6 +404,8 @@ export class SessionDashboard extends LitElement {
 
   @state() private errorModalOpen = false;
 
+  @state() private passkeyOpen = false;
+
   connectedCallback(): void {
     super.connectedCallback();
     this.syncSnapshot = syncManager.getSnapshot();
@@ -634,6 +638,41 @@ export class SessionDashboard extends LitElement {
     this.errorModalOpen = false;
   }
 
+  private handleRetry(): void {
+    if (syncManager.isReadOnly) return;
+    if (!isUnlocked()) {
+      this.passkeyOpen = true;
+      return;
+    }
+    void this.doRetry();
+  }
+
+  private async doRetry(): Promise<void> {
+    const session = this.session;
+    const project = this.project;
+    if (!session?.sync_session_id || !project?.readable_id || !project?.connection_id) return;
+    try {
+      await syncManager.retrySession(
+        project.connection_id,
+        project.readable_id,
+        session.sync_session_id,
+      );
+    } catch {
+      // The run will surface the failure via the progress bar / status modal.
+    }
+  }
+
+  private handlePasskeyUnlocked(): void {
+    this.passkeyOpen = false;
+    if (isUnlocked()) {
+      void this.doRetry();
+    }
+  }
+
+  private handlePasskeyClose(): void {
+    this.passkeyOpen = false;
+  }
+
   render() {
     const session = this.session;
 
@@ -651,6 +690,10 @@ export class SessionDashboard extends LitElement {
     }
 
     const mostUsed = this.mostUsedTool;
+    const syncStatus = this.syncStatusFor();
+    const retryable =
+      syncStatus === 'failed' &&
+      !(session.sync_details ?? '').includes('MANIFEST_UNSUPPORTED_SCHEMA');
 
     return html`
       <div class="session-dashboard">
@@ -668,7 +711,7 @@ export class SessionDashboard extends LitElement {
                 session.sync_status
                   ? html`
                     <session-sync-chip
-                      .status=${this.syncStatusFor()}
+                      .status=${syncStatus}
                       .details=${session.sync_details ?? ''}
                       @chip-click=${this.openErrorModal}
                     ></session-sync-chip>
@@ -676,12 +719,12 @@ export class SessionDashboard extends LitElement {
                   : ''
               }
               ${
-                this.syncStatusFor() === 'failed'
+                retryable
                   ? html`
                     <button
                       class="retry-button"
                       ?disabled=${syncManager.isReadOnly}
-                      @click=${this.openErrorModal}
+                      @click=${this.handleRetry}
                       type="button"
                     >
                       Retry sync
@@ -1084,6 +1127,13 @@ export class SessionDashboard extends LitElement {
             `
             : ''
         }
+
+        <passkey-modal
+          .open=${this.passkeyOpen}
+          mode="unlock"
+          @passkey-unlocked=${this.handlePasskeyUnlocked}
+          @modal-close=${this.handlePasskeyClose}
+        ></passkey-modal>
       </div>
     `;
   }

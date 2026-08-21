@@ -1,5 +1,5 @@
 import type { LitElement } from 'lit';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbClient } from '../../src/db/db-client';
 import '../../src/pages/home-page';
 import '../../src/pages/project-view';
@@ -11,7 +11,21 @@ import type { IndicatorDetails } from '../../src/pages/indicator-details';
 import type { ProjectView } from '../../src/pages/project-view';
 import type { SessionDashboard } from '../../src/pages/session-dashboard';
 import type { SessionTranscriptPage } from '../../src/pages/session-transcript-page';
+import { isUnlocked } from '../../src/sync/credential-crypto';
+import { syncManager } from '../../src/sync/sync-manager';
 import type { DashboardSession, Project, SessionMetrics } from '../../src/types';
+
+const credentialCryptoMock = vi.hoisted(() => ({
+  isUnlocked: vi.fn(),
+  unlock: vi.fn().mockResolvedValue(true),
+  lock: vi.fn(),
+  createPasskey: vi.fn().mockResolvedValue(undefined),
+  forgetPasskey: vi.fn().mockResolvedValue(undefined),
+  encryptField: vi.fn().mockResolvedValue({ iv: '', ct: '' }),
+  decryptField: vi.fn().mockResolvedValue(''),
+}));
+
+vi.mock('../../src/sync/credential-crypto', () => credentialCryptoMock);
 
 async function flush(element: LitElement): Promise<void> {
   await element.updateComplete;
@@ -34,6 +48,10 @@ async function mount<T extends LitElement>(element: T): Promise<T> {
   await flush(element);
   return element;
 }
+
+beforeEach(() => {
+  vi.mocked(isUnlocked).mockReturnValue(true);
+});
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -654,6 +672,108 @@ describe('session-dashboard', () => {
     );
 
     expect(window.location.hash).toBe('#/sessions/s1/indicator/files_written');
+  });
+
+  it('retries a failed sync from the header when unlocked', async () => {
+    vi.spyOn(dbClient, 'getSession').mockResolvedValue(
+      sessionFixture({
+        sync_status: 'failed',
+        sync_details: 'MANIFEST_DOWNLOAD_ERROR: missing file',
+        sync_session_id: 'sync-s1',
+      }),
+    );
+    vi.spyOn(dbClient, 'getProject').mockResolvedValue(
+      projectFixture({
+        readable_id: 'proj1',
+        connection_id: 'conn1',
+      }),
+    );
+    const retrySession = vi.spyOn(syncManager, 'retrySession').mockResolvedValue(undefined);
+
+    const dashboard = Object.assign(document.createElement('session-dashboard'), {
+      sessionId: 's1',
+    }) as SessionDashboard;
+    await mount(dashboard);
+    const root = dashboard.shadowRoot as ShadowRoot;
+
+    const retryButton = Array.from(root.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Retry sync'),
+    );
+    expect(retryButton).not.toBeUndefined();
+    retryButton?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(retrySession).toHaveBeenCalledWith('conn1', 'proj1', 'sync-s1');
+  });
+
+  it('opens the passkey modal for retry when locked and retries after unlock', async () => {
+    vi.spyOn(dbClient, 'getSession').mockResolvedValue(
+      sessionFixture({
+        sync_status: 'failed',
+        sync_details: 'MANIFEST_DOWNLOAD_ERROR: missing file',
+        sync_session_id: 'sync-s1',
+      }),
+    );
+    vi.spyOn(dbClient, 'getProject').mockResolvedValue(
+      projectFixture({
+        readable_id: 'proj1',
+        connection_id: 'conn1',
+      }),
+    );
+    const retrySession = vi.spyOn(syncManager, 'retrySession').mockResolvedValue(undefined);
+    vi.mocked(isUnlocked).mockReturnValue(false);
+
+    const dashboard = Object.assign(document.createElement('session-dashboard'), {
+      sessionId: 's1',
+    }) as SessionDashboard;
+    await mount(dashboard);
+    const root = dashboard.shadowRoot as ShadowRoot;
+
+    const retryButton = Array.from(root.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Retry sync'),
+    );
+    retryButton?.click();
+    await dashboard.updateComplete;
+
+    const passkeyModal = root.querySelector('passkey-modal') as LitElement | null;
+    expect(passkeyModal).not.toBeNull();
+    expect((passkeyModal as unknown as { open: boolean }).open).toBe(true);
+    expect(retrySession).not.toHaveBeenCalled();
+
+    vi.mocked(isUnlocked).mockReturnValue(true);
+    passkeyModal?.dispatchEvent(
+      new CustomEvent('passkey-unlocked', { bubbles: true, composed: true }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(retrySession).toHaveBeenCalledWith('conn1', 'proj1', 'sync-s1');
+  });
+
+  it('hides the retry button for MANIFEST_UNSUPPORTED_SCHEMA', async () => {
+    vi.spyOn(dbClient, 'getSession').mockResolvedValue(
+      sessionFixture({
+        sync_status: 'failed',
+        sync_details: 'MANIFEST_UNSUPPORTED_SCHEMA: schema version not supported',
+        sync_session_id: 'sync-s1',
+      }),
+    );
+    vi.spyOn(dbClient, 'getProject').mockResolvedValue(
+      projectFixture({
+        readable_id: 'proj1',
+        connection_id: 'conn1',
+      }),
+    );
+
+    const dashboard = Object.assign(document.createElement('session-dashboard'), {
+      sessionId: 's1',
+    }) as SessionDashboard;
+    await mount(dashboard);
+    const root = dashboard.shadowRoot as ShadowRoot;
+
+    const retryButton = Array.from(root.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Retry sync'),
+    );
+    expect(retryButton).toBeUndefined();
   });
 });
 

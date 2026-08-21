@@ -292,6 +292,7 @@ export class SyncManager extends EventTarget {
    */
   async retrySession(connectionId: string, projectId: string, sessionId: string): Promise<void> {
     if (this.readOnly) return;
+    if (!isUnlocked()) throw new Error('Vault is locked');
     const project = await this.db.getProjectByReadableId(projectId);
     if (!project) throw new Error(`Project not found: ${projectId}`);
 

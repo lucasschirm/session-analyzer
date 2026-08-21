@@ -117,10 +117,7 @@ export class SyncProgressBar extends LitElement {
     if (!snapshot) return false;
     if (snapshot.queuedRuns.length > 0) return true;
     if (!snapshot.activeRun) return false;
-    if (snapshot.activeRun.state === 'running' || snapshot.activeRun.state === 'queued') {
-      return true;
-    }
-    return snapshot.activeRun.state === 'done' && snapshot.queuedRuns.length > 0;
+    return snapshot.activeRun.state === 'running' || snapshot.activeRun.state === 'queued';
   }
 
   private get totals(): {
@@ -186,17 +183,10 @@ export class SyncProgressBar extends LitElement {
     filesFound: number;
     filesDownloaded: number;
   }): TemplateResult {
+    const label = `Projects ${totals.startedProjects}/${totals.totalProjects} | Sessions ${totals.sessionsDone}/${totals.totalSessions} | Files ${totals.filesDownloaded}/${totals.filesFound}`;
     return html`
-      <span class="counts">
-        <span class="count-group" title="Projects started / discovered">
-          P ${totals.startedProjects}/${totals.totalProjects}
-        </span>
-        <span class="count-group" title="Sessions completed / discovered">
-          S ${totals.sessionsDone}/${totals.totalSessions}
-        </span>
-        <span class="count-group" title="Files downloaded / discovered">
-          F ${totals.filesDownloaded}/${totals.filesFound}
-        </span>
+      <span class="counts" title="Projects started | Sessions completed | Files downloaded">
+        ${label}
       </span>
     `;
   }
@@ -236,7 +226,7 @@ export class SyncProgressBar extends LitElement {
           @click=${this.handleCancelClick}
           type="button"
         >
-          ✕ Cancel
+          [✕ Cancel]
         </button>
       </div>
 
