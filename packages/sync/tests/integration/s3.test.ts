@@ -407,7 +407,7 @@ describe.skipIf(!process.env.SAL_S3_TEST_ENDPOINT)('S3 storage integration', () 
 
   it('uploads a manifest to the session root key', async () => {
     const adapter = new S3StorageAdapter(makeS3Config(endpoint), { retries: 0 });
-    const manifest = JSON.stringify({ schemaVersion: 1 });
+    const manifest = JSON.stringify({ schemaVersion: 2 });
     const result = await adapter.putObject(makeInput('manifest.json', manifest, 'manifest'));
 
     expect(result.key).toBe(`${projectId}/${sessionId}/manifest.json`);
