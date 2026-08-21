@@ -9,6 +9,7 @@ export * from './manifest/parse.js';
 export * from './privacy.js';
 export * from './project-id.js';
 export * from './project-manifest.js';
+export * from './sanitization/contract.js';
 export * from './session.js';
 export * from './storage/contract.js';
 export * from './storage/object-key.js';

@@ -13,6 +13,11 @@ class ProjectIdError extends Error {
   }
 }
 
+/**
+ * Validate that `id` is a usable project identifier.
+ *
+ * Invariant: rejects reserved names and any characters outside `[a-z0-9-]`.
+ */
 export function validateProjectId(id: string): void {
   if (!VALID_PROJECT_ID.test(id)) {
     throw new ProjectIdError(

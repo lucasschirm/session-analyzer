@@ -5,10 +5,9 @@ import { describe, expect, it } from 'vitest';
 const DIST = path.resolve(import.meta.dirname ?? '.', '../../dist');
 
 describe('dist node: import guard', () => {
-  it('contains no "node:" substring in any emitted .js file', function () {
+  it('contains no "node:" substring in any emitted .js file', () => {
     if (!fs.existsSync(DIST)) {
-      this.skip();
-      return;
+      throw new Error(`dist directory is missing at ${DIST}; run pnpm build first`);
     }
 
     const distFiles: string[] = [];

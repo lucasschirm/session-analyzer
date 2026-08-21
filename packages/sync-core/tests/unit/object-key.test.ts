@@ -102,6 +102,11 @@ describe('buildObjectKey', () => {
     ).toBe('p/s/session/caf%C3%A9/emoji');
   });
 
+  it('pins Buffer and TextEncoder UTF-8 byte length equivalence', () => {
+    const x = 'café/?a&b=c 🎉';
+    expect(Buffer.byteLength(x, 'utf8')).toBe(new TextEncoder().encode(x).length);
+  });
+
   it('encodes URL-unsafe path segments', () => {
     expect(
       buildObjectKey({

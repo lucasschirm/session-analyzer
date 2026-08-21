@@ -1,5 +1,10 @@
 import type { SyncErrorCode } from './errors.js';
 
+/**
+ * On-disk representation of a project metadata manifest.
+ *
+ * Invariant: `projectId` matches the project's directory/object-key prefix.
+ */
 export interface ProjectManifest {
   schemaVersion: 1;
   projectId: string;
@@ -19,66 +24,67 @@ class ProjectManifestError extends Error {
   }
 }
 
-export function parseProjectManifest(json: unknown): ProjectManifest {
+function assertProjectManifestRecord(json: unknown): Record<string, unknown> {
   if (typeof json !== 'object' || json === null) {
     throw new ProjectManifestError('SYNC_JSON_PARSE_FAILED', 'Project manifest must be an object');
   }
+  return json as Record<string, unknown>;
+}
 
-  const record = json as Record<string, unknown>;
-
+function assertProjectManifestSchema(record: Record<string, unknown>): void {
   if (record.schemaVersion !== 1) {
     throw new ProjectManifestError(
       'MANIFEST_UNSUPPORTED_SCHEMA',
       'Project manifest schemaVersion must be 1',
     );
   }
+}
 
-  if (typeof record.projectId !== 'string' || record.projectId === '') {
+function assertProjectString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || value === '') {
     throw new ProjectManifestError(
       'SYNC_JSON_PARSE_FAILED',
-      'Project manifest projectId is required and must be a string',
+      `Project manifest ${field} is required and must be a string`,
     );
   }
+  return value;
+}
 
-  if (typeof record.name !== 'string' || record.name === '') {
-    throw new ProjectManifestError(
-      'SYNC_JSON_PARSE_FAILED',
-      'Project manifest name is required and must be a string',
-    );
-  }
-
-  if (record.description !== undefined && typeof record.description !== 'string') {
+function assertProjectDescription(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') {
     throw new ProjectManifestError(
       'SYNC_JSON_PARSE_FAILED',
       'Project manifest description must be a string when present',
     );
   }
+  return value;
+}
 
-  if (typeof record.createdAt !== 'string' || record.createdAt === '') {
-    throw new ProjectManifestError(
-      'SYNC_JSON_PARSE_FAILED',
-      'Project manifest createdAt is required and must be a string',
-    );
-  }
-
-  if (typeof record.writtenBy !== 'string' || record.writtenBy === '') {
-    throw new ProjectManifestError(
-      'SYNC_JSON_PARSE_FAILED',
-      'Project manifest writtenBy is required and must be a string',
-    );
-  }
-
+/**
+ * Parse a raw JSON-decoded object into a {@link ProjectManifest}.
+ *
+ * Invariant: `schemaVersion` is normalized to 1 and every required string field is non-empty.
+ */
+export function parseProjectManifest(json: unknown): ProjectManifest {
+  const record = assertProjectManifestRecord(json);
+  assertProjectManifestSchema(record);
   return {
     ...record,
     schemaVersion: 1,
-    projectId: record.projectId as string,
-    name: record.name as string,
-    description: record.description,
-    createdAt: record.createdAt as string,
-    writtenBy: record.writtenBy as string,
+    projectId: assertProjectString(record.projectId, 'projectId'),
+    name: assertProjectString(record.name, 'name'),
+    description: assertProjectDescription(record.description),
+    createdAt: assertProjectString(record.createdAt, 'createdAt'),
+    writtenBy: assertProjectString(record.writtenBy, 'writtenBy'),
   } as ProjectManifest;
 }
 
+/**
+ * Build a fresh {@link ProjectManifest} from project metadata.
+ *
+ * Invariant: the generated `createdAt` is an ISO-8601 timestamp.
+ */
 export function buildProjectManifest(
   input: {
     projectId: string;
