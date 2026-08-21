@@ -1,6 +1,7 @@
 import process from 'node:process';
 import type { SyncErrorCode } from '@lucasschirm/sal-sync-core';
 import {
+  CAS_NAMESPACE_ROOT,
   DEFAULT_HOOK_UPLOAD_TIMEOUT_MS,
   DEFAULT_MAX_FILE_BYTES,
   DEFAULT_MAX_FILES,
@@ -36,6 +37,7 @@ import {
   type SyncConfig,
   type SyncLimits,
   type SyncTimeouts,
+  validateProjectId,
 } from '@lucasschirm/sal-sync-core';
 
 export type ConfigEnv = Record<string, string | undefined>;
@@ -245,6 +247,30 @@ function parseLimits(env: ConfigEnv): LimitsParseResult {
   };
 }
 
+function validateResolvedProjectId(projectId: string): SyncConfigError | undefined {
+  try {
+    validateProjectId(projectId);
+    return undefined;
+  } catch (err) {
+    if (projectId === CAS_NAMESPACE_ROOT) {
+      return {
+        code: 'SYNC_CONFIG_MISSING',
+        message: `${ENV_SAL_PROJECT_ID} must not be the reserved value '${CAS_NAMESPACE_ROOT}'.`,
+      };
+    }
+    if (err instanceof Error) {
+      return {
+        code: 'SYNC_CONFIG_MISSING',
+        message: `${ENV_SAL_PROJECT_ID} is invalid: ${err.message}`,
+      };
+    }
+    return {
+      code: 'SYNC_CONFIG_MISSING',
+      message: `${ENV_SAL_PROJECT_ID} is invalid.`,
+    };
+  }
+}
+
 export function loadStorageConfig(env: ConfigEnv = process.env): LoadStorageConfigResult {
   const storageResult = parseStorageConfig(env);
   if ('error' in storageResult) {
@@ -260,6 +286,35 @@ export function loadStorageConfig(env: ConfigEnv = process.env): LoadStorageConf
     ok: true,
     config: { storage: storageResult.config, retries: retriesResult.retries },
   };
+}
+
+function buildFullConfig(env: ConfigEnv, projectId: string): LoadConfigResult {
+  const storageResult = parseStorageConfig(env);
+  if ('error' in storageResult) {
+    return { ok: false, disabled: true, error: storageResult.error };
+  }
+  const timeoutsResult = parseTimeouts(env);
+  if ('error' in timeoutsResult) {
+    return { ok: false, disabled: true, error: timeoutsResult.error };
+  }
+  const retriesResult = parseRetries(env);
+  if ('error' in retriesResult) {
+    return { ok: false, disabled: true, error: retriesResult.error };
+  }
+  const limitsResult = parseLimits(env);
+  if ('error' in limitsResult) {
+    return { ok: false, disabled: true, error: limitsResult.error };
+  }
+  const config: SyncConfig = {
+    projectId,
+    disabled: false,
+    captureTranscripts: !isFalse(envValue(env, ENV_SAL_CAPTURE_TRANSCRIPTS)),
+    storage: storageResult.config,
+    limits: limitsResult.limits,
+    timeouts: timeoutsResult.timeouts,
+    retries: retriesResult.retries,
+  };
+  return { ok: true, config };
 }
 
 export function loadConfig(env: ConfigEnv = process.env): LoadConfigResult {
@@ -279,35 +334,10 @@ export function loadConfig(env: ConfigEnv = process.env): LoadConfigResult {
     };
   }
 
-  const storageResult = parseStorageConfig(env);
-  if ('error' in storageResult) {
-    return { ok: false, disabled: true, error: storageResult.error };
+  const projectIdError = validateResolvedProjectId(projectId);
+  if (projectIdError) {
+    return { ok: false, disabled: true, error: projectIdError };
   }
 
-  const timeoutsResult = parseTimeouts(env);
-  if ('error' in timeoutsResult) {
-    return { ok: false, disabled: true, error: timeoutsResult.error };
-  }
-
-  const retriesResult = parseRetries(env);
-  if ('error' in retriesResult) {
-    return { ok: false, disabled: true, error: retriesResult.error };
-  }
-
-  const limitsResult = parseLimits(env);
-  if ('error' in limitsResult) {
-    return { ok: false, disabled: true, error: limitsResult.error };
-  }
-
-  const config: SyncConfig = {
-    projectId,
-    disabled: false,
-    captureTranscripts: !isFalse(envValue(env, ENV_SAL_CAPTURE_TRANSCRIPTS)),
-    storage: storageResult.config,
-    limits: limitsResult.limits,
-    timeouts: timeoutsResult.timeouts,
-    retries: retriesResult.retries,
-  };
-
-  return { ok: true, config };
+  return buildFullConfig(env, projectId);
 }
