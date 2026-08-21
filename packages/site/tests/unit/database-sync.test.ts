@@ -400,6 +400,28 @@ describe('DatabaseManager sync and connections', () => {
       expect(row?.sync_schema_version).toBe(1);
     });
 
+    it('round-trips a sync manifest through getSessionSyncManifest', () => {
+      const project = makeProject();
+      manager.createProject(project);
+
+      const stub = makeSessionStub(project.id);
+      manager.upsertSessionStub(stub);
+
+      const manifest = makeSyncManifest({
+        artifacts: [{ id: 'artifact-1' }],
+        syncRuns: [{ id: 'run-2' }],
+      });
+      manager.updateSessionManifest(stub.id, manifest);
+
+      const round = manager.getSessionSyncManifest(stub.id);
+      expect(round).not.toBeNull();
+      expect(round?.sessionId).toBe(manifest.sessionId);
+      expect(round?.schemaVersion).toBe(manifest.schemaVersion);
+      expect(round?.harness).toBe(manifest.harness);
+      expect(round?.artifacts).toEqual(manifest.artifacts);
+      expect(round?.syncRuns).toEqual(manifest.syncRuns);
+    });
+
     it('fails stale sessions for a project', () => {
       const project = makeProject();
       manager.createProject(project);

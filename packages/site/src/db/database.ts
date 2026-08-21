@@ -1109,6 +1109,41 @@ export class DatabaseManager {
     });
   }
 
+  /** Reads the sync manifest mirror columns back as a `SyncManifest`. */
+  getSessionSyncManifest(sessionId: string): SyncManifest | null {
+    const row = this.requireDb().selectObject(
+      `SELECT
+        sync_session_id, sync_schema_version, sync_harness, sync_harness_version,
+        sync_manifest_model, sync_started_at, sync_ended_at, sync_duration_ms,
+        sync_end_reason, sync_engine_version, sync_plugin_version, sync_transcripts_captured,
+        sync_main_transcript_relative_path, sync_artifacts, sync_runs
+      FROM sessions WHERE id = ?`,
+      [sessionId],
+    ) as Record<string, unknown> | undefined;
+
+    if (!row || row.sync_session_id == null) return null;
+
+    return {
+      sessionId: String(row.sync_session_id),
+      schemaVersion: Number(row.sync_schema_version),
+      harness: row.sync_harness ? String(row.sync_harness) : undefined,
+      harnessVersion: row.sync_harness_version ? String(row.sync_harness_version) : undefined,
+      model: row.sync_manifest_model ? String(row.sync_manifest_model) : undefined,
+      startedAt: row.sync_started_at ? String(row.sync_started_at) : undefined,
+      endedAt: row.sync_ended_at ? String(row.sync_ended_at) : undefined,
+      durationMs: typeof row.sync_duration_ms === 'number' ? row.sync_duration_ms : undefined,
+      endReason: row.sync_end_reason ? String(row.sync_end_reason) : undefined,
+      syncVersion: row.sync_engine_version ? String(row.sync_engine_version) : undefined,
+      pluginVersion: row.sync_plugin_version ? String(row.sync_plugin_version) : undefined,
+      transcriptsCaptured: Number(row.sync_transcripts_captured) === 1,
+      mainTranscriptRelativePath: row.sync_main_transcript_relative_path
+        ? String(row.sync_main_transcript_relative_path)
+        : undefined,
+      artifacts: safeJsonParseArray<unknown>(String(row.sync_artifacts ?? '[]')),
+      syncRuns: safeJsonParseArray<unknown>(String(row.sync_runs ?? '[]')),
+    };
+  }
+
   /** Returns the number of recorded sync runs for a session. */
   getSyncRunCount(sessionId: string): number {
     const row = this.requireDb().selectObject('SELECT sync_runs FROM sessions WHERE id = ?', [

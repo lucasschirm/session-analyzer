@@ -28,8 +28,10 @@ import type {
   SessionFileRecord,
   SessionStub,
 } from '../types';
+import { parseInWorker } from '../workers/parser-client';
 import { generateId } from '../workers/session-builder';
 import { decryptField, isUnlocked, unlock } from './credential-crypto';
+import { createFileProcessingBridge } from './file-processing-bridge';
 import type {
   FileSummary,
   FileToDownload,
@@ -93,6 +95,8 @@ export interface SyncManagerOptions {
   createS3Client?: (config: S3ClientConfig) => S3Client;
   /** Async seam for processing a downloaded file buffer. */
   onFileDownloaded?: (sessionId: string, file: DownloadedFile) => Promise<void>;
+  /** Async seam for forcing completion when the sync worker signals a session is complete. */
+  onSyncComplete?: (sessionId: string) => Promise<void>;
   /** Async seam for resolving a missing project manifest. */
   onProjectMissing?: (folder: string) => Promise<ProjectManifestInput | null>;
   /** Async seam for requesting the passkey from the user. */
@@ -216,6 +220,7 @@ export class SyncManager extends EventTarget {
   private readonly createS3Client: (config: S3ClientConfig) => S3Client;
   private readonly createBroadcastChannel: (name: string) => BroadcastChannel;
   private readonly onFileDownloaded: (sessionId: string, file: DownloadedFile) => Promise<void>;
+  private readonly onSyncComplete: (sessionId: string) => Promise<void>;
   private readonly onProjectMissing?: (folder: string) => Promise<ProjectManifestInput | null>;
   private readonly onPasskeyRequired?: () => Promise<string>;
   private readonly onRunSummary?: (summary: RunSummary) => void;
@@ -242,6 +247,7 @@ export class SyncManager extends EventTarget {
     this.createBroadcastChannel =
       options.createBroadcastChannel ?? this.defaultCreateBroadcastChannel;
     this.onFileDownloaded = options.onFileDownloaded ?? this.defaultOnFileDownloaded;
+    this.onSyncComplete = options.onSyncComplete ?? this.defaultOnSyncComplete;
     this.onProjectMissing = options.onProjectMissing;
     this.onPasskeyRequired = options.onPasskeyRequired;
     this.onRunSummary = options.onRunSummary;
@@ -345,6 +351,10 @@ export class SyncManager extends EventTarget {
   }
 
   private defaultOnFileDownloaded(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  private defaultOnSyncComplete(): Promise<void> {
     return Promise.resolve();
   }
 
@@ -1172,6 +1182,8 @@ export class SyncManager extends EventTarget {
       await this.reconcileCompleteFile(project, session, file);
     }
 
+    await this.onSyncComplete(session.localSessionId);
+
     project.sessionsDone++;
     await this.maybeCompleteSession(session);
     this.emitChange();
@@ -1527,5 +1539,9 @@ export class SyncManager extends EventTarget {
   }
 }
 
-/** App-wide singleton. */
-export const syncManager = new SyncManager();
+/** App-wide singleton, wired to the TSK0008 file-processing bridge. */
+const fileBridge = createFileProcessingBridge(dbClient, parseInWorker);
+export const syncManager = new SyncManager({
+  onFileDownloaded: fileBridge.onFileDownloaded,
+  onSyncComplete: fileBridge.onSyncComplete,
+});
