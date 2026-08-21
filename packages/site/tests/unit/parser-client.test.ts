@@ -32,6 +32,33 @@ class FakeParserWorker {
   }
 }
 
+/**
+ * A fake worker that actually performs the structured-clone transfer when a
+ * transfer list is supplied, so the original ArrayBuffer becomes detached
+ * exactly as it would with a real `postMessage` call.
+ */
+class TransferringFakeWorker {
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: ErrorEvent) => void) | null = null;
+  posted: ParseRequest[] = [];
+  transfers: Array<Array<Transferable> | undefined> = [];
+  terminated = false;
+
+  postMessage(request: ParseRequest, transfer?: Array<Transferable>): void {
+    this.posted.push(request);
+    this.transfers.push(transfer);
+    if (transfer && transfer.length > 0) {
+      // This is the same transfer semantics `postMessage` uses internally.
+      globalThis.structuredClone(request, { transfer });
+    }
+    this.onmessage?.({ data: { type: 'result', result: parsedSession } } as MessageEvent);
+  }
+
+  terminate(): void {
+    this.terminated = true;
+  }
+}
+
 const parsedSession: ParsedSession = {
   session: {
     id: 's1',
@@ -156,6 +183,23 @@ describe('parseInWorker ArrayBuffer transfer', () => {
     await promise;
     expect(worker.posted[0].payload).toBe(buffer);
     expect(worker.transfers[0]).toEqual([buffer]);
+  });
+
+  it('detaches the original ArrayBuffer after postMessage transfers it', async () => {
+    const text = '{"type": "message_start"}';
+    const buffer = encoder.encode(text).buffer;
+    const worker = new TransferringFakeWorker();
+
+    const promise = parseInWorker(buffer, {
+      projectId: 'p1',
+      createWorker: () => worker as unknown as Worker,
+    });
+
+    await promise;
+    const detachedBuffer = worker.posted[0].payload as ArrayBuffer;
+    expect(buffer.byteLength).toBe(0);
+    expect(detachedBuffer.byteLength).toBe(0);
+    expect(worker.terminated).toBe(true);
   });
 
   it('rejects with the worker error message for an ArrayBuffer payload', async () => {

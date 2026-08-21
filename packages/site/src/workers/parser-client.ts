@@ -62,30 +62,35 @@ function parseWorkerMessage(
   throw new Error(event.data.message);
 }
 
+function attachWorkerResponseHandlers(
+  worker: Worker,
+  resolve: (value: ParsedSession) => void,
+  reject: (reason: Error) => void,
+): void {
+  const timer = setTimeout(() => reject(new Error('Session parsing timed out')), PARSE_TIMEOUT_MS);
+
+  worker.onmessage = (event: MessageEvent<ParseResponse | ParseErrorResponse>) => {
+    clearTimeout(timer);
+    try {
+      resolve(parseWorkerMessage(event));
+    } catch (error) {
+      reject(error as Error);
+    }
+  };
+
+  worker.onerror = (event: ErrorEvent) => {
+    clearTimeout(timer);
+    reject(new Error(`Parser worker error: ${event.message}`));
+  };
+}
+
 function runWorkerParse(
   worker: Worker,
   payload: string | ArrayBuffer,
   options: ParseFileOptions,
 ): Promise<ParsedSession> {
   return new Promise<ParsedSession>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error('Session parsing timed out'));
-    }, PARSE_TIMEOUT_MS);
-
-    worker.onmessage = (event: MessageEvent<ParseResponse | ParseErrorResponse>) => {
-      clearTimeout(timer);
-      try {
-        resolve(parseWorkerMessage(event));
-      } catch (error) {
-        reject(error as Error);
-      }
-    };
-
-    worker.onerror = (event: ErrorEvent) => {
-      clearTimeout(timer);
-      reject(new Error(`Parser worker error: ${event.message}`));
-    };
-
+    attachWorkerResponseHandlers(worker, resolve, reject);
     const request = buildParseRequest(payload, options);
     if (typeof payload === 'string') {
       worker.postMessage(request);
