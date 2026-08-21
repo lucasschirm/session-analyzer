@@ -1,6 +1,8 @@
 import { type S3ClientConfig, S3Error, S3FetchClient } from '@lucasschirm/sal-sync-core';
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
+import { repeat } from 'lit/directives/repeat.js';
 import { dbClient } from '../db/db-client';
 import { encryptField, isUnlocked } from '../sync/credential-crypto';
 import { syncManager } from '../sync/sync-manager';
@@ -1062,7 +1064,11 @@ export class ConnectModal extends LitElement {
   private renderConnectionRows(): TemplateResult {
     return html`
       <div class="connection-list" role="list">
-        ${this.items.map((item) => this.renderConnectionRow(item))}
+        ${repeat(
+          this.items,
+          (item) => item.id,
+          (item) => this.renderConnectionRow(item),
+        )}
       </div>
     `;
   }
@@ -1075,7 +1081,7 @@ export class ConnectModal extends LitElement {
         <div class="connection-info">
           <div class="connection-name">${item.name}</div>
           <div class="connection-meta">
-            <span class="badge ${item.inMemory ? 'memory' : ''}">${item.inMemory ? 'In-Memory' : 'S3'}</span>
+            <span class="badge ${classMap({ memory: item.inMemory })}">${item.inMemory ? 'In-Memory' : 'S3'}</span>
             ${item.bucket ? ` • ${item.bucket}` : ''} • Last sync: ${formatLastSync(item.lastSyncAt)}
           </div>
         </div>
