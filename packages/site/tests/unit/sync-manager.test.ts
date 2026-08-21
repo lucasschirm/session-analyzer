@@ -233,6 +233,14 @@ class FakeDbWorker {
         m.updateSessionManifest(req.sessionId, req.manifest);
         return { id: request.id, ok: true };
       }
+      case 'getSessionSyncManifest':
+        return {
+          id: request.id,
+          ok: true,
+          result: m.getSessionSyncManifest(
+            (request as DbRequestOf<'getSessionSyncManifest'>).sessionId,
+          ),
+        };
       case 'getSyncRunCount':
         return {
           id: request.id,

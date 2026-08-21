@@ -170,6 +170,13 @@ const handlers: Record<DbRequest['type'], Handler> = {
     manager.updateSessionManifest(req.sessionId, req.manifest);
     return { id: request.id, ok: true };
   },
+  getSessionSyncManifest: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getSessionSyncManifest(
+      (request as DbRequestOf<'getSessionSyncManifest'>).sessionId,
+    ),
+  }),
   getSyncRunCount: (request) => ({
     id: request.id,
     ok: true,

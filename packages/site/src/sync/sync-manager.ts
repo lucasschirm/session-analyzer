@@ -28,8 +28,10 @@ import type {
   SessionFileRecord,
   SessionStub,
 } from '../types';
+import { parseInWorker } from '../workers/parser-client';
 import { generateId } from '../workers/session-builder';
 import { decryptField, isUnlocked, unlock } from './credential-crypto';
+import { createFileProcessingBridge } from './file-processing-bridge';
 import type {
   FileSummary,
   FileToDownload,
@@ -1481,5 +1483,7 @@ export class SyncManager extends EventTarget {
   }
 }
 
-/** App-wide singleton. */
-export const syncManager = new SyncManager();
+/** App-wide singleton, wired to the TSK0008 file-processing bridge. */
+export const syncManager = new SyncManager({
+  onFileDownloaded: createFileProcessingBridge(dbClient, parseInWorker),
+});

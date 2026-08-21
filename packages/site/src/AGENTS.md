@@ -24,7 +24,9 @@ src/
 ├── lib/
 │   ├── markdown.ts                # marked + DOMPurify rendering helpers
 │   ├── format.ts                  # Compact number formatting (K/M/B) with full-number tooltips; estimateTokenCount/formatEstimatedTokens for the ~4-chars/token tool-result estimate (no exact tokenizer available client-side)
-│   └── claude-to-dashboard.ts     # toDashboardSession(native, projectId, title): transforms a `@lucasschirm/sal-claude-session-parser` ClaudeCodeSession into DashboardSession - token accumulation incl. per-model, tool_use/tool_result pairing by id, result_uuid capture, isMeta filtering, compact_boundary -> compactions, task_reminder -> SessionTask, ai-title -> title. Successor to the old inline parseClaudeCode; reuses SessionBuilder from workers/session-builder.ts
+│   ├── claude-to-dashboard.ts     # toDashboardSession(native, projectId, title): transforms a `@lucasschirm/sal-claude-session-parser` ClaudeCodeSession into DashboardSession - token accumulation incl. per-model, tool_use/tool_result pairing by id, result_uuid capture, isMeta filtering, compact_boundary -> compactions, task_reminder -> SessionTask, ai-title -> title. Successor to the old inline parseClaudeCode; reuses SessionBuilder from workers/session-builder.ts
+│   └── subagents.ts               # Classifies uploaded/synced files into main vs subagent pairs, parses `.meta.json` sidecars, and folds parsed subagent usage into the parent session via mergeSubagentIntoSession
+├── sync/                          # Remote sync orchestration and downloaded file processing (see src/sync/AGENTS.md)
 ├── pages/
 │   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap
 │   ├── home-page.ts               # Projects CRUD grid + export database

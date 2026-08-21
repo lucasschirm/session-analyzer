@@ -235,6 +235,11 @@ export class DbClient {
     return this.call({ type: 'updateSessionManifest', sessionId, manifest }) as Promise<void>;
   }
 
+  /** Reads the sync manifest mirror columns back as a `SyncManifest`. */
+  getSessionSyncManifest(sessionId: string): Promise<SyncManifest | null> {
+    return this.call({ type: 'getSessionSyncManifest', sessionId }) as Promise<SyncManifest | null>;
+  }
+
   /** Returns the number of recorded sync runs for a session. */
   getSyncRunCount(sessionId: string): Promise<number> {
     return this.call({ type: 'getSyncRunCount', sessionId }) as Promise<number>;
