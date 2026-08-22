@@ -15,6 +15,7 @@ import {
 } from '@lucasschirm/sal-sync';
 import { parseClaudeHookInput, readStdin, toHarnessSession, toSyncInput } from './claude.js';
 import { resolveCliEnv } from './cli/env.js';
+import { isMainModule } from './is-main-module.js';
 
 export interface SessionStartRunOptions extends CliOptions {
   watcherPath?: string;
@@ -121,7 +122,7 @@ async function main(): Promise<number> {
   }
 }
 
-if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   main().then(
     (code) => process.exit(code),
     () => process.exit(0),

@@ -1,5 +1,4 @@
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 import {
   buildTelemetryRecord,
   type CliOptions,
@@ -10,6 +9,7 @@ import {
 } from '@lucasschirm/sal-sync';
 import { parseClaudeHookInput, readStdin, toHarnessSession, toSyncInput } from './claude.js';
 import { resolveCliEnv } from './cli/env.js';
+import { isMainModule } from './is-main-module.js';
 
 export async function runSessionEnd(raw: unknown, options: CliOptions = {}): Promise<number> {
   const parsed = parseClaudeHookInput(raw);
@@ -87,7 +87,7 @@ async function main(): Promise<number> {
   }
 }
 
-if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   main().then(
     (code) => process.exit(code),
     () => process.exit(0),

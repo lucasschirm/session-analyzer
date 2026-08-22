@@ -3,71 +3,79 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
+ * `.claude/settings.json` and `~/.claude/settings.json` are typically
+ * committed to git, unlike `settings.local.json`. Credentials and the
+ * storage endpoint must never be sourced from a file anyone with
+ * commit/PR access can edit — a malicious `SAL_STORAGE_ENDPOINT` there
+ * could silently redirect session uploads (and the requester's real
+ * credentials) to an attacker-controlled server. These keys are only
+ * ever honored from `process.env` or `settings.local.json`.
+ */
+const SHARED_SETTINGS_BLOCKLIST = new Set([
+  'SAL_STORAGE_ENDPOINT',
+  'SAL_STORAGE_ACCESS_KEY_ID',
+  'SAL_STORAGE_SECRET_ACCESS_KEY',
+]);
+const EMPTY_BLOCKLIST: ReadonlySet<string> = new Set();
+
+async function readSettingsEnv(settingsPath: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const raw = await fsp.readFile(settingsPath, 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const env = (parsed as Record<string, unknown>).env;
+    if (!env || typeof env !== 'object' || Array.isArray(env)) {
+      return undefined;
+    }
+    return env as Record<string, unknown>;
+  } catch {
+    // Missing or unreadable settings file — caller falls through to the next source.
+    return undefined;
+  }
+}
+
+function fillMissing(
+  merged: Record<string, string | undefined>,
+  settingsEnv: Record<string, unknown> | undefined,
+  blocklist: ReadonlySet<string>,
+): void {
+  if (!settingsEnv) return;
+  for (const [key, value] of Object.entries(settingsEnv)) {
+    if (typeof value !== 'string') continue;
+    if (blocklist.has(key)) continue;
+    if (merged[key] === undefined || merged[key] === '') {
+      merged[key] = value;
+    }
+  }
+}
+
+/**
  * Precedence ladder for Claude Code environment resolution (highest → lowest):
  *
  * ```
  *   process.env (ENV)
  *   .claude/settings.local.json   (project-local, gitignored)
  *   .claude/settings.json          (project, committed)
- *   ~/.claude/settings.json         (user-global)
+ *   ~/.claude/settings.json         (user-global, committed)
  * ```
  *
- * A variable set in a higher-precedence source is never overwritten by a
- * lower-precedence one. This matches Claude Code's own resolution order and
- * the spread semantics `{ ...user, ...project, ...local, ...ENV }`.
+ * Process environment variables take precedence. For any variable still
+ * missing, the CLI looks for `${cwd}/.claude/settings.local.json` and merges
+ * in its `env` key; any variable still missing after that is filled in from
+ * `${cwd}/.claude/settings.json` (project-wide settings shared by the team),
+ * and finally from `~/.claude/settings.json` (user-global settings).
+ *
+ * Credentials and the storage endpoint are never read from either committed
+ * settings file (`settings.json` or `~/.claude/settings.json`), since those
+ * files are typically committed to git — see {@link SHARED_SETTINGS_BLOCKLIST}.
+ * Only `settings.local.json` (gitignored) and `process.env` may supply them.
  *
  * Only the `env` key of each settings file is read. Non-string values are
  * silently skipped (Claude Code itself ignores them). Missing or malformed
  * files are silently ignored — the run proceeds with whatever sources are
  * available.
- */
-const SETTINGS_FILES = [
-  // Lowest precedence first — each layer overwrites keys from the previous.
-  // The user-scope path ignores `cwd` (it's always ~/.claude/settings.json),
-  // but the parameter is kept for signature uniformity with the other entries.
-  { scope: 'user', getPath: (_cwd: string) => path.join(os.homedir(), '.claude', 'settings.json') },
-  { scope: 'project', getPath: (cwd: string) => path.join(cwd, '.claude', 'settings.json') },
-  { scope: 'local', getPath: (cwd: string) => path.join(cwd, '.claude', 'settings.local.json') },
-] as const;
-
-/**
- * Read the `env` record from a single Claude Code settings file.
- * Returns `undefined` if the file is missing, unreadable, malformed, or
- * has no `env` key (or its `env` is not a plain object of strings).
- */
-async function readSettingsEnv(filePath: string): Promise<Record<string, string> | undefined> {
-  let raw: string;
-  try {
-    raw = await fsp.readFile(filePath, 'utf8');
-  } catch {
-    return undefined;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-
-  const env = (parsed as Record<string, unknown>).env;
-  if (!env || typeof env !== 'object' || Array.isArray(env)) return undefined;
-
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env as Record<string, unknown>)) {
-    if (typeof value === 'string') result[key] = value;
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
-/**
- * Resolve the effective environment for the Claude session-sync plugin.
- *
- * Merges `~/.claude/settings.json`, `${cwd}/.claude/settings.json`, and
- * `${cwd}/.claude/settings.local.json` (in that order), then overlays
- * `processEnv` on top so that real environment variables always win.
  *
  * This is the single shared function used by every entry point in the plugin
  * — the `claude-sync` CLI commands (sync, list, download, remove) and the
@@ -83,16 +91,17 @@ export async function resolveCliEnv(
 ): Promise<Record<string, string | undefined>> {
   const merged: Record<string, string | undefined> = {};
 
-  // Layer 1–3: settings files, lowest precedence first.
-  // Each layer overrides keys from the previous (higher precedence wins).
-  for (const { getPath } of SETTINGS_FILES) {
-    const env = await readSettingsEnv(getPath(cwd));
-    if (env) {
-      for (const [key, value] of Object.entries(env)) {
-        merged[key] = value;
-      }
-    }
-  }
+  // Layer 1: settings.local.json (highest among files, no blocklist — gitignored).
+  const localEnv = await readSettingsEnv(path.join(cwd, '.claude', 'settings.local.json'));
+  fillMissing(merged, localEnv, EMPTY_BLOCKLIST);
+
+  // Layer 2: .claude/settings.json (committed — blocklist applies).
+  const projectEnv = await readSettingsEnv(path.join(cwd, '.claude', 'settings.json'));
+  fillMissing(merged, projectEnv, SHARED_SETTINGS_BLOCKLIST);
+
+  // Layer 3: ~/.claude/settings.json (committed — blocklist applies).
+  const userEnv = await readSettingsEnv(path.join(os.homedir(), '.claude', 'settings.json'));
+  fillMissing(merged, userEnv, SHARED_SETTINGS_BLOCKLIST);
 
   // Layer 4: process.env — always wins, but only for keys that are actually
   // set (undefined values don't override settings files).

@@ -25,7 +25,6 @@
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
     "sync": "node ./bin/claude-sync"
   },
-  "dependencies": {},
   "devDependencies": {
     "@lucasschirm/sal-sync": "workspace:*",
     "@types/node": "^26.2.0",

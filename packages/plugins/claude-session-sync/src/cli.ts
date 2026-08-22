@@ -6,6 +6,7 @@ import { runDownloadCommand } from './cli/download-command.js';
 import { runListCommand } from './cli/list-command.js';
 import { runRemoveCommand } from './cli/remove-command.js';
 import { runSyncCommand } from './cli/sync-command.js';
+import { isMainModule } from './is-main-module.js';
 
 const HELP_TEXT = `claude-sync — manually sync Claude Code sessions to S3 storage
 
@@ -44,7 +45,8 @@ Environment:
   SAL_STORAGE_SECRET_ACCESS_KEY           AWS secret access key (required)
   SAL_STORAGE_ENDPOINT                    Custom S3 endpoint (optional)
 
-Configuration is read from process.env, falling back to .claude/settings.local.json "env".
+Configuration is read from process.env, falling back to .claude/settings.local.json
+"env" and then .claude/settings.json "env".
 `;
 
 function readPackageVersion(): string {
@@ -86,7 +88,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 }
 
-if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   main().then(
     (code) => process.exit(code),
     (err) => {
