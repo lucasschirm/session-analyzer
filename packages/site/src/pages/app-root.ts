@@ -3,6 +3,8 @@ import { customElement, state } from 'lit/decorators.js';
 import '../components/connect-modal';
 import '../components/passkey-modal';
 import '../components/sync-progress-bar';
+import '../components/sync-status-bar';
+import '../components/toast-container';
 import { dbClient } from '../db/db-client';
 import { HashRouter } from '../router';
 import { isUnlocked } from '../sync/credential-crypto';
@@ -112,6 +114,7 @@ export class AppRoot extends LitElement {
 
     main {
       padding: 24px;
+      padding-bottom: 56px;
       max-width: 1200px;
       margin: 0 auto;
     }
@@ -276,6 +279,10 @@ export class AppRoot extends LitElement {
         @passkey-forgotten=${this.handlePasskeyForgotten}
         @modal-close=${this.handlePasskeyClose}
       ></passkey-modal>
+
+      <sync-status-bar></sync-status-bar>
+
+      <toast-container></toast-container>
     `;
   }
 }

@@ -65,3 +65,4 @@ docs/superpowers
 .devin/agents
 .devin/rules
 .devin/skills
+.playwright-mcp

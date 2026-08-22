@@ -6,12 +6,14 @@ import '../../src/components/project-sync-status-modal';
 import '../../src/components/session-sync-chip';
 import '../../src/components/session-sync-error-modal';
 import '../../src/components/sync-progress-bar';
+import '../../src/components/sync-status-bar';
 import type { PasskeyModal } from '../../src/components/passkey-modal';
 import type { ProjectSyncIndicator } from '../../src/components/project-sync-indicator';
 import type { ProjectSyncStatusModal } from '../../src/components/project-sync-status-modal';
 import type { SessionSyncChip } from '../../src/components/session-sync-chip';
 import type { SessionSyncErrorModal } from '../../src/components/session-sync-error-modal';
 import type { SyncProgressBar } from '../../src/components/sync-progress-bar';
+import type { SyncStatusBar } from '../../src/components/sync-status-bar';
 import { isUnlocked } from '../../src/sync/credential-crypto';
 import type { SyncManager, SyncManagerSnapshot } from '../../src/sync/sync-manager';
 
@@ -265,6 +267,457 @@ describe('sync-progress-bar', () => {
 
     shadow(bar).querySelector('.cancel-button')?.dispatchEvent(new Event('click'));
     expect(manager.cancel).toHaveBeenCalled();
+  });
+});
+
+describe('sync-status-bar', () => {
+  it('stays mounted but hidden when there is no active run', async () => {
+    const manager = makeMockSyncManager(makeSnapshot());
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    const root = shadow(bar).querySelector('.status-bar');
+    expect(root).not.toBeNull();
+    expect(root?.classList.contains('hidden')).toBe(true);
+  });
+
+  it('shows the discovery summary with projects, sessions, and pending counts', async () => {
+    const manager = makeMockSyncManager(
+      makeSnapshot({
+        activeRun: { state: 'running' as const },
+        projects: [
+          {
+            projectId: 'proj-a',
+            localProjectId: 'p1',
+            status: 'running' as const,
+            totalSessions: 6,
+            sessionsDone: 1,
+            filesFound: 0,
+            filesDownloaded: 0,
+          },
+          {
+            projectId: 'proj-b',
+            localProjectId: 'p2',
+            status: 'running' as const,
+            totalSessions: 5,
+            sessionsDone: 0,
+            filesFound: 0,
+            filesDownloaded: 0,
+          },
+        ],
+        sessions: [
+          {
+            projectId: 'proj-a',
+            sessionId: 's1',
+            status: 'in_sync',
+            filesFound: 0,
+            filesDownloaded: 0,
+            filesFailed: 0,
+          },
+          {
+            projectId: 'proj-a',
+            sessionId: 's2',
+            status: 'pending',
+            filesFound: 0,
+            filesDownloaded: 0,
+            filesFailed: 0,
+          },
+          {
+            projectId: 'proj-b',
+            sessionId: 's3',
+            status: 'pending',
+            filesFound: 0,
+            filesDownloaded: 0,
+            filesFailed: 0,
+          },
+        ],
+      }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    const root = shadow(bar).querySelector('.status-bar');
+    expect(root?.classList.contains('hidden')).toBe(false);
+    expect(root?.textContent).toContain('Found:');
+    expect(root?.textContent).toContain('2 Projects');
+    expect(root?.textContent).toContain('11 Sessions');
+    expect(root?.textContent).toContain('2 sessions pending');
+  });
+
+  it('uses singular nouns when there is exactly one project/session/pending', async () => {
+    const manager = makeMockSyncManager(
+      makeSnapshot({
+        activeRun: { state: 'running' as const },
+        projects: [
+          {
+            projectId: 'proj-a',
+            localProjectId: 'p1',
+            status: 'running' as const,
+            totalSessions: 1,
+            sessionsDone: 0,
+            filesFound: 0,
+            filesDownloaded: 0,
+          },
+        ],
+        sessions: [
+          {
+            projectId: 'proj-a',
+            sessionId: 's1',
+            status: 'pending',
+            filesFound: 0,
+            filesDownloaded: 0,
+            filesFailed: 0,
+          },
+        ],
+      }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    const root = shadow(bar).querySelector('.status-bar');
+    expect(root?.textContent).toContain('1 Project');
+    expect(root?.textContent).toContain('1 Session');
+    expect(root?.textContent).toContain('1 session pending');
+  });
+
+  it('shows the queued suffix when runs are waiting', async () => {
+    const manager = makeMockSyncManager(
+      makeSnapshot({
+        activeRun: { state: 'done' as const },
+        queuedRuns: ['next-run'],
+        projects: [],
+        sessions: [],
+      }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    const root = shadow(bar).querySelector('.status-bar');
+    expect(root?.classList.contains('hidden')).toBe(false);
+    expect(root?.textContent).toContain('1 queued');
+  });
+
+  it('hides when the run finishes and nothing is queued', async () => {
+    const manager = makeMockSyncManager(
+      makeSnapshot({
+        activeRun: { state: 'running' as const },
+        projects: [
+          {
+            projectId: 'proj-a',
+            localProjectId: 'p1',
+            status: 'running' as const,
+            totalSessions: 2,
+            sessionsDone: 0,
+            filesFound: 0,
+            filesDownloaded: 0,
+          },
+        ],
+        sessions: [],
+      }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    expect(shadow(bar).querySelector('.status-bar')?.classList.contains('hidden')).toBe(false);
+
+    manager.dispatchEvent(
+      new CustomEvent<SyncManagerSnapshot>('change', {
+        detail: makeSnapshot({ activeRun: { state: 'done' as const }, queuedRuns: [] }),
+      }),
+    );
+    await bar.updateComplete;
+
+    expect(shadow(bar).querySelector('.status-bar')?.classList.contains('hidden')).toBe(true);
+  });
+
+  it('shows zero counts when a run is active but no projects discovered yet', async () => {
+    const manager = makeMockSyncManager(
+      makeSnapshot({
+        activeRun: { state: 'running' as const },
+        projects: [],
+        sessions: [],
+      }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    const root = shadow(bar).querySelector('.status-bar');
+    expect(root?.classList.contains('hidden')).toBe(false);
+    expect(root?.textContent).toContain('Found:');
+    expect(root?.textContent).toContain('0 Projects');
+    expect(root?.textContent).toContain('0 Sessions');
+    expect(root?.textContent).toContain('0 sessions pending');
+  });
+
+  it('handles large project and session counts', async () => {
+    const projects = Array.from({ length: 15 }, (_, i) => ({
+      projectId: `proj-${i}`,
+      localProjectId: `p${i}`,
+      status: 'running' as const,
+      totalSessions: 100,
+      sessionsDone: 50,
+      filesFound: 0,
+      filesDownloaded: 0,
+    }));
+    const sessions = Array.from({ length: 750 }, (_, i) => ({
+      projectId: `proj-${Math.floor(i / 100)}`,
+      sessionId: `s${i}`,
+      status: 'pending',
+      filesFound: 0,
+      filesDownloaded: 0,
+      filesFailed: 0,
+    }));
+    const manager = makeMockSyncManager(
+      makeSnapshot({ activeRun: { state: 'running' as const }, projects, sessions }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    const root = shadow(bar).querySelector('.status-bar');
+    expect(root?.textContent).toContain('15 Projects');
+    expect(root?.textContent).toContain('1500 Sessions');
+    expect(root?.textContent).toContain('750 sessions pending');
+  });
+
+  it('counts only pending sessions (not in_sync or failed)', async () => {
+    const manager = makeMockSyncManager(
+      makeSnapshot({
+        activeRun: { state: 'running' as const },
+        projects: [
+          {
+            projectId: 'proj-a',
+            localProjectId: 'p1',
+            status: 'running' as const,
+            totalSessions: 5,
+            sessionsDone: 0,
+            filesFound: 0,
+            filesDownloaded: 0,
+          },
+        ],
+        sessions: [
+          {
+            projectId: 'proj-a',
+            sessionId: 's1',
+            status: 'in_sync',
+            filesFound: 0,
+            filesDownloaded: 0,
+            filesFailed: 0,
+          },
+          {
+            projectId: 'proj-a',
+            sessionId: 's2',
+            status: 'pending',
+            filesFound: 0,
+            filesDownloaded: 0,
+            filesFailed: 0,
+          },
+          {
+            projectId: 'proj-a',
+            sessionId: 's3',
+            status: 'failed',
+            filesFound: 0,
+            filesDownloaded: 0,
+            filesFailed: 0,
+          },
+          {
+            projectId: 'proj-a',
+            sessionId: 's4',
+            status: 'pending',
+            filesFound: 0,
+            filesDownloaded: 0,
+            filesFailed: 0,
+          },
+          {
+            projectId: 'proj-a',
+            sessionId: 's5',
+            status: 'processing',
+            filesFound: 0,
+            filesDownloaded: 0,
+            filesFailed: 0,
+          },
+        ],
+      }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    const root = shadow(bar).querySelector('.status-bar');
+    // Only 2 pending sessions (s2 and s4)
+    expect(root?.textContent).toContain('2 sessions pending');
+  });
+
+  it('shows when a run is queued (not yet running)', async () => {
+    const manager = makeMockSyncManager(
+      makeSnapshot({
+        activeRun: { state: 'queued' as const },
+        projects: [],
+        sessions: [],
+      }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    expect(shadow(bar).querySelector('.status-bar')?.classList.contains('hidden')).toBe(false);
+  });
+
+  it('hides when a run is cancelled and nothing is queued', async () => {
+    const manager = makeMockSyncManager(
+      makeSnapshot({
+        activeRun: { state: 'cancelled' as const },
+        queuedRuns: [],
+        projects: [],
+        sessions: [],
+      }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    expect(shadow(bar).querySelector('.status-bar')?.classList.contains('hidden')).toBe(true);
+  });
+
+  it('shows when a run is done but there are queued runs', async () => {
+    const manager = makeMockSyncManager(
+      makeSnapshot({
+        activeRun: { state: 'done' as const },
+        queuedRuns: ['next-conn'],
+        projects: [],
+        sessions: [],
+      }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    expect(shadow(bar).querySelector('.status-bar')?.classList.contains('hidden')).toBe(false);
+    expect(shadow(bar).querySelector('.status-bar')?.textContent).toContain('1 queued');
+  });
+
+  it('transitions from hidden to visible when a run starts', async () => {
+    const manager = makeMockSyncManager(makeSnapshot());
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    expect(shadow(bar).querySelector('.status-bar')?.classList.contains('hidden')).toBe(true);
+
+    manager.dispatchEvent(
+      new CustomEvent<SyncManagerSnapshot>('change', {
+        detail: makeSnapshot({
+          activeRun: { state: 'running' as const },
+          projects: [
+            {
+              projectId: 'proj-a',
+              localProjectId: 'p1',
+              status: 'running' as const,
+              totalSessions: 3,
+              sessionsDone: 0,
+              filesFound: 0,
+              filesDownloaded: 0,
+            },
+          ],
+          sessions: [
+            {
+              projectId: 'proj-a',
+              sessionId: 's1',
+              status: 'pending',
+              filesFound: 0,
+              filesDownloaded: 0,
+              filesFailed: 0,
+            },
+          ],
+        }),
+      }),
+    );
+    await bar.updateComplete;
+
+    const root = shadow(bar).querySelector('.status-bar');
+    expect(root?.classList.contains('hidden')).toBe(false);
+    expect(root?.textContent).toContain('1 Project');
+    expect(root?.textContent).toContain('3 Sessions');
+    expect(root?.textContent).toContain('1 session pending');
+  });
+
+  it('updates counts reactively when a change event fires', async () => {
+    const manager = makeMockSyncManager(
+      makeSnapshot({
+        activeRun: { state: 'running' as const },
+        projects: [
+          {
+            projectId: 'proj-a',
+            localProjectId: 'p1',
+            status: 'running' as const,
+            totalSessions: 10,
+            sessionsDone: 0,
+            filesFound: 0,
+            filesDownloaded: 0,
+          },
+        ],
+        sessions: Array.from({ length: 10 }, (_, i) => ({
+          projectId: 'proj-a',
+          sessionId: `s${i}`,
+          status: 'pending' as const,
+          filesFound: 0,
+          filesDownloaded: 0,
+          filesFailed: 0,
+        })),
+      }),
+    );
+    const bar = document.createElement('sync-status-bar') as SyncStatusBar;
+    bar.syncManager = manager;
+    await mount(bar);
+
+    expect(shadow(bar).querySelector('.status-bar')?.textContent).toContain('10 sessions pending');
+
+    // Simulate 8 sessions moving to in_sync
+    manager.dispatchEvent(
+      new CustomEvent<SyncManagerSnapshot>('change', {
+        detail: makeSnapshot({
+          activeRun: { state: 'running' as const },
+          projects: [
+            {
+              projectId: 'proj-a',
+              localProjectId: 'p1',
+              status: 'running' as const,
+              totalSessions: 10,
+              sessionsDone: 8,
+              filesFound: 0,
+              filesDownloaded: 0,
+            },
+          ],
+          sessions: [
+            ...Array.from({ length: 8 }, (_, i) => ({
+              projectId: 'proj-a',
+              sessionId: `s${i}`,
+              status: 'in_sync' as const,
+              filesFound: 0,
+              filesDownloaded: 0,
+              filesFailed: 0,
+            })),
+            ...Array.from({ length: 2 }, (_, i) => ({
+              projectId: 'proj-a',
+              sessionId: `s${i + 8}`,
+              status: 'pending' as const,
+              filesFound: 0,
+              filesDownloaded: 0,
+              filesFailed: 0,
+            })),
+          ],
+        }),
+      }),
+    );
+    await bar.updateComplete;
+
+    expect(shadow(bar).querySelector('.status-bar')?.textContent).toContain('2 sessions pending');
   });
 });
 

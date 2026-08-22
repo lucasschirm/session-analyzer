@@ -2,7 +2,7 @@
  * @vitest-environment node
  */
 
-import type { SyncManifest } from '@lucasschirm/sal-sync-core';
+import { S3Error, type SyncManifest } from '@lucasschirm/sal-sync-core';
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseManager } from '../../src/db/database';
@@ -790,6 +790,58 @@ describe('SyncManager', () => {
     const putManifest = s3.getBuffer('new-proj/manifest.json');
     const parsed = JSON.parse(textFromBuffer(putManifest));
     expect(parsed.projectId).toBe('new-proj');
+  });
+
+  it('syncs a project folder without a manifest and creates the manifest on S3', async () => {
+    const { syncManager, workers, s3 } = createTestManager();
+    const initPromise = syncManager.init();
+    await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+    await initPromise;
+
+    const { connection } = await setupConnectionAndCredentials(dbClient);
+    // No manifest.json for "orphan-proj" — just a session folder
+    s3.putBuffer('orphan-proj/session-1/session/manifest.json', bufferFromText('{}'));
+
+    syncManager.requestRun(connection.id);
+    await flush();
+
+    // No warnings — missing manifest is not an error
+    const snapshot = syncManager.getSnapshot();
+    expect(snapshot.warnings.some((w) => w.includes('orphan-proj'))).toBe(false);
+
+    // A worker was dispatched for the project (sessions are synced)
+    expect(workers.length).toBeGreaterThanOrEqual(1);
+    const start = workers[0]?.posted.find((m) => m.type === 'START');
+    expect(start).toBeTruthy();
+    expect((start as { projectId: string }).projectId).toBe('orphan-proj');
+
+    // The manifest was created on S3 so it exists next time
+    const manifestBuffer = s3.getBuffer('orphan-proj/manifest.json');
+    const manifest = JSON.parse(textFromBuffer(manifestBuffer));
+    expect(manifest.projectId).toBe('orphan-proj');
+  });
+
+  it('fires onWarning when a warning is pushed during a run', async () => {
+    const warnings: string[] = [];
+    const manager = new SyncManager({
+      createWorker: () => new MockWorker() as unknown as Worker,
+      createS3Client: () => new MockS3Client(),
+      createBroadcastChannel: (name) =>
+        new FakeBroadcastChannel(name) as unknown as BroadcastChannel,
+      onWarning: (w) => warnings.push(w),
+      onFileDownloaded: () => Promise.resolve(),
+    });
+    managersToDispose.push(manager);
+
+    const initPromise = manager.init();
+    await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+    await initPromise;
+
+    manager.requestRun('missing-id');
+    await flush();
+
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings.some((w) => w.includes('Connection not found'))).toBe(true);
   });
 
   it('sends sync:true for a new session with files to download', async () => {
@@ -1860,6 +1912,430 @@ describe('SyncManager', () => {
       await expect(
         syncManager.retrySession(connection.id, 'remote-proj', syncSessionId),
       ).rejects.toThrow('Vault is locked');
+    });
+  });
+
+  describe('missing project manifest handling', () => {
+    it('syncs without a manifest and creates a local project using the folder name', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      s3.putBuffer('orphan-proj/session-1/session/manifest.json', bufferFromText('{}'));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      // No warnings — missing manifest is not an error
+      const snapshot = syncManager.getSnapshot();
+      expect(snapshot.warnings.some((w) => w.includes('orphan-proj'))).toBe(false);
+
+      // Worker dispatched — sessions are synced
+      expect(workers.length).toBeGreaterThanOrEqual(1);
+      const start = workers[0]?.posted.find((m) => m.type === 'START');
+      expect((start as { projectId: string } | undefined)?.projectId).toBe('orphan-proj');
+
+      // Local project created with folder name as both readable_id and name
+      const project = await dbClient.getProjectByReadableId('orphan-proj');
+      expect(project).not.toBeNull();
+      expect(project?.name).toBe('orphan-proj');
+
+      // Manifest created on S3
+      const manifestBuffer = s3.getBuffer('orphan-proj/manifest.json');
+      const manifest = JSON.parse(textFromBuffer(manifestBuffer));
+      expect(manifest.projectId).toBe('orphan-proj');
+      expect(manifest.name).toBe('orphan-proj');
+    });
+
+    it('reuses an existing local project when manifest is missing', async () => {
+      const { syncManager, workers, s3 } = createTestManager();
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      // Pre-create the local project
+      const existing = await createLocalProject(
+        dbClient,
+        'My Existing Project',
+        'orphan-proj',
+        connection.id,
+      );
+
+      s3.putBuffer('orphan-proj/session-1/session/manifest.json', bufferFromText('{}'));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      // Worker dispatched
+      expect(workers.length).toBeGreaterThanOrEqual(1);
+
+      // The existing project was reused — no new project created
+      const projects = await dbClient.getProjects();
+      const matching = projects.filter((p) => p.readable_id === 'orphan-proj');
+      expect(matching).toHaveLength(1);
+      expect(matching[0]?.id).toBe(existing.id);
+      expect(matching[0]?.name).toBe('My Existing Project');
+    });
+
+    it('proceeds when onProjectMissing handler returns null', async () => {
+      const { syncManager, workers, s3 } = createTestManager({
+        onProjectMissing: async () => null,
+      });
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      s3.putBuffer('declined-proj/session-1/session/manifest.json', bufferFromText('{}'));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      // No warnings — falls through to proceed anyway
+      const snapshot = syncManager.getSnapshot();
+      expect(snapshot.warnings.some((w) => w.includes('declined-proj'))).toBe(false);
+
+      // Worker dispatched
+      expect(workers.length).toBeGreaterThanOrEqual(1);
+      const start = workers[0]?.posted.find((m) => m.type === 'START');
+      expect((start as { projectId: string } | undefined)?.projectId).toBe('declined-proj');
+
+      // Manifest created on S3 with folder name
+      const manifestBuffer = s3.getBuffer('declined-proj/manifest.json');
+      const manifest = JSON.parse(textFromBuffer(manifestBuffer));
+      expect(manifest.projectId).toBe('declined-proj');
+    });
+
+    it('uses onProjectMissing handler when provided and creates manifest with user input', async () => {
+      let handlerCalled = false;
+      const { syncManager, s3 } = createTestManager({
+        onProjectMissing: async () => {
+          handlerCalled = true;
+          return { name: 'User Named Project', description: 'User description' };
+        },
+      });
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      s3.putBuffer('handler-proj/session-1/session/manifest.json', bufferFromText('{}'));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      expect(handlerCalled).toBe(true);
+
+      // Manifest created with user-provided name
+      const manifestBuffer = s3.getBuffer('handler-proj/manifest.json');
+      const manifest = JSON.parse(textFromBuffer(manifestBuffer));
+      expect(manifest.projectId).toBe('handler-proj');
+      expect(manifest.name).toBe('User Named Project');
+      expect(manifest.description).toBe('User description');
+
+      // Local project created with user-provided name
+      const project = await dbClient.getProjectByReadableId('handler-proj');
+      expect(project?.name).toBe('User Named Project');
+    });
+
+    it('still syncs when manifest write to S3 fails', async () => {
+      // Custom S3 client that fails putObject for manifest.json
+      class FailPutManifestS3 extends MockS3Client {
+        async putObject(key: string, body: ArrayBuffer | Uint8Array): Promise<{ etag?: string }> {
+          if (key.endsWith('/manifest.json')) {
+            throw new Error('S3 put failed: AccessDenied');
+          }
+          return super.putObject(key, body);
+        }
+      }
+      const failS3 = new FailPutManifestS3();
+      const workers: MockWorker[] = [];
+      const syncManager = new SyncManager({
+        createWorker: () => {
+          const w = new MockWorker();
+          workers.push(w);
+          return w as unknown as Worker;
+        },
+        createS3Client: () => failS3,
+        createBroadcastChannel: (name) =>
+          new FakeBroadcastChannel(name) as unknown as BroadcastChannel,
+        onFileDownloaded: () => Promise.resolve(),
+      });
+      managersToDispose.push(syncManager);
+
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      failS3.putBuffer('fail-put-proj/session-1/session/manifest.json', bufferFromText('{}'));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      // Worker still dispatched — sync proceeds despite manifest write failure
+      expect(workers.length).toBeGreaterThanOrEqual(1);
+      const start = workers[0]?.posted.find((m) => m.type === 'START');
+      expect((start as { projectId: string } | undefined)?.projectId).toBe('fail-put-proj');
+
+      // No warnings about the manifest write failure (it's silently caught)
+      const snapshot = syncManager.getSnapshot();
+      expect(snapshot.warnings.some((w) => w.includes('fail-put-proj'))).toBe(false);
+    });
+
+    it('warns with S3 error details when manifest fetch fails with a non-404 error', async () => {
+      // Custom S3 client that returns a 403 for manifest fetch
+      class FailGetManifestS3 extends MockS3Client {
+        async getObject(key: string): Promise<ArrayBuffer> {
+          if (key.endsWith('/manifest.json') && !this.hasBuffer(key)) {
+            throw new S3Error({
+              status: 403,
+              code: 'AccessDenied',
+              message: 'Access denied',
+              kind: 's3',
+            });
+          }
+          return super.getObject(key);
+        }
+
+        private hasBuffer(key: string): boolean {
+          return (this as unknown as { store: Map<string, ArrayBuffer> }).store.has(key);
+        }
+      }
+      const failS3 = new FailGetManifestS3();
+      const warnings: string[] = [];
+      const syncManager = new SyncManager({
+        createWorker: () => new MockWorker() as unknown as Worker,
+        createS3Client: () => failS3,
+        createBroadcastChannel: (name) =>
+          new FakeBroadcastChannel(name) as unknown as BroadcastChannel,
+        onWarning: (w) => warnings.push(w),
+        onFileDownloaded: () => Promise.resolve(),
+      });
+      managersToDispose.push(syncManager);
+
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      // Put a session file so the folder is discovered, but no manifest
+      failS3.putBuffer('denied-proj/session-1/session/manifest.json', bufferFromText('{}'));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      // A warning was emitted with the project name
+      expect(warnings.some((w) => w.includes('denied-proj'))).toBe(true);
+      expect(warnings.some((w) => w.includes('manifest error'))).toBe(true);
+    });
+  });
+
+  describe('onWarning seam', () => {
+    it('fires onWarning for a global namespace conflict', async () => {
+      const warnings: string[] = [];
+      const { syncManager, s3 } = createTestManager({ onWarning: (w) => warnings.push(w) });
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      // Put something under global/ that is NOT cas/ — triggers the conflict warning
+      s3.putBuffer('global/rogue/session/manifest.json', bufferFromText('{}'));
+      // Also need a valid project so the run doesn't just finish empty
+      const manifestObj = makeProjectManifest('real-proj', 'Real Project');
+      s3.putBuffer('real-proj/manifest.json', bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      expect(warnings.some((w) => w.includes('global') && w.includes('reserved'))).toBe(true);
+    });
+
+    it('fires onWarning when a worker reports an error', async () => {
+      const warnings: string[] = [];
+      const { syncManager, workers, s3 } = createTestManager({
+        onWarning: (w) => warnings.push(w),
+      });
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const projectId = 'worker-err-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Worker Error Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      worker.receive({
+        type: 'WORKER_ERROR',
+        projectId,
+        error: { code: 'WORKER_CRASH', message: 'Worker crashed unexpectedly' },
+      });
+      await flush();
+
+      expect(warnings.some((w) => w.includes(projectId) && w.includes('WORKER_CRASH'))).toBe(true);
+    });
+
+    it('fires onWarning when a run is aborted (e.g. offline)', async () => {
+      const warnings: string[] = [];
+      const { syncManager, s3, offline } = createTestManager({
+        onWarning: (w) => warnings.push(w),
+      });
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const projectId = 'abort-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Abort Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      offline.dispatchEvent(new Event('offline'));
+      await flush();
+
+      expect(warnings.some((w) => w.includes('NETWORK_OFFLINE') || w.includes('Network'))).toBe(
+        true,
+      );
+    });
+
+    it('fires onWarning when failRun is called (e.g. connection not found)', async () => {
+      const warnings: string[] = [];
+      const { syncManager } = createTestManager({ onWarning: (w) => warnings.push(w) });
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      syncManager.requestRun('missing-connection-id');
+      await flush();
+
+      expect(warnings.some((w) => w.includes('Connection not found'))).toBe(true);
+    });
+  });
+
+  describe('onRunSummary seam', () => {
+    it('fires onRunSummary with failed state when a run fails', async () => {
+      const summaries: Array<{ state: string; warnings: string[] }> = [];
+      const { syncManager } = createTestManager({
+        onRunSummary: (s) => summaries.push({ state: s.state, warnings: [...s.warnings] }),
+      });
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      syncManager.requestRun('missing-connection-id');
+      await flush();
+
+      const failed = summaries.find((s) => s.state === 'failed');
+      expect(failed).toBeDefined();
+      expect(failed?.warnings.some((w) => w.includes('Connection not found'))).toBe(true);
+    });
+
+    it('fires onRunSummary with done state when a run completes successfully', async () => {
+      const summaries: Array<{ state: string; warnings: string[] }> = [];
+      const { syncManager, workers, s3 } = createTestManager({
+        onRunSummary: (s) => summaries.push({ state: s.state, warnings: [...s.warnings] }),
+      });
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const projectId = 'done-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Done Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      const worker = getWorker(workers);
+      worker.receive({
+        type: 'WORKER_DONE',
+        projectId,
+        synced: 0,
+        failed: 0,
+        skipped: 0,
+      });
+      await flush();
+
+      const done = summaries.find((s) => s.state === 'done');
+      expect(done).toBeDefined();
+    });
+
+    it('fires onRunSummary with cancelled state when a run is cancelled', async () => {
+      const summaries: Array<{ state: string }> = [];
+      const { syncManager, s3 } = createTestManager({
+        onRunSummary: (s) => summaries.push({ state: s.state }),
+      });
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+      const projectId = 'cancel-proj';
+      const manifestObj = makeProjectManifest(projectId, 'Cancel Project');
+      s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      syncManager.cancel();
+      await flush();
+
+      const cancelled = summaries.find((s) => s.state === 'cancelled');
+      expect(cancelled).toBeDefined();
+    });
+  });
+
+  describe('failRun error formatting', () => {
+    it('includes S3 error details (status, code, message) in the warning for S3Errors', async () => {
+      // Custom S3 client whose listProjectFolders throws an S3Error
+      class FailListS3 extends MockS3Client {
+        async listProjectFolders(): Promise<string[]> {
+          throw new S3Error({
+            status: 403,
+            code: 'SignatureDoesNotMatch',
+            message: 'Signature does not match',
+            kind: 's3',
+          });
+        }
+      }
+      const failS3 = new FailListS3();
+      const warnings: string[] = [];
+      const syncManager = new SyncManager({
+        createWorker: () => new MockWorker() as unknown as Worker,
+        createS3Client: () => failS3,
+        createBroadcastChannel: (name) =>
+          new FakeBroadcastChannel(name) as unknown as BroadcastChannel,
+        onWarning: (w) => warnings.push(w),
+        onFileDownloaded: () => Promise.resolve(),
+      });
+      managersToDispose.push(syncManager);
+
+      const initPromise = syncManager.init();
+      await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+      await initPromise;
+
+      const { connection } = await setupConnectionAndCredentials(dbClient);
+
+      syncManager.requestRun(connection.id);
+      await flush();
+
+      // The run should fail with the S3 error details
+      const snapshot = syncManager.getSnapshot();
+      expect(snapshot.activeRun?.state).toBe('failed');
+      // describeS3Error formats as "HTTP 403 • SignatureDoesNotMatch • Signature does not match"
+      expect(warnings.some((w) => w.includes('403'))).toBe(true);
+      expect(warnings.some((w) => w.includes('SignatureDoesNotMatch'))).toBe(true);
     });
   });
 });

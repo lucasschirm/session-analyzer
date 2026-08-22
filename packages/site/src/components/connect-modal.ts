@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { dbClient } from '../db/db-client';
+import { hintForS3Error } from '../lib/s3-errors';
 import { encryptField, isUnlocked } from '../sync/credential-crypto';
 import { syncManager } from '../sync/sync-manager';
 import type { Connection, StoredS3Credentials } from '../types';
@@ -54,9 +55,6 @@ interface TestResult {
   link?: string;
 }
 
-const CORS_DOCS_URL =
-  'https://github.com/lucasschirm/session-analyzer/blob/main/packages/site/README.md#cors-configuration';
-
 /** Builds a blank form for a new connection. */
 function blankForm(): FormData {
   return {
@@ -98,28 +96,6 @@ function connectionFromForm(form: FormData, id: string, now: number): Connection
     created_at: now,
     updated_at: now,
   };
-}
-
-/** Chooses a human hint and an optional docs link for an S3 error. */
-function hintForS3Error(error: S3Error): { hint: string; link?: string } {
-  if (error.kind === 'cors' || error.kind === 'network') {
-    return {
-      hint: 'Could not reach the S3 endpoint. This is often a CORS misconfiguration or an incorrect endpoint.',
-      link: CORS_DOCS_URL,
-    };
-  }
-  switch (error.code) {
-    case 'SignatureDoesNotMatch':
-      return { hint: 'Check the secret access key and region are correct.' };
-    case 'NoSuchBucket':
-      return { hint: 'Check the bucket name and region are correct.' };
-    case 'AccessDenied':
-      return { hint: 'Check this key has permission to access the bucket.' };
-    case 'RequestTimeTooSkewed':
-      return { hint: 'Check your system clock is accurate.' };
-    default:
-      return { hint: 'Check the endpoint, credentials, and bucket details.' };
-  }
 }
 
 /** Returns a presentable timestamp, or a placeholder. */

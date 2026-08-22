@@ -20,7 +20,9 @@ import {
   type S3ListOptions,
   type SyncManifest,
 } from '@lucasschirm/sal-sync-core';
+import { toastManager } from '../components/toast-container';
 import { type DbClient, dbClient } from '../db/db-client';
+import { describeS3Error } from '../lib/s3-errors';
 import type {
   Connection,
   DashboardSession,
@@ -103,6 +105,8 @@ export interface SyncManagerOptions {
   onPasskeyRequired?: () => Promise<string>;
   /** Optional consumer of run summary updates. */
   onRunSummary?: (summary: RunSummary) => void;
+  /** Optional consumer fired each time a warning is added to a run. */
+  onWarning?: (warning: string) => void;
   /** Event target for `offline` events; defaults to `globalThis`. */
   eventTarget?: EventTarget;
 }
@@ -224,6 +228,7 @@ export class SyncManager extends EventTarget {
   private readonly onProjectMissing?: (folder: string) => Promise<ProjectManifestInput | null>;
   private readonly onPasskeyRequired?: () => Promise<string>;
   private readonly onRunSummary?: (summary: RunSummary) => void;
+  private readonly onWarning?: (warning: string) => void;
   private readonly eventTarget: EventTarget;
 
   private broadcastChannel: BroadcastChannel | null = null;
@@ -251,6 +256,7 @@ export class SyncManager extends EventTarget {
     this.onProjectMissing = options.onProjectMissing;
     this.onPasskeyRequired = options.onPasskeyRequired;
     this.onRunSummary = options.onRunSummary;
+    this.onWarning = options.onWarning;
     this.eventTarget = options.eventTarget ?? globalThis;
   }
 
@@ -432,7 +438,7 @@ export class SyncManager extends EventTarget {
       this.dispatchWorkers(run);
       this.checkRunComplete(run);
     } catch (error) {
-      this.failRun(run, this.errorMessage(error));
+      this.failRun(run, describeS3Error(error).message);
     }
   }
 
@@ -497,7 +503,8 @@ export class SyncManager extends EventTarget {
     const children = await run.s3Client.listSessionFolders(CAS_NAMESPACE_ROOT);
     for (const child of children) {
       if (child !== 'cas') {
-        run.warnings.push(
+        this.pushWarning(
+          run,
           "project id 'global' is reserved — re-upload under a different SAL_PROJECT_ID",
         );
         break;
@@ -517,20 +524,50 @@ export class SyncManager extends EventTarget {
         await this.handleMissingProjectManifest(run, folder);
         return;
       }
-      run.warnings.push(`Project "${folder}" manifest error: ${this.errorMessage(error)}`);
+      const detail = describeS3Error(error);
+      this.pushWarning(run, `Project "${folder}" manifest error: ${detail.message}`);
     }
   }
 
   private async handleMissingProjectManifest(run: SyncRun, folder: string): Promise<void> {
-    if (!this.onProjectMissing || !run.s3Client) return;
-    const input = await this.onProjectMissing(folder);
-    if (!input) return;
-    const project = await this.createLocalProject(run, folder, input.name, input.description);
+    if (this.onProjectMissing && run.s3Client) {
+      const input = await this.onProjectMissing(folder);
+      if (input) {
+        const project = await this.createLocalProject(run, folder, input.name, input.description);
+        await this.putProjectManifest(run, folder, input.name, input.description);
+        this.queueProjectForSync(run, folder, project.id);
+        return;
+      }
+    }
+    // No handler or user declined — proceed anyway using the folder name.
+    // The manifest is metadata; the worker discovers sessions from the S3
+    // folder structure. Create/find a local project and queue it for sync.
+    // The manifest will be created/updated on S3 so it exists next time.
+    const project = await this.findOrCreateLocalProject(run, folder);
+    await this.putProjectManifest(run, folder, folder, undefined).catch(() => undefined);
+    this.queueProjectForSync(run, folder, project.id);
+  }
+
+  /** Finds an existing local project by readable id, or creates one. */
+  private async findOrCreateLocalProject(run: SyncRun, readableId: string): Promise<Project> {
+    const existing = await this.db.getProjectByReadableId(readableId);
+    if (existing) return existing;
+    return this.createLocalProject(run, readableId, readableId, undefined);
+  }
+
+  /** Writes a project manifest to S3 for the given folder. */
+  private async putProjectManifest(
+    run: SyncRun,
+    folder: string,
+    name: string,
+    description?: string,
+  ): Promise<void> {
+    if (!run.s3Client) return;
     const manifest = buildProjectManifest(
       {
         projectId: folder,
-        name: input.name,
-        description: input.description,
+        name,
+        description,
         writtenBy: 'session-analyzer-site',
       },
       () => new Date().toISOString(),
@@ -539,7 +576,6 @@ export class SyncManager extends EventTarget {
       `${encodeKeySegment(folder)}/manifest.json`,
       this.bufferFromText(JSON.stringify(manifest)),
     );
-    this.queueProjectForSync(run, folder, project.id);
   }
 
   private async useProjectManifest(
@@ -1279,7 +1315,7 @@ export class SyncManager extends EventTarget {
     message: WorkerErrorMessage,
   ): Promise<void> {
     const details = this.formatSyncDetails(message.error.code, message.error.message);
-    run.warnings.push(`${project.projectId}: ${details}`);
+    this.pushWarning(run, `${project.projectId}: ${details}`);
     await this.closeWorkerSlot(run, project, worker, details, true);
   }
 
@@ -1290,7 +1326,7 @@ export class SyncManager extends EventTarget {
     error: Error,
   ): void {
     const details = this.formatSyncDetails('WORKER_ERROR', error.message);
-    run.warnings.push(`${project.projectId}: ${details}`);
+    this.pushWarning(run, `${project.projectId}: ${details}`);
     this.closeWorkerSlot(run, project, worker, details, true).catch(() => undefined);
   }
 
@@ -1343,13 +1379,19 @@ export class SyncManager extends EventTarget {
     this.processQueue();
   }
 
+  /** Pushes a warning onto the run and fires the {@link onWarning} seam. */
+  private pushWarning(run: SyncRun, warning: string): void {
+    run.warnings.push(warning);
+    this.onWarning?.(warning);
+  }
+
   private failRun(run: SyncRun, reason: string): void {
     for (const worker of run.activeWorkers) {
       worker.postMessage({ type: 'CANCEL' } as SyncMessageToWorker);
       worker.terminate();
     }
     run.activeWorkers.clear();
-    run.warnings.push(reason);
+    this.pushWarning(run, reason);
     this.endRun(run, 'failed');
   }
 
@@ -1357,7 +1399,7 @@ export class SyncManager extends EventTarget {
     const run = this.activeRun;
     if (!run) return;
     run.cancelled = true;
-    run.warnings.push(details);
+    this.pushWarning(run, details);
 
     for (const worker of run.activeWorkers) {
       worker.postMessage({ type: 'CANCEL' } as SyncMessageToWorker);
@@ -1536,11 +1578,6 @@ export class SyncManager extends EventTarget {
     return connections.find((c) => c.id === connectionId) ?? null;
   }
 
-  private errorMessage(error: unknown): string {
-    if (error instanceof Error) return error.message;
-    return String(error);
-  }
-
   private isNotFoundError(error: unknown): boolean {
     const e = error as { status?: number; code?: string };
     return e.status === 404 || e.code === 'NoSuchKey' || e.code === 'NotFound';
@@ -1552,4 +1589,13 @@ const fileBridge = createFileProcessingBridge(dbClient, parseInWorker);
 export const syncManager = new SyncManager({
   onFileDownloaded: fileBridge.onFileDownloaded,
   onSyncComplete: fileBridge.onSyncComplete,
+  onWarning: (warning) => toastManager.warning('Sync warning', { message: warning }),
+  onRunSummary: (summary) => {
+    if (summary.state === 'failed' && summary.warnings.length > 0) {
+      toastManager.error('Sync failed', {
+        message: summary.warnings[summary.warnings.length - 1],
+        hint: 'Click the progress bar in the header for full details.',
+      });
+    }
+  },
 });

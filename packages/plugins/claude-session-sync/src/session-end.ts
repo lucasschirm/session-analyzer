@@ -9,6 +9,7 @@ import {
   zeroRun,
 } from '@lucasschirm/sal-sync';
 import { parseClaudeHookInput, readStdin, toHarnessSession, toSyncInput } from './claude.js';
+import { resolveCliEnv } from './cli/env.js';
 
 export async function runSessionEnd(raw: unknown, options: CliOptions = {}): Promise<number> {
   const parsed = parseClaudeHookInput(raw);
@@ -58,7 +59,10 @@ export async function runSessionEnd(raw: unknown, options: CliOptions = {}): Pro
 async function main(): Promise<number> {
   try {
     const raw = await readStdin();
-    return await runSessionEnd(raw, { env: process.env });
+    const parsed = parseClaudeHookInput(raw);
+    const cwd = parsed.ok ? parsed.input.cwd : process.cwd();
+    const env = await resolveCliEnv(cwd);
+    return await runSessionEnd(raw, { env });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`claude-session-sync session-end error: ${message}\n`);

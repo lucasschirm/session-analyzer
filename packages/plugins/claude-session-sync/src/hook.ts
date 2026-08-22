@@ -15,6 +15,7 @@ import {
   toHarnessSession,
   toSyncInput,
 } from './claude.js';
+import { resolveCliEnv } from './cli/env.js';
 
 export async function runHook(raw: unknown, options: CliOptions = {}): Promise<number> {
   const parsed = parseClaudeHookInput(raw);
@@ -37,7 +38,10 @@ export async function runHook(raw: unknown, options: CliOptions = {}): Promise<n
 async function main(): Promise<number> {
   try {
     const raw = await readStdin();
-    return await runHook(raw, { env: process.env });
+    const parsed = parseClaudeHookInput(raw);
+    const cwd = parsed.ok ? parsed.input.cwd : process.cwd();
+    const env = await resolveCliEnv(cwd);
+    return await runHook(raw, { env });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`claude-session-sync hook error: ${message}\n`);

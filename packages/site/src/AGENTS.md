@@ -18,6 +18,8 @@ src/
 │   ├── connect-modal.ts           # S3 connection management modal (list, add, edit, test, sync)
 │   ├── upload-zone.ts             # Drag & drop + file picker upload zone
 │   ├── sync-progress-bar.ts       # Global sync progress bar with live P/S/F counts, queued-run suffix, cancel button, and full sync-status modal
+│   ├── sync-status-bar.ts         # Bottom-fixed sync discovery indicator ("Found: X Projects / Y Sessions / Z sessions pending") shown while a run is active or queued
+│   ├── toast-container.ts         # ToastManager singleton + fixed-position toast stack (error/warning/info/success); error toasts are sticky, others auto-dismiss; sync warnings and run failures are wired to toasts via the manager
 │   ├── project-sync-status-modal.ts # Per-project and full-run sync status modal with project/session progress and file counts
 │   ├── session-sync-error-modal.ts # Failed-session detail modal with context-aware retry (bypasses sync-only-new and handles vault unlock)
 │   ├── session-sync-chip.ts       # Compact session sync status chip with clickable failed state
@@ -32,10 +34,11 @@ src/
 │   ├── markdown.ts                # marked + DOMPurify rendering helpers
 │   ├── format.ts                  # Compact number formatting (K/M/B) with full-number tooltips; estimateTokenCount/formatEstimatedTokens for the ~4-chars/token tool-result estimate (no exact tokenizer available client-side)
 │   ├── claude-to-dashboard.ts     # toDashboardSession(native, projectId, title): transforms a `@lucasschirm/sal-claude-session-parser` ClaudeCodeSession into DashboardSession - token accumulation incl. per-model, tool_use/tool_result pairing by id, result_uuid capture, isMeta filtering, compact_boundary -> compactions, task_reminder -> SessionTask, ai-title -> title. Successor to the old inline parseClaudeCode; reuses SessionBuilder from workers/session-builder.ts
+│   ├── s3-errors.ts               # Shared S3 error utilities: hintForS3Error (human hint + docs link per error code), formatS3Error (HTTP status + code + message), describeS3Error (structured message + hint for toast notifications)
 │   └── subagents.ts               # Classifies uploaded/synced files into main vs subagent pairs, parses `.meta.json` sidecars, and folds parsed subagent usage into the parent session via mergeSubagentIntoSession
 ├── sync/                          # Remote sync orchestration and downloaded file processing (see src/sync/AGENTS.md)
 ├── pages/
-│   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap, sync-manager initialization, and Connect entry point
+│   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap, sync-manager initialization, Connect entry point, bottom-fixed sync-status-bar, and toast-container
 │   ├── home-page.ts               # Projects CRUD grid + export database; shows project-sync-indicator during sync
 │   ├── project-view.ts            # Upload zone + search + sessions for one project; Total Tokens card uses compact number formatting with tooltip; shows project-sync-indicator and passes project to session-list
 │   ├── session-dashboard.ts       # Metric cards + link to the Session Transcript page; "Total Tokens" card = input+output only (cache tokens excluded - see SessionBuilder.finalize); enriched with token breakdown panel (input/output/cache write/cache read), an estimated Tool Result Tokens panel (~4-chars/token heuristic over tool_result content, % of total input volume), models-used table, top-tools ranked list (Skill/Agent tool calls excluded - see isSkillTool/isAgentTool), skills-used list with parameters, a collapsible Subagents panel ("Show all"), separate Agents/Skills metric cards (Agent/Skill tool invocation counts, distinct from Sub Agents), and session-sync-chip with retry for failed synced sessions
