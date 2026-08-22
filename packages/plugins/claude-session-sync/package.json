@@ -1,6 +1,6 @@
 {
   "name": "@lucasschirm/claude-session-sync",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "private": false,
   "type": "module",
   "license": "ISC",
@@ -25,10 +25,9 @@
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
     "sync": "node ./bin/claude-sync"
   },
-  "dependencies": {
-    "@lucasschirm/sal-sync": "workspace:*"
-  },
+  "dependencies": {},
   "devDependencies": {
+    "@lucasschirm/sal-sync": "workspace:*",
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "^4.1.10",
     "esbuild": "^0.25.12",
