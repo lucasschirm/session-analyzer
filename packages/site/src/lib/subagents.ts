@@ -81,6 +81,31 @@ export function parseSubagentMeta(raw: string): SubagentMeta {
   }
 }
 
+/** Result of classifying a single sync-downloaded file path. */
+export interface SyncFileClassification {
+  /** Main session transcript or subagent file. */
+  type: 'main' | 'subagent';
+  /** Agent id for subagent files. */
+  agentId?: string;
+  /** Subagent file kind: transcript or sidecar. */
+  kind?: 'jsonl' | 'meta';
+}
+
+/**
+ * Classifies a single sync-downloaded logical path. Main transcripts live
+ * directly under `session/`; `session/subagents/agent-<id>.jsonl` and
+ * `.meta.json` are subagent files. Any other scope is ignored.
+ */
+export function classifySyncFile(path: string): SyncFileClassification | null {
+  const match = path.match(SUBAGENT_FILE_PATTERN);
+  if (match) {
+    const [, agentId, kind] = match;
+    return { type: 'subagent', agentId, kind: kind === 'jsonl' ? 'jsonl' : 'meta' };
+  }
+  if (path.startsWith('session/')) return { type: 'main' };
+  return null;
+}
+
 /**
  * Folds a subagent's already-parsed session (its own tokens/cache/models,
  * exactly as if it were a standalone session) into the parent session's

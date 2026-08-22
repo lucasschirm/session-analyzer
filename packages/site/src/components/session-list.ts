@@ -1,14 +1,21 @@
 import { css, html, LitElement } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { formatCompactNumber, formatFullNumber } from '../lib/format';
-import type { DashboardSession } from '../types';
+import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
+import type { DashboardSession, Project } from '../types';
+import './session-sync-chip';
+import './session-sync-error-modal';
 
 /**
  * Session list.
  *
  * Renders sessions (expected sorted by date descending) as clickable rows and
  * dispatches `session-click` with the selected session id.
+ *
+ * When a `project` is supplied, each row also shows a `session-sync-chip`
+ * reflecting the current sync state and opens the error modal on failed
+ * sessions.
  */
 @customElement('session-list')
 export class SessionList extends LitElement {
@@ -91,9 +98,38 @@ export class SessionList extends LitElement {
       border: 1px dashed var(--md-sys-color-outline, #2a303c);
       border-radius: 8px;
     }
+
+    .session-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
   `;
 
   @property({ type: Array }) sessions: DashboardSession[] = [];
+
+  @property({ type: Object }) project: Project | null = null;
+
+  @state() private syncSnapshot: SyncManagerSnapshot | null = null;
+
+  @state() private errorModalOpen = false;
+
+  @state() private errorSession: DashboardSession | null = null;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.syncSnapshot = syncManager.getSnapshot();
+    syncManager.addEventListener('change', this.handleSyncChange);
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    syncManager.removeEventListener('change', this.handleSyncChange);
+  }
+
+  private handleSyncChange = (event: Event): void => {
+    this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
+  };
 
   private formatDate(timestamp: number): string {
     return new Date(timestamp).toLocaleString();
@@ -113,6 +149,26 @@ export class SessionList extends LitElement {
     );
   }
 
+  private syncStatusFor(session: DashboardSession): string {
+    const project = this.project;
+    if (!project?.readable_id || !session.sync_session_id) return session.sync_status ?? '';
+
+    const live = this.syncSnapshot?.sessions.find(
+      (s) => s.projectId === project.readable_id && s.sessionId === session.sync_session_id,
+    );
+    return live?.status ?? session.sync_status ?? '';
+  }
+
+  private openErrorModal(session: DashboardSession): void {
+    this.errorSession = session;
+    this.errorModalOpen = true;
+  }
+
+  private closeErrorModal(): void {
+    this.errorModalOpen = false;
+    this.errorSession = null;
+  }
+
   render() {
     if (this.sessions.length === 0) {
       return html`<div class="session-list"><p class="empty">No sessions found</p></div>`;
@@ -130,7 +186,23 @@ export class SessionList extends LitElement {
               @click=${() => this.handleSessionClick(session.id)}
             >
               <div class="session-info">
-                <div class="session-title">${session.title || this.sourceLabel(session)}</div>
+                <div class="session-row">
+                  <div class="session-title">${session.title || this.sourceLabel(session)}</div>
+                  ${
+                    this.project && (session.sync_status || session.sync_session_id)
+                      ? html`
+                        <session-sync-chip
+                          .status=${this.syncStatusFor(session)}
+                          .details=${session.sync_details ?? ''}
+                          @chip-click=${(event: Event) => {
+                            event.stopPropagation();
+                            this.openErrorModal(session);
+                          }}
+                        ></session-sync-chip>
+                      `
+                      : ''
+                  }
+                </div>
                 <div class="session-meta">
                   ${this.sourceLabel(session)} • ${this.formatDate(session.started_at)}
                   ${session.model ? html` • ${session.model}` : ''}
@@ -146,6 +218,22 @@ export class SessionList extends LitElement {
           `,
         )}
       </div>
+
+      ${
+        this.errorSession && this.project
+          ? html`
+            <session-sync-error-modal
+              .open=${this.errorModalOpen}
+              .connectionId=${this.project.connection_id ?? ''}
+              .projectId=${this.project.readable_id ?? ''}
+              .sessionId=${this.errorSession.sync_session_id ?? ''}
+              .syncDetails=${this.errorSession.sync_details ?? ''}
+              .status=${this.errorSession.sync_status ?? ''}
+              @modal-close=${this.closeErrorModal}
+            ></session-sync-error-modal>
+          `
+          : ''
+      }
     `;
   }
 }

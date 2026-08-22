@@ -5,17 +5,17 @@ import * as fsp from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { clearTimeout, setTimeout } from 'node:timers';
-
-import type { ArtifactIdentity } from '../artifact.js';
-import { loadConfig, type SyncConfig } from '../config/index.js';
+import type {
+  ArtifactIdentity,
+  PutObjectInput,
+  StorageAdapter,
+  SyncConfig,
+} from '@lucasschirm/sal-sync-core';
+import { StorageError } from '@lucasschirm/sal-sync-core';
+import { loadConfig } from '../config/index.js';
 import { processDelta, selectSanitizer } from '../hashing/index.js';
 import { StateStore } from '../state/index.js';
-import {
-  type PutObjectInput,
-  S3StorageAdapter,
-  type StorageAdapter,
-  StorageError,
-} from '../storage/index.js';
+import { S3StorageAdapter } from '../storage/index.js';
 
 import {
   createWatcherMatcher,

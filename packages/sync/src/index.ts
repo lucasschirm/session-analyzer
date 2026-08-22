@@ -1,19 +1,127 @@
-export * from './allowlist.js';
-export * from './artifact.js';
+/**
+ * Package entry — re-exports the isomorphic sync-core contracts and the
+ * sal-sync-specific implementations that build on top of them.
+ *
+ * The synchronous `sha256Hex` implementation remains sal-sync's own; the
+ * isomorphic async hasher lives in `@lucasschirm/sal-sync-core` and is not
+ * re-exported here to avoid name collision.
+ */
+
+export {
+  type AllowlistEntry,
+  type ArtifactIdentity,
+  type ArtifactScope,
+  type ArtifactStatus,
+  buildObjectKey,
+  buildProjectManifest,
+  CAPTURE_ALLOWLIST,
+  CAPTURE_ALLOWLIST_VERSION,
+  CAS_NAMESPACE_ROOT,
+  CAS_PREFIX,
+  type CaptureAllowlist,
+  type CaptureScope,
+  DEFAULT_HOOK_UPLOAD_TIMEOUT_MS,
+  DEFAULT_MAX_FILE_BYTES,
+  DEFAULT_MAX_FILES,
+  DEFAULT_MAX_JSON_DEPTH,
+  DEFAULT_MAX_JSONL_LINE_BYTES,
+  DEFAULT_MAX_TOTAL_BYTES,
+  DEFAULT_MAX_TRANSCRIPT_BYTES,
+  DEFAULT_PLUGIN_VERSION,
+  DEFAULT_PRIVACY_POLICY,
+  DEFAULT_SESSION_END_BUDGET_MS,
+  DEFAULT_SYNC_LIMITS,
+  DEFAULT_SYNC_RETRIES,
+  DEFAULT_SYNC_TIMEOUT_MS,
+  DEFAULT_SYNC_TIMEOUTS,
+  type DeleteObjectsInput,
+  type DeleteObjectsResult,
+  type DeletionBehavior,
+  ENV_SAL_CAPTURE_TRANSCRIPTS,
+  ENV_SAL_HOOK_UPLOAD_TIMEOUT,
+  ENV_SAL_MAX_FILE_BYTES,
+  ENV_SAL_MAX_FILES,
+  ENV_SAL_MAX_JSON_DEPTH,
+  ENV_SAL_MAX_JSONL_LINE_BYTES,
+  ENV_SAL_MAX_TOTAL_BYTES,
+  ENV_SAL_MAX_TRANSCRIPT_BYTES,
+  ENV_SAL_PROJECT_ID,
+  ENV_SAL_SESSION_END_BUDGET_MS,
+  ENV_SAL_STORAGE_ACCESS_KEY_ID,
+  ENV_SAL_STORAGE_BUCKET,
+  ENV_SAL_STORAGE_ENDPOINT,
+  ENV_SAL_STORAGE_REGION,
+  ENV_SAL_STORAGE_SECRET_ACCESS_KEY,
+  ENV_SAL_STORAGE_SESSION_TOKEN,
+  ENV_SAL_STORAGE_TYPE,
+  ENV_SAL_STORAGE_URL,
+  ENV_SAL_SYNC_DISABLED,
+  ENV_SAL_SYNC_RETRIES,
+  ENV_SAL_SYNC_TIMEOUT,
+  encodeKeySegment,
+  FULL_DISABLE_ENV_VAR,
+  FULL_DISABLE_VALUE,
+  type GetObjectInput,
+  type GetObjectResult,
+  GLOBAL_ALLOWLIST_PATTERNS,
+  type HeadObjectInput,
+  type HeadObjectResult,
+  type ListObjectEntry,
+  type ListObjectsInput,
+  type ListObjectsResult,
+  MANIFEST_SCHEMA_VERSION,
+  type ManifestArtifact,
+  type ParsedObjectKey,
+  type ProjectManifest,
+  type PutObjectInput,
+  type PutObjectResult,
+  parseObjectKey,
+  parseProjectManifest,
+  parseSyncManifest,
+  type RetentionScope,
+  SANITIZATION_POLICY_VERSION,
+  type SessionData,
+  type SessionEndReason,
+  type SessionTelemetry,
+  STORAGE_CONFIG_FIELDS,
+  type StorageAdapter,
+  type StorageAdapterOptions,
+  type StorageConfig,
+  StorageError,
+  type StorageObjectScope,
+  type StorageType,
+  SYNC_ERROR_CATALOG,
+  SYNC_SCHEMA_VERSION,
+  SYNC_STORAGE_URL_CONFLATION_PROHIBITED,
+  SYNC_VERSION,
+  type SyncConfig,
+  type SyncEnvVar,
+  type SyncErrorCategory,
+  type SyncErrorCode,
+  type SyncErrorMeta,
+  type SyncLimits,
+  type SyncManifest,
+  type SyncPerformanceTelemetry,
+  type SyncPrivacyPolicy,
+  type SyncRun,
+  type SyncRunResult,
+  type SyncTimeouts,
+  type SyncTrigger,
+  TELEMETRY_INCLUDES_RAW_EXCEPTIONS,
+  UNKNOWN_HARNESS_VERSION,
+  validateProjectId,
+  WATCHER_MATCHER_VERSION,
+  WORKSPACE_ALLOWLIST_PATTERNS,
+} from '@lucasschirm/sal-sync-core';
+
 export * from './cli/index.js';
 export * from './config/index.js';
 export * from './discovery/index.js';
-export * from './errors.js';
 export * from './harness.js';
 export * from './hashing/index.js';
-export * from './limits.js';
 export * from './manifest/index.js';
-export * from './privacy.js';
 export * from './sanitization/index.js';
-export * from './session.js';
 export * from './state/index.js';
 export * from './storage/index.js';
-export * from './sync-run.js';
 export * from './telemetry/index.js';
-export * from './versions.js';
 export * from './watcher/index.js';

@@ -29,6 +29,23 @@ describe('loadConfig', () => {
     expect(result.error?.code).toBe('SYNC_CONFIG_MISSING');
   });
 
+  it('rejects the reserved project id "global" with a clear reserved-id error', () => {
+    const result = loadConfig({ ...baseEnv, SAL_PROJECT_ID: 'global' });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.disabled).toBe(true);
+    expect(result.error?.code).toBe('SYNC_CONFIG_MISSING');
+    expect(result.error?.message).toContain('global');
+    expect(result.error?.message).toContain('reserved');
+  });
+
+  it('rejects an invalid SAL_PROJECT_ID format', () => {
+    const result = loadConfig({ ...baseEnv, SAL_PROJECT_ID: 'my_project' });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error?.code).toBe('SYNC_CONFIG_MISSING');
+  });
+
   it('disables synchronization when SAL_SYNC_DISABLED=true', () => {
     const result = loadConfig({ ...baseEnv, SAL_SYNC_DISABLED: 'true' });
     expect(result.ok).toBe(false);

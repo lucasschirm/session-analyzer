@@ -14,6 +14,7 @@ import {
   zeroRun,
 } from '@lucasschirm/sal-sync';
 import { parseClaudeHookInput, readStdin, toHarnessSession, toSyncInput } from './claude.js';
+import { resolveCliEnv } from './cli/env.js';
 import { isMainModule } from './is-main-module.js';
 
 export interface SessionStartRunOptions extends CliOptions {
@@ -93,7 +94,10 @@ export async function runSessionStart(
 async function main(): Promise<number> {
   try {
     const raw = await readStdin();
-    return await runSessionStart(raw, { env: process.env });
+    const parsed = parseClaudeHookInput(raw);
+    const cwd = parsed.ok ? parsed.input.cwd : process.cwd();
+    const env = await resolveCliEnv(cwd);
+    return await runSessionStart(raw, { env });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`claude-session-sync session-start error: ${message}\n`);

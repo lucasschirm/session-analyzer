@@ -1,14 +1,22 @@
 import { Buffer } from 'node:buffer';
-
 import type {
   ArtifactIdentity,
   ArtifactScope,
   ArtifactStatus,
   ManifestArtifact,
-} from '../artifact.js';
-import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
-import type { SyncManifest } from '../manifest/index.js';
-import type { SessionData } from '../session.js';
+  SessionData,
+  StorageAdapter,
+  SyncManifest,
+  SyncRun,
+  SyncTrigger,
+} from '@lucasschirm/sal-sync-core';
+import {
+  DEFAULT_PLUGIN_VERSION,
+  MANIFEST_SCHEMA_VERSION,
+  SYNC_ERROR_CATALOG,
+  SYNC_VERSION,
+  type SyncErrorCode,
+} from '@lucasschirm/sal-sync-core';
 import {
   getArtifactRecord,
   isArtifactPending,
@@ -18,9 +26,6 @@ import {
   recordArtifactUploading,
   type SyncState,
 } from '../state/index.js';
-import type { StorageAdapter } from '../storage/contract.js';
-import type { SyncRun, SyncTrigger } from '../sync-run.js';
-import { DEFAULT_PLUGIN_VERSION, MANIFEST_SCHEMA_VERSION, SYNC_VERSION } from '../versions.js';
 import { type ArtifactSanitizer, selectSanitizer } from './sanitize.js';
 import { sha256Hex } from './sha256.js';
 

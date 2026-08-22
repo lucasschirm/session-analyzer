@@ -1,4 +1,4 @@
-import type { SyncManifest } from '../manifest/index.js';
+import type { SyncManifest } from '@lucasschirm/sal-sync-core';
 import { StateStore } from '../state/index.js';
 import {
   buildManifestArtifactsFromResults,

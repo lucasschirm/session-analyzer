@@ -1,9 +1,19 @@
 import { Buffer } from 'node:buffer';
-
-import type { ArtifactIdentity, ManifestArtifact } from '../artifact.js';
-import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
+import type {
+  ArtifactIdentity,
+  ManifestArtifact,
+  SessionData,
+  SyncManifest,
+  SyncRun,
+} from '@lucasschirm/sal-sync-core';
+import {
+  DEFAULT_PLUGIN_VERSION,
+  type StorageAdapter,
+  StorageError,
+  SYNC_ERROR_CATALOG,
+  type SyncErrorCode,
+} from '@lucasschirm/sal-sync-core';
 import { sha256Hex } from '../hashing/sha256.js';
-import type { SessionData } from '../session.js';
 import {
   recordArtifactFailure,
   recordArtifactHashed,
@@ -11,10 +21,6 @@ import {
   recordArtifactUploading,
   StateStore,
 } from '../state/index.js';
-import { type StorageAdapter, StorageError } from '../storage/contract.js';
-import type { SyncRun } from '../sync-run.js';
-import { DEFAULT_PLUGIN_VERSION } from '../versions.js';
-import type { SyncManifest } from './contract.js';
 import { buildManifest } from './generator.js';
 import { ManifestRunStore } from './runs.js';
 

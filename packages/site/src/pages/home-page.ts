@@ -1,11 +1,13 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
+import '../components/project-modal';
+import '../components/project-sync-indicator';
+import '../components/project-sync-status-modal';
 import { dbClient } from '../db/db-client';
 import { navigateTo } from '../router';
+import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 import type { Project } from '../types';
-import '../components/metrics-card';
-import '../components/project-modal';
 
 /**
  * Home page: projects list with full CRUD.
@@ -101,6 +103,9 @@ export class HomePage extends LitElement {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
     .project-card .description {
@@ -173,10 +178,25 @@ export class HomePage extends LitElement {
 
   @state() private error: string | null = null;
 
+  @state() private syncSnapshot: SyncManagerSnapshot | null = null;
+
+  @state() private syncModalProjectId = '';
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.syncSnapshot = syncManager.getSnapshot();
+    syncManager.addEventListener('change', this.handleSyncChange);
     void this.loadProjects();
   }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    syncManager.removeEventListener('change', this.handleSyncChange);
+  }
+
+  private handleSyncChange = (event: Event): void => {
+    this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
+  };
 
   private loadingLock = false;
 
@@ -204,10 +224,17 @@ export class HomePage extends LitElement {
     this.modalOpen = false;
   }
 
+  private async getLocalProjectIds(): Promise<string[]> {
+    const projects = await dbClient.getProjects();
+    return projects
+      .map((project) => project.readable_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  }
+
   private async handleProjectCreate(
-    event: CustomEvent<{ name: string; description: string }>,
+    event: CustomEvent<{ name: string; description: string; readableId: string }>,
   ): Promise<void> {
-    const { name, description } = event.detail;
+    const { name, description, readableId } = event.detail;
     const now = Date.now();
     const project: Project = {
       id: `project-${now}-${Math.random().toString(36).slice(2, 8)}`,
@@ -216,6 +243,7 @@ export class HomePage extends LitElement {
       created_at: now,
       updated_at: now,
       session_count: 0,
+      readable_id: readableId,
     };
 
     try {
@@ -229,6 +257,24 @@ export class HomePage extends LitElement {
 
   private openProject(projectId: string): void {
     navigateTo(`/projects/${projectId}`);
+  }
+
+  private isProjectSyncing(project: Project): boolean {
+    if (project.sync_status === 'syncing') return true;
+    const snapshot = this.syncSnapshot;
+    if (!snapshot) return false;
+    return snapshot.projects.some(
+      (p) => p.localProjectId === project.id && (p.status === 'running' || p.status === 'queued'),
+    );
+  }
+
+  private openSyncModal(project: Project): void {
+    if (!project.readable_id) return;
+    this.syncModalProjectId = project.readable_id;
+  }
+
+  private closeSyncModal(): void {
+    this.syncModalProjectId = '';
   }
 
   private async handleDeleteProject(event: Event, project: Project): Promise<void> {
@@ -293,7 +339,18 @@ export class HomePage extends LitElement {
                         }
                       }}
                     >
-                      <h3>${project.name}</h3>
+                      <h3>
+                        ${project.name}
+                        ${
+                          this.isProjectSyncing(project)
+                            ? html`
+                              <project-sync-indicator
+                                @indicator-click=${() => this.openSyncModal(project)}
+                              ></project-sync-indicator>
+                            `
+                            : ''
+                        }
+                      </h3>
                       <p class="description">${project.description || 'No description'}</p>
                       <div class="project-card-footer">
                         <span class="project-meta">
@@ -316,9 +373,16 @@ export class HomePage extends LitElement {
 
         <project-modal
           .open=${this.modalOpen}
+          .getLocalProjectIds=${this.getLocalProjectIds}
           @project-create=${this.handleProjectCreate}
           @modal-close=${this.closeModal}
         ></project-modal>
+
+        <project-sync-status-modal
+          .open=${this.syncModalProjectId !== ''}
+          .projectId=${this.syncModalProjectId}
+          @modal-close=${this.closeSyncModal}
+        ></project-sync-status-modal>
       </div>
     `;
   }

@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import * as fsp from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ArtifactScope } from '../artifact.js';
-import { DEFAULT_SYNC_LIMITS, type SyncLimits } from '../limits.js';
+import type { ArtifactScope } from '@lucasschirm/sal-sync-core';
+import { DEFAULT_SYNC_LIMITS, type SyncLimits } from '@lucasschirm/sal-sync-core';
 import type { DiscoveryArtifact, DiscoveryError, DiscoveryResult } from './contract.js';
 import { validatePath } from './paths.js';
 

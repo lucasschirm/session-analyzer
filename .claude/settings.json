@@ -15,5 +15,8 @@
   },
   "enabledPlugins": {
     "claude-session-sync@session-analyzer": true
+  },
+  "env": {
+    "SAL_PROJECT_ID": "session-analyzer"
   }
 }

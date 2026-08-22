@@ -1,9 +1,7 @@
 import * as fsp from 'node:fs/promises';
 import path from 'node:path';
-
-import type { ArtifactIdentity, ArtifactScope } from '../artifact.js';
-import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
-import type { SessionData } from '../session.js';
+import type { ArtifactIdentity, ArtifactScope, SessionData } from '@lucasschirm/sal-sync-core';
+import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '@lucasschirm/sal-sync-core';
 import { FileLock, type LockOptions, SyncStateError } from './lock.js';
 
 export const STATE_SCHEMA_VERSION = 1;

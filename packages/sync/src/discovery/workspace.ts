@@ -1,4 +1,4 @@
-import { CAPTURE_ALLOWLIST } from '../allowlist.js';
+import { CAPTURE_ALLOWLIST } from '@lucasschirm/sal-sync-core';
 import type { DiscoveryResult, WorkspaceDiscoveryInput } from './contract.js';
 import { makeDiscoveryContext, runScopeDiscovery } from './core.js';
 import { expandAllowlist } from './glob.js';

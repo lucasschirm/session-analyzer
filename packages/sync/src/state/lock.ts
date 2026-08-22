@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import path from 'node:path';
 
-import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
+import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '@lucasschirm/sal-sync-core';
 
 export class SyncStateError extends Error {
   constructor(

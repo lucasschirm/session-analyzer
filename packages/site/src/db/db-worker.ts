@@ -11,72 +11,202 @@ import type { DbRequest, DbResponse } from './db-protocol';
 
 const manager = new DatabaseManager();
 
+type DbRequestOf<K extends DbRequest['type']> = Extract<DbRequest, { type: K }>;
+
+type Handler = (request: DbRequest) => DbResponse | Promise<DbResponse>;
+
+/**
+ * Router for every supported DbRequest type. Each handler is a short arrow
+ * that delegates to DatabaseManager and returns a DbResponse.
+ */
+const handlers: Record<DbRequest['type'], Handler> = {
+  init: async (request) => {
+    const storage = await manager.initialize();
+    return { id: request.id, ok: true, storage, fallbackReason: manager.fallbackReason };
+  },
+  createProject: (request) => {
+    manager.createProject((request as DbRequestOf<'createProject'>).project);
+    return { id: request.id, ok: true };
+  },
+  getProjects: (request) => ({ id: request.id, ok: true, result: manager.getProjects() }),
+  getProject: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getProject((request as DbRequestOf<'getProject'>).projectId),
+  }),
+  updateProject: (request) => {
+    const req = request as DbRequestOf<'updateProject'>;
+    manager.updateProject(req.projectId, req.fields);
+    return { id: request.id, ok: true };
+  },
+  deleteProject: (request) => {
+    manager.deleteProject((request as DbRequestOf<'deleteProject'>).projectId);
+    return { id: request.id, ok: true };
+  },
+  saveSession: (request) => {
+    manager.saveSession((request as DbRequestOf<'saveSession'>).session);
+    return { id: request.id, ok: true };
+  },
+  upsertSessionByExternalId: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.upsertSessionByExternalId(
+      (request as DbRequestOf<'upsertSessionByExternalId'>).session,
+    ),
+  }),
+  replaceSession: (request) => {
+    manager.replaceSession((request as DbRequestOf<'replaceSession'>).session);
+    return { id: request.id, ok: true };
+  },
+  findSessionByExternalId: (request) => {
+    const req = request as DbRequestOf<'findSessionByExternalId'>;
+    return {
+      id: request.id,
+      ok: true,
+      result: manager.findSessionByExternalId(req.projectId, req.externalId),
+    };
+  },
+  getSessionsByProject: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getSessionsByProject(
+      (request as DbRequestOf<'getSessionsByProject'>).projectId,
+    ),
+  }),
+  searchSessions: (request) => {
+    const req = request as DbRequestOf<'searchSessions'>;
+    return { id: request.id, ok: true, result: manager.searchSessions(req.projectId, req.query) };
+  },
+  getSession: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getSession((request as DbRequestOf<'getSession'>).sessionId),
+  }),
+  deleteSession: (request) => {
+    manager.deleteSession((request as DbRequestOf<'deleteSession'>).sessionId);
+    return { id: request.id, ok: true };
+  },
+  getProjectMetrics: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getProjectMetrics((request as DbRequestOf<'getProjectMetrics'>).projectId),
+  }),
+  exportDatabase: (request) => ({
+    id: request.id,
+    ok: true,
+    bytes: manager.exportDatabase(),
+  }),
+
+  createConnection: (request) => {
+    manager.createConnection((request as DbRequestOf<'createConnection'>).connection);
+    return { id: request.id, ok: true };
+  },
+  updateConnection: (request) => {
+    const req = request as DbRequestOf<'updateConnection'>;
+    manager.updateConnection(req.connectionId, req.fields);
+    return { id: request.id, ok: true };
+  },
+  deleteConnection: (request) => {
+    manager.deleteConnection((request as DbRequestOf<'deleteConnection'>).connectionId);
+    return { id: request.id, ok: true };
+  },
+  getConnections: (request) => ({ id: request.id, ok: true, result: manager.getConnections() }),
+  saveS3Credentials: (request) => {
+    manager.saveS3Credentials((request as DbRequestOf<'saveS3Credentials'>).credentials);
+    return { id: request.id, ok: true };
+  },
+  getS3Credentials: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getS3Credentials((request as DbRequestOf<'getS3Credentials'>).connectionId),
+  }),
+  deleteAllCredentials: (request) => {
+    manager.deleteAllCredentials();
+    return { id: request.id, ok: true };
+  },
+
+  getPasskeyState: (request) => ({ id: request.id, ok: true, result: manager.getPasskeyState() }),
+  savePasskeyState: (request) => {
+    manager.savePasskeyState((request as DbRequestOf<'savePasskeyState'>).state);
+    return { id: request.id, ok: true };
+  },
+
+  getProjectByReadableId: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getProjectByReadableId(
+      (request as DbRequestOf<'getProjectByReadableId'>).readableId,
+    ),
+  }),
+  setProjectSyncStatus: (request) => {
+    const req = request as DbRequestOf<'setProjectSyncStatus'>;
+    manager.setProjectSyncStatus(req.projectId, req.status);
+    return { id: request.id, ok: true };
+  },
+  backfillReadableIds: (request) => {
+    manager.backfillReadableIds();
+    return { id: request.id, ok: true };
+  },
+
+  getSessionBySyncId: (request) => {
+    const req = request as DbRequestOf<'getSessionBySyncId'>;
+    return {
+      id: request.id,
+      ok: true,
+      result: manager.getSessionBySyncId(req.projectId, req.syncSessionId),
+    };
+  },
+  upsertSessionStub: (request) => {
+    manager.upsertSessionStub((request as DbRequestOf<'upsertSessionStub'>).stub);
+    return { id: request.id, ok: true };
+  },
+  setSessionSyncStatus: (request) => {
+    const req = request as DbRequestOf<'setSessionSyncStatus'>;
+    manager.setSessionSyncStatus(req.sessionId, req.status, req.details);
+    return { id: request.id, ok: true };
+  },
+  updateSessionManifest: (request) => {
+    const req = request as DbRequestOf<'updateSessionManifest'>;
+    manager.updateSessionManifest(req.sessionId, req.manifest);
+    return { id: request.id, ok: true };
+  },
+  getSessionSyncManifest: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getSessionSyncManifest(
+      (request as DbRequestOf<'getSessionSyncManifest'>).sessionId,
+    ),
+  }),
+  getSyncRunCount: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getSyncRunCount((request as DbRequestOf<'getSyncRunCount'>).sessionId),
+  }),
+  failStaleSessions: (request) => {
+    const req = request as DbRequestOf<'failStaleSessions'>;
+    manager.failStaleSessions(req.projectId, req.details);
+    return { id: request.id, ok: true };
+  },
+  reconcileSyncStates: (request) => {
+    manager.reconcileSyncStates((request as DbRequestOf<'reconcileSyncStates'>).sessionDetails);
+    return { id: request.id, ok: true };
+  },
+
+  getSessionFiles: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getSessionFiles((request as DbRequestOf<'getSessionFiles'>).sessionId),
+  }),
+  upsertSessionFile: (request) => {
+    manager.upsertSessionFile((request as DbRequestOf<'upsertSessionFile'>).file);
+    return { id: request.id, ok: true };
+  },
+};
+
 async function handleRequest(request: DbRequest): Promise<DbResponse> {
+  const handler = handlers[request.type];
   try {
-    switch (request.type) {
-      case 'init': {
-        const storage = await manager.initialize();
-        return { id: request.id, ok: true, storage };
-      }
-      case 'createProject':
-        manager.createProject(request.project);
-        return { id: request.id, ok: true };
-      case 'getProjects':
-        return { id: request.id, ok: true, result: manager.getProjects() };
-      case 'getProject':
-        return { id: request.id, ok: true, result: manager.getProject(request.projectId) };
-      case 'updateProject':
-        manager.updateProject(request.projectId, request.fields);
-        return { id: request.id, ok: true };
-      case 'deleteProject':
-        manager.deleteProject(request.projectId);
-        return { id: request.id, ok: true };
-      case 'saveSession':
-        manager.saveSession(request.session);
-        return { id: request.id, ok: true };
-      case 'upsertSessionByExternalId':
-        return {
-          id: request.id,
-          ok: true,
-          result: manager.upsertSessionByExternalId(request.session),
-        };
-      case 'replaceSession':
-        manager.replaceSession(request.session);
-        return { id: request.id, ok: true };
-      case 'findSessionByExternalId':
-        return {
-          id: request.id,
-          ok: true,
-          result: manager.findSessionByExternalId(request.projectId, request.externalId),
-        };
-      case 'getSessionsByProject':
-        return {
-          id: request.id,
-          ok: true,
-          result: manager.getSessionsByProject(request.projectId),
-        };
-      case 'searchSessions':
-        return {
-          id: request.id,
-          ok: true,
-          result: manager.searchSessions(request.projectId, request.query),
-        };
-      case 'getSession':
-        return { id: request.id, ok: true, result: manager.getSession(request.sessionId) };
-      case 'deleteSession':
-        manager.deleteSession(request.sessionId);
-        return { id: request.id, ok: true };
-      case 'getProjectMetrics':
-        return { id: request.id, ok: true, result: manager.getProjectMetrics(request.projectId) };
-      case 'exportDatabase': {
-        const bytes = manager.exportDatabase();
-        return { id: request.id, ok: true, bytes };
-      }
-      default: {
-        const exhaustive: never = request;
-        return { id: -1, ok: false, error: `Unknown request: ${JSON.stringify(exhaustive)}` };
-      }
-    }
+    return await handler(request);
   } catch (error) {
     return { id: request.id, ok: false, error: (error as Error).message };
   }

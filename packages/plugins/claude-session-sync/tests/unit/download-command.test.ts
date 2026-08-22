@@ -50,7 +50,7 @@ function makeArtifact(
 
 function makeManifest(sessionId: string, artifacts: ManifestArtifact[]): SyncManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: 'proj-1',
     sessionId,
     harness: 'claude',
@@ -321,6 +321,33 @@ describe('runDownloadCommand', () => {
     });
     expect(result).toBe(1);
     expect(io.stderrStr()).toContain('manifest not found');
+  });
+
+  it('rejects a manifest with an unsupported schema version', async () => {
+    const badManifest = { ...makeManifest('sess-bad', []), schemaVersion: 1 } as Record<
+      string,
+      unknown
+    >;
+    const entries = [
+      makeStoredEntry({
+        projectId: 'proj-1',
+        sessionId: 'sess-bad',
+        scope: 'manifest',
+        relativePath: 'manifest.json',
+        body: textBody(JSON.stringify(badManifest)),
+      }),
+    ];
+
+    const io = makeStdio();
+    const result = await runDownloadCommand(['--session-id=sess-bad', `--output=${tmpDir}`], {
+      env: validEnv,
+      storageAdapter: makeStorageAdapter(entries),
+      ...io,
+    });
+
+    expect(result).toBe(1);
+    expect(io.stdoutStr()).toContain('manifest parse failed');
+    expect(io.stdoutStr()).toContain('schemaVersion');
   });
 
   it('discovers sessions and downloads all via manifest listing', async () => {

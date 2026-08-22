@@ -1,0 +1,55 @@
+# src/
+
+Claude Code plugin adapter for the `@lucasschirm/sal-sync` session data sync engine.
+
+## Environment Resolution
+
+All entry points in this plugin resolve environment variables through a single
+shared function: **`resolveCliEnv`** (`cli/env.ts`). This function implements
+the Claude Code settings precedence ladder:
+
+```
+~/.claude/settings.json        (user-global, lowest precedence)
+.claude/settings.json           (project, committed)
+.claude/settings.local.json     (project-local, gitignored)
+process.env (ENV)               (highest precedence)
+```
+
+Only the `env` key of each settings file is read. Non-string values are
+silently skipped. Missing or malformed files are silently ignored. A variable
+set in a higher-precedence source always overrides the same key from a lower
+one; non-overlapping keys accumulate across all sources.
+
+**Every entry point** — the `claude-sync` CLI commands (sync, list, download,
+remove) and the Claude Code hooks (session-start, session-end, hook,
+transcript-watcher) — calls `resolveCliEnv(cwd, process.env)` in its `main()`
+function before passing the resolved env to the sync engine. The `cwd` is
+taken from the Claude Code hook input when available, falling back to
+`process.cwd()`.
+
+Never bypass `resolveCliEnv` by passing raw `process.env` to the sync engine —
+this would skip the settings files and miss user-configured `SAL_*` variables.
+
+## Files
+
+- **claude.ts** — Claude Code hook input parsing (`parseClaudeHookInput`), harness session mapping (`toHarnessSession`), and sync trigger mapping (`claudeEventToSyncTrigger`). Defines `ClaudeHookInput` with `session_id`, `transcript_path`, `cwd`, `hook_event_name`, etc.
+- **cli.ts** — Standalone `claude-sync` CLI entry point: dispatches to `sync`, `list`, `download`, `remove` subcommands.
+- **cli/env.ts** — `resolveCliEnv(cwd, processEnv)`: the single shared environment resolver. Reads `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json` (in that order), then overlays `processEnv` on top. Used by every entry point in the plugin.
+- **cli/config.ts** — `validateCliConfig` / `validateStorageConfig`: validate the merged environment and produce a `SyncConfig` or a human-readable error with `export` examples for missing variables.
+- **cli/sync-command.ts** — `claude-sync sync` command: full capture + upload.
+- **cli/list-command.ts** — `claude-sync list` command: list projects/sessions/files in storage.
+- **cli/download-command.ts** — `claude-sync download` command: download sessions from storage.
+- **cli/remove-command.ts** — `claude-sync remove` command: remove project/session objects from storage (never touches shared `global/cas/` content).
+- **cli/project.ts** — `resolveClaudeProjectDir`, `listLocalSessions`, `encodeProjectFolder`/`decodeProjectFolder` helpers.
+- **session-start.ts** — `SessionStart` hook handler: parses hook input, resolves env via `resolveCliEnv`, records session metadata, spawns a detached transcript watcher, and performs the initial bulk upload.
+- **session-end.ts** — `SessionEnd` hook handler: parses hook input, resolves env via `resolveCliEnv`, performs the final budgeted delta sync, uploads a session manifest, and surfaces a summary to stderr.
+- **hook.ts** — Generic hook handler (PreCompact, PostCompact, Stop, StopFailure, SubagentStop): parses hook input, resolves env via `resolveCliEnv`, and fires a capture.
+- **transcript-watcher.ts** — Detached watcher process entry point: resolves env via `resolveCliEnv`, then delegates to `watchTranscripts` from the sync engine.
+- **index.ts** — Barrel re-exporting all public APIs.
+
+## Key relationships
+
+- All hooks and CLI commands call `resolveCliEnv` from `cli/env.ts` to merge settings files with `process.env` before passing the result to the sync engine.
+- `session-start.ts` spawns `transcript-watcher.ts` as a detached child process; the watcher inherits the resolved env from its parent.
+- `cli/config.ts` validates the merged env and delegates to `@lucasschirm/sal-sync`'s `loadConfig` for value validation.
+- All sync operations go through `@lucasschirm/sal-sync`'s CLI helpers (`capture`, `sessionStart`, `sessionEnd`, `watch`).

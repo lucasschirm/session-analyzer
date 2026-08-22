@@ -1,5 +1,6 @@
 import process from 'node:process';
 import { type CliOptions, watch, watchTranscripts } from '@lucasschirm/sal-sync';
+import { resolveCliEnv } from './cli/env.js';
 import { isMainModule } from './is-main-module.js';
 
 export async function runTranscriptWatcher(options: CliOptions = {}): Promise<number> {
@@ -12,7 +13,8 @@ export async function runTranscriptWatcher(options: CliOptions = {}): Promise<nu
 
 async function main(): Promise<number> {
   try {
-    return await runTranscriptWatcher({ argv: process.argv.slice(2) });
+    const env = await resolveCliEnv(process.cwd());
+    return await runTranscriptWatcher({ argv: process.argv.slice(2), env });
   } catch {
     return 1;
   }
