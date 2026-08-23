@@ -47,8 +47,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build parser and sync dist (needed for downstream typechecks)
+      - name: Build parser, sync-core, and sync dist (needed for downstream typechecks)
         run: |
+          pnpm --filter @lucasschirm/sal-sync-core build
           pnpm --filter @lucasschirm/sal-claude-session-parser build
           pnpm --filter @lucasschirm/sal-sync build
 
