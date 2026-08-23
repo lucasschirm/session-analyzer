@@ -1,5 +1,4 @@
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 import {
   buildTelemetryRecord,
   type CliOptions,
@@ -9,6 +8,7 @@ import {
   zeroRun,
 } from '@lucasschirm/sal-sync';
 import { parseClaudeHookInput, readStdin, toHarnessSession, toSyncInput } from './claude.js';
+import { isMainModule } from './is-main-module.js';
 
 export async function runSessionEnd(raw: unknown, options: CliOptions = {}): Promise<number> {
   const parsed = parseClaudeHookInput(raw);
@@ -23,10 +23,34 @@ export async function runSessionEnd(raw: unknown, options: CliOptions = {}): Pro
   const syncInput = toSyncInput(session, 'session-end');
   syncInput.reason = session.endReason;
 
+  // Write a start message so the user sees activity before the upload completes.
+  // If the hook times out, at least this will have been written.
+  process.stderr.write('claude-session-sync: uploading session data...\n');
+
   const result = await sessionEnd({
     ...options,
     input: syncInput,
   });
+
+  // Surface a summary to stderr so the user sees it in Claude Code.
+  // SessionEnd hooks show stderr to the user.
+  const run = result.run;
+  if (run) {
+    const parts: string[] = [];
+    if (run.filesUploaded > 0) parts.push(`${run.filesUploaded} files uploaded`);
+    if (run.filesSkipped > 0) parts.push(`${run.filesSkipped} files skipped (unchanged)`);
+    if (run.filesFailed > 0) parts.push(`${run.filesFailed} files failed`);
+    if (result.budgetExhausted) parts.push('budget exhausted (some uploads may be incomplete)');
+
+    if (parts.length > 0) {
+      process.stderr.write(`claude-session-sync: ${parts.join(', ')}.\n`);
+    }
+
+    if (run.errors && run.errors.length > 0) {
+      const errorSummary = run.errors.join(', ');
+      process.stderr.write(`claude-session-sync: errors: ${errorSummary}.\n`);
+    }
+  }
 
   return result.exitCode;
 }
@@ -42,6 +66,7 @@ async function main(): Promise<number> {
       const dataDir = getDataDir(process.env);
       const record = zeroRun('session-end', 'unknown', 'session-end');
       record.errors = ['SYNC_INTERNAL_ERROR'];
+      record.errorDetails = [{ code: 'SYNC_INTERNAL_ERROR', message }];
       await emitTelemetry(
         dataDir,
         buildTelemetryRecord({
@@ -58,7 +83,7 @@ async function main(): Promise<number> {
   }
 }
 
-if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   main().then(
     (code) => process.exit(code),
     () => process.exit(0),

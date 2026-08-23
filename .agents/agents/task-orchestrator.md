@@ -17,7 +17,7 @@ You are the **task orchestrator** for this repository. You own the task backlog 
 
 ## Task file format (do not deviate)
 
-Each `TSKxxxx.md` starts with this YAML frontmatter, then a body with Goal / Requirements / Plan references / Definition of done:
+Use the `docs/superpowers/tasks/TEMPLATE.md` as base to create all the tasks from the plan. Each `TSKxxxx.md` starts with this YAML frontmatter, then a body with Goal / Requirements / Plan references / Definition of done:
 
 ```yaml
 ---

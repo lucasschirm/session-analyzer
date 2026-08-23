@@ -11,7 +11,7 @@ import type {
   ArtifactStatus,
   ManifestArtifact,
 } from '../artifact.js';
-import { loadConfig, type SyncConfig } from '../config/index.js';
+import { loadConfig, type StorageConfig, type SyncConfig } from '../config/index.js';
 import { type DiscoveryResult, discover } from '../discovery/index.js';
 import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
 import {
@@ -20,6 +20,7 @@ import {
   hashCandidate,
   processDelta,
   selectSanitizer,
+  uploadWithHeadSkip,
 } from '../hashing/index.js';
 import { ManifestGenerator, type SyncManifest } from '../manifest/index.js';
 import { DEFAULT_SANITIZATION_POLICY, sanitizeJson } from '../sanitization/index.js';
@@ -36,7 +37,12 @@ import {
   type SyncState,
 } from '../state/index.js';
 import type { PutObjectInput } from '../storage/index.js';
-import { S3StorageAdapter, type StorageAdapter, StorageError } from '../storage/index.js';
+import {
+  S3StorageAdapter,
+  type StorageAdapter,
+  type StorageAdapterOptions,
+  StorageError,
+} from '../storage/index.js';
 import type { SyncRun, SyncTrigger } from '../sync-run.js';
 import { DEFAULT_PLUGIN_VERSION, UNKNOWN_HARNESS_VERSION } from '../versions.js';
 
@@ -365,12 +371,19 @@ export function normalizeTrigger(value: unknown): SyncTrigger {
 }
 
 export function buildStorageAdapter(config: SyncConfig): StorageAdapter {
-  if (config.storage.type === 's3') {
-    return new S3StorageAdapter(config.storage, { retries: config.retries });
+  return buildStorageAdapterFromStorage(config.storage, { retries: config.retries });
+}
+
+export function buildStorageAdapterFromStorage(
+  storage: StorageConfig,
+  options?: StorageAdapterOptions,
+): StorageAdapter {
+  if (storage.type === 's3') {
+    return new S3StorageAdapter(storage, options);
   }
   throw new StorageError(
     'SYNC_CONFIG_MISSING',
-    `${SYNC_ERROR_CATALOG.SYNC_CONFIG_MISSING.description} (unsupported storage type: ${config.storage.type})`,
+    `${SYNC_ERROR_CATALOG.SYNC_CONFIG_MISSING.description} (unsupported storage type: ${storage.type})`,
     false,
   );
 }
@@ -527,6 +540,7 @@ export async function runFullSync(options: RunFullSyncOptions): Promise<RunFullS
       trigger: options.trigger,
       candidates,
       uploader,
+      storageAdapter: options.storageAdapter,
       session: options.session,
       pluginVersion: options.pluginVersion ?? DEFAULT_PLUGIN_VERSION,
       transcriptsCaptured: options.config.captureTranscripts,
@@ -539,6 +553,14 @@ export async function runFullSync(options: RunFullSyncOptions): Promise<RunFullS
   for (const code of discoveryErrorCodes) {
     if (!deltaResult.errors.includes(code)) {
       deltaResult.errors.push(code);
+    }
+  }
+  for (const error of discovery.errors) {
+    deltaResult.errorDetails = deltaResult.errorDetails ?? [];
+    if (
+      !deltaResult.errorDetails.some((d) => d.code === error.code && d.message === error.message)
+    ) {
+      deltaResult.errorDetails.push({ code: error.code, message: error.message });
     }
   }
 
@@ -705,17 +727,20 @@ export async function runSessionEndUploadLoop(options: {
       continue;
     }
 
+    const isCold = record === undefined || record.lastUploadedHash === undefined;
     recordArtifactUploading(state, artifact);
     const remaining = Math.max(0, deadline - Date.now());
     const timeoutMs = Math.min(config.timeouts.syncTimeoutMs, remaining);
     const uploadStart = Date.now();
     try {
-      await putArtifactWithTimeout(
+      await uploadWithHeadSkip({
         storageAdapter,
         artifact,
-        resultItem.candidate.content,
-        timeoutMs,
-      );
+        content: resultItem.candidate.content,
+        uploader: (a: ArtifactIdentity, c: string) =>
+          putArtifactWithTimeout(storageAdapter, a, c, timeoutMs),
+        isCold,
+      });
       recordArtifactUploaded(state, artifact);
       run.filesUploaded += 1;
       run.bytesUploaded += resultItem.size;
@@ -724,11 +749,16 @@ export async function runSessionEndUploadLoop(options: {
     } catch (err) {
       run.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveStorageError(err);
+      const message = err instanceof Error ? err.message : String(err);
       recordArtifactFailure(state, artifact, code);
       run.filesFailed += 1;
       run.errors = run.errors ?? [];
       if (!run.errors.includes(code)) {
         run.errors.push(code);
+      }
+      run.errorDetails = run.errorDetails ?? [];
+      if (!run.errorDetails.some((d) => d.code === code && d.message === message)) {
+        run.errorDetails.push({ code, message });
       }
       failed.push(artifact);
     }

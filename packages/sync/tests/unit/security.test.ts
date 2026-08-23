@@ -86,8 +86,8 @@ function baseEnv(
     SAL_STORAGE_TYPE: 's3',
     SAL_STORAGE_BUCKET: 'my-bucket',
     SAL_STORAGE_REGION: 'us-east-1',
-    SAL_STORAGE_ID: TEST_ACCESS_KEY,
-    SAL_STORAGE_SECRET: TEST_SECRET_KEY,
+    SAL_STORAGE_ACCESS_KEY_ID: TEST_ACCESS_KEY,
+    SAL_STORAGE_SECRET_ACCESS_KEY: TEST_SECRET_KEY,
     SAL_STORAGE_SESSION_TOKEN: TEST_SESSION_TOKEN,
     SAL_CAPTURE_TRANSCRIPTS: 'true',
     SAL_MAX_TRANSCRIPT_BYTES: '1000000',
@@ -257,7 +257,7 @@ describe('object key path traversal prevention', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: '/etc/passwd',
       }),
     ).toThrow(StorageError);
@@ -268,7 +268,7 @@ describe('object key path traversal prevention', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: 'C:\\Windows\\secret.ini',
       }),
     ).toThrow(StorageError);
@@ -279,7 +279,7 @@ describe('object key path traversal prevention', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: 'foo/../../bar',
       }),
     ).toThrow(StorageError);
@@ -289,10 +289,10 @@ describe('object key path traversal prevention', () => {
     const key = buildObjectKey({
       projectId: 'p',
       sessionId: 's',
-      scope: 'workspace',
+      scope: 'session',
       relativePath: 'foo/..%2F..%2Fbar',
     });
-    expect(key).toBe('p/s/workspace/foo/..%252F..%252Fbar');
+    expect(key).toBe('p/s/session/foo/..%252F..%252Fbar');
     expect(key).not.toContain('/../');
   });
 
@@ -301,7 +301,7 @@ describe('object key path traversal prevention', () => {
       buildObjectKey({
         projectId: 'p',
         sessionId: 's',
-        scope: 'workspace',
+        scope: 'session',
         relativePath: '',
       }),
     ).toThrow(StorageError);
@@ -427,12 +427,12 @@ describe('watcher boundary enforcement', () => {
   });
 
   it('matcher rejects paths outside the transcript directory', () => {
-    const matcher = createWatcherMatcher(transcriptDir);
+    const matcher = createWatcherMatcher(transcriptDir, 'sess-1');
 
-    expect(isPathWatched(matcher, path.join(transcriptDir, 'transcript.jsonl'))).toBe(true);
-    expect(isPathWatched(matcher, path.join(transcriptDir, 'subagents', 'agent-1.jsonl'))).toBe(
-      true,
-    );
+    expect(isPathWatched(matcher, path.join(transcriptDir, 'sess-1.jsonl'))).toBe(true);
+    expect(
+      isPathWatched(matcher, path.join(transcriptDir, 'sess-1', 'subagents', 'agent-1.jsonl')),
+    ).toBe(true);
 
     const outside = path.join(transcriptDir, '..', 'evil.jsonl');
     expect(isPathWatched(matcher, outside)).toBe(false);
@@ -447,7 +447,7 @@ describe('watcher boundary enforcement', () => {
     const linkPath = path.join(transcriptDir, 'link.jsonl');
     fs.symlinkSync(outsideFile, linkPath);
 
-    const matcher = createWatcherMatcher(transcriptDir);
+    const matcher = createWatcherMatcher(transcriptDir, 'sess-1');
     expect(isPathWatched(matcher, linkPath)).toBe(false);
     expect(getWatchedRelativePath(matcher, linkPath)).toBeUndefined();
 
@@ -457,7 +457,7 @@ describe('watcher boundary enforcement', () => {
   it('TranscriptWatcher does not upload files outside the transcript directory', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-sec-watcher-data-'));
     const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-sec-watcher-out2-'));
-    const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
+    const transcriptPath = path.join(transcriptDir, 'sess-1.jsonl');
     await fsp.writeFile(transcriptPath, '');
 
     const outsideFile = path.join(outsideDir, 'leaked.jsonl');

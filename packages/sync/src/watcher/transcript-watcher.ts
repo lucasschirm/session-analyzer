@@ -21,7 +21,7 @@ import {
   createWatcherMatcher,
   getWatchedRelativePath,
   isPathWatched,
-  WATCHER_ALLOWED_PATTERNS,
+  toStorageRelativePath,
 } from './matcher.js';
 import {
   getWatcherStatePath,
@@ -196,7 +196,7 @@ export class TranscriptWatcher {
     await this.stateStore.ensureDirectories();
 
     this.baseDir = path.dirname(path.resolve(this.transcriptPath));
-    this.matcher = createWatcherMatcher(this.baseDir, WATCHER_ALLOWED_PATTERNS);
+    this.matcher = createWatcherMatcher(this.baseDir, this.sessionId);
 
     await this.acquireWatcherPidFile();
 
@@ -258,9 +258,24 @@ export class TranscriptWatcher {
   }
 
   private setupWatchers(): void {
-    if (this.baseDir && fs.existsSync(this.baseDir)) {
+    if (!this.baseDir) {
+      this.schedulePoll();
+      return;
+    }
+
+    if (fs.existsSync(this.baseDir)) {
       this.watchDirectory(this.baseDir);
     }
+
+    const sessionDir = path.join(this.baseDir, this.sessionId);
+    const subagentsDir = path.join(sessionDir, 'subagents');
+    if (fs.existsSync(sessionDir) && fs.statSync(sessionDir).isDirectory()) {
+      this.watchDirectory(sessionDir);
+    }
+    if (fs.existsSync(subagentsDir) && fs.statSync(subagentsDir).isDirectory()) {
+      this.watchDirectory(subagentsDir);
+    }
+
     this.schedulePoll();
   }
 
@@ -283,12 +298,36 @@ export class TranscriptWatcher {
         const filePath = path.join(dirPath, filename);
         void this.handleFileEvent(filePath);
 
-        if (event === 'rename' && path.basename(filePath) === 'subagents') {
+        if (event !== 'rename' || !this.baseDir) {
+          return;
+        }
+
+        const sessionDir = path.join(this.baseDir, this.sessionId);
+        const subagentsDir = path.join(sessionDir, 'subagents');
+
+        // Watch the per-session directory when it appears in the project dir.
+        if (dirPath === this.baseDir && filename === this.sessionId) {
+          if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
+            this.watchDirectory(filePath);
+            if (fs.existsSync(subagentsDir) && fs.statSync(subagentsDir).isDirectory()) {
+              this.watchDirectory(subagentsDir);
+            }
+            void this.scanFiles();
+          }
+          return;
+        }
+
+        // Watch the per-session subagents directory when it appears.
+        if (dirPath === sessionDir && filename === 'subagents') {
           if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
             this.watchDirectory(filePath);
             void this.scanFiles();
           }
+          return;
         }
+
+        // If a subagent file inside the per-session subagents dir appears,
+        // scanFiles will pick it up through the existing poll.
       });
 
       watcher.on('error', (err) => {
@@ -437,7 +476,9 @@ export class TranscriptWatcher {
     }
 
     const base = this.baseDir;
-    const subagents = path.join(base, 'subagents');
+    const mainTranscript = path.join(base, `${this.sessionId}.jsonl`);
+    const sessionDir = path.join(base, this.sessionId);
+    const subagents = path.join(sessionDir, 'subagents');
 
     if (fs.existsSync(subagents) && fs.statSync(subagents).isDirectory()) {
       this.watchDirectory(subagents);
@@ -446,14 +487,12 @@ export class TranscriptWatcher {
     const entries: string[] = [];
 
     try {
-      const baseEntries = await fsp.readdir(base, { withFileTypes: true });
-      for (const entry of baseEntries) {
-        if (entry.isFile() || entry.isDirectory()) {
-          entries.push(path.join(base, entry.name));
-        }
+      const stat = await fsp.stat(mainTranscript);
+      if (stat.isFile()) {
+        entries.push(mainTranscript);
       }
     } catch {
-      // base may not exist
+      // Main transcript may not exist yet.
     }
 
     try {
@@ -464,7 +503,7 @@ export class TranscriptWatcher {
         }
       }
     } catch {
-      // subagents may not exist
+      // subagents may not exist yet.
     }
 
     for (const filePath of entries) {
@@ -560,6 +599,11 @@ export class TranscriptWatcher {
     const sanitizer = selectSanitizer(relativePath, 'session');
     const sanitized = sanitizer(delta);
 
+    // Convert the filesystem-relative path (which includes the <sessionId>/
+    // prefix) to a storage-relative path so the sessionId is not repeated in
+    // the S3 key.
+    const storageRelativePath = toStorageRelativePath(this.sessionId, relativePath);
+
     try {
       const result = await this.stateStore.withState((state) =>
         processDelta({
@@ -570,22 +614,22 @@ export class TranscriptWatcher {
               projectId: config.projectId,
               sessionId: this.sessionId,
               scope: 'session',
-              relativePath,
+              relativePath: storageRelativePath,
               content: sanitized,
               sanitizer: (content) => content,
             },
           ],
           uploader,
-          targetRelativePath: relativePath,
+          targetRelativePath: storageRelativePath,
           transcriptsCaptured: true,
         }),
       );
 
       const uploaded = result.uploaded.some(
-        (a) => a.scope === 'session' && a.relativePath === relativePath,
+        (a) => a.scope === 'session' && a.relativePath === storageRelativePath,
       );
       const failed = result.failed.some(
-        (a) => a.scope === 'session' && a.relativePath === relativePath,
+        (a) => a.scope === 'session' && a.relativePath === storageRelativePath,
       );
 
       if (uploaded) {

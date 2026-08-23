@@ -1,12 +1,12 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 const packageRoot = fileURLToPath(new URL('../../', import.meta.url));
 const binDir = resolve(packageRoot, 'bin');
-const executables = ['session-start', 'session-end', 'hook', 'transcript-watcher'];
+const executables = ['session-start', 'session-end', 'hook', 'transcript-watcher', 'claude-sync'];
 
 type BuildOutput = { name: string; path: string; bytes: number };
 
@@ -24,7 +24,7 @@ async function runBuild(options?: BuildOptions): Promise<BuildOutput[]> {
 describe('plugin packaging', () => {
   beforeAll(async () => {
     const outputs = await runBuild();
-    expect(outputs).toHaveLength(4);
+    expect(outputs).toHaveLength(5);
     for (const { name } of outputs) {
       expect(executables).toContain(name.replace(/^src\//, '').replace(/\.ts$/, ''));
     }
@@ -108,5 +108,61 @@ describe('plugin packaging', () => {
     expect(pkg.files).not.toContain('node_modules');
     expect(pkg.files).not.toContain('package-lock.json');
     expect(pkg.files).not.toContain('pnpm-lock.yaml');
+  });
+
+  it('declares both claude-sync and claude-session-sync bin aliases', () => {
+    const pkg = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'));
+    expect(pkg.bin).toBeDefined();
+    expect(pkg.bin['claude-sync']).toBe('bin/claude-sync');
+    expect(pkg.bin['claude-session-sync']).toBe('bin/claude-sync');
+  });
+
+  it('claude-sync --version prints the package version', () => {
+    const binPath = resolve(binDir, 'claude-sync');
+    const pkg = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'));
+    const output = execFileSync(process.execPath, [binPath, '--version'], {
+      timeout: 5000,
+      encoding: 'utf8',
+    }).trim();
+    expect(output).toBe(pkg.version);
+  });
+
+  it('claude-sync --help prints usage text', () => {
+    const binPath = resolve(binDir, 'claude-sync');
+    const output = execFileSync(process.execPath, [binPath, '--help'], {
+      timeout: 5000,
+      encoding: 'utf8',
+    });
+    expect(output).toContain('claude-sync');
+    expect(output).toContain('sync');
+    expect(output).toContain('list');
+    expect(output).toContain('download');
+    expect(output).toContain('SAL_PROJECT_ID');
+  });
+
+  it('claude-sync with no args prints help and exits 0', () => {
+    const binPath = resolve(binDir, 'claude-sync');
+    const output = execFileSync(process.execPath, [binPath], {
+      timeout: 5000,
+      encoding: 'utf8',
+    });
+    expect(output).toContain('claude-sync');
+  });
+
+  it('runs correctly when invoked through a symlink, as npm install -g does', () => {
+    const tempRoot = mkdtempSync(resolve(packageRoot, 'tests', 'symlink-'));
+    const linkPath = resolve(tempRoot, 'claude-sync');
+    symlinkSync(resolve(binDir, 'claude-sync'), linkPath);
+
+    try {
+      const output = execFileSync(process.execPath, [linkPath, '--help'], {
+        timeout: 5000,
+        encoding: 'utf8',
+      });
+      expect(output).toContain('claude-sync');
+      expect(output).toContain('SAL_PROJECT_ID');
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });

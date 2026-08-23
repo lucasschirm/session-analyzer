@@ -18,6 +18,7 @@ import {
   recordArtifactUploading,
   type SyncState,
 } from '../state/index.js';
+import type { StorageAdapter } from '../storage/contract.js';
 import type { SyncRun, SyncTrigger } from '../sync-run.js';
 import { DEFAULT_PLUGIN_VERSION, MANIFEST_SCHEMA_VERSION, SYNC_VERSION } from '../versions.js';
 import { type ArtifactSanitizer, selectSanitizer } from './sanitize.js';
@@ -42,6 +43,29 @@ export interface HashResult {
 
 export type ArtifactUploader = (artifact: ArtifactIdentity, content: string) => Promise<void>;
 
+export interface UploadWithHeadSkipOptions {
+  storageAdapter: StorageAdapter | undefined;
+  artifact: ArtifactIdentity;
+  content: string;
+  uploader: ArtifactUploader;
+  isCold: boolean;
+}
+
+export async function uploadWithHeadSkip(options: UploadWithHeadSkipOptions): Promise<void> {
+  const isCas = options.artifact.scope === 'workspace' || options.artifact.scope === 'global';
+  if (options.isCold && isCas && options.storageAdapter?.headObject) {
+    const head = await options.storageAdapter.headObject({
+      projectId: options.artifact.projectId,
+      sessionId: options.artifact.sessionId,
+      scope: options.artifact.scope,
+      relativePath: options.artifact.relativePath,
+      contentSha256: options.artifact.sha256,
+    });
+    if (head) return;
+  }
+  await options.uploader(options.artifact, options.content);
+}
+
 export type TriggerScope = 'bulk' | 'watcher-delta' | 'hash-filtered' | 'session-end-final';
 
 export function getTriggerScope(trigger: SyncTrigger): TriggerScope {
@@ -62,6 +86,7 @@ export interface ProcessDeltaOptions {
   trigger: SyncTrigger;
   candidates: ArtifactCandidate[];
   uploader: ArtifactUploader;
+  storageAdapter?: StorageAdapter;
   targetRelativePath?: string;
   session?: SessionData;
   pluginVersion?: string;
@@ -148,6 +173,9 @@ export function buildSessionManifest(
   artifacts: ManifestArtifact[],
   options?: { pluginVersion?: string; transcriptsCaptured?: boolean },
 ): SyncManifest {
+  // The main transcript is always the first session-scoped artifact discovered
+  // (discoverSession adds the exact transcriptPath before any subagents).
+  const mainTranscript = artifacts.find((a) => a.scope === 'session');
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     projectId: session.projectId,
@@ -162,6 +190,7 @@ export function buildSessionManifest(
     syncVersion: SYNC_VERSION,
     pluginVersion: options?.pluginVersion ?? DEFAULT_PLUGIN_VERSION,
     transcriptsCaptured: options?.transcriptsCaptured ?? true,
+    mainTranscriptRelativePath: mainTranscript?.relativePath,
     artifacts,
     syncRuns: [run],
   };
@@ -174,6 +203,7 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
     trigger,
     candidates,
     uploader,
+    storageAdapter,
     targetRelativePath,
     session,
     pluginVersion,
@@ -233,10 +263,18 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
   }
 
   for (const item of changed) {
+    const record = getArtifactRecord(state, item.artifact);
+    const isCold = record === undefined || record.lastUploadedHash === undefined;
     recordArtifactUploading(state, item.artifact);
     const uploadStart = Date.now();
     try {
-      await uploader(item.artifact, item.sanitized);
+      await uploadWithHeadSkip({
+        storageAdapter,
+        artifact: item.artifact,
+        content: item.sanitized,
+        uploader,
+        isCold,
+      });
       recordArtifactUploaded(state, item.artifact);
       result.uploadDurationMs += Date.now() - uploadStart;
       result.filesUploaded += 1;
@@ -245,11 +283,16 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
     } catch (err) {
       result.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveErrorCode(err);
+      const message = err instanceof Error ? err.message : String(err);
       recordArtifactFailure(state, item.artifact, code);
       result.filesFailed += 1;
       result.failed.push(item.artifact);
       if (!result.errors.includes(code)) {
         result.errors.push(code);
+      }
+      result.errorDetails = result.errorDetails ?? [];
+      if (!result.errorDetails.some((d) => d.code === code && d.message === message)) {
+        result.errorDetails.push({ code, message });
       }
     }
   }
@@ -283,11 +326,16 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
     } catch (err) {
       result.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveErrorCode(err);
+      const message = err instanceof Error ? err.message : String(err);
       recordArtifactFailure(state, manifestArtifact, code);
       result.filesFailed += 1;
       result.failed.push(manifestArtifact);
       if (!result.errors.includes(code)) {
         result.errors.push(code);
+      }
+      result.errorDetails = result.errorDetails ?? [];
+      if (!result.errorDetails.some((d) => d.code === code && d.message === message)) {
+        result.errorDetails.push({ code, message });
       }
     }
     result.manifest = manifest;

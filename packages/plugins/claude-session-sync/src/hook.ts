@@ -1,5 +1,4 @@
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 import {
   buildTelemetryRecord,
   type CliOptions,
@@ -15,6 +14,7 @@ import {
   toHarnessSession,
   toSyncInput,
 } from './claude.js';
+import { isMainModule } from './is-main-module.js';
 
 export async function runHook(raw: unknown, options: CliOptions = {}): Promise<number> {
   const parsed = parseClaudeHookInput(raw);
@@ -45,6 +45,7 @@ async function main(): Promise<number> {
       const dataDir = getDataDir(process.env);
       const record = zeroRun('manual', 'unknown', 'capture');
       record.errors = ['SYNC_INTERNAL_ERROR'];
+      record.errorDetails = [{ code: 'SYNC_INTERNAL_ERROR', message }];
       await emitTelemetry(
         dataDir,
         buildTelemetryRecord({
@@ -61,7 +62,7 @@ async function main(): Promise<number> {
   }
 }
 
-if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   main().then(
     (code) => process.exit(code),
     () => process.exit(0),

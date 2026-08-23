@@ -58,8 +58,9 @@ class InMemoryStorageAdapter implements StorageAdapter {
       }
     }
 
-    const key = buildObjectKey(input);
     const actualSha256 = sha256Hex(Buffer.from(input.body).toString('utf8'));
+    const keyInput = { ...input, contentSha256: input.contentSha256 ?? actualSha256 };
+    const key = buildObjectKey(keyInput);
     if (input.contentSha256 && input.contentSha256 !== actualSha256) {
       throw new StorageError(
         'SYNC_STORAGE_ERROR',
@@ -68,7 +69,7 @@ class InMemoryStorageAdapter implements StorageAdapter {
       );
     }
 
-    this.calls.push(input);
+    this.calls.push(keyInput);
     this.objects.set(key, {
       body: input.body,
       sha256: actualSha256,
@@ -85,8 +86,7 @@ class InMemoryStorageAdapter implements StorageAdapter {
     if (!existing) return undefined;
     return {
       body: existing.body,
-      sha256: existing.sha256,
-      etag: existing.etag,
+      etag: `"${existing.sha256}"`,
       contentType: existing.contentType,
       metadata: existing.metadata,
     };
@@ -98,8 +98,7 @@ class InMemoryStorageAdapter implements StorageAdapter {
     if (!existing) return undefined;
     return {
       contentLength: existing.body.length,
-      sha256: existing.sha256,
-      etag: existing.etag,
+      etag: `"${existing.sha256}"`,
       contentType: existing.contentType,
       metadata: existing.metadata,
     };
@@ -108,7 +107,12 @@ class InMemoryStorageAdapter implements StorageAdapter {
   getStoredContent(relativePath: string, scope: PutObjectInput['scope']): string | undefined {
     const projectId = 'proj-e2e';
     const sessionId = 'sess-e2e';
-    const key = buildObjectKey({ projectId, sessionId, scope, relativePath });
+    const put = this.calls.find(
+      (call) => call.relativePath === relativePath && call.scope === scope,
+    );
+    if (!put) return undefined;
+    const contentSha256 = put.contentSha256;
+    const key = buildObjectKey({ projectId, sessionId, scope, relativePath, contentSha256 });
     const existing = this.objects.get(key);
     if (!existing) return undefined;
     return Buffer.from(existing.body).toString('utf8');
@@ -126,8 +130,8 @@ function defaultTestEnv(): Record<string, string> {
     SAL_STORAGE_BUCKET: 'test-bucket',
     SAL_STORAGE_ENDPOINT: 'http://localhost:4566',
     SAL_STORAGE_REGION: 'us-east-1',
-    SAL_STORAGE_ID: 'AKIAIOSFODNN7EXAMPLE',
-    SAL_STORAGE_SECRET: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    SAL_STORAGE_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
+    SAL_STORAGE_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
     SAL_SYNC_TIMEOUT: '5000',
     SAL_SESSION_END_BUDGET_MS: '5000',
     SAL_HOOK_UPLOAD_TIMEOUT: '5000',
@@ -152,7 +156,7 @@ async function writeWorkspace(workspaceDir: string): Promise<void> {
   await mkdir(path.join(workspaceDir, '.claude', 'agents'), { recursive: true });
   await mkdir(path.join(workspaceDir, '.claude', 'skills'), { recursive: true });
   await mkdir(path.join(workspaceDir, '.claude', 'rules'), { recursive: true });
-  await mkdir(path.join(workspaceDir, 'subagents'), { recursive: true });
+  await mkdir(path.join(workspaceDir, 'sess-e2e', 'subagents'), { recursive: true });
 
   await writeFile(
     path.join(workspaceDir, 'CLAUDE.md'),
@@ -209,7 +213,7 @@ async function writeWorkspace(workspaceDir: string): Promise<void> {
   );
 
   await writeFile(
-    path.join(workspaceDir, 'subagents', 'agent-1.jsonl'),
+    path.join(workspaceDir, 'sess-e2e', 'subagents', 'agent-1.jsonl'),
     `${JSON.stringify({ type: 'message', role: 'assistant', content: 'subagent line' })}\n`,
   );
 }

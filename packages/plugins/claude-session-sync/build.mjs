@@ -1,10 +1,10 @@
 import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
+import { basename, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as esbuildBuild } from 'esbuild';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
-const syncPackageRoot = resolve(packageRoot, '..', 'sync');
+const syncPackageRoot = resolve(packageRoot, '..', '..', 'sync');
 const binDir = resolve(packageRoot, 'bin');
 
 const FORBIDDEN_PACKAGE = '@lucasschirm/sal-claude-session-parser';
@@ -18,6 +18,7 @@ const DEFAULT_ENTRIES = {
   'session-end': 'src/session-end.ts',
   hook: 'src/hook.ts',
   'transcript-watcher': 'src/transcript-watcher.ts',
+  'claude-sync': 'src/cli.ts',
 };
 
 const GUARD_PATTERN =
@@ -94,8 +95,12 @@ export async function build(options = {}) {
       const finalOutputPath = absOutputPath.replace(/\.js$/, '');
       renameSync(absOutputPath, finalOutputPath);
       chmodSync(finalOutputPath, 0o755);
+      // Derive the output name from the file name (without extension), which
+      // matches the entry point key. This is more reliable than
+      // `outputInfo.entryPoint` which is the source file path.
+      const outputName = basename(finalOutputPath);
       outputs.push({
-        name: outputInfo.entryPoint,
+        name: outputName,
         path: finalOutputPath,
         bytes: outputInfo.bytes,
       });

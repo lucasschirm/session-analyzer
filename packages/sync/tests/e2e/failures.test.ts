@@ -82,8 +82,8 @@ function baseEnv(): Record<string, string> {
     SAL_STORAGE_BUCKET: 'test-bucket',
     SAL_STORAGE_ENDPOINT: 'http://localhost:4566',
     SAL_STORAGE_REGION: 'us-east-1',
-    SAL_STORAGE_ID: 'AKIAIOSFODNN7EXAMPLE',
-    SAL_STORAGE_SECRET: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    SAL_STORAGE_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
+    SAL_STORAGE_SECRET_ACCESS_KEY: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
     SAL_SYNC_TIMEOUT: '5000',
     SAL_SESSION_END_BUDGET_MS: '5000',
     SAL_HOOK_UPLOAD_TIMEOUT: '5000',
@@ -179,8 +179,8 @@ describe('sync E2E failure modes', () => {
 
   it('exits 0 and records auth failure when storage credentials are missing', async () => {
     const env = envForFixture(fixture, {
-      SAL_STORAGE_ID: undefined,
-      SAL_STORAGE_SECRET: undefined,
+      SAL_STORAGE_ACCESS_KEY_ID: undefined,
+      SAL_STORAGE_SECRET_ACCESS_KEY: undefined,
     });
     const result = await capture({
       dataDir: fixture.dataDir,
@@ -194,24 +194,27 @@ describe('sync E2E failure modes', () => {
     expect(result.exitCode).not.toBe(2);
   });
 
-  it('exits 0 and reports filesystem permission failures', async () => {
-    const settingsPath = path.join(fixture.workspaceDir, '.claude', 'settings.json');
-    await chmod(settingsPath, 0o000);
+  it.skipIf(process.getuid?.() === 0)(
+    'exits 0 and reports filesystem permission failures',
+    async () => {
+      const settingsPath = path.join(fixture.workspaceDir, '.claude', 'settings.json');
+      await chmod(settingsPath, 0o000);
 
-    const result = await capture({
-      dataDir: fixture.dataDir,
-      env: envForFixture(fixture),
-      input: hookInput({ cwd: fixture.workspaceDir, transcript_path: fixture.transcriptPath }),
-      storageAdapter: new RecordingStorageAdapter(),
-    });
+      const result = await capture({
+        dataDir: fixture.dataDir,
+        env: envForFixture(fixture),
+        input: hookInput({ cwd: fixture.workspaceDir, transcript_path: fixture.transcriptPath }),
+        storageAdapter: new RecordingStorageAdapter(),
+      });
 
-    // restore permission for cleanup
-    await chmod(settingsPath, 0o644).catch(() => {});
+      // restore permission for cleanup
+      await chmod(settingsPath, 0o644).catch(() => {});
 
-    expect(result.exitCode).toBe(0);
-    expect(result.run?.errors).toContain('SYNC_DISCOVERY_ERROR');
-    expect(result.exitCode).not.toBe(2);
-  });
+      expect(result.exitCode).toBe(0);
+      expect(result.run?.errors).toContain('SYNC_DISCOVERY_ERROR');
+      expect(result.exitCode).not.toBe(2);
+    },
+  );
 
   it('exits 0 and skips when hook JSON is malformed', async () => {
     const result = await capture({

@@ -35,13 +35,16 @@ export interface PutObjectResult {
 }
 
 /**
- * Input for a storage GET operation.
+ * Input for a storage GET operation. The `contentSha256` field is required for
+ * content-addressed `workspace` and `global` objects so the CAS key can be
+ * derived.
  */
 export interface GetObjectInput {
   projectId: string;
   sessionId: string;
   scope: StorageObjectScope;
   relativePath: string;
+  contentSha256?: string;
 }
 
 /**
@@ -56,13 +59,16 @@ export interface GetObjectResult {
 }
 
 /**
- * Input for a storage HEAD operation.
+ * Input for a storage HEAD operation. The `contentSha256` field is required for
+ * content-addressed `workspace` and `global` objects so the CAS key can be
+ * derived.
  */
 export interface HeadObjectInput {
   projectId: string;
   sessionId: string;
   scope: StorageObjectScope;
   relativePath: string;
+  contentSha256?: string;
 }
 
 /**
@@ -77,14 +83,67 @@ export interface HeadObjectResult {
 }
 
 /**
+ * Input for a storage LIST operation. When `projectId` is omitted, all objects
+ * in the bucket are listed; when `projectId` is provided but `sessionId` is
+ * omitted, all objects under `<projectId>/` are listed; when `sessionId` is
+ * provided, only objects under `<projectId>/<sessionId>/`.
+ */
+export interface ListObjectsInput {
+  projectId?: string;
+  sessionId?: string;
+}
+
+/**
+ * A single object entry returned by `listObjects`. `key` is the full, decoded
+ * object key (e.g. `my-project/sess-1/session/transcript.jsonl`).
+ */
+export interface ListObjectEntry {
+  key: string;
+  size?: number;
+  lastModified?: Date;
+  etag?: string;
+}
+
+/**
+ * Result of a successful LIST.
+ */
+export interface ListObjectsResult {
+  objects: ListObjectEntry[];
+}
+
+/**
+ * Input for a bulk DELETE operation, scoped the same way as `ListObjectsInput`:
+ * `sessionId` omitted deletes every object under `<projectId>/`; `sessionId`
+ * provided deletes only objects under `<projectId>/<sessionId>/`. Never
+ * touches content-addressed `global/cas/<hash>` objects, since those are
+ * shared across projects/sessions and are not prefixed by `projectId`.
+ */
+export interface DeleteObjectsInput {
+  projectId: string;
+  sessionId?: string;
+}
+
+/**
+ * Result of a bulk DELETE. `deletedKeys` lists every key actually removed;
+ * `errors` carries a key/message pair for any deletion that failed without
+ * aborting the rest of the batch.
+ */
+export interface DeleteObjectsResult {
+  deletedKeys: string[];
+  errors: Array<{ key: string; message: string }>;
+}
+
+/**
  * Storage-agnostic adapter contract. Implementations must support `putObject`;
- * `getObject` and `headObject` are optional conveniences for callers that need
- * them.
+ * `getObject`, `headObject`, `listObjects`, and `deleteObjects` are optional
+ * conveniences for callers that need them (e.g. the standalone CLI).
  */
 export interface StorageAdapter {
   putObject(input: PutObjectInput): Promise<PutObjectResult>;
   getObject?(input: GetObjectInput): Promise<GetObjectResult | undefined>;
   headObject?(input: HeadObjectInput): Promise<HeadObjectResult | undefined>;
+  listObjects?(input: ListObjectsInput): Promise<ListObjectsResult>;
+  deleteObjects?(input: DeleteObjectsInput): Promise<DeleteObjectsResult>;
 }
 
 /**

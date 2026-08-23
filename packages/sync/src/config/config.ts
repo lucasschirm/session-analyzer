@@ -24,11 +24,11 @@ import {
   ENV_SAL_MAX_TRANSCRIPT_BYTES,
   ENV_SAL_PROJECT_ID,
   ENV_SAL_SESSION_END_BUDGET_MS,
+  ENV_SAL_STORAGE_ACCESS_KEY_ID,
   ENV_SAL_STORAGE_BUCKET,
   ENV_SAL_STORAGE_ENDPOINT,
-  ENV_SAL_STORAGE_ID,
   ENV_SAL_STORAGE_REGION,
-  ENV_SAL_STORAGE_SECRET,
+  ENV_SAL_STORAGE_SECRET_ACCESS_KEY,
   ENV_SAL_STORAGE_SESSION_TOKEN,
   ENV_SAL_STORAGE_TYPE,
   ENV_SAL_SYNC_DISABLED,
@@ -50,6 +50,15 @@ export interface SyncConfigError {
 export type LoadConfigResult =
   | { ok: true; config: SyncConfig }
   | { ok: false; disabled: true; error?: SyncConfigError };
+
+export interface StorageOnlyConfig {
+  storage: StorageConfig;
+  retries: number;
+}
+
+export type LoadStorageConfigResult =
+  | { ok: true; config: StorageOnlyConfig }
+  | { ok: false; error: SyncConfigError };
 
 const KNOWN_STORAGE_TYPES: readonly string[] = ['s3'];
 
@@ -128,8 +137,8 @@ function parseStorageConfig(env: ConfigEnv): StorageParseResult {
     endpoint: envValue(env, ENV_SAL_STORAGE_ENDPOINT),
     bucket: envValue(env, ENV_SAL_STORAGE_BUCKET),
     region: envValue(env, ENV_SAL_STORAGE_REGION),
-    accessKeyId: envValue(env, ENV_SAL_STORAGE_ID),
-    secretAccessKey: envValue(env, ENV_SAL_STORAGE_SECRET),
+    accessKeyId: envValue(env, ENV_SAL_STORAGE_ACCESS_KEY_ID),
+    secretAccessKey: envValue(env, ENV_SAL_STORAGE_SECRET_ACCESS_KEY),
     sessionToken: envValue(env, ENV_SAL_STORAGE_SESSION_TOKEN),
   };
 
@@ -235,6 +244,23 @@ function parseLimits(env: ConfigEnv): LimitsParseResult {
       maxJsonDepth: maxJsonDepth.value,
       maxJsonlLineBytes: maxJsonlLineBytes.value,
     },
+  };
+}
+
+export function loadStorageConfig(env: ConfigEnv = process.env): LoadStorageConfigResult {
+  const storageResult = parseStorageConfig(env);
+  if ('error' in storageResult) {
+    return { ok: false, error: storageResult.error };
+  }
+
+  const retriesResult = parseRetries(env);
+  if ('error' in retriesResult) {
+    return { ok: false, error: retriesResult.error };
+  }
+
+  return {
+    ok: true,
+    config: { storage: storageResult.config, retries: retriesResult.retries },
   };
 }
 

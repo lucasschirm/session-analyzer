@@ -71,6 +71,16 @@ class MockS3Server {
     const _bucket = pathParts.shift();
     const key = pathParts.join('/');
 
+    if (req.method === 'GET' && url.searchParams.has('list-type')) {
+      this.handleList(url.searchParams.get('prefix') ?? '', res);
+      return;
+    }
+
+    if (req.method === 'POST' && url.searchParams.has('delete')) {
+      await this.handleDelete(req, res);
+      return;
+    }
+
     const testMode = req.headers['x-amz-meta-testmode'] as string | undefined;
     const attemptKey = `${req.method}:${key}`;
     const attempt = (this.attemptCounts.get(attemptKey) ?? 0) + 1;
@@ -171,6 +181,49 @@ class MockS3Server {
     res.writeHead(405);
     res.end('Method not allowed');
   }
+
+  private handleList(prefix: string, res: http.ServerResponse): void {
+    const contents = [...this.objects.keys()]
+      .filter((k) => k.startsWith(prefix))
+      .map(
+        (k) =>
+          `<Contents><Key>${escapeXml(k)}</Key><Size>${this.objects.get(k)?.body.length ?? 0}</Size></Contents>`,
+      )
+      .join('');
+    res.writeHead(200, { 'Content-Type': 'application/xml' });
+    res.end(
+      `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><IsTruncated>false</IsTruncated>${contents}</ListBucketResult>`,
+    );
+  }
+
+  private async handleDelete(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(chunk as Buffer);
+    }
+    const body = Buffer.concat(chunks).toString('utf8');
+    const keys = [...body.matchAll(/<Key>([^<]*)<\/Key>/g)].map((m) => unescapeXml(m[1] ?? ''));
+
+    const deleted: string[] = [];
+    for (const key of keys) {
+      if (this.objects.has(key)) {
+        this.objects.delete(key);
+        deleted.push(key);
+      }
+    }
+
+    const deletedXml = deleted.map((k) => `<Deleted><Key>${escapeXml(k)}</Key></Deleted>`).join('');
+    res.writeHead(200, { 'Content-Type': 'application/xml' });
+    res.end(`<?xml version="1.0" encoding="UTF-8"?><DeleteResult>${deletedXml}</DeleteResult>`);
+  }
+}
+
+function escapeXml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function unescapeXml(value: string): string {
+  return value.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
 function makeS3Config(endpoint: string, bucket = 'test-bucket'): StorageConfig {
@@ -242,6 +295,7 @@ describe.skipIf(!process.env.SAL_S3_TEST_ENDPOINT)('S3 storage integration', () 
         sessionId,
         scope: 'workspace',
         relativePath: '.claude/settings.json',
+        contentSha256: sha256Hex(body),
       }),
     );
     expect(result.sha256).toBe(sha256Hex(body));
@@ -363,18 +417,24 @@ describe.skipIf(!process.env.SAL_S3_TEST_ENDPOINT)('S3 storage integration', () 
   it('normalizes object keys with special characters and rejects absolute paths', async () => {
     const adapter = new S3StorageAdapter(makeS3Config(endpoint), { retries: 0 });
 
-    const withSpaces = await adapter.putObject(makeInput('foo bar/baz.json', 'with spaces'));
+    // Legacy (session-scoped) keys still carry relativePath in the key itself,
+    // unlike workspace/global CAS keys, which are addressed purely by hash —
+    // exercise the traversal/normalization behavior against the 'session'
+    // scope, the only scope where it still applies.
+    const withSpaces = await adapter.putObject(
+      makeInput('foo bar/baz.json', 'with spaces', 'session'),
+    );
     expect(withSpaces.key).toBe(
       buildObjectKey({
         projectId,
         sessionId,
-        scope: 'workspace',
+        scope: 'session',
         relativePath: 'foo bar/baz.json',
       }),
     );
 
     await expect(
-      adapter.putObject(makeInput('/etc/passwd', 'absolute', 'workspace')),
+      adapter.putObject(makeInput('/etc/passwd', 'absolute', 'session')),
     ).rejects.toMatchObject({
       code: 'SYNC_STORAGE_ERROR',
       retryable: false,
@@ -410,5 +470,95 @@ describe.skipIf(!process.env.SAL_S3_TEST_ENDPOINT)('S3 storage integration', () 
       chunks.push(chunk);
     }
     expect(Buffer.concat(chunks).toString('utf8')).toBe(body);
+  });
+
+  it('lists and deletes every object under a project prefix, leaving CAS objects untouched', async () => {
+    const adapter = new S3StorageAdapter(makeS3Config(endpoint), { retries: 0 });
+    const removeProjectId = 'proj-remove';
+    const removeSessionId = 'sess-remove';
+
+    await adapter.putObject({
+      projectId: removeProjectId,
+      sessionId: removeSessionId,
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      body: Buffer.from('legacy content', 'utf8'),
+      contentSha256: sha256Hex('legacy content'),
+    });
+    const casResult = await adapter.putObject({
+      projectId: removeProjectId,
+      sessionId: removeSessionId,
+      scope: 'workspace',
+      relativePath: 'CLAUDE.md',
+      body: Buffer.from('shared workspace file', 'utf8'),
+      contentSha256: sha256Hex('shared workspace file'),
+    });
+
+    const before = await adapter.listObjects({ projectId: removeProjectId });
+    expect(before.objects.length).toBe(1);
+
+    const result = await adapter.deleteObjects({ projectId: removeProjectId });
+    expect(result.deletedKeys).toHaveLength(1);
+    expect(result.errors).toHaveLength(0);
+
+    const after = await adapter.listObjects({ projectId: removeProjectId });
+    expect(after.objects).toHaveLength(0);
+
+    if (server) {
+      expect(server.getStoredBody(casResult.key)).toBeDefined();
+    }
+  });
+
+  it('scopes deleteObjects to a single session when sessionId is given', async () => {
+    const adapter = new S3StorageAdapter(makeS3Config(endpoint), { retries: 0 });
+    const removeProjectId = 'proj-remove-session';
+
+    await adapter.putObject({
+      projectId: removeProjectId,
+      sessionId: 'sess-a',
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      body: Buffer.from('session a', 'utf8'),
+      contentSha256: sha256Hex('session a'),
+    });
+    await adapter.putObject({
+      projectId: removeProjectId,
+      sessionId: 'sess-b',
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      body: Buffer.from('session b', 'utf8'),
+      contentSha256: sha256Hex('session b'),
+    });
+
+    const result = await adapter.deleteObjects({ projectId: removeProjectId, sessionId: 'sess-a' });
+    expect(result.deletedKeys).toHaveLength(1);
+
+    const remaining = await adapter.listObjects({ projectId: removeProjectId });
+    expect(remaining.objects).toHaveLength(1);
+    expect(remaining.objects[0]?.key).toContain('sess-b');
+  });
+
+  it('rejects deleteObjects for projectId "global", the reserved CAS namespace root', async () => {
+    const adapter = new S3StorageAdapter(makeS3Config(endpoint), { retries: 0 });
+
+    // A CAS object shared by some other project/session.
+    const shared = await adapter.putObject({
+      projectId: 'some-other-project',
+      sessionId: 'some-other-session',
+      scope: 'workspace',
+      relativePath: 'CLAUDE.md',
+      body: Buffer.from('shared across projects', 'utf8'),
+      contentSha256: sha256Hex('shared across projects'),
+    });
+    expect(shared.key.startsWith('global/cas/')).toBe(true);
+
+    await expect(adapter.deleteObjects({ projectId: 'global' })).rejects.toMatchObject({
+      code: 'SYNC_STORAGE_ERROR',
+      retryable: false,
+    });
+
+    if (server) {
+      expect(server.getStoredBody(shared.key)).toBeDefined();
+    }
   });
 });

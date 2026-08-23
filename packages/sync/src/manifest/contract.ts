@@ -15,6 +15,8 @@ export interface SyncManifest {
   syncVersion: string;
   pluginVersion: string;
   transcriptsCaptured: boolean;
+  /** Relative path within the `session` scope of the primary transcript artifact. */
+  mainTranscriptRelativePath?: string;
   artifacts: ManifestArtifact[];
   syncRuns: SyncRun[];
 }

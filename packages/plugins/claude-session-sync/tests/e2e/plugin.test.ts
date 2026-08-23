@@ -32,6 +32,10 @@ function runBin(
       // Give the child process a moment to attach its stdin listeners before
       // closing the pipe, so small inputs are not lost before readStdin() runs.
       setTimeout(() => child.stdin.end(), 100);
+    } else {
+      // Close stdin immediately so readStdin() receives an empty input
+      // instead of waiting forever for data that will never arrive.
+      child.stdin.end();
     }
 
     child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
@@ -357,8 +361,8 @@ describe('Claude Code plugin E2E', () => {
         SAL_STORAGE_BUCKET: 'test-bucket',
         SAL_STORAGE_ENDPOINT: 'http://localhost:4566',
         SAL_STORAGE_REGION: 'us-east-1',
-        SAL_STORAGE_ID: TEST_ACCESS_KEY,
-        SAL_STORAGE_SECRET: TEST_SECRET_KEY,
+        SAL_STORAGE_ACCESS_KEY_ID: TEST_ACCESS_KEY,
+        SAL_STORAGE_SECRET_ACCESS_KEY: TEST_SECRET_KEY,
         SAL_SYNC_TIMEOUT: '5000',
         SAL_SESSION_END_BUDGET_MS: '5000',
         SAL_HOOK_UPLOAD_TIMEOUT: '5000',
@@ -495,8 +499,8 @@ describe('Claude Code plugin E2E', () => {
         SAL_STORAGE_BUCKET: 'test-bucket',
         SAL_STORAGE_ENDPOINT: endpoint,
         SAL_STORAGE_REGION: 'us-east-1',
-        SAL_STORAGE_ID: TEST_ACCESS_KEY,
-        SAL_STORAGE_SECRET: TEST_SECRET_KEY,
+        SAL_STORAGE_ACCESS_KEY_ID: TEST_ACCESS_KEY,
+        SAL_STORAGE_SECRET_ACCESS_KEY: TEST_SECRET_KEY,
         SAL_SYNC_TIMEOUT: '5000',
         SAL_HOOK_UPLOAD_TIMEOUT: '5000',
         SAL_DATA_DIR: dataDir,
@@ -520,7 +524,7 @@ describe('Claude Code plugin E2E', () => {
       expect(exitCode).toBe(0);
 
       const keys = server.listKeys();
-      expect(keys.some((k) => k.includes('workspace/CLAUDE.md'))).toBe(true);
+      expect(keys.some((k) => k.startsWith('global/cas/'))).toBe(true);
       expect(keys.some((k) => k.includes('session/transcript.jsonl'))).toBe(true);
     });
   });

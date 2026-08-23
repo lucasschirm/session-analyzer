@@ -33,6 +33,9 @@ export async function capture(options: CliOptions = {}): Promise<CommandResult> 
     const sessionId = 'unknown';
     const zero = zeroRun('manual', sessionId, 'capture');
     zero.errors = [resolved.configError.code];
+    zero.errorDetails = [
+      { code: resolved.configError.code, message: resolved.configError.message },
+    ];
     await emitTelemetry(
       dataDir,
       buildTelemetryRecord({
