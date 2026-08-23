@@ -1,5 +1,10 @@
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import '../components/metrics-card';
+import '../components/passkey-modal';
+import '../components/session-sync-chip';
+import '../components/session-sync-error-modal';
+import '../components/upload-zone';
 import { dbClient } from '../db/db-client';
 import {
   estimateTokenCount,
@@ -14,11 +19,11 @@ import {
   type UploadedFile,
 } from '../lib/subagents';
 import { navigateTo } from '../router';
-import type { DashboardSession, IndicatorKey, SessionTask, ToolExecution } from '../types';
+import { isUnlocked } from '../sync/credential-crypto';
+import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
+import type { DashboardSession, IndicatorKey, Project, SessionTask, ToolExecution } from '../types';
 import { parseInWorker } from '../workers/parser-client';
 import { isAgentTool, isSkillTool } from '../workers/session-parser.worker';
-import '../components/metrics-card';
-import '../components/upload-zone';
 
 /**
  * Session Dashboard: the primary analytics view for an uploaded session.
@@ -57,6 +62,34 @@ export class SessionDashboard extends LitElement {
       align-items: flex-start;
       gap: 12px;
       flex-wrap: wrap;
+    }
+
+    .session-title-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .retry-button {
+      background: var(--md-sys-color-error-container, #5c2626);
+      color: var(--md-sys-color-error, #ff6b6b);
+      border: 1px solid var(--md-sys-color-error, #ff6b6b);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .retry-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .retry-button:hover:not(:disabled) {
+      background: var(--md-sys-color-error, #ff6b6b);
+      color: var(--md-sys-color-on-error, #000);
     }
 
     h1 {
@@ -353,6 +386,8 @@ export class SessionDashboard extends LitElement {
 
   @state() private session: DashboardSession | null = null;
 
+  @state() private project: Project | null = null;
+
   @state() private isLoading = true;
 
   @state() private error: string | null = null;
@@ -365,7 +400,28 @@ export class SessionDashboard extends LitElement {
 
   @state() private attachError: string | null = null;
 
-  willUpdate(changed: Map<string, unknown>): void {
+  @state() private syncSnapshot: SyncManagerSnapshot | null = null;
+
+  @state() private errorModalOpen = false;
+
+  @state() private passkeyOpen = false;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.syncSnapshot = syncManager.getSnapshot();
+    syncManager.addEventListener('change', this.handleSyncChange);
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    syncManager.removeEventListener('change', this.handleSyncChange);
+  }
+
+  private handleSyncChange = (event: Event): void => {
+    this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
+  };
+
+  willUpdate(changed: PropertyValues): void {
     if (changed.has('sessionId') && this.sessionId) {
       void this.loadSession();
     }
@@ -376,6 +432,7 @@ export class SessionDashboard extends LitElement {
     try {
       this.session = await dbClient.getSession(this.sessionId);
       this.error = this.session ? null : `Session not found: ${this.sessionId}`;
+      this.project = this.session ? await dbClient.getProject(this.session.project_id) : null;
     } catch (error) {
       this.error = `Failed to load session: ${(error as Error).message}`;
     } finally {
@@ -561,6 +618,61 @@ export class SessionDashboard extends LitElement {
     return source.replaceAll('_', ' ');
   }
 
+  private syncStatusFor(): string {
+    const session = this.session;
+    const project = this.project;
+    if (!session || !project?.readable_id || !session.sync_session_id) {
+      return session?.sync_status ?? '';
+    }
+    const live = this.syncSnapshot?.sessions.find(
+      (s) => s.projectId === project.readable_id && s.sessionId === session.sync_session_id,
+    );
+    return live?.status ?? session.sync_status ?? '';
+  }
+
+  private openErrorModal(): void {
+    this.errorModalOpen = true;
+  }
+
+  private closeErrorModal(): void {
+    this.errorModalOpen = false;
+  }
+
+  private handleRetry(): void {
+    if (this.syncSnapshot?.readOnly) return;
+    if (!isUnlocked()) {
+      this.passkeyOpen = true;
+      return;
+    }
+    void this.doRetry();
+  }
+
+  private async doRetry(): Promise<void> {
+    const session = this.session;
+    const project = this.project;
+    if (!session?.sync_session_id || !project?.readable_id || !project?.connection_id) return;
+    try {
+      await syncManager.retrySession(
+        project.connection_id,
+        project.readable_id,
+        session.sync_session_id,
+      );
+    } catch {
+      // The run will surface the failure via the progress bar / status modal.
+    }
+  }
+
+  private handlePasskeyUnlocked(): void {
+    this.passkeyOpen = false;
+    if (isUnlocked()) {
+      void this.doRetry();
+    }
+  }
+
+  private handlePasskeyClose(): void {
+    this.passkeyOpen = false;
+  }
+
   render() {
     const session = this.session;
 
@@ -578,6 +690,10 @@ export class SessionDashboard extends LitElement {
     }
 
     const mostUsed = this.mostUsedTool;
+    const syncStatus = this.syncStatusFor();
+    const retryable =
+      syncStatus === 'failed' &&
+      !(session.sync_details ?? '').includes('MANIFEST_UNSUPPORTED_SCHEMA');
 
     return html`
       <div class="session-dashboard">
@@ -589,7 +705,34 @@ export class SessionDashboard extends LitElement {
 
         <div class="title-row">
           <div>
-            <h1>${session.title || this.sourceLabel(session.source)}</h1>
+            <div class="session-title-row">
+              <h1>${session.title || this.sourceLabel(session.source)}</h1>
+              ${
+                session.sync_status
+                  ? html`
+                    <session-sync-chip
+                      .status=${syncStatus}
+                      .details=${session.sync_details ?? ''}
+                      @chip-click=${this.openErrorModal}
+                    ></session-sync-chip>
+                  `
+                  : ''
+              }
+              ${
+                retryable
+                  ? html`
+                    <button
+                      class="retry-button"
+                      ?disabled=${this.syncSnapshot?.readOnly}
+                      @click=${this.handleRetry}
+                      type="button"
+                    >
+                      Retry sync
+                    </button>
+                  `
+                  : ''
+              }
+            </div>
             <p class="session-subtitle">
               ${this.sourceLabel(session.source)}
               ${session.model ? html` • ${session.model}` : ''} •
@@ -968,6 +1111,29 @@ export class SessionDashboard extends LitElement {
               : ''
           }
         </div>
+
+        ${
+          this.session && this.project
+            ? html`
+              <session-sync-error-modal
+                .open=${this.errorModalOpen}
+                .connectionId=${this.project.connection_id ?? ''}
+                .projectId=${this.project.readable_id ?? ''}
+                .sessionId=${this.session.sync_session_id ?? ''}
+                .syncDetails=${this.session.sync_details ?? ''}
+                .status=${this.session.sync_status ?? ''}
+                @modal-close=${this.closeErrorModal}
+              ></session-sync-error-modal>
+            `
+            : ''
+        }
+
+        <passkey-modal
+          .open=${this.passkeyOpen}
+          mode="unlock"
+          @passkey-unlocked=${this.handlePasskeyUnlocked}
+          @modal-close=${this.handlePasskeyClose}
+        ></passkey-modal>
       </div>
     `;
   }

@@ -1,11 +1,11 @@
 /**
  * storage/ module barrel.
  *
- * Exports the storage adapter contract, deterministic object key builder,
- * retry policy, and S3StorageAdapter implementation.
+ * Exports the S3StorageAdapter implementation and retry policy.
+ *
+ * The storage contract and deterministic object key builder are re-exported by
+ * the package index from `@lucasschirm/sal-sync-core`.
  */
 
-export * from './contract.js';
-export * from './object-key.js';
 export * from './retry.js';
 export * from './s3-adapter.js';

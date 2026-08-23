@@ -1,8 +1,10 @@
 import path from 'node:path';
-
-import { CAPTURE_ALLOWLIST } from '../allowlist.js';
-import type { ArtifactScope } from '../artifact.js';
-import { DEFAULT_SYNC_LIMITS, type SyncLimits } from '../limits.js';
+import type { ArtifactScope } from '@lucasschirm/sal-sync-core';
+import {
+  CAPTURE_ALLOWLIST,
+  DEFAULT_SYNC_LIMITS,
+  type SyncLimits,
+} from '@lucasschirm/sal-sync-core';
 import { DiscoveryContext } from './context.js';
 import type { DiscoveryInput, DiscoveryResult, SessionDiscoveryInput } from './contract.js';
 import { discoverFromPattern, type ExpandedPattern, expandAllowlist } from './glob.js';

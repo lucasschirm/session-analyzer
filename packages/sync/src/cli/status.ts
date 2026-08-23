@@ -1,7 +1,7 @@
 import * as fsp from 'node:fs/promises';
 import process from 'node:process';
 
-import type { ArtifactStatus } from '../artifact.js';
+import type { ArtifactStatus } from '@lucasschirm/sal-sync-core';
 import { discover } from '../discovery/index.js';
 import {
   type ArtifactStateStatus,

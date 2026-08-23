@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DbClient } from '../../src/db/db-client';
 import type { DbRequest, DbResponse } from '../../src/db/db-protocol';
+import type {
+  Connection,
+  PasskeyState,
+  SessionFileRecord,
+  SessionStub,
+  StoredS3Credentials,
+  SyncManifest,
+} from '../../src/types';
 
 /** Minimal Worker double that records posted messages and lets tests reply. */
 class FakeWorker {
@@ -158,5 +166,125 @@ describe('DbClient', () => {
     clickSpy.mockRestore();
     createObjectURLSpy.mockRestore();
     revokeObjectURLSpy.mockRestore();
+  });
+
+  it('stores the fallback reason reported by init', async () => {
+    const ready = client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'memory', fallbackReason: 'locked' });
+    await expect(ready).resolves.toBe('memory');
+    expect(client.fallbackReason).toBe('locked');
+  });
+
+  it('posts sync, connection, passkey and session-file payloads', () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'memory' });
+
+    const connection: Connection = {
+      id: 'c1',
+      name: 'S3 Dev',
+      storage_type: 's3',
+      sync_only_new: true,
+      created_at: 1,
+      updated_at: 2,
+    };
+    const credentials: StoredS3Credentials = {
+      connection_id: 'c1',
+      region: 'us-east-1',
+      bucket: 'dev',
+      access_key_id: 'AKIA...',
+      secret_access_key_ct: 'ct',
+      secret_access_key_iv: 'iv',
+      created_at: 1,
+      updated_at: 2,
+    };
+    const passkey: PasskeyState = {
+      id: 1,
+      kdf_salt: 'salt',
+      verifier_iv: 'iv',
+      verifier_ct: 'ct',
+      created_at: 1,
+    };
+    const stub: SessionStub = {
+      id: 'stub',
+      project_id: 'p1',
+      source: 'sync',
+      title: 'Stub',
+      started_at: '2026-01-01T00:00:00.000Z',
+      ended_at: '2026-01-01T00:00:00.000Z',
+      sync_session_id: 'remote-1',
+      sync_status: 'pending',
+    };
+    const manifest: SyncManifest = {
+      sessionId: 'remote-1',
+      schemaVersion: 1,
+      artifacts: [{ path: 't.json' }],
+      syncRuns: [{ id: 'run-1' }],
+    };
+    const file: SessionFileRecord = {
+      id: 'f1',
+      project_id: 'p1',
+      session_id: 's1',
+      path: 't.json',
+      scope: 'session',
+      sha256: 'deadbeef',
+      size: 42,
+      status: 'downloaded',
+      updated_at: 1,
+    };
+
+    void client.createConnection(connection);
+    void client.updateConnection('c1', { name: 'S3 Prod' });
+    void client.deleteConnection('c1');
+    void client.getConnections();
+    void client.saveS3Credentials(credentials);
+    void client.getS3Credentials('c1');
+    void client.deleteAllCredentials();
+    void client.getPasskeyState();
+    void client.savePasskeyState(passkey);
+    void client.getProjectByReadableId('my-project');
+    void client.setProjectSyncStatus('p1', 'syncing');
+    void client.backfillReadableIds();
+    void client.getSessionBySyncId('p1', 'remote-1');
+    void client.upsertSessionStub(stub);
+    void client.setSessionSyncStatus('stub', 'in_sync', 'ok');
+    void client.updateSessionManifest('stub', manifest);
+    void client.getSyncRunCount('stub');
+    void client.failStaleSessions('p1', 'worker lost');
+    void client.reconcileSyncStates('restarted');
+    void client.getSessionFiles('s1');
+    void client.upsertSessionFile(file);
+
+    const types = worker.posted.slice(1).map((request) => request.type);
+    expect(types).toEqual([
+      'createConnection',
+      'updateConnection',
+      'deleteConnection',
+      'getConnections',
+      'saveS3Credentials',
+      'getS3Credentials',
+      'deleteAllCredentials',
+      'getPasskeyState',
+      'savePasskeyState',
+      'getProjectByReadableId',
+      'setProjectSyncStatus',
+      'backfillReadableIds',
+      'getSessionBySyncId',
+      'upsertSessionStub',
+      'setSessionSyncStatus',
+      'updateSessionManifest',
+      'getSyncRunCount',
+      'failStaleSessions',
+      'reconcileSyncStates',
+      'getSessionFiles',
+      'upsertSessionFile',
+    ]);
+
+    const createRequest = worker.posted[1] as DbRequest & { type: 'createConnection' };
+    expect(createRequest.connection).toEqual(connection);
+
+    const fileRequest = worker.posted[worker.posted.length - 1] as DbRequest & {
+      type: 'upsertSessionFile';
+    };
+    expect(fileRequest.file).toEqual(file);
   });
 });

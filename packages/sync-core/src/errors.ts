@@ -12,7 +12,8 @@ export type SyncErrorCode =
   | 'SYNC_JSON_PARSE_FAILED'
   | 'SYNC_STATE_CORRUPT'
   | 'SYNC_WATCHER_ERROR'
-  | 'SYNC_INTERNAL_ERROR';
+  | 'SYNC_INTERNAL_ERROR'
+  | 'MANIFEST_UNSUPPORTED_SCHEMA';
 
 export type SyncErrorCategory = 'retryable' | 'non-retryable' | 'context-dependent';
 
@@ -92,6 +93,11 @@ export const SYNC_ERROR_CATALOG: Record<SyncErrorCode, SyncErrorMeta> = {
     code: 'SYNC_INTERNAL_ERROR',
     category: 'non-retryable',
     description: 'An unexpected internal error escaped the sync pipeline.',
+  },
+  MANIFEST_UNSUPPORTED_SCHEMA: {
+    code: 'MANIFEST_UNSUPPORTED_SCHEMA',
+    category: 'non-retryable',
+    description: 'The manifest schemaVersion is not supported.',
   },
 };
 

@@ -8,6 +8,7 @@ import {
   type GetObjectInput,
   type ManifestArtifact,
   parseObjectKey,
+  parseSyncManifest,
   type StorageAdapter,
   type StorageObjectScope,
   type SyncConfig,
@@ -239,7 +240,7 @@ async function downloadManifest(
 
 function parseManifest(body: Uint8Array): SyncManifest {
   const text = new TextDecoder().decode(body);
-  return JSON.parse(text) as SyncManifest;
+  return parseSyncManifest(JSON.parse(text));
 }
 
 interface SessionDownloadResult {
@@ -333,9 +334,10 @@ async function downloadSession(
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    stdout.write(`[fail] ${sessionId} — manifest parse failed: ${message}\n`);
     return {
       downloaded: 0,
-      failed: 0,
+      failed: 1,
       totalBytes: 0,
       errors: [`manifest parse failed: ${message}`],
     };

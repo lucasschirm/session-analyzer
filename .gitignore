@@ -56,6 +56,7 @@ package-lock.json
 # Custom
 tmp
 docs/superpowers
+.worktrees
 .claude/scheduled_tasks.lock
 .claude/agents
 .gitignore
@@ -64,3 +65,4 @@ docs/superpowers
 .devin/agents
 .devin/rules
 .devin/skills
+.playwright-mcp

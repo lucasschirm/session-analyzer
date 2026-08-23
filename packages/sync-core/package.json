@@ -1,0 +1,44 @@
+{
+  "name": "@lucasschirm/sal-sync-core",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "license": "ISC",
+  "sideEffects": false,
+  "description": "Isomorphic session data sync core contracts, schemas, and utilities.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucasschirm/session-analyzer.git",
+    "directory": "packages/sync-core"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome check src tests",
+    "preverify": "pnpm run build",
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "aws4fetch": "1.0.20"
+  }
+}

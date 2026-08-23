@@ -1,9 +1,9 @@
 /**
- * manifest/ module barrel — re-exports the contract surface from `./contract.js`.
+ * manifest/ module barrel — re-exports the manifest generator implementation.
  *
- * The manifest generator implementation is added by TSK0007 and must be
- * exported from this barrel.
+ * The contract surface is re-exported by the package index from
+ * `@lucasschirm/sal-sync-core`.
  */
-export * from './contract.js';
+
 export * from './generator.js';
 export * from './manifest.js';

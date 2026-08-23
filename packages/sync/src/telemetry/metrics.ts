@@ -1,10 +1,9 @@
 import * as fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-
+import type { SyncRun } from '@lucasschirm/sal-sync-core';
 import { DEFAULT_SANITIZATION_POLICY } from '../sanitization/contract.js';
 import { sanitizeJson } from '../sanitization/json.js';
-import type { SyncRun } from '../sync-run.js';
 
 export interface SyncTelemetry extends SyncRun {
   sessionId: string;

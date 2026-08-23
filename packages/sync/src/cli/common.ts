@@ -4,16 +4,30 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-
 import type {
   ArtifactIdentity,
   ArtifactScope,
   ArtifactStatus,
   ManifestArtifact,
-} from '../artifact.js';
-import { loadConfig, type StorageConfig, type SyncConfig } from '../config/index.js';
+  PutObjectInput,
+  SessionData,
+  StorageAdapter,
+  StorageAdapterOptions,
+  StorageConfig,
+  SyncConfig,
+  SyncManifest,
+  SyncRun,
+  SyncTrigger,
+} from '@lucasschirm/sal-sync-core';
+import {
+  DEFAULT_PLUGIN_VERSION,
+  StorageError,
+  SYNC_ERROR_CATALOG,
+  type SyncErrorCode,
+  UNKNOWN_HARNESS_VERSION,
+} from '@lucasschirm/sal-sync-core';
+import { loadConfig } from '../config/index.js';
 import { type DiscoveryResult, discover } from '../discovery/index.js';
-import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
 import {
   type ArtifactCandidate,
   type DeltaEngineResult,
@@ -22,9 +36,8 @@ import {
   selectSanitizer,
   uploadWithHeadSkip,
 } from '../hashing/index.js';
-import { ManifestGenerator, type SyncManifest } from '../manifest/index.js';
+import { ManifestGenerator } from '../manifest/index.js';
 import { DEFAULT_SANITIZATION_POLICY, sanitizeJson } from '../sanitization/index.js';
-import type { SessionData } from '../session.js';
 import {
   FileLock,
   getArtifactRecord,
@@ -36,17 +49,9 @@ import {
   StateStore,
   type SyncState,
 } from '../state/index.js';
-import type { PutObjectInput } from '../storage/index.js';
-import {
-  S3StorageAdapter,
-  type StorageAdapter,
-  type StorageAdapterOptions,
-  StorageError,
-} from '../storage/index.js';
-import type { SyncRun, SyncTrigger } from '../sync-run.js';
-import { DEFAULT_PLUGIN_VERSION, UNKNOWN_HARNESS_VERSION } from '../versions.js';
+import { S3StorageAdapter } from '../storage/index.js';
 
-export type { SyncErrorCode } from '../errors.js';
+export type { SyncErrorCode } from '@lucasschirm/sal-sync-core';
 
 import { type SyncTelemetry, TelemetryLogger } from '../telemetry/index.js';
 

@@ -28,7 +28,8 @@ export { isAgentOrSkill, isAgentTool, isReadTool, isSkillTool, isWriteTool };
 
 export interface ParseRequest {
   type: 'parse';
-  payload: string;
+  /** Raw session content as a string, or a transferred ArrayBuffer to decode in the worker. */
+  payload: string | ArrayBuffer;
   projectId: string;
   title?: string;
 }
@@ -50,6 +51,35 @@ function tryParseJson(line: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** Chunk size for streaming ArrayBuffer decoding (1 MB). */
+const DEFAULT_DECODE_CHUNK_BYTES = 1_048_576;
+
+/**
+ * Decodes a transferred ArrayBuffer into a UTF-8 string using a streaming
+ * `TextDecoder`. Decoding happens in chunks to avoid a single giant string
+ * allocation, accumulating output strings and joining once at the end.
+ *
+ * @param buffer - ArrayBuffer received via transferable `postMessage`.
+ * @param chunkSizeBytes - Optional override for the decode chunk size.
+ * @returns The decoded UTF-8 string.
+ */
+export function decodeTransferredBuffer(
+  buffer: ArrayBuffer,
+  chunkSizeBytes = DEFAULT_DECODE_CHUNK_BYTES,
+): string {
+  const bytes = new Uint8Array(buffer);
+  const decoder = new TextDecoder('utf-8');
+  const chunks: string[] = [];
+
+  for (let offset = 0; offset < bytes.length; offset += chunkSizeBytes) {
+    const end = Math.min(offset + chunkSizeBytes, bytes.length);
+    chunks.push(decoder.decode(bytes.subarray(offset, end), { stream: true }));
+  }
+
+  chunks.push(decoder.decode());
+  return chunks.join('');
 }
 
 // ==================== Format detection ====================
@@ -510,20 +540,33 @@ export function parseSession(payload: string, projectId: string, title = ''): Pa
 
 // ==================== Worker message handler ====================
 
-self.onmessage = (event: MessageEvent<ParseRequest>) => {
-  const { type, payload, projectId, title } = event.data;
-
-  if (type !== 'parse') return;
-
+/**
+ * Handles a single parse request, returning the typed response object that
+ * the worker should post back. Decodes ArrayBuffer payloads with the chunked
+ * `TextDecoder` before running them through the existing string-based pipeline.
+ *
+ * @param request - The worker message carrying the payload to parse.
+ * @returns Either a successful `ParseResponse` or a `ParseErrorResponse`.
+ */
+export function handleParseRequest(request: ParseRequest): ParseResponse | ParseErrorResponse {
   try {
-    const result = parseSession(payload, projectId, title);
-    const response: ParseResponse = { type: 'result', result };
-    self.postMessage(response);
+    const content =
+      typeof request.payload === 'string'
+        ? request.payload
+        : decodeTransferredBuffer(request.payload);
+    const result = parseSession(content, request.projectId, request.title ?? '');
+    return { type: 'result', result };
   } catch (error) {
-    const response: ParseErrorResponse = {
+    return {
       type: 'error',
       message: `Parser error: ${(error as Error).message}`,
     };
-    self.postMessage(response);
   }
+}
+
+self.onmessage = (event: MessageEvent<ParseRequest>) => {
+  if (event.data.type !== 'parse') return;
+
+  const response = handleParseRequest(event.data);
+  self.postMessage(response);
 };
