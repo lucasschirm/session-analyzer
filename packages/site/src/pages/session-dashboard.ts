@@ -418,8 +418,17 @@ export class SessionDashboard extends LitElement {
   }
 
   private handleSyncChange = (event: Event): void => {
+    const wasRunning = this.isRunActive(this.syncSnapshot);
     this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
+    if (wasRunning && !this.isRunActive(this.syncSnapshot)) {
+      void this.loadSession();
+    }
   };
+
+  private isRunActive(snapshot: SyncManagerSnapshot | null): boolean {
+    if (!snapshot?.activeRun) return false;
+    return snapshot.activeRun.state === 'running' || snapshot.activeRun.state === 'queued';
+  }
 
   willUpdate(changed: PropertyValues): void {
     if (changed.has('sessionId') && this.sessionId) {
@@ -699,7 +708,7 @@ export class SessionDashboard extends LitElement {
       <div class="session-dashboard">
         ${
           session.project_id
-            ? html`<a class="back-link" href="#/projects/${session.project_id}">← Back to Project</a>`
+            ? html`<a class="back-link" href="#/projects/${this.project?.readable_id ?? session.project_id}">← Back to Project</a>`
             : ''
         }
 

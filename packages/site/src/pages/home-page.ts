@@ -195,8 +195,24 @@ export class HomePage extends LitElement {
   }
 
   private handleSyncChange = (event: Event): void => {
+    const wasRunning = this.isRunActive(this.syncSnapshot);
+    const prevProjectIds = new Set(this.syncSnapshot?.projects.map((p) => p.localProjectId) ?? []);
+    const prevSessionCount = this.syncSnapshot?.sessions.length ?? 0;
     this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
+    const runEnded = wasRunning && !this.isRunActive(this.syncSnapshot);
+    const hasNewProjects =
+      this.syncSnapshot?.projects.some((p) => !prevProjectIds.has(p.localProjectId)) ?? false;
+    const sessionCount = this.syncSnapshot?.sessions.length ?? 0;
+    const hasNewSessions = sessionCount > prevSessionCount;
+    if (runEnded || hasNewProjects || hasNewSessions) {
+      void this.loadProjects();
+    }
   };
+
+  private isRunActive(snapshot: SyncManagerSnapshot | null): boolean {
+    if (!snapshot?.activeRun) return false;
+    return snapshot.activeRun.state === 'running' || snapshot.activeRun.state === 'queued';
+  }
 
   private loadingLock = false;
 
@@ -255,8 +271,9 @@ export class HomePage extends LitElement {
     }
   }
 
-  private openProject(projectId: string): void {
-    navigateTo(`/projects/${projectId}`);
+  private openProject(project: Project): void {
+    const slug = project.readable_id || project.id;
+    navigateTo(`/projects/${slug}`);
   }
 
   private isProjectSyncing(project: Project): boolean {
@@ -331,11 +348,11 @@ export class HomePage extends LitElement {
                       class="project-card"
                       role="button"
                       tabindex="0"
-                      @click=${() => this.openProject(project.id)}
+                      @click=${() => this.openProject(project)}
                       @keydown=${(event: KeyboardEvent) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault();
-                          this.openProject(project.id);
+                          this.openProject(project);
                         }
                       }}
                     >

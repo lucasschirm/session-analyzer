@@ -129,6 +129,14 @@ export interface S3ListObjectEntry {
   key: string;
   /** Object size in bytes, when S3 returns it. */
   size?: number;
+  /**
+   * The S3 ETag for the object, when S3 returns it. For single-part uploads this
+   * is the MD5 of the object content (wrapped in double quotes); for multipart
+   * uploads it is a compound hash. It is NOT the SHA-256 content hash — that is
+   * only available via HEAD/GET user metadata, not via ListObjectsV2. Use the
+   * ETag as a quick-change indicator to skip re-downloading unchanged objects.
+   */
+  etag?: string;
 }
 
 /** A single page of object keys returned by an object listing. */
@@ -234,16 +242,18 @@ function parseListObjectsV2Xml(xml: string): S3ListPage {
   }
   const objects: S3ListObjectEntry[] = [];
   const contentMatches = xml.matchAll(
-    /<Contents>[\s\S]*?<Key>([^<]*)<\/Key>[\s\S]*?<Size>([^<]*)<\/Size>[\s\S]*?<\/Contents>/g,
+    /<Contents>[\s\S]*?<Key>([^<]*)<\/Key>[\s\S]*?(?:<ETag>([^<]*)<\/ETag>[\s\S]*?)?<Size>([^<]*)<\/Size>[\s\S]*?<\/Contents>/g,
   );
   for (const match of contentMatches) {
     const key = match[1];
-    const sizeText = match[2];
+    const etag = match[2];
+    const sizeText = match[3];
     if (key === undefined) continue;
     const size = sizeText === undefined ? undefined : Number.parseInt(sizeText, 10);
     objects.push({
       key,
       size: Number.isNaN(size) ? undefined : size,
+      etag: etag || undefined,
     });
   }
   const isTruncated = /<IsTruncated>\s*true\s*<\/IsTruncated>/i.test(xml);

@@ -455,6 +455,7 @@ export class SessionSyncWorker {
           parsed.relativePath,
           entry.size ?? 0,
           mainPath,
+          entry.etag,
         );
         if (!fileMap.has(file.file)) fileMap.set(file.file, file);
       }
@@ -466,7 +467,7 @@ export class SessionSyncWorker {
   private isInScopeArtifact(artifact: ManifestArtifact, mainPath: string): boolean {
     return (
       artifact.scope === 'session' &&
-      artifact.status === 'uploaded' &&
+      (artifact.status === 'uploaded' || artifact.status === 'skipped') &&
       this.isInScopeRelativePath(artifact.relativePath, mainPath)
     );
   }
@@ -497,12 +498,14 @@ export class SessionSyncWorker {
     relativePath: string,
     size: number,
     mainPath: string,
+    etag?: string,
   ): FileToDownload {
     return {
       file: `session/${relativePath}`,
       scope: 'session',
       relativePath,
       hash: '',
+      etag,
       size,
       isMainTranscript: relativePath === mainPath,
     };

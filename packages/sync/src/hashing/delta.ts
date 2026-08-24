@@ -261,6 +261,35 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
       result.bytesChanged += item.size;
       changed.push(item);
     } else {
+      // The local state says this artifact was already uploaded with this
+      // hash. For session-scoped files (which are not content-addressed and
+      // therefore not self-verifying), HEAD-check the remote object to guard
+      // against a wiped/reset bucket: if the object is missing, re-upload it
+      // instead of silently skipping.
+      const isSessionScoped = item.artifact.scope === 'session';
+      const headObject = storageAdapter?.headObject;
+      if (isSessionScoped && headObject) {
+        try {
+          const head = await headObject({
+            projectId: item.artifact.projectId,
+            sessionId: item.artifact.sessionId,
+            scope: item.artifact.scope,
+            relativePath: item.artifact.relativePath,
+            contentSha256: item.artifact.sha256,
+          });
+          if (!head) {
+            // Remote object is missing despite local state claiming it was
+            // uploaded. Re-upload to restore consistency.
+            result.filesChanged += 1;
+            result.bytesChanged += item.size;
+            changed.push(item);
+            continue;
+          }
+        } catch {
+          // HEAD failed (network/auth/transient) — trust local state and
+          // skip rather than blocking the sync on an unverified error.
+        }
+      }
       result.filesSkipped += 1;
       result.filesUnchanged += 1;
       result.skipped.push(item.artifact);

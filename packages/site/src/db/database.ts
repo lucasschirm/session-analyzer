@@ -940,10 +940,17 @@ export class DatabaseManager {
     }
   }
 
-  getSessionsByProject(projectId: string): DashboardSession[] {
+  getSessionsByProject(projectId: string, limit?: number, offset?: number): DashboardSession[] {
+    const params: (string | number)[] = [projectId];
+    const pagination = limit !== undefined;
+    if (pagination) {
+      params.push(limit, offset ?? 0);
+    }
     const rows = this.requireDb().selectObjects(
-      'SELECT * FROM sessions WHERE project_id = ? ORDER BY started_at DESC',
-      [projectId],
+      `SELECT * FROM sessions
+       WHERE project_id = ?
+       ORDER BY ended_at DESC, started_at DESC${pagination ? ' LIMIT ? OFFSET ?' : ''}`,
+      params,
     ) as unknown as SessionRow[];
     return rows.map((row) => this.hydrateSession(row));
   }
@@ -952,8 +959,18 @@ export class DatabaseManager {
    * Filters a project's sessions by title or by transcript message content
    * (case-insensitive substring match).
    */
-  searchSessions(projectId: string, query: string): DashboardSession[] {
+  searchSessions(
+    projectId: string,
+    query: string,
+    limit?: number,
+    offset?: number,
+  ): DashboardSession[] {
     const like = `%${query}%`;
+    const params: (string | number)[] = [projectId, like, like];
+    const pagination = limit !== undefined;
+    if (pagination) {
+      params.push(limit, offset ?? 0);
+    }
     const rows = this.requireDb().selectObjects(
       `SELECT s.* FROM sessions s
        WHERE s.project_id = ?
@@ -962,8 +979,8 @@ export class DatabaseManager {
                 SELECT 1 FROM session_messages m
                 WHERE m.session_id = s.id AND m.content LIKE ? COLLATE NOCASE
               ))
-       ORDER BY s.started_at DESC`,
-      [projectId, like, like],
+       ORDER BY s.ended_at DESC, s.started_at DESC${pagination ? ' LIMIT ? OFFSET ?' : ''}`,
+      params,
     ) as unknown as SessionRow[];
     return rows.map((row) => this.hydrateSession(row));
   }

@@ -41,6 +41,7 @@ export interface S3RequestLog {
 interface S3ListObjectEntry {
   key: string;
   size: number;
+  etag?: string;
 }
 
 export function sha256Hex(data: Buffer | string): string {
@@ -170,7 +171,8 @@ function buildListXml(
     xml += `<CommonPrefixes><Prefix>${encodeXml(prefix)}</Prefix></CommonPrefixes>`;
   }
   for (const object of objects) {
-    xml += `<Contents><Key>${encodeXml(object.key)}</Key><Size>${object.size}</Size></Contents>`;
+    const etag = object.etag ? `<ETag>${encodeXml(object.etag)}</ETag>` : '';
+    xml += `<Contents><Key>${encodeXml(object.key)}</Key>${etag}<Size>${object.size}</Size></Contents>`;
   }
   xml += `<IsTruncated>${isTruncated ? 'true' : 'false'}</IsTruncated>`;
   xml += '</ListBucketResult>';
@@ -528,7 +530,7 @@ export class FixtureBucket {
     const entries: S3ListObjectEntry[] = [];
     for (const [key, body] of this.objectStore) {
       if (key.startsWith(prefix)) {
-        entries.push({ key, size: body.length });
+        entries.push({ key, size: body.length, etag: `"${key}-etag"` });
       }
     }
     return entries.sort((a, b) => a.key.localeCompare(b.key));

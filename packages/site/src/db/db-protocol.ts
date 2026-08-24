@@ -33,8 +33,15 @@ export type DbRequest =
   | { id: number; type: 'upsertSessionByExternalId'; session: DashboardSession }
   | { id: number; type: 'replaceSession'; session: DashboardSession }
   | { id: number; type: 'findSessionByExternalId'; projectId: string; externalId: string }
-  | { id: number; type: 'getSessionsByProject'; projectId: string }
-  | { id: number; type: 'searchSessions'; projectId: string; query: string }
+  | { id: number; type: 'getSessionsByProject'; projectId: string; limit?: number; offset?: number }
+  | {
+      id: number;
+      type: 'searchSessions';
+      projectId: string;
+      query: string;
+      limit?: number;
+      offset?: number;
+    }
   | { id: number; type: 'getSession'; sessionId: string }
   | { id: number; type: 'deleteSession'; sessionId: string }
   | { id: number; type: 'getProjectMetrics'; projectId: string }

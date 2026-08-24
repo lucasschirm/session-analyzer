@@ -756,6 +756,37 @@ describe('runListCommand', () => {
     expect(output).toContain('2 project(s), 2 files');
   });
 
+  it('lists all projects including the global CAS namespace', async () => {
+    const casHash = 'a'.repeat(64);
+    const objects = [
+      { key: 'proj-1/sess-a/manifest.json', size: 100, lastModified: new Date('2026-01-02') },
+      { key: `global/cas/${casHash}`, size: 300, lastModified: new Date('2026-01-03') },
+    ] as ListObjectEntry[];
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const result = await runListCommand([], {
+      env: validEnv,
+      storageAdapter: makeAdapter(objects),
+      stdout: {
+        write: (s: string) => {
+          stdout.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+      stderr: {
+        write: (s: string) => {
+          stderr.push(s);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+    });
+    expect(result).toBe(0);
+    const output = stdout.join('');
+    expect(output).toContain('proj-1');
+    expect(output).toContain('global');
+    expect(output).toContain('2 project(s), 2 files');
+  });
+
   it('lists sessions for a project', async () => {
     const objects = [
       { key: 'proj-1/sess-a/manifest.json', size: 100, lastModified: new Date('2026-01-02') },
@@ -1149,5 +1180,16 @@ describe('runSyncCommand', () => {
     } finally {
       process.env.HOME = oldHome;
     }
+  });
+
+  it('rejects "global" as a project id (reserved CAS namespace)', async () => {
+    const io = makeStdio();
+    const result = await runSyncCommand({
+      env: { ...validEnv, SAL_PROJECT_ID: 'global' },
+      storageAdapter: makeAdapter([]),
+      ...io,
+    });
+    expect(result).toBe(1);
+    expect(io.stderrStr()).toContain('reserved');
   });
 });

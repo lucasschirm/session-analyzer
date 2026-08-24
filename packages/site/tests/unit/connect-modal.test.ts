@@ -32,7 +32,20 @@ const mockSyncManager = vi.hoisted(() => {
       listeners[type] = listeners[type].filter((l) => l !== listener);
     }),
     requestRun: vi.fn(),
-    getSnapshot: vi.fn(() => ({ readOnly: false, activeRun: null, queuedRuns: [] as string[] })),
+    getSnapshot: vi.fn(
+      () =>
+        ({ readOnly: false, activeRun: null, queuedRuns: [] as string[] }) as {
+          readOnly: boolean;
+          activeRun: {
+            connectionId: string;
+            state: string;
+            warnings: string[];
+            startedAt: number;
+            finishedAt?: number;
+          } | null;
+          queuedRuns: string[];
+        },
+    ),
     emitChange: () => {
       for (const listener of listeners.change ?? []) {
         listener(new Event('change'));
@@ -550,5 +563,41 @@ describe('connect-modal', () => {
     await flush(modal);
 
     expect(closed).toBe(1);
+  });
+
+  it('re-enables the sync button after a sync run completes', async () => {
+    mockDbClient.getConnections.mockResolvedValue([savedConnection]);
+    mockDbClient.getS3Credentials.mockResolvedValue(savedCredentials);
+
+    // Sync is running
+    mockSyncManager.getSnapshot.mockReturnValue({
+      readOnly: false,
+      activeRun: { connectionId: 'c1', state: 'running', warnings: [], startedAt: 1 },
+      queuedRuns: [],
+    });
+
+    const modal = await mount(document.createElement('connect-modal') as ConnectModal);
+    modal.open = true;
+    await flush(modal);
+
+    const root = shadow(modal);
+    const syncButton = Array.from(root.querySelectorAll('button')).find((b) =>
+      b.textContent?.trim().includes('Sync'),
+    ) as HTMLButtonElement;
+    expect(syncButton.disabled).toBe(true);
+
+    // Sync run completes — activeRun is still present but state is 'done'
+    mockSyncManager.getSnapshot.mockReturnValue({
+      readOnly: false,
+      activeRun: { connectionId: 'c1', state: 'done', warnings: [], startedAt: 1, finishedAt: 2 },
+      queuedRuns: [],
+    });
+    mockSyncManager.emitChange();
+    await flush(modal);
+
+    const syncButtonAfter = Array.from(root.querySelectorAll('button')).find((b) =>
+      b.textContent?.trim().includes('Sync'),
+    ) as HTMLButtonElement;
+    expect(syncButtonAfter.disabled).toBe(false);
   });
 });

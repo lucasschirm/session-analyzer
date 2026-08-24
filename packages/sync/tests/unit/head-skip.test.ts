@@ -190,6 +190,113 @@ describe('processDelta HEAD skip', () => {
     expect(putObject).toHaveBeenCalledTimes(1);
     expect(result.filesUploaded).toBe(1);
   });
+
+  it('HEAD-verifies a skipped session-scoped artifact and re-uploads if missing from remote', async () => {
+    const state = createEmptySyncState();
+    const { adapter, headObject, putObject } = makeStorage({ headResult: undefined });
+    const candidate = makeCandidate({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      content: '{"type":"message"}\n',
+    });
+    // Simulate a previous upload: local state says it was uploaded with the
+    // same hash, so without HEAD-verify the file would be skipped.
+    const identity = { ...candidate, sha256: sha256Hex(candidate.content) };
+    recordArtifactUploaded(state, identity);
+
+    const result = await processDelta({
+      state,
+      trigger: 'session-start',
+      candidates: [candidate],
+      uploader: makeUploader(adapter),
+      storageAdapter: adapter,
+    });
+
+    expect(headObject).toHaveBeenCalledTimes(1);
+    expect(headObject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+      }),
+    );
+    expect(putObject).toHaveBeenCalledTimes(1);
+    expect(result.filesUploaded).toBe(1);
+    expect(result.filesSkipped).toBe(0);
+  });
+
+  it('skips re-upload when HEAD confirms a skipped session-scoped artifact exists remotely', async () => {
+    const state = createEmptySyncState();
+    const { adapter, headObject, putObject } = makeStorage({ headResult: { contentLength: 42 } });
+    const candidate = makeCandidate({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      content: '{"type":"message"}\n',
+    });
+    const identity = { ...candidate, sha256: sha256Hex(candidate.content) };
+    recordArtifactUploaded(state, identity);
+
+    const result = await processDelta({
+      state,
+      trigger: 'session-start',
+      candidates: [candidate],
+      uploader: makeUploader(adapter),
+      storageAdapter: adapter,
+    });
+
+    expect(headObject).toHaveBeenCalledTimes(1);
+    expect(putObject).not.toHaveBeenCalled();
+    expect(result.filesSkipped).toBe(1);
+    expect(result.filesUploaded).toBe(0);
+  });
+
+  it('trusts local state and skips when HEAD throws a transient error', async () => {
+    const state = createEmptySyncState();
+    const headObject = vi.fn().mockRejectedValue(new Error('network down'));
+    const putObject = vi.fn().mockResolvedValue({ key: 'x', sha256: '0'.repeat(64) });
+    const adapter: StorageAdapter = { putObject, headObject };
+    const candidate = makeCandidate({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      content: '{"type":"message"}\n',
+    });
+    const identity = { ...candidate, sha256: sha256Hex(candidate.content) };
+    recordArtifactUploaded(state, identity);
+
+    const result = await processDelta({
+      state,
+      trigger: 'session-start',
+      candidates: [candidate],
+      uploader: makeUploader(adapter),
+      storageAdapter: adapter,
+    });
+
+    expect(headObject).toHaveBeenCalledTimes(1);
+    expect(putObject).not.toHaveBeenCalled();
+    expect(result.filesSkipped).toBe(1);
+  });
+
+  it('does not HEAD-verify skipped session artifacts when headObject is unavailable', async () => {
+    const state = createEmptySyncState();
+    const { adapter, putObject } = makeStorage({ noHead: true });
+    const candidate = makeCandidate({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      content: '{"type":"message"}\n',
+    });
+    const identity = { ...candidate, sha256: sha256Hex(candidate.content) };
+    recordArtifactUploaded(state, identity);
+
+    const result = await processDelta({
+      state,
+      trigger: 'session-start',
+      candidates: [candidate],
+      uploader: makeUploader(adapter),
+      storageAdapter: adapter,
+    });
+
+    expect(putObject).not.toHaveBeenCalled();
+    expect(result.filesSkipped).toBe(1);
+  });
 });
 
 describe('runSessionEndUploadLoop HEAD skip', () => {

@@ -456,6 +456,7 @@ function makeManifest(
     sha256: string;
     size: number;
     scope?: 'session' | 'workspace' | 'global' | 'runtime';
+    status?: 'uploaded' | 'skipped' | 'failed' | 'pending';
   }>,
   mainTranscriptRelativePath = 'transcript.jsonl',
   harness = 'claude',
@@ -495,7 +496,7 @@ function makeManifest(
       relativePath: a.relativePath,
       sha256: a.sha256,
       size: a.size,
-      status: 'uploaded' as const,
+      status: (a.status ?? 'uploaded') as 'uploaded',
     })),
   };
 }
@@ -725,6 +726,39 @@ describe('SyncManager', () => {
     expect(start).toBeTruthy();
     expect(start?.type).toBe('START');
     expect((start as { projectId: string }).projectId).toBe(projectId);
+  });
+
+  it('emits a change event with the discovered project before any sessions are processed', async () => {
+    const { syncManager, s3 } = createTestManager();
+    const initPromise = syncManager.init();
+    await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+    await initPromise;
+
+    const { connection } = await setupConnectionAndCredentials(dbClient);
+    const projectId = 'discovered-proj';
+    const manifest = makeProjectManifest(projectId, 'Discovered Project', 'test');
+    s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifest)));
+
+    const snapshots: Array<ReturnType<typeof syncManager.getSnapshot>> = [];
+    syncManager.addEventListener('change', (event: Event) => {
+      snapshots.push((event as CustomEvent).detail);
+    });
+
+    syncManager.requestRun(connection.id);
+    await flush();
+
+    // The project should appear in at least one snapshot's projects list
+    // even though no sessions have been found/processed yet.
+    const discoveredSnapshot = snapshots.find((snap) =>
+      snap.projects.some((p) => p.projectId === projectId),
+    );
+    expect(discoveredSnapshot).toBeTruthy();
+    expect(discoveredSnapshot!.projects).toHaveLength(1);
+    expect(discoveredSnapshot!.projects[0]!.projectId).toBe(projectId);
+
+    // The project should also be persisted in the DB with 0 sessions
+    const projects = await dbClient.getProjects();
+    expect(projects.some((p) => p.readable_id === projectId)).toBe(true);
   });
 
   it('retries a failed session with targetSessionIds and bypasses sync-only-new', async () => {
@@ -1018,6 +1052,57 @@ describe('SyncManager', () => {
     const snapshot = syncManager.getSnapshot();
     const session = snapshot.sessions.find((s) => s.sessionId === 'session-1');
     expect(session?.status).toBe('transcript_unavailable');
+  });
+
+  it('treats a skipped main transcript as downloadable (not transcript_unavailable)', async () => {
+    const { syncManager, workers, s3 } = createTestManager();
+    const initPromise = syncManager.init();
+    await vi.advanceTimersByTimeAsync(INIT_TIMEOUT + 50);
+    await initPromise;
+
+    const { connection } = await setupConnectionAndCredentials(dbClient);
+    const projectId = 'remote-proj';
+    const manifestObj = makeProjectManifest(projectId, 'Remote Project');
+    s3.putBuffer(`${projectId}/manifest.json`, bufferFromText(JSON.stringify(manifestObj)));
+
+    syncManager.requestRun(connection.id);
+    await flush();
+
+    const worker = getWorker(workers);
+    // Manifest with a "skipped" transcript — the plugin marked it as already
+    // uploaded, but the site must still attempt to download it.
+    const manifest = makeManifest(projectId, 'session-1', [
+      { relativePath: 'transcript.jsonl', sha256: hashOf('main'), size: 100, status: 'skipped' },
+    ]);
+
+    worker.receive({ type: 'PROJECT_FOLDER_FOUND', projectId, totalSessions: 1 });
+    worker.receive({
+      type: 'SESSION_BATCH_FOUND',
+      projectId,
+      sessionIds: ['session-1'],
+      final: true,
+    });
+    await flush();
+
+    worker.receive({
+      type: 'SESSION_MANIFEST_READY',
+      projectId,
+      sessionId: 'session-1',
+      manifest,
+    });
+    await flush();
+
+    const syncMessage = worker.posted.find((m) => m.type === 'SESSION_SYNC') as
+      | SessionSyncMessage
+      | undefined;
+    expect(syncMessage).toBeTruthy();
+    expect(syncMessage?.sync).toBe(true);
+    expect(syncMessage?.filesToDownload).toHaveLength(1);
+    expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+
+    const snapshot = syncManager.getSnapshot();
+    const session = snapshot.sessions.find((s) => s.sessionId === 'session-1');
+    expect(session?.status).not.toBe('transcript_unavailable');
   });
 
   it('queues runs and caps parallel workers at 3', async () => {

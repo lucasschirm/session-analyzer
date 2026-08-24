@@ -478,7 +478,10 @@ export class ConnectModal extends LitElement {
     const snapshot = syncManager.getSnapshot();
     this.syncReadOnly = snapshot.readOnly;
     const active = new Set<string>(snapshot.queuedRuns);
-    if (snapshot.activeRun) active.add(snapshot.activeRun.connectionId);
+    const runState = snapshot.activeRun?.state;
+    if (runState === 'running' || runState === 'queued') {
+      active.add(snapshot.activeRun!.connectionId);
+    }
     this.activeConnectionIds = active;
   };
 

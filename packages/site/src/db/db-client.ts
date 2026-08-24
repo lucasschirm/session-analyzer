@@ -103,12 +103,32 @@ export class DbClient {
     }) as Promise<DashboardSession | null>;
   }
 
-  getSessionsByProject(projectId: string): Promise<DashboardSession[]> {
-    return this.call({ type: 'getSessionsByProject', projectId }) as Promise<DashboardSession[]>;
+  getSessionsByProject(
+    projectId: string,
+    limit?: number,
+    offset?: number,
+  ): Promise<DashboardSession[]> {
+    return this.call({
+      type: 'getSessionsByProject',
+      projectId,
+      limit,
+      offset,
+    }) as Promise<DashboardSession[]>;
   }
 
-  searchSessions(projectId: string, query: string): Promise<DashboardSession[]> {
-    return this.call({ type: 'searchSessions', projectId, query }) as Promise<DashboardSession[]>;
+  searchSessions(
+    projectId: string,
+    query: string,
+    limit?: number,
+    offset?: number,
+  ): Promise<DashboardSession[]> {
+    return this.call({
+      type: 'searchSessions',
+      projectId,
+      query,
+      limit,
+      offset,
+    }) as Promise<DashboardSession[]>;
   }
 
   getSession(sessionId: string): Promise<DashboardSession | null> {

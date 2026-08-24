@@ -214,6 +214,36 @@ describe('home-page', () => {
     expect((page.shadowRoot as ShadowRoot).textContent).toContain('No projects yet');
   });
 
+  it('navigates using readable_id when a project card is clicked', async () => {
+    vi.spyOn(dbClient, 'ensureReady').mockResolvedValue('memory');
+    vi.spyOn(dbClient, 'getProjects').mockResolvedValue([
+      projectFixture({ id: 'internal-123', readable_id: 'my-cool-project' }),
+    ]);
+
+    const page = await mount(document.createElement('home-page') as HomePage);
+    const root = page.shadowRoot as ShadowRoot;
+    const card = root.querySelector('.project-card') as HTMLElement;
+    card.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.location.hash).toBe('#/projects/my-cool-project');
+  });
+
+  it('falls back to internal id when readable_id is missing', async () => {
+    vi.spyOn(dbClient, 'ensureReady').mockResolvedValue('memory');
+    vi.spyOn(dbClient, 'getProjects').mockResolvedValue([
+      projectFixture({ id: 'internal-456', readable_id: undefined }),
+    ]);
+
+    const page = await mount(document.createElement('home-page') as HomePage);
+    const root = page.shadowRoot as ShadowRoot;
+    const card = root.querySelector('.project-card') as HTMLElement;
+    card.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.location.hash).toBe('#/projects/internal-456');
+  });
+
   it('opens the modal and creates a project', async () => {
     vi.spyOn(dbClient, 'ensureReady').mockResolvedValue('memory');
     const getProjects = vi.spyOn(dbClient, 'getProjects').mockResolvedValue([]);
@@ -297,11 +327,91 @@ describe('home-page', () => {
 
     expect(exportAndDownload).toHaveBeenCalled();
   });
+
+  it('reloads projects when new sessions appear during a sync run', async () => {
+    vi.spyOn(dbClient, 'ensureReady').mockResolvedValue('memory');
+    const getProjects = vi
+      .spyOn(dbClient, 'getProjects')
+      .mockResolvedValue([projectFixture({ session_count: 0 })]);
+
+    // Initial snapshot: no sessions yet
+    vi.spyOn(syncManager, 'getSnapshot').mockReturnValue({
+      initialized: true,
+      readOnly: false,
+      activeRun: { connectionId: 'c1', state: 'running', warnings: [], startedAt: 1 },
+      projects: [
+        {
+          projectId: 'proj1',
+          localProjectId: 'p1',
+          status: 'running',
+          totalSessions: 0,
+          sessionsDone: 0,
+          sessionsFailed: 0,
+          filesFound: 0,
+          filesDownloaded: 0,
+          filesFailed: 0,
+          bytesReceived: 0,
+        },
+      ],
+      sessions: [],
+      queuedRuns: [],
+      warnings: [],
+    });
+
+    const page = await mount(document.createElement('home-page') as HomePage);
+    expect(getProjects).toHaveBeenCalledTimes(1);
+
+    // Simulate a sync change event with a new session discovered
+    getProjects.mockResolvedValue([projectFixture({ session_count: 1 })]);
+    vi.spyOn(syncManager, 'getSnapshot').mockReturnValue({
+      initialized: true,
+      readOnly: false,
+      activeRun: { connectionId: 'c1', state: 'running', warnings: [], startedAt: 1 },
+      projects: [
+        {
+          projectId: 'proj1',
+          localProjectId: 'p1',
+          status: 'running',
+          totalSessions: 1,
+          sessionsDone: 0,
+          sessionsFailed: 0,
+          filesFound: 0,
+          filesDownloaded: 0,
+          filesFailed: 0,
+          bytesReceived: 0,
+        },
+      ],
+      sessions: [
+        {
+          projectId: 'proj1',
+          sessionId: 's1',
+          status: 'pending',
+          filesFound: 0,
+          filesDownloaded: 0,
+          filesFailed: 0,
+          bytesReceived: 0,
+        },
+      ],
+      queuedRuns: [],
+      warnings: [],
+    });
+    syncManager.dispatchEvent(new CustomEvent('change', { detail: syncManager.getSnapshot() }));
+
+    await flush(page);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flush(page);
+
+    // getProjects should have been called again to pick up the updated session_count
+    expect(getProjects.mock.calls.length).toBeGreaterThan(1);
+    const root = page.shadowRoot as ShadowRoot;
+    expect(root.textContent).toContain('1 session');
+  });
 });
 
 describe('project-view', () => {
   function stubProjectLoad() {
     vi.spyOn(dbClient, 'ensureReady').mockResolvedValue('memory');
+    vi.spyOn(dbClient, 'getProjectByReadableId').mockResolvedValue(projectFixture());
     vi.spyOn(dbClient, 'getProject').mockResolvedValue(projectFixture());
     vi.spyOn(dbClient, 'getSessionsByProject').mockResolvedValue([sessionFixture()]);
     vi.spyOn(dbClient, 'getProjectMetrics').mockResolvedValue(metricsFixture);
@@ -325,10 +435,47 @@ describe('project-view', () => {
     expect(allChildTexts(root, 'metrics-card').join(' ')).toContain('150');
   });
 
-  it('shows a not-found notice for unknown projects', async () => {
-    vi.spyOn(dbClient, 'getProject').mockResolvedValue(null);
-    vi.spyOn(dbClient, 'getSessionsByProject').mockResolvedValue([]);
+  it('resolves the route param via readable_id first, then falls back to internal id', async () => {
+    vi.spyOn(dbClient, 'ensureReady').mockResolvedValue('memory');
+    const getByReadable = vi
+      .spyOn(dbClient, 'getProjectByReadableId')
+      .mockResolvedValue(projectFixture({ readable_id: 'my-slug' }));
+    const getById = vi.spyOn(dbClient, 'getProject').mockResolvedValue(null);
+    vi.spyOn(dbClient, 'getSessionsByProject').mockResolvedValue([sessionFixture()]);
     vi.spyOn(dbClient, 'getProjectMetrics').mockResolvedValue(metricsFixture);
+
+    const view = Object.assign(document.createElement('project-view'), {
+      projectId: 'my-slug',
+    }) as ProjectView;
+    await mount(view);
+
+    expect(getByReadable).toHaveBeenCalledWith('my-slug');
+    expect(getById).not.toHaveBeenCalled();
+    expect((view.shadowRoot as ShadowRoot).textContent).toContain('Project One');
+  });
+
+  it('falls back to internal id lookup when readable_id lookup fails', async () => {
+    vi.spyOn(dbClient, 'ensureReady').mockResolvedValue('memory');
+    vi.spyOn(dbClient, 'getProjectByReadableId').mockResolvedValue(null);
+    const getById = vi
+      .spyOn(dbClient, 'getProject')
+      .mockResolvedValue(projectFixture({ id: 'old-id', readable_id: undefined }));
+    vi.spyOn(dbClient, 'getSessionsByProject').mockResolvedValue([sessionFixture()]);
+    vi.spyOn(dbClient, 'getProjectMetrics').mockResolvedValue(metricsFixture);
+
+    const view = Object.assign(document.createElement('project-view'), {
+      projectId: 'old-id',
+    }) as ProjectView;
+    await mount(view);
+
+    expect(getById).toHaveBeenCalledWith('old-id');
+    expect((view.shadowRoot as ShadowRoot).textContent).toContain('Project One');
+  });
+
+  it('shows a not-found notice for unknown projects', async () => {
+    vi.spyOn(dbClient, 'ensureReady').mockResolvedValue('memory');
+    vi.spyOn(dbClient, 'getProjectByReadableId').mockResolvedValue(null);
+    vi.spyOn(dbClient, 'getProject').mockResolvedValue(null);
 
     const view = Object.assign(document.createElement('project-view'), {
       projectId: 'missing',
@@ -356,7 +503,12 @@ describe('project-view', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await flush(view);
 
-    expect(searchSessions).toHaveBeenCalledWith('p1', 'match');
+    expect(searchSessions).toHaveBeenCalledWith(
+      'p1',
+      'match',
+      expect.any(Number),
+      expect.any(Number),
+    );
     expect(childText(root, 'session-list')).toContain('matched.jsonl');
   });
 

@@ -106,7 +106,7 @@ class MockS3Client implements S3Client {
       if (key.startsWith(prefix) && !key.endsWith('/')) {
         const parsed = parseObjectKey(key);
         if (parsed?.scope === 'session' && parsed.relativePath) {
-          result.push({ key, size: buffer.byteLength });
+          result.push({ key, size: buffer.byteLength, etag: `"${key}-etag"` });
         }
       }
     }

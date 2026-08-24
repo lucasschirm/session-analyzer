@@ -24,6 +24,13 @@ export interface FileToDownload {
   scope: ArtifactScope;
   relativePath: string;
   hash: string;
+  /**
+   * S3 ETag from the ListObjectsV2 response, when available. This is an MD5
+   * (or compound hash for multipart uploads), NOT the SHA-256 content hash.
+   * Available for future ETag-based skip optimization; the site would store
+   * the last-seen ETag locally and skip downloads when it hasn't changed.
+   */
+  etag?: string;
   size: number;
   isMainTranscript: boolean;
 }

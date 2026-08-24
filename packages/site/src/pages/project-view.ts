@@ -95,6 +95,37 @@ export class ProjectView extends LitElement {
       outline-offset: 1px;
     }
 
+    .pagination {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .pagination-button {
+      padding: 8px 14px;
+      font-size: 14px;
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-radius: 8px;
+      background: var(--md-sys-color-surface, #171a21);
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      cursor: pointer;
+    }
+
+    .pagination-button:hover:not(:disabled) {
+      background: var(--md-sys-color-surface-container-hover, #262d3a);
+    }
+
+    .pagination-button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .pagination-info {
+      font-size: 14px;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+    }
+
     .error {
       background: var(--md-sys-color-error-container, #5c2626);
       color: var(--md-sys-color-on-error-container, #ffb4ab);
@@ -132,6 +163,12 @@ export class ProjectView extends LitElement {
   @state() private syncSnapshot: SyncManagerSnapshot | null = null;
 
   @state() private syncModalOpen = false;
+
+  @state() private page = 0;
+
+  @state() private hasMore = false;
+
+  private readonly PAGE_SIZE = 30;
 
   private loadingLock = false;
 
@@ -171,16 +208,27 @@ export class ProjectView extends LitElement {
     this.isLoading = true;
     try {
       await dbClient.ensureReady();
-      const [project, sessions, metrics] = await Promise.all([
-        dbClient.getProject(this.projectId),
-        dbClient.getSessionsByProject(this.projectId),
-        dbClient.getProjectMetrics(this.projectId),
-      ]);
+      // The route param is the project's readable_id (URL-friendly slug).
+      // Resolve it to the internal project id, falling back to a direct
+      // id lookup for backward compatibility with old bookmarks.
+      let project = await dbClient.getProjectByReadableId(this.projectId);
+      if (!project) project = await dbClient.getProject(this.projectId);
+      if (!project) {
+        this.project = null;
+        this.sessions = [];
+        this.hasMore = false;
+        this.totalTokens = 0;
+        this.totalToolExecutions = 0;
+        this.error = `Project not found: ${this.projectId}`;
+        return;
+      }
       this.project = project;
-      this.sessions = sessions;
+      const [metrics] = await Promise.all([
+        dbClient.getProjectMetrics(project.id),
+        this.loadPage(0, project.id),
+      ]);
       this.totalTokens = metrics.total_tokens;
       this.totalToolExecutions = metrics.total_tool_executions;
-      this.error = null;
     } catch (error) {
       this.error = `Failed to load project: ${(error as Error).message}`;
     } finally {
@@ -208,11 +256,12 @@ export class ProjectView extends LitElement {
 
     try {
       const sessionIdByExternalId = new Map<string, string>();
+      const internalProjectId = this.project?.id ?? '';
 
       for (const upload of mainFiles) {
         const content = await upload.file.text();
         const parsed = await parseInWorker(content, {
-          projectId: this.projectId,
+          projectId: internalProjectId,
           title: upload.file.name,
         });
 
@@ -236,13 +285,16 @@ export class ProjectView extends LitElement {
         if (!group.jsonl) continue;
 
         const content = await group.jsonl.file.text();
-        const parsedSub = await parseInWorker(content, { projectId: this.projectId });
+        const parsedSub = await parseInWorker(content, { projectId: internalProjectId });
         if (!parsedSub.session.external_id) continue;
 
         const knownId = sessionIdByExternalId.get(parsedSub.session.external_id);
         const session = knownId
           ? await dbClient.getSession(knownId)
-          : await dbClient.findSessionByExternalId(this.projectId, parsedSub.session.external_id);
+          : await dbClient.findSessionByExternalId(
+              internalProjectId,
+              parsedSub.session.external_id,
+            );
         if (!session) {
           console.warn(`No session found for subagent data (agent ${group.agentId}) - skipping.`);
           continue;
@@ -262,15 +314,13 @@ export class ProjectView extends LitElement {
   }
 
   private async handleSearchInput(event: Event): Promise<void> {
-    const query = (event.target as HTMLInputElement).value;
-    this.searchQuery = query;
-
+    this.searchQuery = (event.target as HTMLInputElement).value;
+    this.page = 0;
+    this.isLoading = true;
     try {
-      this.sessions = query.trim()
-        ? await dbClient.searchSessions(this.projectId, query.trim())
-        : await dbClient.getSessionsByProject(this.projectId);
-    } catch (error) {
-      this.error = `Search failed: ${(error as Error).message}`;
+      await this.loadPage(0);
+    } finally {
+      this.isLoading = false;
     }
   }
 
@@ -287,6 +337,75 @@ export class ProjectView extends LitElement {
       (p) =>
         p.projectId === project.readable_id && (p.status === 'running' || p.status === 'queued'),
     );
+  }
+
+  private async loadPage(page: number, projectId = this.project?.id ?? ''): Promise<void> {
+    this.page = page;
+    const offset = page * this.PAGE_SIZE;
+    const limit = this.PAGE_SIZE + 1;
+    const query = this.searchQuery.trim();
+    try {
+      const results = query
+        ? await dbClient.searchSessions(projectId, query, limit, offset)
+        : await dbClient.getSessionsByProject(projectId, limit, offset);
+      this.hasMore = results.length > this.PAGE_SIZE;
+      this.sessions = this.hasMore ? results.slice(0, this.PAGE_SIZE) : results;
+      this.error = null;
+    } catch (error) {
+      this.sessions = [];
+      this.hasMore = false;
+      this.error = query
+        ? `Search failed: ${(error as Error).message}`
+        : `Failed to load sessions: ${(error as Error).message}`;
+    }
+  }
+
+  private async goToPage(page: number): Promise<void> {
+    if (this.isLoading || page < 0) return;
+    this.isLoading = true;
+    try {
+      await this.loadPage(page);
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  private handlePreviousPage(): void {
+    if (this.page > 0) {
+      void this.goToPage(this.page - 1);
+    }
+  }
+
+  private handleNextPage(): void {
+    if (this.hasMore) {
+      void this.goToPage(this.page + 1);
+    }
+  }
+
+  private renderPagination() {
+    const show = this.sessions.length > 0 || this.page > 0;
+    if (!show) return '';
+    return html`
+      <div class="pagination">
+        <button
+          class="pagination-button"
+          type="button"
+          ?disabled=${this.page === 0 || this.isLoading}
+          @click=${this.handlePreviousPage}
+        >
+          Previous
+        </button>
+        <span class="pagination-info">Page ${this.page + 1}</span>
+        <button
+          class="pagination-button"
+          type="button"
+          ?disabled=${!this.hasMore || this.isLoading}
+          @click=${this.handleNextPage}
+        >
+          Next
+        </button>
+      </div>
+    `;
   }
 
   render() {
@@ -373,6 +492,7 @@ export class ProjectView extends LitElement {
               .project=${this.project}
               @session-click=${this.handleSessionClick}
             ></session-list>
+            ${this.renderPagination()}
           `
         }
 

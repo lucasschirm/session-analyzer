@@ -66,16 +66,21 @@ const handlers: Record<DbRequest['type'], Handler> = {
       result: manager.findSessionByExternalId(req.projectId, req.externalId),
     };
   },
-  getSessionsByProject: (request) => ({
-    id: request.id,
-    ok: true,
-    result: manager.getSessionsByProject(
-      (request as DbRequestOf<'getSessionsByProject'>).projectId,
-    ),
-  }),
+  getSessionsByProject: (request) => {
+    const req = request as DbRequestOf<'getSessionsByProject'>;
+    return {
+      id: request.id,
+      ok: true,
+      result: manager.getSessionsByProject(req.projectId, req.limit, req.offset),
+    };
+  },
   searchSessions: (request) => {
     const req = request as DbRequestOf<'searchSessions'>;
-    return { id: request.id, ok: true, result: manager.searchSessions(req.projectId, req.query) };
+    return {
+      id: request.id,
+      ok: true,
+      result: manager.searchSessions(req.projectId, req.query, req.limit, req.offset),
+    };
   },
   getSession: (request) => ({
     id: request.id,

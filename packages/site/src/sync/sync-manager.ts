@@ -435,6 +435,7 @@ export class SyncManager extends EventTarget {
       this.startHeartbeatTimer();
       await this.prepareRunCredentials(run);
       await this.discoverProjects(run);
+      this.emitChange();
       this.dispatchWorkers(run);
       this.checkRunComplete(run);
     } catch (error) {
@@ -961,7 +962,7 @@ export class SyncManager extends EventTarget {
     return manifest.artifacts.find(
       (artifact) =>
         artifact.scope === 'session' &&
-        artifact.status === 'uploaded' &&
+        (artifact.status === 'uploaded' || artifact.status === 'skipped') &&
         artifact.relativePath === mainPath,
     );
   }
@@ -1002,7 +1003,7 @@ export class SyncManager extends EventTarget {
     return artifacts.filter(
       (artifact) =>
         artifact.scope === 'session' &&
-        artifact.status === 'uploaded' &&
+        (artifact.status === 'uploaded' || artifact.status === 'skipped') &&
         (artifact.relativePath === mainPath || this.isSubagentFile(artifact.relativePath)),
     );
   }
