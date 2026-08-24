@@ -123,7 +123,9 @@ async function runFullScopeSync(
     limits: config.limits,
   });
 
-  const candidateResults = await buildCandidates(discovery, config);
+  const candidateResults = await buildCandidates(discovery, config, {
+    projectRoot: hookInput.cwd,
+  });
   const candidates = candidateResults.map((r) => r.candidate);
   const uploader = buildUploader({
     storageAdapter,
@@ -198,7 +200,9 @@ async function runSessionOnlySync(
     limits: config.limits,
   });
 
-  const candidateResults = await buildCandidates(discovery, config);
+  const candidateResults = await buildCandidates(discovery, config, {
+    projectRoot: hookInput.cwd,
+  });
   const candidates = candidateResults.map((r) => r.candidate);
   const uploader = buildUploader({
     storageAdapter,

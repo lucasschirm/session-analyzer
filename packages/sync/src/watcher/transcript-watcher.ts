@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import type { Stats } from 'node:fs';
 import fs, { createReadStream } from 'node:fs';
 import * as fsp from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { clearTimeout, setTimeout } from 'node:timers';
@@ -13,7 +14,8 @@ import type {
 } from '@lucasschirm/sal-sync-core';
 import { StorageError } from '@lucasschirm/sal-sync-core';
 import { loadConfig } from '../config/index.js';
-import { processDelta, selectSanitizer } from '../hashing/index.js';
+import { isTranscriptJsonl, processDelta, selectSanitizer } from '../hashing/index.js';
+import { normalizeTranscriptDelta } from '../sanitization/index.js';
 import { StateStore } from '../state/index.js';
 import { S3StorageAdapter } from '../storage/index.js';
 
@@ -40,6 +42,9 @@ export interface WatchTranscriptsOptions {
   dataDir: string;
   sessionId: string;
   transcriptPath: string;
+  /** Project root (session cwd) used to strip machine-specific path prefixes
+   * from uploaded transcript deltas. */
+  cwd?: string;
   env?: Record<string, string | undefined>;
   ownerPid?: number;
   storageAdapter?: StorageAdapter;
@@ -128,6 +133,7 @@ export class TranscriptWatcher {
   private readonly dataDir: string;
   private readonly sessionId: string;
   private readonly transcriptPath: string;
+  private readonly projectRoot?: string;
   private readonly env: Record<string, string | undefined>;
   private readonly ownerPid?: number;
   private storageAdapter?: StorageAdapter;
@@ -158,6 +164,7 @@ export class TranscriptWatcher {
     this.dataDir = options.dataDir;
     this.sessionId = options.sessionId;
     this.transcriptPath = options.transcriptPath;
+    this.projectRoot = options.cwd;
     this.env = options.env ?? process.env;
     this.ownerPid = options.ownerPid;
     this.storageAdapter = options.storageAdapter;
@@ -596,8 +603,15 @@ export class TranscriptWatcher {
     }
 
     const delta = await readFileDelta(filePath, fileState.offset, targetSize);
+    // Strip the machine-specific project-root prefix so uploaded paths are
+    // portable. Limited to complete lines: a delta may end mid-line while the
+    // writer is still appending, and a prefix at the end of such a fragment
+    // cannot be boundary-checked safely (see normalizeTranscriptDelta).
+    const normalizedDelta = isTranscriptJsonl(relativePath, 'session')
+      ? normalizeTranscriptDelta(delta, this.projectRoot, os.homedir())
+      : delta;
     const sanitizer = selectSanitizer(relativePath, 'session');
-    const sanitized = sanitizer(delta);
+    const sanitized = sanitizer(normalizedDelta);
 
     // Convert the filesystem-relative path (which includes the <sessionId>/
     // prefix) to a storage-relative path so the sessionId is not repeated in

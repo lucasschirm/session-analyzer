@@ -215,6 +215,42 @@ describe('TranscriptWatcher', () => {
     expect(offsets.offsets['sess-1.jsonl'].offset).toBeGreaterThan(0);
   });
 
+  it('strips the project-root prefix from appended transcript deltas when cwd is provided', async () => {
+    const storage = new InMemoryStorageAdapter();
+    const projectRoot = transcriptDir;
+    const watcher = new TranscriptWatcher({
+      dataDir,
+      sessionId: 'sess-1',
+      transcriptPath,
+      cwd: projectRoot,
+      env: baseEnv(),
+      storageAdapter: storage,
+      debounceMs: 50,
+      pollIntervalMs: 20,
+      livenessIntervalMs: 10_000,
+    });
+
+    const startPromise = watcher.start();
+    await sleep(50);
+
+    await appendFile(
+      transcriptPath,
+      `{"tool_use":{"file_path":"${projectRoot}/src/app.ts","cwd":"${projectRoot}"}}\n`,
+    );
+    await sleep(400);
+
+    await watcher.stop();
+    await startPromise.catch(() => {});
+
+    const transcriptCalls = storage.calls.filter(
+      (call) => call.scope === 'session' && call.relativePath === 'transcript.jsonl',
+    );
+    expect(transcriptCalls.length).toBeGreaterThanOrEqual(1);
+    expect(transcriptCalls[0]?.content).toBe(
+      '{"tool_use":{"file_path":"/src/app.ts","cwd":"/"}}\n',
+    );
+  });
+
   it('uploads per-session subagent transcript deltas', async () => {
     const subagentsDir = path.join(transcriptDir, 'sess-1', 'subagents');
     await fsp.mkdir(subagentsDir, { recursive: true });

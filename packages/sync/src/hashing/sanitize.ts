@@ -9,7 +9,7 @@ import {
 
 export type ArtifactSanitizer = (content: string) => string;
 
-function isTranscriptJsonl(relativePath: string, scope: ArtifactScope): boolean {
+export function isTranscriptJsonl(relativePath: string, scope: ArtifactScope): boolean {
   return scope === 'session' && relativePath.endsWith('.jsonl');
 }
 

@@ -10,7 +10,13 @@ import {
 } from './common.js';
 
 export interface WatchOptions extends CliOptions {
-  watcher?(options: { dataDir: string; sessionId: string; transcriptPath: string }): Promise<void>;
+  watcher?(options: {
+    dataDir: string;
+    sessionId: string;
+    transcriptPath: string;
+    /** Project root (session cwd) used to strip machine-specific path prefixes. */
+    cwd?: string;
+  }): Promise<void>;
 }
 
 /**
@@ -25,6 +31,7 @@ export async function watch(options: WatchOptions = {}): Promise<CommandResult> 
   const sessionId = args.sessionId;
   const dataDir = options.dataDir ?? args.dataDir ?? '';
   const transcriptPath = args.transcriptPath ?? '';
+  const cwd = args.cwd;
 
   if (!sessionId || !dataDir) {
     return { exitCode: 0 };
@@ -51,7 +58,7 @@ export async function watch(options: WatchOptions = {}): Promise<CommandResult> 
   });
 
   try {
-    await watcher({ dataDir, sessionId, transcriptPath });
+    await watcher({ dataDir, sessionId, transcriptPath, cwd });
     await shutdown();
     return { exitCode: 0 };
   } catch {

@@ -32,12 +32,17 @@ import {
   type ArtifactCandidate,
   type DeltaEngineResult,
   hashCandidate,
+  isTranscriptJsonl,
   processDelta,
   selectSanitizer,
   uploadWithHeadSkip,
 } from '../hashing/index.js';
 import { ManifestGenerator } from '../manifest/index.js';
-import { DEFAULT_SANITIZATION_POLICY, sanitizeJson } from '../sanitization/index.js';
+import {
+  DEFAULT_SANITIZATION_POLICY,
+  normalizeTranscriptPaths,
+  sanitizeJson,
+} from '../sanitization/index.js';
 import {
   FileLock,
   getArtifactRecord,
@@ -431,15 +436,30 @@ export interface CandidateResult {
   sha256: string;
 }
 
+export interface BuildCandidatesOptions {
+  /**
+   * Absolute project root (session cwd). When set, transcript artifacts have
+   * this machine-specific prefix stripped to "/" before hashing/upload so
+   * stored paths match across environments.
+   */
+  projectRoot?: string;
+}
+
 export async function buildCandidates(
   discovery: DiscoveryResult,
   _config: SyncConfig,
+  options?: BuildCandidatesOptions,
 ): Promise<CandidateResult[]> {
   const results: CandidateResult[] = [];
   for (const artifact of discovery.artifacts) {
     const raw = await fsp.readFile(artifact.absolutePath, 'utf8');
+    const isTranscript = isTranscriptJsonl(artifact.relativePath, artifact.scope);
+    const normalized =
+      isTranscript && options?.projectRoot
+        ? normalizeTranscriptPaths(raw, options.projectRoot, os.homedir())
+        : raw;
     const sanitizer = selectSanitizer(artifact.relativePath, artifact.scope);
-    const sanitized = sanitizer(raw);
+    const sanitized = sanitizer(normalized);
     const hashed = hashCandidate({
       projectId: artifact.projectId,
       sessionId: artifact.sessionId,
@@ -528,7 +548,9 @@ export async function runFullSync(options: RunFullSyncOptions): Promise<RunFullS
   const discoveryDuration = Date.now() - discoveryStart;
 
   const sanitizationStart = Date.now();
-  const candidateResults = await buildCandidates(discovery, options.config);
+  const candidateResults = await buildCandidates(discovery, options.config, {
+    projectRoot: options.hookInput.cwd,
+  });
   const sanitizationDuration = Date.now() - sanitizationStart;
 
   const candidates = candidateResults.map((result) => result.candidate);
