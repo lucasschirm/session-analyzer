@@ -186,7 +186,7 @@ function objectKeyForFile(
   actualSha256: string,
 ): string {
   if (file.scope === 'session') {
-    return `${projectId}/${sessionId}/session/${file.relativePath}`;
+    return `${projectId}/${sessionId}/${file.relativePath}`;
   }
   return `global/cas/${actualSha256}`;
 }

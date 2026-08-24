@@ -21,7 +21,7 @@ describe('buildObjectKey', () => {
     ).toBe('p/s/manifest.json');
   });
 
-  it('builds session artifact keys', () => {
+  it('builds session artifact keys without a scope segment', () => {
     expect(
       buildObjectKey({
         projectId: 'p',
@@ -29,7 +29,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: 'transcript.jsonl',
       }),
-    ).toBe('p/s/session/transcript.jsonl');
+    ).toBe('p/s/transcript.jsonl');
   });
 
   it('builds workspace artifact keys as global/cas/<hash>', () => {
@@ -77,7 +77,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: 'file.json',
       }),
-    ).toBe('my%20project/sess%3A1/session/file.json');
+    ).toBe('my%20project/sess%3A1/file.json');
   });
 
   it('encodes special characters in path segments', () => {
@@ -88,7 +88,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: 'foo bar/baz:qux',
       }),
-    ).toBe('p/s/session/foo%20bar/baz%3Aqux');
+    ).toBe('p/s/foo%20bar/baz%3Aqux');
   });
 
   it('encodes Unicode path segments', () => {
@@ -99,7 +99,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: 'café/emoji',
       }),
-    ).toBe('p/s/session/caf%C3%A9/emoji');
+    ).toBe('p/s/caf%C3%A9/emoji');
   });
 
   it('pins Buffer and TextEncoder UTF-8 byte length equivalence', () => {
@@ -115,7 +115,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: 'a?b&c=d',
       }),
-    ).toBe('p/s/session/a%3Fb%26c%3Dd');
+    ).toBe('p/s/a%3Fb%26c%3Dd');
   });
 
   it('collapses and normalizes slashes and backslashes', () => {
@@ -126,7 +126,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: 'a\\b//c',
       }),
-    ).toBe('p/s/session/a/b/c');
+    ).toBe('p/s/a/b/c');
   });
 
   it('strips leading and trailing slashes', () => {
@@ -137,7 +137,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: './.claude/settings.json/',
       }),
-    ).toBe('p/s/session/.claude/settings.json');
+    ).toBe('p/s/.claude/settings.json');
   });
 
   it('rejects absolute unix paths', () => {
@@ -238,9 +238,9 @@ describe('buildObjectKey', () => {
   });
 
   it('preserves the 1024-byte boundary with a key that is exactly the limit', () => {
-    // 'p/s/session/' is 12 ASCII bytes; pad the remainder to 1024 bytes with
+    // 'p/s/' is 4 ASCII bytes; pad the remainder to 1024 bytes with
     // unencoded ASCII so the final key length is exactly the S3 limit.
-    const segment = 'a'.repeat(1024 - 12);
+    const segment = 'a'.repeat(1024 - 4);
     const key = buildObjectKey({
       projectId: 'p',
       sessionId: 's',
@@ -251,7 +251,7 @@ describe('buildObjectKey', () => {
   });
 
   it('rejects keys one byte over the 1024-byte boundary', () => {
-    const segment = 'a'.repeat(1024 - 12 + 1);
+    const segment = 'a'.repeat(1024 - 4 + 1);
     expect(() =>
       buildObjectKey({
         projectId: 'p',
@@ -297,12 +297,30 @@ describe('parseObjectKey', () => {
     });
   });
 
-  it('parses a session-scoped artifact key', () => {
+  it('parses a new session-scoped artifact key (no scope segment)', () => {
+    expect(parseObjectKey('p/s/transcript.jsonl')).toEqual({
+      projectId: 'p',
+      sessionId: 's',
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+    });
+  });
+
+  it('parses a legacy session-scoped artifact key (with scope segment)', () => {
     expect(parseObjectKey('p/s/session/transcript.jsonl')).toEqual({
       projectId: 'p',
       sessionId: 's',
       scope: 'session',
       relativePath: 'transcript.jsonl',
+    });
+  });
+
+  it('parses a new session-scoped subagent key', () => {
+    expect(parseObjectKey('p/s/subagents/agent-abc.jsonl')).toEqual({
+      projectId: 'p',
+      sessionId: 's',
+      scope: 'session',
+      relativePath: 'subagents/agent-abc.jsonl',
     });
   });
 
@@ -325,7 +343,7 @@ describe('parseObjectKey', () => {
   });
 
   it('decodes percent-encoded segments', () => {
-    expect(parseObjectKey('my%20project/sess%3A1/session/file.json')).toEqual({
+    expect(parseObjectKey('my%20project/sess%3A1/file.json')).toEqual({
       projectId: 'my project',
       sessionId: 'sess:1',
       scope: 'session',
@@ -334,7 +352,7 @@ describe('parseObjectKey', () => {
   });
 
   it('decodes percent-encoded Unicode segments', () => {
-    expect(parseObjectKey('p/s/session/caf%C3%A9/emoji')).toEqual({
+    expect(parseObjectKey('p/s/caf%C3%A9/emoji')).toEqual({
       projectId: 'p',
       sessionId: 's',
       scope: 'session',
@@ -347,8 +365,16 @@ describe('parseObjectKey', () => {
     expect(parseObjectKey('p/s')).toBeUndefined();
   });
 
-  it('returns undefined for keys with an unknown scope', () => {
-    expect(parseObjectKey('p/s/unknown/file.json')).toBeUndefined();
+  it('treats keys with an unrecognized third segment as session-scoped', () => {
+    // New session-scoped keys omit the `session/` segment. An unrecognized
+    // third segment is therefore interpreted as the start of a session-scoped
+    // relativePath, not rejected as an unknown scope.
+    expect(parseObjectKey('p/s/unknown/file.json')).toEqual({
+      projectId: 'p',
+      sessionId: 's',
+      scope: 'session',
+      relativePath: 'unknown/file.json',
+    });
   });
 
   it('returns undefined for empty keys', () => {

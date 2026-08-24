@@ -19,7 +19,7 @@ export interface S3Credentials {
  * `scope`, `relativePath`, and `hash` via `buildObjectKey`.
  */
 export interface FileToDownload {
-  /** Logical path used in progress and `session_files` rows: `<scope>/<relativePath>`. */
+  /** Logical path used in progress and `session_files` rows: `<relativePath>` for session/manifest scopes, `<scope>/<relativePath>` otherwise. */
   file: string;
   scope: ArtifactScope;
   relativePath: string;

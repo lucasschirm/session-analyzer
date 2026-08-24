@@ -13,6 +13,7 @@ import type {
 import {
   DEFAULT_PLUGIN_VERSION,
   MANIFEST_SCHEMA_VERSION,
+  StorageError,
   SYNC_ERROR_CATALOG,
   SYNC_VERSION,
   type SyncErrorCode,
@@ -267,10 +268,9 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
       // against a wiped/reset bucket: if the object is missing, re-upload it
       // instead of silently skipping.
       const isSessionScoped = item.artifact.scope === 'session';
-      const headObject = storageAdapter?.headObject;
-      if (isSessionScoped && headObject) {
+      if (isSessionScoped && storageAdapter?.headObject) {
         try {
-          const head = await headObject({
+          const head = await storageAdapter.headObject({
             projectId: item.artifact.projectId,
             sessionId: item.artifact.sessionId,
             scope: item.artifact.scope,
@@ -285,9 +285,17 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
             changed.push(item);
             continue;
           }
-        } catch {
-          // HEAD failed (network/auth/transient) — trust local state and
-          // skip rather than blocking the sync on an unverified error.
+        } catch (err) {
+          // Only mapped StorageError failures (network/auth/transient) fall
+          // back to trusting local state. Unexpected errors (e.g. a
+          // programming defect) must propagate so the caller reports a
+          // failure instead of silently skipping.
+          if (err instanceof StorageError) {
+            // Trust local state and skip rather than blocking the sync on
+            // an unverified storage error.
+          } else {
+            throw err;
+          }
         }
       }
       result.filesSkipped += 1;

@@ -726,7 +726,7 @@ describe('runListCommand', () => {
     const objects = [
       { key: 'proj-1/sess-a/manifest.json', size: 100, lastModified: new Date('2026-01-02') },
       {
-        key: 'proj-2/sess-b/session/transcript.jsonl',
+        key: 'proj-2/sess-b/transcript.jsonl',
         size: 200,
         lastModified: new Date('2026-01-01'),
       },
@@ -790,7 +790,7 @@ describe('runListCommand', () => {
   it('lists sessions for a project', async () => {
     const objects = [
       { key: 'proj-1/sess-a/manifest.json', size: 100, lastModified: new Date('2026-01-02') },
-      { key: 'proj-1/sess-a/session/transcript.jsonl', size: 200 },
+      { key: 'proj-1/sess-a/transcript.jsonl', size: 200 },
       { key: 'proj-1/sess-b/manifest.json', size: 50, lastModified: new Date('2026-01-01') },
     ] as ListObjectEntry[];
     const stdout: string[] = [];
@@ -815,11 +815,11 @@ describe('runListCommand', () => {
     const objects = [
       { key: 'proj-1/sess-a/manifest.json', size: 100, lastModified: new Date('2026-01-02') },
       {
-        key: 'proj-1/sess-a/session/transcript.jsonl',
+        key: 'proj-1/sess-a/transcript.jsonl',
         size: 200,
         lastModified: new Date('2026-01-02'),
       },
-      { key: 'proj-1/sess-a/session/subagents/agent-x.jsonl', size: 80 },
+      { key: 'proj-1/sess-a/subagents/agent-x.jsonl', size: 80 },
       { key: 'proj-1/sess-a/workspace/package.json', size: 50 },
     ] as ListObjectEntry[];
     const stdout: string[] = [];
@@ -850,9 +850,9 @@ describe('runListCommand', () => {
   it('filters files by --path (non-recursive under the path)', async () => {
     const objects = [
       { key: 'proj-1/sess-a/manifest.json', size: 100 },
-      { key: 'proj-1/sess-a/session/transcript.jsonl', size: 200 },
-      { key: 'proj-1/sess-a/session/subagents/agent-x.jsonl', size: 80 },
-      { key: 'proj-1/sess-a/session/subagents/agent-x.meta.json', size: 20 },
+      { key: 'proj-1/sess-a/transcript.jsonl', size: 200 },
+      { key: 'proj-1/sess-a/subagents/agent-x.jsonl', size: 80 },
+      { key: 'proj-1/sess-a/subagents/agent-x.meta.json', size: 20 },
       { key: 'proj-1/sess-a/workspace/package.json', size: 50 },
     ] as ListObjectEntry[];
     const stdout: string[] = [];
@@ -998,13 +998,16 @@ describe('runSyncCommand', () => {
     }
   });
 
-  it('skips sessions that already exist in storage', async () => {
+  it('skips sessions that are complete in storage (manifest + transcript)', async () => {
     const tmpDir = makeTmpDir();
     const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
     await fsp.mkdir(claudeDir, { recursive: true });
     await fsp.writeFile(path.join(claudeDir, 'sess-a.jsonl'), '{"type":"message"}\n');
 
-    const adapter = makeAdapter([{ key: 'proj-1/sess-a/manifest.json', size: 100 }]);
+    const adapter = makeAdapter([
+      { key: 'proj-1/sess-a/manifest.json', size: 100 },
+      { key: 'proj-1/sess-a/transcript.jsonl', size: 50 },
+    ]);
 
     const oldHome = process.env.HOME;
     process.env.HOME = tmpDir;
@@ -1019,6 +1022,34 @@ describe('runSyncCommand', () => {
       expect(result).toBe(0);
       expect(io.stdoutStr()).toContain('[skip] session sess-a');
       expect(io.stdoutStr()).toContain('1 already synced');
+    } finally {
+      process.env.HOME = oldHome;
+    }
+  });
+
+  it('re-syncs sessions that have a manifest but no transcript (incomplete)', async () => {
+    const tmpDir = makeTmpDir();
+    const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
+    await fsp.mkdir(claudeDir, { recursive: true });
+    await fsp.writeFile(path.join(claudeDir, 'sess-a.jsonl'), '{"type":"message"}\n');
+
+    // Manifest-only: the old code would skip this, but the completeness check
+    // should detect the missing transcript and re-sync.
+    const adapter = makeAdapter([{ key: 'proj-1/sess-a/manifest.json', size: 100 }]);
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    try {
+      const io = makeStdio();
+      const result = await runSyncCommand({
+        cwd: tmpDir,
+        env: { ...validEnv, SAL_DATA_DIR: path.join(tmpDir, 'sal-data') },
+        storageAdapter: adapter,
+        ...io,
+      });
+      expect(result).toBe(0);
+      expect(io.stdoutStr()).not.toContain('[skip] session sess-a');
+      expect(io.stdoutStr()).toContain('[ok]   session sess-a');
     } finally {
       process.env.HOME = oldHome;
     }
@@ -1051,13 +1082,18 @@ describe('runSyncCommand', () => {
     }
   });
 
-  it('prints force message when --force clears state', async () => {
+  it('prints force message when --force clears state and re-syncs', async () => {
     const tmpDir = makeTmpDir();
     const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
     await fsp.mkdir(claudeDir, { recursive: true });
     await fsp.writeFile(path.join(claudeDir, 'sess-a.jsonl'), '{"type":"message"}\n');
 
-    const adapter = makeAdapter([{ key: 'proj-1/sess-a/manifest.json', size: 100 }]);
+    // Even with a complete session in storage, --force bypasses the
+    // completeness check and re-syncs.
+    const adapter = makeAdapter([
+      { key: 'proj-1/sess-a/manifest.json', size: 100 },
+      { key: 'proj-1/sess-a/transcript.jsonl', size: 50 },
+    ]);
 
     const oldHome = process.env.HOME;
     process.env.HOME = tmpDir;
@@ -1071,8 +1107,9 @@ describe('runSyncCommand', () => {
         ...io,
       });
       expect(result).toBe(0);
-      // With force, the session should still be skipped because it exists in storage.
-      expect(io.stdoutStr()).toContain('[skip] session sess-a');
+      // With force, the session should NOT be skipped.
+      expect(io.stdoutStr()).not.toContain('[skip] session sess-a');
+      expect(io.stdoutStr()).toContain('[ok]   session sess-a');
     } finally {
       process.env.HOME = oldHome;
     }

@@ -144,7 +144,7 @@ describe('FileProcessingBridge', () => {
     parse.mockResolvedValue(makeParsedSession(main));
     createBridge(makeSyncManifest());
 
-    const file = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const file = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', file);
 
     expect(parse).toHaveBeenCalledWith(file.content, {
@@ -161,12 +161,12 @@ describe('FileProcessingBridge', () => {
     parse.mockResolvedValue(makeParsedSession(main));
     createBridge(null);
 
-    const file = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const file = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', file);
 
     expect(parse).toHaveBeenCalledWith(file.content, {
       projectId: 'project-1',
-      title: 'session/transcript.jsonl',
+      title: 'transcript.jsonl',
     });
   });
 
@@ -187,10 +187,10 @@ describe('FileProcessingBridge', () => {
     );
     createBridge(makeSyncManifest({ artifacts: [makeArtifact('subagents/agent-1.jsonl')] }));
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
 
-    const file = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const file = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     await onFileDownloaded('session-1', file);
 
     expect(parse).toHaveBeenCalledWith(file.content, { projectId: 'project-1' });
@@ -229,19 +229,16 @@ describe('FileProcessingBridge', () => {
       }),
     );
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
 
-    const sidecar = makeDownloadedFile(
-      'session/subagents/agent-1.meta.json',
-      '{"agentType":"Research"}',
-    );
+    const sidecar = makeDownloadedFile('subagents/agent-1.meta.json', '{"agentType":"Research"}');
     const sidecarPromise = onFileDownloaded('session-1', sidecar);
 
     await Promise.resolve();
     expect(calls.replaceSession).not.toHaveBeenCalled();
 
-    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonl = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     const jsonlPromise = onFileDownloaded('session-1', jsonl);
 
     await Promise.all([sidecarPromise, jsonlPromise]);
@@ -276,19 +273,16 @@ describe('FileProcessingBridge', () => {
       }),
     );
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
 
-    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonl = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     const jsonlPromise = onFileDownloaded('session-1', jsonl);
 
     await Promise.resolve();
     expect(calls.replaceSession).not.toHaveBeenCalled();
 
-    const sidecar = makeDownloadedFile(
-      'session/subagents/agent-1.meta.json',
-      '{"agentType":"Coder"}',
-    );
+    const sidecar = makeDownloadedFile('subagents/agent-1.meta.json', '{"agentType":"Coder"}');
     const sidecarPromise = onFileDownloaded('session-1', sidecar);
 
     await Promise.all([jsonlPromise, sidecarPromise]);
@@ -315,11 +309,11 @@ describe('FileProcessingBridge', () => {
     });
     createBridge(makeSyncManifest({ artifacts: [makeArtifact('subagents/agent-1.jsonl')] }));
 
-    const main = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const main = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', main);
 
-    const sub1 = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent-1');
-    const sub2 = makeDownloadedFile('session/subagents/agent-2.jsonl', 'subagent-2');
+    const sub1 = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent-1');
+    const sub2 = makeDownloadedFile('subagents/agent-2.jsonl', 'subagent-2');
     await Promise.all([onFileDownloaded('session-1', sub1), onFileDownloaded('session-1', sub2)]);
 
     expect(calls.replaceSession).toHaveBeenCalledTimes(2);
@@ -343,16 +337,16 @@ describe('FileProcessingBridge', () => {
     );
     createBridge(makeSyncManifest({ artifacts: [makeArtifact('subagents/agent-1.meta.json')] }));
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
 
-    const sidecar = makeDownloadedFile('session/subagents/agent-1.meta.json', '{}');
+    const sidecar = makeDownloadedFile('subagents/agent-1.meta.json', '{}');
     const promise = onFileDownloaded('session-1', sidecar);
 
     await Promise.resolve();
     expect(parse).toHaveBeenCalledTimes(1);
 
-    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonl = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     await onFileDownloaded('session-1', jsonl);
     await promise;
 
@@ -382,13 +376,13 @@ describe('FileProcessingBridge', () => {
     });
     createBridge(makeSyncManifest({ artifacts: [makeArtifact('subagents/agent-1.jsonl')] }));
 
-    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonl = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     const jsonlPromise = onFileDownloaded('session-1', jsonl);
 
     await Promise.resolve();
     expect(calls.replaceSession).not.toHaveBeenCalled();
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     const mainPromise = onFileDownloaded('session-1', mainFile);
     await Promise.resolve();
     resolveUpsert('session-1');
@@ -422,10 +416,10 @@ describe('FileProcessingBridge', () => {
       }),
     );
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
 
-    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonl = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     const jsonlPromise = onFileDownloaded('session-1', jsonl);
 
     await Promise.resolve();
@@ -466,10 +460,10 @@ describe('FileProcessingBridge', () => {
     );
     calls.replaceSession.mockRejectedValue(new Error('replace failed'));
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
 
-    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonl = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     const jsonlPromise = onFileDownloaded('session-1', jsonl);
 
     await Promise.resolve();
@@ -517,11 +511,11 @@ describe('FileProcessingBridge', () => {
     );
     calls.replaceSession.mockRejectedValueOnce(new Error('replace failed'));
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
 
-    const jsonl1 = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent-1');
-    const jsonl2 = makeDownloadedFile('session/subagents/agent-2.jsonl', 'subagent-2');
+    const jsonl1 = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent-1');
+    const jsonl2 = makeDownloadedFile('subagents/agent-2.jsonl', 'subagent-2');
     const jsonl1Promise = onFileDownloaded('session-1', jsonl1);
     const jsonl2Promise = onFileDownloaded('session-1', jsonl2);
 
@@ -554,10 +548,10 @@ describe('FileProcessingBridge', () => {
       makeDashboardSession({ id, external_id: 'remote-sess' }),
     );
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
 
-    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonl = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     await onFileDownloaded('session-1', jsonl);
 
     expect(calls.getSession).toHaveBeenCalledWith('new-session-id');
@@ -592,21 +586,18 @@ describe('FileProcessingBridge', () => {
       }),
     );
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
     expect(calls.upsertSessionFile).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: 'session/transcript.jsonl',
+        path: 'transcript.jsonl',
         scope: 'session',
         status: 'processed',
       }),
     );
 
-    const sidecar = makeDownloadedFile(
-      'session/subagents/agent-1.meta.json',
-      '{"agentType":"Research"}',
-    );
-    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const sidecar = makeDownloadedFile('subagents/agent-1.meta.json', '{"agentType":"Research"}');
+    const jsonl = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     await Promise.all([
       onFileDownloaded('session-1', sidecar),
       onFileDownloaded('session-1', jsonl),
@@ -614,14 +605,14 @@ describe('FileProcessingBridge', () => {
 
     expect(calls.upsertSessionFile).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: 'session/subagents/agent-1.jsonl',
+        path: 'subagents/agent-1.jsonl',
         scope: 'session',
         status: 'processed',
       }),
     );
     expect(calls.upsertSessionFile).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: 'session/subagents/agent-1.meta.json',
+        path: 'subagents/agent-1.meta.json',
         scope: 'session',
         status: 'processed',
       }),
@@ -652,13 +643,10 @@ describe('FileProcessingBridge', () => {
       }),
     );
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
 
-    const sidecar = makeDownloadedFile(
-      'session/subagents/agent-1.meta.json',
-      '{"agentType":"Research"}',
-    );
+    const sidecar = makeDownloadedFile('subagents/agent-1.meta.json', '{"agentType":"Research"}');
     const sidecarPromise = onFileDownloaded('session-1', sidecar);
 
     await Promise.resolve();
@@ -670,7 +658,7 @@ describe('FileProcessingBridge', () => {
     expect(calls.replaceSession).not.toHaveBeenCalled();
     expect(calls.upsertSessionFile).toHaveBeenCalledWith(
       expect.objectContaining({
-        path: 'session/subagents/agent-1.meta.json',
+        path: 'subagents/agent-1.meta.json',
         scope: 'session',
         status: 'processed',
       }),
@@ -698,10 +686,10 @@ describe('FileProcessingBridge', () => {
     );
     createBridge(makeSyncManifest({ artifacts: [makeArtifact('subagents/agent-1.jsonl')] }));
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await onFileDownloaded('session-1', mainFile);
 
-    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonl = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     const jsonlPromise = onFileDownloaded('session-1', jsonl);
 
     await Promise.resolve();
@@ -738,10 +726,10 @@ describe('FileProcessingBridge', () => {
     createBridge(makeSyncManifest({ artifacts: [makeArtifact('subagents/agent-1.jsonl')] }));
     calls.upsertSessionByExternalId.mockRejectedValue(new Error('main upsert failed'));
 
-    const mainFile = makeDownloadedFile('session/transcript.jsonl', 'main');
+    const mainFile = makeDownloadedFile('transcript.jsonl', 'main');
     await expect(onFileDownloaded('session-1', mainFile)).rejects.toThrow('main upsert failed');
 
-    const jsonl = makeDownloadedFile('session/subagents/agent-1.jsonl', 'subagent');
+    const jsonl = makeDownloadedFile('subagents/agent-1.jsonl', 'subagent');
     const jsonlPromise = onFileDownloaded('session-1', jsonl);
 
     await expect(jsonlPromise).rejects.toThrow('main upsert failed');

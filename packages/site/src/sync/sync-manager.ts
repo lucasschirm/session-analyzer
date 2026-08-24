@@ -1025,7 +1025,10 @@ export class SyncManager extends EventTarget {
 
   private artifactToFile(artifact: ManifestArtifact, mainPath: string): FileToDownload {
     return {
-      file: `${artifact.scope}/${artifact.relativePath}`,
+      file:
+        artifact.scope === 'session'
+          ? artifact.relativePath
+          : `${artifact.scope}/${artifact.relativePath}`,
       scope: artifact.scope,
       relativePath: artifact.relativePath,
       hash: artifact.sha256,

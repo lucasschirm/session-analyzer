@@ -102,7 +102,11 @@ function buildLegacyKey(
   relativePath: string,
 ): string {
   const parts = validateRelativePath(relativePath);
-  const scopeParts = scope === 'manifest' ? [] : [scope];
+  // `manifest` and `session` scopes omit the scope segment from the key.
+  // The session is already identified by `<sessionId>/`, so `session/` is
+  // redundant. This produces flatter keys like `<projectId>/<sessionId>/transcript.jsonl`
+  // instead of `<projectId>/<sessionId>/session/transcript.jsonl`.
+  const scopeParts = scope === 'manifest' || scope === 'session' ? [] : [scope];
   const segments = [projectId, sessionId, ...scopeParts, ...parts];
   const encoded = segments.map(encodeKeySegment).join('/');
 
@@ -118,7 +122,12 @@ function buildLegacyKey(
  *
  * Legacy keys follow the layout:
  *   `<projectId>/<sessionId>/manifest.json`
- *   `<projectId>/<sessionId>/<scope>/<relativePath>`
+ *   `<projectId>/<sessionId>/transcript.jsonl`
+ *   `<projectId>/<sessionId>/subagents/<relativePath>`
+ *   `<projectId>/<sessionId>/<scope>/<relativePath>`  (workspace, global, runtime)
+ *
+ * `manifest` and `session` scopes omit the scope segment from the key. All
+ * other scopes include it.
  *
  * Content-addressed workspace and global objects use the flat layout:
  *   `global/cas/<contentSha256>`
@@ -176,15 +185,24 @@ function parseLegacyKeySegments(segments: string[]): ParsedObjectKey | undefined
     return { projectId, sessionId, scope: 'manifest', relativePath: 'manifest.json' };
   }
 
-  if (!VALID_SCOPES.has(third)) {
-    return undefined;
+  // Keys with an explicit scope segment (workspace, global, runtime, session).
+  // The `session` case handles backward compatibility with old keys that
+  // included the `session/` segment.
+  if (VALID_SCOPES.has(third)) {
+    const scope = third as 'manifest' | ArtifactScope;
+    const rest = segments.slice(3).map(decodeURIComponent).join('/');
+    if (!rest) return undefined;
+    return { projectId, sessionId, scope, relativePath: rest };
   }
 
-  const scope = third as 'manifest' | ArtifactScope;
-  const rest = segments.slice(3).map(decodeURIComponent).join('/');
+  // New session-scoped keys omit the `session/` segment. If the third
+  // segment is not a recognized scope, treat the remaining segments as a
+  // session-scoped relativePath (e.g. `transcript.jsonl` or
+  // `subagents/agent-xxx.jsonl`).
+  const rest = segments.slice(2).map(decodeURIComponent).join('/');
   if (!rest) return undefined;
 
-  return { projectId, sessionId, scope, relativePath: rest };
+  return { projectId, sessionId, scope: 'session', relativePath: rest };
 }
 
 /**
@@ -192,7 +210,13 @@ function parseLegacyKeySegments(segments: string[]): ParsedObjectKey | undefined
  *
  * Legacy keys follow the layout:
  *   `<projectId>/<sessionId>/manifest.json`
- *   `<projectId>/<sessionId>/<scope>/<relativePath>`
+ *   `<projectId>/<sessionId>/transcript.jsonl`
+ *   `<projectId>/<sessionId>/subagents/<relativePath>`
+ *   `<projectId>/<sessionId>/<scope>/<relativePath>`  (workspace, global, runtime, legacy session)
+ *
+ * `manifest` and `session` scopes omit the scope segment from new keys. Old
+ * keys with an explicit `session/` segment are still recognized for backward
+ * compatibility.
  *
  * Content-addressed keys follow the layout:
  *   `global/cas/<contentSha256>`
@@ -212,6 +236,12 @@ export function parseObjectKey(key: string): ParsedObjectKey | undefined {
   if (first === 'global' && second === 'cas' && segments.length === 3) {
     const casParsed = parseCasKeySegments(segments);
     if (casParsed) return casParsed;
+    // `global/cas/manifest.json` is a legacy manifest key for a project
+    // literally named 'global' with session 'cas'. Let it fall through to
+    // legacy parsing. For any other non-hash third segment, return undefined
+    // to avoid misinterpreting it as a session-scoped key.
+    const third = decodeURIComponent(segments[2] as string);
+    if (third !== 'manifest.json') return undefined;
   }
 
   return parseLegacyKeySegments(segments);

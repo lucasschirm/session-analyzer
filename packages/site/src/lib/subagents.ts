@@ -92,9 +92,10 @@ export interface SyncFileClassification {
 }
 
 /**
- * Classifies a single sync-downloaded logical path. Main transcripts live
- * directly under `session/`; `session/subagents/agent-<id>.jsonl` and
- * `.meta.json` are subagent files. Any other scope is ignored.
+ * Classifies a single sync-downloaded logical path. Session-scoped files
+ * are stored directly under `<projectId>/<sessionId>/` without a `session/`
+ * segment: the main transcript is `transcript.jsonl`, and subagent files
+ * are `subagents/agent-<id>.jsonl` and `.meta.json`. Any other path is ignored.
  */
 export function classifySyncFile(path: string): SyncFileClassification | null {
   const match = path.match(SUBAGENT_FILE_PATTERN);
@@ -102,7 +103,8 @@ export function classifySyncFile(path: string): SyncFileClassification | null {
     const [, agentId, kind] = match;
     return { type: 'subagent', agentId, kind: kind === 'jsonl' ? 'jsonl' : 'meta' };
   }
-  if (path.startsWith('session/')) return { type: 'main' };
+  // Main transcript: a session-scoped file that is not a subagent file.
+  if (SESSION_FILE_PATTERN.test(path)) return { type: 'main' };
   return null;
 }
 

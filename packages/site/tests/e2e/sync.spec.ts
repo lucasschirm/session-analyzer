@@ -115,7 +115,7 @@ async function openSyncStatusModal(page: Page): Promise<Locator> {
 }
 
 function transcriptFileKey(projectId: string, sessionId: string): string {
-  return `${projectId}/${sessionId}/session/transcript.jsonl`;
+  return `${projectId}/${sessionId}/transcript.jsonl`;
 }
 
 // =============================================================================

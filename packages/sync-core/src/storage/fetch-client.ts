@@ -444,18 +444,21 @@ export class S3FetchClient {
   }
 
   /**
-   * List all objects under a session's `session/` scope.
+   * List all objects under a session prefix.
    *
    * Unlike {@link listSessionFolders}, this returns the raw object keys under
-   * `<projectId>/<sessionId>/session/` rather than common prefixes. The keys
-   * can be decoded with {@link parseObjectKey}.
+   * `<projectId>/<sessionId>/` rather than common prefixes. Session-scoped
+   * artifacts (transcripts, subagents) are stored directly under this prefix
+   * without a `session/` segment. The keys can be decoded with
+   * {@link parseObjectKey}; callers filter by `parsed.scope === 'session'`
+   * to exclude manifest and runtime artifacts.
    */
   async listSessionObjects(
     projectId: string,
     sessionId: string,
     options: S3ListObjectsOptions = {},
   ): Promise<S3ListObjectEntry[]> {
-    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/session/`;
+    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/`;
     return this.listObjectPages(prefix, options);
   }
 

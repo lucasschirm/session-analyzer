@@ -1,6 +1,6 @@
 {
   "name": "@lucasschirm/claude-session-sync",
-  "version": "0.2.14",
+  "version": "0.2.16",
   "private": false,
   "type": "module",
   "license": "ISC",

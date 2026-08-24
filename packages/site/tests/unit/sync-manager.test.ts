@@ -801,7 +801,7 @@ describe('SyncManager', () => {
     await initPromise;
 
     const { connection } = await setupConnectionAndCredentials(dbClient);
-    s3.putBuffer('new-proj/session-1/session/manifest.json', bufferFromText('{}'));
+    s3.putBuffer('new-proj/session-1/manifest.json', bufferFromText('{}'));
 
     let createdName = '';
     const syncManagerWithModal = new SyncManager({
@@ -834,7 +834,7 @@ describe('SyncManager', () => {
 
     const { connection } = await setupConnectionAndCredentials(dbClient);
     // No manifest.json for "orphan-proj" — just a session folder
-    s3.putBuffer('orphan-proj/session-1/session/manifest.json', bufferFromText('{}'));
+    s3.putBuffer('orphan-proj/session-1/manifest.json', bufferFromText('{}'));
 
     syncManager.requestRun(connection.id);
     await flush();
@@ -924,7 +924,7 @@ describe('SyncManager', () => {
     expect(syncMessage?.sync).toBe(true);
     expect(syncMessage?.exists).toBe(false);
     expect(syncMessage?.filesToDownload).toHaveLength(1);
-    expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+    expect(syncMessage?.filesToDownload?.[0]?.file).toBe('transcript.jsonl');
   });
 
   it('completes a session after downloaded files and a complete summary', async () => {
@@ -972,7 +972,7 @@ describe('SyncManager', () => {
       type: 'SESSION_FILE_DOWNLOADED',
       projectId,
       sessionId: 'session-1',
-      file: 'session/transcript.jsonl',
+      file: 'transcript.jsonl',
       hash: sha,
       content,
     });
@@ -980,7 +980,7 @@ describe('SyncManager', () => {
 
     expect(onFileDownloaded).toHaveBeenCalledOnce();
     const [sessionIdArg, fileArg] = onFileDownloaded.mock.calls[0] as [string, DownloadedFile];
-    expect(fileArg.path).toBe('session/transcript.jsonl');
+    expect(fileArg.path).toBe('transcript.jsonl');
     expect(fileArg.size).toBe(content.byteLength);
 
     worker.receive({
@@ -989,7 +989,7 @@ describe('SyncManager', () => {
       sessionId: 'session-1',
       files: [
         {
-          file: 'session/transcript.jsonl',
+          file: 'transcript.jsonl',
           hash: sha,
           size: content.byteLength,
           status: 'downloaded',
@@ -1003,7 +1003,7 @@ describe('SyncManager', () => {
     expect(session?.status).toBe('in_sync');
 
     const files = await dbClient.getSessionFiles(sessionIdArg);
-    const file = files.find((f) => f.path === 'session/transcript.jsonl');
+    const file = files.find((f) => f.path === 'transcript.jsonl');
     expect(file?.status).toBe('processed');
   });
 
@@ -1098,7 +1098,7 @@ describe('SyncManager', () => {
     expect(syncMessage).toBeTruthy();
     expect(syncMessage?.sync).toBe(true);
     expect(syncMessage?.filesToDownload).toHaveLength(1);
-    expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+    expect(syncMessage?.filesToDownload?.[0]?.file).toBe('transcript.jsonl');
 
     const snapshot = syncManager.getSnapshot();
     const session = snapshot.sessions.find((s) => s.sessionId === 'session-1');
@@ -1243,7 +1243,7 @@ describe('SyncManager', () => {
       const sessionId = await insertSessionStub(dbClient, project.id, 'session-1', {}, 'in_sync');
       const oldHash = hashOf('old');
       const newHash = hashOf('new');
-      await insertSessionFile(dbClient, project.id, sessionId, 'session/transcript.jsonl', oldHash);
+      await insertSessionFile(dbClient, project.id, sessionId, 'transcript.jsonl', oldHash);
 
       const projectId = project.readable_id ?? 'remote-proj';
       const manifestObj = makeProjectManifest(projectId, 'Remote Project');
@@ -1280,7 +1280,7 @@ describe('SyncManager', () => {
       expect(syncMessage?.sync).toBe(true);
       expect(syncMessage?.exists).toBe(true);
       expect(syncMessage?.filesToDownload).toHaveLength(1);
-      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('transcript.jsonl');
       expect(syncMessage?.filesToDownload?.[0]?.hash).toBe(newHash);
     });
 
@@ -1298,7 +1298,7 @@ describe('SyncManager', () => {
         dbClient,
         project.id,
         sessionId,
-        'session/transcript.jsonl',
+        'transcript.jsonl',
         fileHash,
         'failed',
       );
@@ -1338,7 +1338,7 @@ describe('SyncManager', () => {
       expect(syncMessage?.sync).toBe(true);
       expect(syncMessage?.exists).toBe(true);
       expect(syncMessage?.filesToDownload).toHaveLength(1);
-      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('transcript.jsonl');
 
       const session = (await dbClient.getSession(sessionId)) as SessionWithSync;
       expect(session?.sync_status).toBe('pending');
@@ -1382,13 +1382,7 @@ describe('SyncManager', () => {
       const project = await createLocalProject(dbClient, 'Remote Project', 'remote-proj');
       const sessionId = await insertSessionStub(dbClient, project.id, 'session-1', {}, 'in_sync');
       const fileHash = hashOf('main');
-      await insertSessionFile(
-        dbClient,
-        project.id,
-        sessionId,
-        'session/transcript.jsonl',
-        fileHash,
-      );
+      await insertSessionFile(dbClient, project.id, sessionId, 'transcript.jsonl', fileHash);
 
       const projectId = project.readable_id ?? 'remote-proj';
       const manifestObj = makeProjectManifest(projectId, 'Remote Project');
@@ -1430,7 +1424,7 @@ describe('SyncManager', () => {
       expect(session?.sync_status).toBe('in_sync');
 
       const files = await dbClient.getSessionFiles(sessionId);
-      const mainFile = files.find((f) => f.path === 'session/transcript.jsonl');
+      const mainFile = files.find((f) => f.path === 'transcript.jsonl');
       expect(mainFile?.project_id).toBe(project.id);
       expect(mainFile?.status).toBe('processed');
     });
@@ -1522,8 +1516,8 @@ describe('SyncManager', () => {
         | undefined;
       expect(syncMessage?.filesToDownload).toHaveLength(3);
       const paths = syncMessage?.filesToDownload?.map((f) => f.file);
-      expect(paths).toContain('session/subagents/agent-1.jsonl');
-      expect(paths).toContain('session/subagents/agent-1.meta.json');
+      expect(paths).toContain('subagents/agent-1.jsonl');
+      expect(paths).toContain('subagents/agent-1.meta.json');
     });
 
     it('flags the artifact whose relativePath matches mainTranscriptRelativePath', async () => {
@@ -1634,7 +1628,7 @@ describe('SyncManager', () => {
         dbClient,
         project.id,
         sessionId,
-        'session/transcript.jsonl',
+        'transcript.jsonl',
         fileHash,
         'failed',
       );
@@ -1672,7 +1666,7 @@ describe('SyncManager', () => {
         | SessionSyncMessage
         | undefined;
       expect(syncMessage?.sync).toBe(true);
-      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('transcript.jsonl');
     });
 
     it('excludes out-of-scope workspace and global artifacts from the diff', async () => {
@@ -1722,7 +1716,7 @@ describe('SyncManager', () => {
         | SessionSyncMessage
         | undefined;
       expect(syncMessage?.filesToDownload).toHaveLength(1);
-      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('session/transcript.jsonl');
+      expect(syncMessage?.filesToDownload?.[0]?.file).toBe('transcript.jsonl');
 
       const session = syncManager.getSnapshot().sessions[0];
       expect(session).toBeTruthy();
@@ -1919,7 +1913,7 @@ describe('SyncManager', () => {
         id: fileId,
         project_id: project.id,
         session_id: sessionId,
-        path: 'session/transcript.jsonl',
+        path: 'transcript.jsonl',
         scope: 'session',
         sha256: hashOf('old'),
         size: 100,
@@ -1961,14 +1955,14 @@ describe('SyncManager', () => {
         type: 'SESSION_FILE_DOWNLOADED',
         projectId,
         sessionId: 'session-1',
-        file: 'session/transcript.jsonl',
+        file: 'transcript.jsonl',
         hash: fileHash,
         content: bufferFromText('new content'),
       });
       await flush();
 
       const files = await dbClient.getSessionFiles(sessionId);
-      const file = files.find((f) => f.path === 'session/transcript.jsonl');
+      const file = files.find((f) => f.path === 'transcript.jsonl');
       expect(file?.id).toBe(fileId);
       expect(file?.sha256).toBe(fileHash);
       expect(file?.project_id).toBe(project.id);
@@ -2008,7 +2002,7 @@ describe('SyncManager', () => {
       await initPromise;
 
       const { connection } = await setupConnectionAndCredentials(dbClient);
-      s3.putBuffer('orphan-proj/session-1/session/manifest.json', bufferFromText('{}'));
+      s3.putBuffer('orphan-proj/session-1/manifest.json', bufferFromText('{}'));
 
       syncManager.requestRun(connection.id);
       await flush();
@@ -2049,7 +2043,7 @@ describe('SyncManager', () => {
         connection.id,
       );
 
-      s3.putBuffer('orphan-proj/session-1/session/manifest.json', bufferFromText('{}'));
+      s3.putBuffer('orphan-proj/session-1/manifest.json', bufferFromText('{}'));
 
       syncManager.requestRun(connection.id);
       await flush();
@@ -2074,7 +2068,7 @@ describe('SyncManager', () => {
       await initPromise;
 
       const { connection } = await setupConnectionAndCredentials(dbClient);
-      s3.putBuffer('declined-proj/session-1/session/manifest.json', bufferFromText('{}'));
+      s3.putBuffer('declined-proj/session-1/manifest.json', bufferFromText('{}'));
 
       syncManager.requestRun(connection.id);
       await flush();
@@ -2107,7 +2101,7 @@ describe('SyncManager', () => {
       await initPromise;
 
       const { connection } = await setupConnectionAndCredentials(dbClient);
-      s3.putBuffer('handler-proj/session-1/session/manifest.json', bufferFromText('{}'));
+      s3.putBuffer('handler-proj/session-1/manifest.json', bufferFromText('{}'));
 
       syncManager.requestRun(connection.id);
       await flush();
@@ -2156,7 +2150,7 @@ describe('SyncManager', () => {
       await initPromise;
 
       const { connection } = await setupConnectionAndCredentials(dbClient);
-      failS3.putBuffer('fail-put-proj/session-1/session/manifest.json', bufferFromText('{}'));
+      failS3.putBuffer('fail-put-proj/session-1/manifest.json', bufferFromText('{}'));
 
       syncManager.requestRun(connection.id);
       await flush();
@@ -2208,7 +2202,7 @@ describe('SyncManager', () => {
 
       const { connection } = await setupConnectionAndCredentials(dbClient);
       // Put a session file so the folder is discovered, but no manifest
-      failS3.putBuffer('denied-proj/session-1/session/manifest.json', bufferFromText('{}'));
+      failS3.putBuffer('denied-proj/session-1/manifest.json', bufferFromText('{}'));
 
       syncManager.requestRun(connection.id);
       await flush();

@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { StorageAdapter } from '@lucasschirm/sal-sync';
+import { buildObjectKey, type StorageAdapter } from '@lucasschirm/sal-sync';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getTranscriptWatcherPath,
@@ -37,7 +37,7 @@ class InMemoryStorageAdapter implements StorageAdapter {
     body: Uint8Array;
     contentSha256?: string;
   }) {
-    const key = `${input.projectId}/${input.sessionId}/${input.scope}/${input.relativePath}`;
+    const key = buildObjectKey(input);
     this.calls.push({
       projectId: input.projectId,
       sessionId: input.sessionId,

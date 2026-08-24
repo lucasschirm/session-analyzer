@@ -485,7 +485,10 @@ export class SessionSyncWorker {
 
   private toFileToDownload(artifact: ManifestArtifact, mainPath: string): FileToDownload {
     return {
-      file: `${artifact.scope}/${artifact.relativePath}`,
+      file:
+        artifact.scope === 'session'
+          ? artifact.relativePath
+          : `${artifact.scope}/${artifact.relativePath}`,
       scope: artifact.scope,
       relativePath: artifact.relativePath,
       hash: artifact.sha256,
@@ -501,7 +504,7 @@ export class SessionSyncWorker {
     etag?: string,
   ): FileToDownload {
     return {
-      file: `session/${relativePath}`,
+      file: relativePath,
       scope: 'session',
       relativePath,
       hash: '',
