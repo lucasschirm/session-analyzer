@@ -9,6 +9,7 @@ import '../../src/pages/session-dashboard';
 import '../../src/pages/session-evidence/session-evidence-view';
 import '../../src/pages/indicator-details';
 import '../../src/pages/session-transcript-page';
+import '../../src/pages/artifact-diff/artifact-diff-view';
 import type { AnalyticsToken } from '@lucasschirm/sal-db';
 import type { HomePage } from '../../src/pages/home-page';
 import type { IndicatorDetails } from '../../src/pages/indicator-details';
@@ -68,6 +69,11 @@ const searchMock = vi.hoisted(() => ({
   getRootSessionTree: vi.fn(),
 }));
 
+const artifactMock = vi.hoisted(() => ({
+  getMetadata: vi.fn(),
+  getDiff: vi.fn(),
+}));
+
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
   analyticsClient: {
@@ -75,6 +81,7 @@ vi.mock('../../src/db/analytics-client', () => ({
     project: projectMock,
     session: sessionMock,
     search: searchMock,
+    artifact: artifactMock,
   },
 }));
 
@@ -1818,5 +1825,58 @@ describe('project-behavior-view', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(window.location.hash).toBe('#/sessions/s1');
+  });
+});
+
+describe('artifact-diff-view', () => {
+  beforeEach(() => {
+    window.location.hash =
+      '#/artifact-diff?leftArtifact=ref-left&rightArtifact=ref-right&component=agent-1&origin=component&returnContext=project%3Dp1';
+    artifactMock.getMetadata.mockResolvedValue({
+      artifactId: '.claude/agents.json',
+      sha256: 'sha256-left',
+      size: 800,
+      mediaType: 'application/json',
+      captureTime: '2024-01-01T00:00:00.000Z',
+      retentionClass: 'retained',
+      sessionIds: ['s1'],
+      componentIds: ['agent-1'],
+    });
+    artifactMock.getDiff.mockResolvedValue({
+      artifactId: '.claude/agents.json',
+      leftVersion: 'v1.0.0',
+      rightVersion: 'v1.1.0',
+      unifiedDiff: '- old\n+ new',
+      sideBySideDiff: {
+        left: [{ lineNumber: 1, text: 'old', changeType: 'removed' }],
+        right: [{ lineNumber: 1, text: 'new', changeType: 'added' }],
+      },
+      metadataChanges: [{ field: 'scope', oldValue: '"global"', newValue: '"workspace"' }],
+      sessionExposure: { s1: 1 },
+      contentAvailable: true,
+      concurrentChanges: [],
+      observationalCohorts: [{ sessionId: 's1', left: true, right: true }],
+      componentDiffs: [],
+    });
+  });
+
+  it('renders an artifact diff with stable hash navigation', async () => {
+    const view = document.createElement(
+      'artifact-diff-view',
+    ) as import('../../src/pages/artifact-diff/artifact-diff-view').ArtifactDiffView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    expect(root.textContent).toContain('Artifact diff');
+    expect(root.textContent).toContain('v1.0.0');
+    expect(root.textContent).toContain('v1.1.0');
+    expect(root.textContent).toContain('scope');
+    expect(root.textContent).toContain('workspace');
+    expect(root.textContent).toContain('- old');
+    expect(root.textContent).toContain('+ new');
+
+    const backLink = root.querySelector('.breadcrumbs a') as HTMLAnchorElement;
+    expect(backLink).not.toBeNull();
+    expect(backLink.getAttribute('href')).toBe('#/components/agent-1?project=p1');
   });
 });

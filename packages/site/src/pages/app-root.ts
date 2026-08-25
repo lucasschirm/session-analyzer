@@ -18,6 +18,7 @@ import './indicator-details';
 import './session-transcript-page';
 import './manual-import/manual-import-page';
 import './component-ecosystem/component-ecosystem-view';
+import './artifact-diff/artifact-diff-view';
 import './activation/activation-page';
 
 /**
@@ -202,6 +203,10 @@ export class AppRoot extends LitElement {
       {
         path: '/activation',
         render: () => html`<activation-page></activation-page>`,
+      },
+      {
+        path: '/artifact-diff*',
+        render: () => html`<artifact-diff-view></artifact-diff-view>`,
       },
     ],
     {
