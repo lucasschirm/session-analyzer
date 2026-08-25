@@ -1503,6 +1503,9 @@ export class MetricValueStore {
         input.metricDefinitionId,
         input.valueClass,
         comparabilityGroupId,
+        input.sessionId ?? '',
+        input.generationId,
+        input.dimensionsKey ?? '',
         String(now),
       )}`;
     await queryable.exec(

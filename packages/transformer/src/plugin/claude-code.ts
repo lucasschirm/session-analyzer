@@ -49,6 +49,10 @@ import {
   getClaudeCodeMetricCapabilities,
 } from './claude-code-metrics.js';
 import {
+  deriveClaudeCodeOptimizationMetrics,
+  getClaudeCodeOptimizationMetricCapabilities,
+} from './claude-code-optimization-metrics.js';
+import {
   type ClaudeCodeEvidenceContext,
   normalizeCommandExecutions,
   normalizeComponentEvidenceLinks,
@@ -1171,7 +1175,10 @@ export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = 
   },
 
   getCapabilities(bundle?: UnknownArtifactBundle): MetricCapability[] {
-    return getClaudeCodeMetricCapabilities(bundle);
+    return [
+      ...getClaudeCodeMetricCapabilities(bundle),
+      ...getClaudeCodeOptimizationMetricCapabilities(bundle),
+    ];
   },
 
   transform(bundle: UnknownArtifactBundle, context: TransformContext): TransformResult {
@@ -1243,11 +1250,29 @@ export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = 
         context,
         rootArtifactId,
       );
+      const optimizationMetrics = deriveClaudeCodeOptimizationMetrics(
+        session,
+        allEvidence,
+        bundle,
+        context,
+        rootArtifactId,
+      );
+
+      const allMetricValues = [...metrics.metricValues, ...optimizationMetrics.metricValues];
+      const allMetricProvenance = [
+        ...metrics.metricProvenance,
+        ...optimizationMetrics.metricProvenance,
+      ];
+      const allCapabilities = [...metrics.capabilities, ...optimizationMetrics.capabilities];
+      const allUnavailableReasons = [
+        ...metrics.unavailableReasons,
+        ...optimizationMetrics.unavailableReasons,
+      ];
 
       const allProvenance = [
         ...provenance,
         ...makeProvenanceFromArtifacts(bundle, classification),
-        ...metrics.metricProvenance,
+        ...allMetricProvenance,
       ];
 
       return {
@@ -1261,18 +1286,21 @@ export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = 
         evidence: allEvidence,
         sessionSummaries: spine.summaries,
         componentSummaries: classification.components,
-        metricValues: metrics.metricValues,
+        metricValues: allMetricValues,
         distributions: [],
         configurationSnapshot: classification.configurationSnapshot,
-        capabilities: metrics.capabilities,
-        unavailableReasons: metrics.unavailableReasons,
+        capabilities: allCapabilities,
+        unavailableReasons: allUnavailableReasons,
         provenance: allProvenance,
         warnings,
         errors,
       };
     }
 
-    const failureCaps = getClaudeCodeMetricCapabilities(bundle);
+    const failureCaps = [
+      ...getClaudeCodeMetricCapabilities(bundle),
+      ...getClaudeCodeOptimizationMetricCapabilities(bundle),
+    ];
     return {
       bundleHash: context.sourceFingerprint,
       parserId: context.parserId,
