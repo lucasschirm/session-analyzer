@@ -2,12 +2,15 @@ import type { LitElement } from 'lit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbClient } from '../../src/db/db-client';
 import '../../src/pages/home-page';
+import '../../src/pages/portfolio/portfolio-view';
 import '../../src/pages/project-view';
 import '../../src/pages/session-dashboard';
 import '../../src/pages/indicator-details';
 import '../../src/pages/session-transcript-page';
+import type { AnalyticsToken } from '@lucasschirm/sal-db';
 import type { HomePage } from '../../src/pages/home-page';
 import type { IndicatorDetails } from '../../src/pages/indicator-details';
+import type { PortfolioView } from '../../src/pages/portfolio/portfolio-view';
 import type { ProjectView } from '../../src/pages/project-view';
 import type { SessionDashboard } from '../../src/pages/session-dashboard';
 import type { SessionTranscriptPage } from '../../src/pages/session-transcript-page';
@@ -30,6 +33,19 @@ const credentialCryptoMock = vi.hoisted(() => ({
 }));
 
 vi.mock('../../src/sync/credential-crypto', () => credentialCryptoMock);
+
+const portfolioMock = vi.hoisted(() => ({
+  getOverview: vi.fn(),
+  getTrends: vi.fn(),
+  getComponentUtilization: vi.fn(),
+  getModelHarnessCohorts: vi.fn(),
+  getProjectList: vi.fn(),
+}));
+
+vi.mock('../../src/db/analytics-client', () => ({
+  AnalyticsClient: vi.fn(),
+  analyticsClient: { portfolio: portfolioMock },
+}));
 
 async function flush(element: LitElement): Promise<void> {
   await element.updateComplete;
@@ -1588,5 +1604,97 @@ describe('session-transcript-page', () => {
     // The close (x) link on the open column does the same.
     const closeLink = root.querySelector('.column-close') as HTMLAnchorElement;
     expect(closeLink.getAttribute('href')).toBe('#/sessions/s1/transcript');
+  });
+});
+
+function token(): AnalyticsToken {
+  return {
+    analysisReleaseId: 'rel-1',
+    generationId: 'gen-1',
+    comparabilityGroupId: 'cgrp-1',
+    eligibleN: 100,
+    knownN: 95,
+    unknownCount: 5,
+    coverage: 'complete',
+    measurementClass: 'observed',
+    confidence: 'high',
+    metricVersion: '1.0.0',
+    evidenceLinks: [],
+  } as AnalyticsToken;
+}
+
+describe('portfolio-view', () => {
+  beforeEach(() => {
+    window.location.hash = '#/portfolio';
+    portfolioMock.getOverview.mockResolvedValue({
+      token: token(),
+      headlineMetrics: [
+        {
+          ...token(),
+          metricId: 'sessions',
+          value: 10,
+          unit: 'count',
+          label: 'Sessions',
+          isExact: true,
+        },
+      ],
+      projectCount: 1,
+      sessionCount: 10,
+      componentCounts: {},
+      unusedOfferedComponents: [],
+    });
+    portfolioMock.getTrends.mockResolvedValue({ token: token(), series: [] });
+    portfolioMock.getComponentUtilization.mockResolvedValue({
+      items: [],
+      generationToken: 'gen-1',
+      analysisReleaseToken: 'rel-1',
+    });
+    portfolioMock.getModelHarnessCohorts.mockResolvedValue({
+      items: [],
+      generationToken: 'gen-1',
+      analysisReleaseToken: 'rel-1',
+    });
+    portfolioMock.getProjectList.mockResolvedValue({
+      items: [
+        {
+          projectId: 'p1',
+          name: 'Portfolio Project',
+          sessionCount: 10,
+          source: 'claude',
+          harness: 'claude',
+          completeness: 'complete',
+          finality: 'final',
+          reprocessing: 'unknown',
+          issueState: 'clean',
+          coverage: 'complete',
+          token: token(),
+        },
+      ],
+      generationToken: 'gen-1',
+      analysisReleaseToken: 'rel-1',
+    });
+  });
+
+  it('renders the portfolio summary and project list', async () => {
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    expect(root.textContent).toContain('Portfolio');
+    expect(allChildTexts(root, 'metrics-card').join(' ')).toContain('Sessions');
+    expect(root.textContent).toContain('Portfolio Project');
+  });
+
+  it('updates the hash when a filter changes', async () => {
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const input = root.querySelector('input') as HTMLInputElement;
+    input.value = 'p1';
+    input.dispatchEvent(new Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.location.hash).toMatch(/project=p1/);
   });
 });

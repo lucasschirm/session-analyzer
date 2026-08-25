@@ -10,6 +10,7 @@ import { HashRouter } from '../router';
 import { isUnlocked } from '../sync/credential-crypto';
 import { syncManager } from '../sync/sync-manager';
 import './home-page';
+import './portfolio/portfolio-view';
 import './project-view';
 import './session-dashboard';
 import './indicator-details';
@@ -136,6 +137,10 @@ export class AppRoot extends LitElement {
         render: () => html`<home-page></home-page>`,
       },
       {
+        path: '/portfolio*',
+        render: () => html`<portfolio-view></portfolio-view>`,
+      },
+      {
         path: '/projects/:projectId',
         render: (params) =>
           html`<project-view project-id=${params.projectId ?? ''}></project-view>`,
@@ -256,6 +261,7 @@ export class AppRoot extends LitElement {
             Connect
           </button>
           <nav>
+            <a href="#/portfolio">Portfolio</a>
             <a href="#/">Home</a>
           </nav>
         </div>

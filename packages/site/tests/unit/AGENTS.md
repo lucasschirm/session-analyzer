@@ -18,6 +18,7 @@ Vitest unit tests for the site package. Covers database/executor adapters, UI co
 - **lib/claude-to-dashboard.test.ts** — ClaudeCodeSession to DashboardSession transformation tests.
 - **markdown.test.ts** — `marked` + DOMPurify rendering helpers.
 - **pages.test.ts** — Route-level page components.
+- **portfolio-view.test.ts** — Portfolio route rendering, filters, hash routing, and data-source integration.
 - **parser-client.test.ts** — Worker parser client.
 - **parser.test.ts** — Session file detection and parsing.
 - **passkey-modal.test.ts** — Passkey create/unlock modal.
