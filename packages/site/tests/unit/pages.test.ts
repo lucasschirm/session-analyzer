@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbClient } from '../../src/db/db-client';
 import '../../src/pages/home-page';
 import '../../src/pages/portfolio/portfolio-view';
+import '../../src/pages/project-behavior/project-behavior-view';
 import '../../src/pages/project-view';
 import '../../src/pages/session-dashboard';
 import '../../src/pages/indicator-details';
@@ -11,6 +12,7 @@ import type { AnalyticsToken } from '@lucasschirm/sal-db';
 import type { HomePage } from '../../src/pages/home-page';
 import type { IndicatorDetails } from '../../src/pages/indicator-details';
 import type { PortfolioView } from '../../src/pages/portfolio/portfolio-view';
+import type { ProjectBehaviorPage } from '../../src/pages/project-behavior/project-behavior-view';
 import type { ProjectView } from '../../src/pages/project-view';
 import type { SessionDashboard } from '../../src/pages/session-dashboard';
 import type { SessionTranscriptPage } from '../../src/pages/session-transcript-page';
@@ -42,9 +44,17 @@ const portfolioMock = vi.hoisted(() => ({
   getProjectList: vi.fn(),
 }));
 
+const projectMock = vi.hoisted(() => ({
+  getSummary: vi.fn(),
+  getSessionTrendSeries: vi.fn(),
+  getConfigurationTimeline: vi.fn(),
+  getOutliers: vi.fn(),
+  getComparisons: vi.fn(),
+}));
+
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
-  analyticsClient: { portfolio: portfolioMock },
+  analyticsClient: { portfolio: portfolioMock, project: projectMock },
 }));
 
 async function flush(element: LitElement): Promise<void> {
@@ -1696,5 +1706,96 @@ describe('portfolio-view', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(window.location.hash).toMatch(/project=p1/);
+  });
+});
+
+describe('project-behavior-view', () => {
+  beforeEach(() => {
+    window.location.hash = '#/projects/p1/behavior';
+    projectMock.getSummary.mockResolvedValue({
+      token: token(),
+      headlineMetrics: [
+        {
+          ...token(),
+          metricId: 'm-cost',
+          value: 100,
+          unit: 'usd',
+          label: 'Cost',
+          isExact: true,
+        },
+      ],
+      trendToken: token(),
+    });
+    projectMock.getSessionTrendSeries.mockResolvedValue({ token: token(), series: [] });
+    projectMock.getConfigurationTimeline.mockResolvedValue({ token: token(), events: [] });
+    projectMock.getOutliers.mockResolvedValue({
+      items: [],
+      generationToken: 'gen-1',
+      analysisReleaseToken: 'rel-1',
+    });
+    projectMock.getComparisons.mockResolvedValue({
+      items: [],
+      generationToken: 'gen-1',
+      analysisReleaseToken: 'rel-1',
+    });
+  });
+
+  it('renders the project behavior summary and metric cards', async () => {
+    const view = Object.assign(document.createElement('project-behavior-view'), {
+      projectId: 'p1',
+    }) as ProjectBehaviorPage;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    expect(root.textContent).toContain('Project Behavior');
+    expect(allChildTexts(root, 'metrics-card').join(' ')).toContain('Cost');
+  });
+
+  it('updates the hash when a filter changes', async () => {
+    const view = Object.assign(document.createElement('project-behavior-view'), {
+      projectId: 'p1',
+    }) as ProjectBehaviorPage;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const modelInput = Array.from(root.querySelectorAll('input')).find(
+      (input) => input.parentElement?.textContent?.trim() === 'Model',
+    );
+    (modelInput as HTMLInputElement).value = 'claude';
+    modelInput?.dispatchEvent(new Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.location.hash).toMatch(/model=claude/);
+  });
+
+  it('navigates to session evidence from an outlier link', async () => {
+    projectMock.getOutliers.mockResolvedValue({
+      items: [
+        {
+          sessionId: 's1',
+          metricId: 'm-cost',
+          value: 100,
+          deviation: 50,
+          evidenceLinks: [
+            { evidenceId: 's1', entityType: 'session', entityId: 's1', label: 'Session' },
+          ],
+        },
+      ],
+      generationToken: 'gen-1',
+      analysisReleaseToken: 'rel-1',
+    });
+
+    const view = Object.assign(document.createElement('project-behavior-view'), {
+      projectId: 'p1',
+    }) as ProjectBehaviorPage;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const link = root.querySelector('a[href^="#/sessions/"]') as HTMLAnchorElement;
+    expect(link).not.toBeNull();
+    link.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.location.hash).toBe('#/sessions/s1');
   });
 });

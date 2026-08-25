@@ -11,7 +11,7 @@ import type {
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import type { PortfolioParams } from './portfolio-params';
-import { evidenceLinkHref } from './portfolio-params';
+import { buildPortfolioHash, evidenceLinkHref } from './portfolio-params';
 
 function valueForMetric(
   row: { metricValues: readonly MetricValueDto[] },
@@ -147,11 +147,8 @@ export function projectListToRows(
     source: project.source,
     completeness: project.completeness,
     finality: project.finality,
-    href: `#/projects/${project.projectId}?returnContext=${encodeURIComponent(
-      Object.entries(params)
-        .filter(([, v]) => v !== undefined && v !== '')
-        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v as string)}`)
-        .join('&'),
+    href: `#/projects/${project.projectId}/behavior?returnContext=${encodeURIComponent(
+      buildPortfolioHash(params).slice(1),
     )}`,
   }));
 }

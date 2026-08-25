@@ -50,6 +50,10 @@ src/
 │   │   ├── portfolio-chart-helpers.ts # DTO-to-ChartSeries and metric-card mappings for the portfolio view
 │   │   └── portfolio-params.ts    # Hash-param parsing, query construction, and evidence-link URL builders
 │   ├── home-page.ts               # Projects CRUD grid + export database; shows project-sync-indicator during sync
+│   ├── project-behavior/          # Project Behavior analytics view (TSK0037)
+│   │   ├── project-behavior-view.ts      # <project-behavior-view> Lit page: loads summary, trends, configuration timeline, outliers, and comparisons from AnalyticsClient.project; renders filters, metric cards, charts, and tables
+│   │   ├── project-behavior-chart-helpers.ts # DTO-to-ChartSeries, metric-card, cohort, and outlier mappings for the project behavior view
+│   │   └── project-behavior-params.ts    # Hash-param parsing, AnalyticsQuery construction, and evidence-link URL builders that preserve filter context
 │   ├── project-view.ts            # Upload zone + search + sessions for one project; Total Tokens card uses compact number formatting with tooltip; shows project-sync-indicator and passes project to session-list
 │   ├── session-dashboard.ts       # Metric cards + link to the Session Transcript page; "Total Tokens" card = input+output only (cache tokens excluded - see SessionBuilder.finalize); enriched with token breakdown panel (input/output/cache write/cache read), an estimated Tool Result Tokens panel (~4-chars/token heuristic over tool_result content, % of total input volume), models-used table, top-tools ranked list (Skill/Agent tool calls excluded - see isSkillTool/isAgentTool), skills-used list with parameters, a collapsible Subagents panel ("Show all"), separate Agents/Skills metric cards (Agent/Skill tool invocation counts, distinct from Sub Agents), and session-sync-chip with retry for failed synced sessions
 │   ├── indicator-details.ts       # Granular events table per indicator; 'turns' renders messages as a collapsible parent/child tree nested by uuid/parent_uuid; 'tools' excludes Skill/Agent tool calls (their own indicators below); 'skills' and 'agents' each list their tool's invocations (filters, Inputs/Result detail, plus a "Linked Content" section recovered by matching a message's parent_uuid against the invocation's tool_result uuid - ToolExecution.result_uuid); 'diagnostics' for cache miss tracking
@@ -73,6 +77,7 @@ Routes are hash-based (`#/...`) for GitHub Pages compatibility:
 - `#/` — Home page (projects list + CRUD)
 - `#/portfolio` — Portfolio analytics view (filters, trends, component/cohort charts, project list)
 - `#/projects/:projectId` — Project view (upload + search + sessions)
+- `#/projects/:projectId/behavior` — Project Behavior analytics view (context growth, distributions, configuration timeline, cohorts, outliers)
 - `#/sessions/:sessionId` — Session dashboard (metrics; links out to the transcript page)
 - `#/sessions/:sessionId/indicator/:indicator` — Indicator details drill-down (`tokens`, `compactions`, `turns`, `tools`, `files_read`, `files_written`, `agents`, `skills`, `diagnostics`, `tasks`)
 - `#/sessions/:sessionId/transcript` — Session transcript page, single full-width column
