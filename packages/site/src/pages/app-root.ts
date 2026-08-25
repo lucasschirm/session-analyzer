@@ -18,6 +18,7 @@ import './indicator-details';
 import './session-transcript-page';
 import './manual-import/manual-import-page';
 import './component-ecosystem/component-ecosystem-view';
+import './activation/activation-page';
 
 /**
  * Root application shell: header, hash-based routing outlet and database
@@ -30,6 +31,7 @@ import './component-ecosystem/component-ecosystem-view';
  * - `#/sessions/:sessionId/transcript`     -> Session Transcript (subagent cards inline, full width)
  * - `#/sessions/:sessionId/transcript/:agentId` -> Session Transcript, split with that subagent's column open
  * - `#/manual-import`                      -> Manual Import (transcript/partial upload)
+ * - `#/activation`                         -> Fresh analytics database activation
  */
 @customElement('app-root')
 export class AppRoot extends LitElement {
@@ -197,6 +199,10 @@ export class AppRoot extends LitElement {
             component-id=${params.componentId ?? ''}
           ></component-ecosystem-view>`,
       },
+      {
+        path: '/activation',
+        render: () => html`<activation-page></activation-page>`,
+      },
     ],
     {
       render: () => html`
@@ -289,6 +295,7 @@ export class AppRoot extends LitElement {
             <a href="#/components">Components</a>
             <a href="#/">Home</a>
             <a href="#/manual-import">Manual Import</a>
+            <a href="#/activation">Activation</a>
           </nav>
         </div>
       </header>

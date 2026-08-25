@@ -15,6 +15,7 @@ import type {
   StoredS3Credentials,
   SyncManifest,
 } from '../types';
+import type { AnalyticsActivationState, SourceRetentionControls } from './activation-state';
 import type { CommittedGenerationReceipt, FallbackReason, SourceCheckpoint } from './database';
 
 export interface DbDatabaseHandle {
@@ -98,7 +99,12 @@ export type DbRequest =
   | { id: number; type: 'resetAnalyticsDatabase' }
   | { id: number; type: 'exportControlDatabase' }
   | { id: number; type: 'getAnalyticsDb' }
-  | { id: number; type: 'getControlDb' };
+  | { id: number; type: 'getControlDb' }
+  | { id: number; type: 'getAnalyticsActivationState' }
+  | { id: number; type: 'setAnalyticsActivationState'; state: AnalyticsActivationState }
+  | { id: number; type: 'activateAnalyticsDatabase'; retention: SourceRetentionControls }
+  | { id: number; type: 'rollbackToLegacyMode' }
+  | { id: number; type: 'getSourceRetentionControls' };
 
 export interface DbSuccessResponse {
   id: number;

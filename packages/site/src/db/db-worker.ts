@@ -249,6 +249,30 @@ const handlers: Record<DbRequest['type'], Handler> = {
     const db = manager.getControlDb();
     return { id: request.id, ok: true, result: { filename: db.filename, pointer: db.pointer } };
   },
+  getAnalyticsActivationState: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getAnalyticsActivationState(),
+  }),
+  setAnalyticsActivationState: (request) => {
+    const req = request as DbRequestOf<'setAnalyticsActivationState'>;
+    manager.setAnalyticsActivationState(req.state);
+    return { id: request.id, ok: true };
+  },
+  activateAnalyticsDatabase: (request) => {
+    const req = request as DbRequestOf<'activateAnalyticsDatabase'>;
+    return { id: request.id, ok: true, result: manager.activateAnalyticsDatabase(req.retention) };
+  },
+  rollbackToLegacyMode: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.rollbackToLegacyMode(),
+  }),
+  getSourceRetentionControls: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getSourceRetentionControls(),
+  }),
 };
 
 async function handleRequest(request: DbRequest): Promise<DbResponse> {
