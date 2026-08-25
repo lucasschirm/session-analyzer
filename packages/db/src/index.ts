@@ -1,4 +1,5 @@
 export * from './analytics.js';
+export * from './analytics-portfolio.js';
 export * from './artifact-diff.js';
 export * from './component-lifecycle.js';
 export * from './configuration.js';
