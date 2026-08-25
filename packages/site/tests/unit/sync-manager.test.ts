@@ -753,8 +753,8 @@ describe('SyncManager', () => {
       snap.projects.some((p) => p.projectId === projectId),
     );
     expect(discoveredSnapshot).toBeTruthy();
-    expect(discoveredSnapshot!.projects).toHaveLength(1);
-    expect(discoveredSnapshot!.projects[0]!.projectId).toBe(projectId);
+    expect(discoveredSnapshot?.projects).toHaveLength(1);
+    expect(discoveredSnapshot?.projects[0]?.projectId).toBe(projectId);
 
     // The project should also be persisted in the DB with 0 sessions
     const projects = await dbClient.getProjects();

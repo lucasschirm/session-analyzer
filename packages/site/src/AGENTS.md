@@ -9,6 +9,11 @@ src/
 ├── main.ts                        # Application entry point (mounts <app-root>)
 ├── router.ts                      # Hash-based router built on @lit-labs/router Routes
 ├── components/
+│   ├── charts/                    # Reusable chart web components built on ECharts, with textual summaries, tables, and accessibility fallbacks
+│   │   ├── analytics-chart.ts     # Chart wrapper that picks ECharts renderers by chart type and exposes loading/empty/error states
+│   │   ├── chart-types.ts         # Chart DTO types, state union, and compact value formatting helpers
+│   │   ├── chart-helpers.ts       # Domain-agnostic ECharts option builders (time-series, stacked-bar, doughnut) and text summaries
+│   │   └── echarts-base.ts        # Tree-shaken ECharts core registration, SVG renderer, and a11y table fallback
 │   ├── metrics-card.ts            # Clickable dashboard metric card; optional valueTitle prop for full-number hover tooltip
 │   ├── session-list.ts            # Clickable session rows (date-descending); token count rendered compactly with full-number tooltip; renders session-sync-chip for synced sessions
 │   ├── events-table.ts            # Drill-down data table for indicator details; metadata column supports hover tooltip and click-to-expand full JSON
@@ -40,6 +45,10 @@ src/
 ├── sync/                          # Remote sync orchestration and downloaded file processing (see src/sync/AGENTS.md)
 ├── pages/
 │   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap, sync-manager initialization, Connect entry point, bottom-fixed sync-status-bar, and toast-container
+│   ├── portfolio/                 # Portfolio analytics view and chart helpers
+│   │   ├── portfolio-view.ts      # Top-level Portfolio route: filter bar, overview metric cards, trend/component/cohort charts, and project list
+│   │   ├── portfolio-chart-helpers.ts # DTO-to-ChartSeries and metric-card mappings for the portfolio view
+│   │   └── portfolio-params.ts    # Hash-param parsing, query construction, and evidence-link URL builders
 │   ├── home-page.ts               # Projects CRUD grid + export database; shows project-sync-indicator during sync
 │   ├── project-view.ts            # Upload zone + search + sessions for one project; Total Tokens card uses compact number formatting with tooltip; shows project-sync-indicator and passes project to session-list
 │   ├── session-dashboard.ts       # Metric cards + link to the Session Transcript page; "Total Tokens" card = input+output only (cache tokens excluded - see SessionBuilder.finalize); enriched with token breakdown panel (input/output/cache write/cache read), an estimated Tool Result Tokens panel (~4-chars/token heuristic over tool_result content, % of total input volume), models-used table, top-tools ranked list (Skill/Agent tool calls excluded - see isSkillTool/isAgentTool), skills-used list with parameters, a collapsible Subagents panel ("Show all"), separate Agents/Skills metric cards (Agent/Skill tool invocation counts, distinct from Sub Agents), and session-sync-chip with retry for failed synced sessions
@@ -62,6 +71,7 @@ src/
 Routes are hash-based (`#/...`) for GitHub Pages compatibility:
 
 - `#/` — Home page (projects list + CRUD)
+- `#/portfolio` — Portfolio analytics view (filters, trends, component/cohort charts, project list)
 - `#/projects/:projectId` — Project view (upload + search + sessions)
 - `#/sessions/:sessionId` — Session dashboard (metrics; links out to the transcript page)
 - `#/sessions/:sessionId/indicator/:indicator` — Indicator details drill-down (`tokens`, `compactions`, `turns`, `tools`, `files_read`, `files_written`, `agents`, `skills`, `diagnostics`, `tasks`)

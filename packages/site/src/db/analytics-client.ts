@@ -46,7 +46,8 @@ export class AnalyticsClient implements AnalyticsDataSource {
   readonly search: ProjectSessionSearchView;
   readonly metadata: MetadataView;
 
-  private readonly worker: Worker;
+  private worker: Worker | null = null;
+  private readonly createWorker: CreateWorkerFactory;
   private readonly pending = new Map<
     number,
     { resolve: (value: AnalyticsResponse) => void; reject: (reason: Error) => void }
@@ -58,16 +59,7 @@ export class AnalyticsClient implements AnalyticsDataSource {
   fallbackReasonForInit?: 'locked' | 'unsupported';
 
   constructor(createWorker: CreateWorkerFactory = defaultWorkerFactory) {
-    this.worker = createWorker();
-    this.worker.onmessage = (event: MessageEvent<AnalyticsResponse>) => {
-      this.handleResponse(event.data);
-    };
-    this.worker.onerror = (event) => {
-      this.rejectAll(String(event.message ?? 'worker error'));
-    };
-    this.worker.onmessageerror = () => {
-      this.rejectAll('worker message deserialization error');
-    };
+    this.createWorker = createWorker;
 
     this.portfolio = this.createViewClient<PortfolioView>('portfolio');
     this.project = this.createViewClient<ProjectBehaviorView>('project');
@@ -76,6 +68,23 @@ export class AnalyticsClient implements AnalyticsDataSource {
     this.artifact = this.createViewClient<ArtifactVersionView>('artifact');
     this.search = this.createViewClient<ProjectSessionSearchView>('search');
     this.metadata = this.createViewClient<MetadataView>('metadata');
+  }
+
+  private ensureWorker(): Worker {
+    if (!this.worker) {
+      const worker = this.createWorker();
+      worker.onmessage = (event: MessageEvent<AnalyticsResponse>) => {
+        this.handleResponse(event.data);
+      };
+      worker.onerror = (event) => {
+        this.rejectAll(String(event.message ?? 'worker error'));
+      };
+      worker.onmessageerror = () => {
+        this.rejectAll('worker message deserialization error');
+      };
+      this.worker = worker;
+    }
+    return this.worker;
   }
 
   private createViewClient<View extends object>(viewName: string): View {
@@ -107,12 +116,13 @@ export class AnalyticsClient implements AnalyticsDataSource {
   }
 
   private send(request: AnalyticsRequestPayload): Promise<AnalyticsResponse> {
+    const worker = this.ensureWorker();
     const id = this.nextId++;
     const withId = { ...request, id } as AnalyticsRequest;
     const promise = new Promise<AnalyticsResponse>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
     });
-    postRequest(this.worker, withId);
+    postRequest(worker, withId);
     return promise;
   }
 
@@ -143,6 +153,7 @@ export class AnalyticsClient implements AnalyticsDataSource {
   async ensureReady(): Promise<AnalyticsBackendReport> {
     if (this.initPromise) return this.initPromise;
 
+    this.ensureWorker();
     this.initPromise = this.send({ type: 'init' })
       .then((response) => {
         if (!response.ok) {
@@ -188,8 +199,7 @@ export class AnalyticsClient implements AnalyticsDataSource {
 
   /**
    * Forwards a resolved artifact downloaded by the sync worker into the
-   * analytics blob store and resolver cache. The Uint8Array content is
-   * transferred, not copied, when possible.
+   * analytics blob store and resolver cache.
    */
   async retainSyncArtifact(artifact: ResolvedArtifact): Promise<void> {
     const response = await this.call({
@@ -207,5 +217,13 @@ export class AnalyticsClient implements AnalyticsDataSource {
       throw new Error(response.error);
     }
     this.initPromise = null;
+    this.worker = null;
   }
 }
+
+/**
+ * Shared, lazy analytics client. The worker is only created on the first view
+ * method call, so importing this module in tests or on pages that do not use
+ * analytics has no side effects.
+ */
+export const analyticsClient = new AnalyticsClient();
