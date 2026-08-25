@@ -1,4 +1,16 @@
+import type { SqliteExecutor, SqliteTransaction } from '@lucasschirm/sal-db-core';
+import { createPortfolioView } from './analytics-portfolio.js';
+import {
+  createArtifactVersionView,
+  createComponentEcosystemView,
+  createMetadataView,
+  createProjectSessionSearchView,
+  createSessionEvidenceView,
+} from './analytics-session.js';
 import type { AnalyticsToken, Coverage, EvidenceLink, MetricValueDto } from './dto.js';
+import { createSha256ContentHasher } from './ingestion.js';
+import type { ContentHasher } from './ports.js';
+import { createProjectBehaviorView } from './project-behavior.js';
 
 export type FilterOperator = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'contains';
 
@@ -432,4 +444,19 @@ export interface AnalyticsDataSource {
   readonly artifact: ArtifactVersionView;
   readonly search: ProjectSessionSearchView;
   readonly metadata: MetadataView;
+}
+
+export function createAnalyticsDataSource(
+  queryable: SqliteExecutor | SqliteTransaction,
+  hasher?: ContentHasher,
+): AnalyticsDataSource {
+  return {
+    portfolio: createPortfolioView(queryable),
+    project: createProjectBehaviorView(queryable),
+    session: createSessionEvidenceView(queryable),
+    component: createComponentEcosystemView(queryable),
+    artifact: createArtifactVersionView(queryable, hasher ?? createSha256ContentHasher()),
+    search: createProjectSessionSearchView(queryable),
+    metadata: createMetadataView(queryable),
+  };
 }
