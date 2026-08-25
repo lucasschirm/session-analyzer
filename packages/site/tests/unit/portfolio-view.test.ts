@@ -245,7 +245,7 @@ describe('portfolio-view', () => {
     link.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(window.location.hash).toContain('#/projects/p1?returnContext=');
+    expect(window.location.hash).toContain('#/projects/p1/behavior?returnContext=');
   });
 
   it('applies filters and updates the hash', async () => {

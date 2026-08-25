@@ -11,6 +11,7 @@ import { isUnlocked } from '../sync/credential-crypto';
 import { syncManager } from '../sync/sync-manager';
 import './home-page';
 import './portfolio/portfolio-view';
+import './project-behavior/project-behavior-view';
 import './project-view';
 import './session-dashboard';
 import './indicator-details';
@@ -141,6 +142,11 @@ export class AppRoot extends LitElement {
       {
         path: '/portfolio*',
         render: () => html`<portfolio-view></portfolio-view>`,
+      },
+      {
+        path: '/projects/:projectId/behavior',
+        render: (params) =>
+          html`<project-behavior-view project-id=${params.projectId ?? ''}></project-behavior-view>`,
       },
       {
         path: '/projects/:projectId',
