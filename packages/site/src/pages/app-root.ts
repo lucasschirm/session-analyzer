@@ -16,6 +16,7 @@ import './session-dashboard';
 import './indicator-details';
 import './session-transcript-page';
 import './manual-import/manual-import-page';
+import './component-ecosystem/component-ecosystem-view';
 
 /**
  * Root application shell: header, hash-based routing outlet and database
@@ -179,6 +180,17 @@ export class AppRoot extends LitElement {
         path: '/manual-import',
         render: () => html`<manual-import-page></manual-import-page>`,
       },
+      {
+        path: '/components',
+        render: () => html`<component-ecosystem-view></component-ecosystem-view>`,
+      },
+      {
+        path: '/components/:componentId',
+        render: (params) =>
+          html`<component-ecosystem-view
+            component-id=${params.componentId ?? ''}
+          ></component-ecosystem-view>`,
+      },
     ],
     {
       render: () => html`
@@ -268,6 +280,7 @@ export class AppRoot extends LitElement {
           </button>
           <nav>
             <a href="#/portfolio">Portfolio</a>
+            <a href="#/components">Components</a>
             <a href="#/">Home</a>
             <a href="#/manual-import">Manual Import</a>
           </nav>
