@@ -6,7 +6,6 @@
 
 import type {
   Connection,
-  DashboardSession,
   PasskeyState,
   Project,
   SessionFileRecord,
@@ -15,7 +14,6 @@ import type {
   StoredS3Credentials,
   SyncManifest,
 } from '../types';
-import type { AnalyticsActivationState, SourceRetentionControls } from './activation-state';
 import type { CommittedGenerationReceipt, FallbackReason, SourceCheckpoint } from './database';
 
 export interface DbDatabaseHandle {
@@ -35,23 +33,6 @@ export type DbRequest =
       fields: { name?: string; description?: string; readable_id?: string };
     }
   | { id: number; type: 'deleteProject'; projectId: string }
-  | { id: number; type: 'saveSession'; session: DashboardSession }
-  | { id: number; type: 'upsertSessionByExternalId'; session: DashboardSession }
-  | { id: number; type: 'replaceSession'; session: DashboardSession }
-  | { id: number; type: 'findSessionByExternalId'; projectId: string; externalId: string }
-  | { id: number; type: 'getSessionsByProject'; projectId: string; limit?: number; offset?: number }
-  | {
-      id: number;
-      type: 'searchSessions';
-      projectId: string;
-      query: string;
-      limit?: number;
-      offset?: number;
-    }
-  | { id: number; type: 'getSession'; sessionId: string }
-  | { id: number; type: 'deleteSession'; sessionId: string }
-  | { id: number; type: 'getProjectMetrics'; projectId: string }
-  | { id: number; type: 'exportDatabase' }
   | { id: number; type: 'createConnection'; connection: Connection }
   | {
       id: number;
@@ -85,6 +66,7 @@ export type DbRequest =
   | { id: number; type: 'reconcileSyncStates'; sessionDetails: string }
   | { id: number; type: 'getSessionFiles'; sessionId: string }
   | { id: number; type: 'upsertSessionFile'; file: SessionFileRecord }
+  | { id: number; type: 'deleteSessionFiles'; sessionId: string }
   | {
       id: number;
       type: 'commitSourceCheckpoint';
@@ -96,22 +78,15 @@ export type DbRequest =
   | { id: number; type: 'getSourceCheckpoints' }
   | { id: number; type: 'setUiPreference'; key: string; value: string }
   | { id: number; type: 'getUiPreference'; key: string }
-  | { id: number; type: 'resetAnalyticsDatabase' }
   | { id: number; type: 'exportControlDatabase' }
-  | { id: number; type: 'getAnalyticsDb' }
-  | { id: number; type: 'getControlDb' }
-  | { id: number; type: 'getAnalyticsActivationState' }
-  | { id: number; type: 'setAnalyticsActivationState'; state: AnalyticsActivationState }
-  | { id: number; type: 'activateAnalyticsDatabase'; retention: SourceRetentionControls }
-  | { id: number; type: 'rollbackToLegacyMode' }
-  | { id: number; type: 'getSourceRetentionControls' };
+  | { id: number; type: 'getControlDb' };
 
 export interface DbSuccessResponse {
   id: number;
   ok: true;
-  /** JSON-serializable result for every request except exportDatabase. */
+  /** JSON-serializable result for every request except exportControlDatabase. */
   result?: unknown;
-  /** Raw SQLite file bytes for exportDatabase (transferred, not copied). */
+  /** Raw SQLite file bytes for exportControlDatabase (transferred, not copied). */
   bytes?: Uint8Array;
   /** Storage backend reported by init. */
   storage?: 'opfs' | 'memory';

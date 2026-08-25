@@ -1,6 +1,6 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import type { UploadedFile } from '../../lib/subagents';
+import type { UploadedFile } from '../../lib/uploaded-file';
 import '../../components/upload-zone';
 
 export interface ManualUploadSelection {

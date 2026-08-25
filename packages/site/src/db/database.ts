@@ -13,30 +13,15 @@ import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import type {
   Connection,
   DashboardSession,
-  ModelTokenUsage,
   PasskeyState,
   Project,
   ProjectSyncStatus,
-  SessionEvent,
   SessionFileRecord,
-  SessionMetrics,
   SessionStub,
   SessionSyncStatus,
-  SessionTask,
   StoredS3Credentials,
-  SubagentUsage,
   SyncManifest,
-  ToolExecution,
-  TranscriptMessage,
 } from '../types';
-import {
-  ACTIVATION_STATE_KEY,
-  type AnalyticsActivationState,
-  DEFAULT_SOURCE_RETENTION,
-  parseActivationState,
-  type SourceRetentionControls,
-  serializeActivationState,
-} from './activation-state';
 
 export type StorageBackend = 'opfs' | 'memory';
 export type FallbackReason = 'locked' | 'unsupported';
@@ -95,39 +80,20 @@ interface SessionRow {
   sync_session_id: string | null;
   sync_status: string | null;
   sync_details: string | null;
-}
-
-interface EventRow {
-  id: string;
-  session_id: string;
-  timestamp: number;
-  event_type: string;
-  description: string | null;
-  metadata: string | null;
-}
-
-interface MessageRow {
-  id: string;
-  session_id: string;
-  role: string;
-  content: string;
-  timestamp: number;
-  uuid: string | null;
-  parent_uuid: string | null;
-}
-
-interface ToolExecutionRow {
-  id: string;
-  session_id: string;
-  timestamp: number;
-  tool_name: string;
-  tool_type: string;
-  target: string | null;
-  success: number;
-  duration_ms: number | null;
-  parameters: string | null;
-  result: string | null;
-  result_uuid: string | null;
+  sync_schema_version: number | null;
+  sync_harness: string | null;
+  sync_harness_version: string | null;
+  sync_manifest_model: string | null;
+  sync_started_at: string | null;
+  sync_ended_at: string | null;
+  sync_duration_ms: number | null;
+  sync_end_reason: string | null;
+  sync_engine_version: string | null;
+  sync_plugin_version: string | null;
+  sync_transcripts_captured: number | null;
+  sync_main_transcript_relative_path: string | null;
+  sync_artifacts: string | null;
+  sync_runs: string | null;
 }
 
 interface CapiLike {
@@ -143,11 +109,6 @@ const COLUMN_MIGRATIONS = [
   'ALTER TABLE sessions ADD COLUMN tasks TEXT',
   'ALTER TABLE sessions ADD COLUMN external_id TEXT',
   'ALTER TABLE sessions ADD COLUMN subagents TEXT',
-  'ALTER TABLE tool_executions ADD COLUMN parameters TEXT',
-  'ALTER TABLE tool_executions ADD COLUMN result TEXT',
-  'ALTER TABLE tool_executions ADD COLUMN result_uuid TEXT',
-  'ALTER TABLE session_messages ADD COLUMN uuid TEXT',
-  'ALTER TABLE session_messages ADD COLUMN parent_uuid TEXT',
   'ALTER TABLE projects ADD COLUMN readable_id TEXT',
   'ALTER TABLE projects ADD COLUMN sync_status TEXT',
   'ALTER TABLE projects ADD COLUMN connection_id TEXT',
@@ -217,14 +178,6 @@ function parseTimestamp(value: string | number): number {
   return Number.isNaN(parsed) ? Number(value) || 0 : parsed;
 }
 
-function safeJsonParse<T>(value: string): T | undefined {
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return undefined;
-  }
-}
-
 function safeJsonParseArray<T>(value: string): T[] {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -276,83 +229,41 @@ function generateReadableId(name: string, used: Set<string>): string {
   return `${base}-${counter}`;
 }
 
-const ANALYTICS_TABLES = [
-  'session_files',
-  'session_messages',
-  'session_events',
-  'tool_executions',
-  'sessions',
-  'projects',
-];
-
-const ANALYTICS_INDEXES = [
-  'idx_sessions_project',
-  'idx_sessions_started',
-  'idx_tool_executions_session',
-  'idx_session_events_session',
-  'idx_session_messages_session',
-  'idx_sessions_external_id',
-  'idx_projects_readable_id',
-  'idx_sessions_sync_session',
-  'idx_sessions_sync_status',
-];
-
 export class DatabaseManager {
-  /** Analytics database (projects, sessions, events, etc.). */
   private db: Database | null = null;
-  /** Site control database (connections, vault, checkpoints, UI prefs). */
-  private controlDb: Database | null = null;
   protected sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | null = null;
-  private analyticsStorage: StorageBackend = 'memory';
-  private controlStorage: StorageBackend = 'memory';
-  private analyticsFilename = '/session-analytics.sqlite3';
-  private controlFilename = '/session-analyzer-control.sqlite3';
+  private storageBackend: StorageBackend = 'memory';
 
   get storage(): StorageBackend {
-    return this.analyticsStorage === 'opfs' && this.controlStorage === 'opfs' ? 'opfs' : 'memory';
+    return this.storageBackend;
   }
 
   fallbackReason?: FallbackReason;
 
   /**
-   * Initializes the SQLite WASM runtime and opens two databases:
-   * an analytics database and a site control database. Each gets its own
-   * connection and OPFS file so they cannot share a lock. Falls back to
-   * in-memory for either when OPFS is unavailable or locked.
+   * Initializes the SQLite WASM runtime and opens the site control database.
+   * Falls back to in-memory when OPFS is unavailable or locked.
    */
-  async initialize(
-    analyticsFilename = '/session-analytics.sqlite3',
-    controlFilename = '/session-analyzer-control.sqlite3',
-  ): Promise<StorageBackend> {
-    if (this.db && this.controlDb) return this.storage;
-
-    this.analyticsFilename = analyticsFilename;
-    this.controlFilename = controlFilename;
+  async initialize(filename = '/session-analyzer.sqlite3'): Promise<StorageBackend> {
+    if (this.db) return this.storage;
 
     if (!this.sqlite3) this.sqlite3 = await sqlite3InitModule();
 
-    this.db = this.openDatabase(this.analyticsFilename, 'analytics');
-    this.controlDb = this.openDatabase(this.controlFilename, 'control');
-
+    this.db = this.openDatabase(filename);
     this.db.exec('PRAGMA foreign_keys = ON;');
-    this.controlDb.exec('PRAGMA foreign_keys = ON;');
     this.createTables();
     this.migrate();
     return this.storage;
   }
 
-  private openDatabase(filename: string, label: 'analytics' | 'control'): Database {
+  private openDatabase(filename: string): Database {
     const sqlite3 = this.sqlite3;
     if (!sqlite3) throw new Error('Database not initialized');
 
     if (sqlite3.oo1.OpfsDb) {
       try {
         const db = new sqlite3.oo1.OpfsDb(filename, 'c');
-        if (label === 'analytics') {
-          this.analyticsStorage = 'opfs';
-        } else {
-          this.controlStorage = 'opfs';
-        }
+        this.storageBackend = 'opfs';
         return db;
       } catch (error) {
         if (isOpfsLockedError(error, sqlite3.capi)) {
@@ -361,21 +272,13 @@ export class DatabaseManager {
           throw error;
         }
         const db = new sqlite3.oo1.DB(':memory:', 'c');
-        if (label === 'analytics') {
-          this.analyticsStorage = 'memory';
-        } else {
-          this.controlStorage = 'memory';
-        }
+        this.storageBackend = 'memory';
         return db;
       }
     }
 
     const db = new sqlite3.oo1.DB(':memory:', 'c');
-    if (label === 'analytics') {
-      this.analyticsStorage = 'memory';
-    } else {
-      this.controlStorage = 'memory';
-    }
+    this.storageBackend = 'memory';
     this.fallbackReason = 'unsupported';
     return db;
   }
@@ -413,26 +316,15 @@ export class DatabaseManager {
   }
 
   private createTables(): void {
-    this.createAnalyticsTables();
-    this.createControlTables();
-  }
-
-  private createAnalyticsTables(): void {
     this.createProjectsTable();
     this.createSessionsTable();
-    this.createToolExecutionsTable();
-    this.createSessionEventsTable();
-    this.createSessionMessagesTable();
     this.createSessionFilesTable();
-    this.createIndexes();
-  }
-
-  private createControlTables(): void {
     this.createConnectionsTable();
     this.createS3CredentialsTable();
     this.createPasskeyStateTable();
     this.createSourceCheckpointsTable();
     this.createUiPreferencesTable();
+    this.createIndexes();
   }
 
   private createProjectsTable(): void {
@@ -473,61 +365,30 @@ export class DatabaseManager {
         files_read INTEGER NOT NULL DEFAULT 0,
         files_written INTEGER NOT NULL DEFAULT 0,
         agent_invocations INTEGER NOT NULL DEFAULT 0,
+        sync_session_id TEXT,
+        sync_status TEXT,
+        sync_details TEXT,
+        sync_schema_version INTEGER,
+        sync_harness TEXT,
+        sync_harness_version TEXT,
+        sync_manifest_model TEXT,
+        sync_started_at TEXT,
+        sync_ended_at TEXT,
+        sync_duration_ms INTEGER,
+        sync_end_reason TEXT,
+        sync_engine_version TEXT,
+        sync_plugin_version TEXT,
+        sync_transcripts_captured INTEGER,
+        sync_main_transcript_relative_path TEXT,
+        sync_artifacts TEXT,
+        sync_runs TEXT,
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
     `);
   }
 
-  private createToolExecutionsTable(): void {
-    this.requireDb().exec(`
-      CREATE TABLE IF NOT EXISTS tool_executions (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        tool_name TEXT NOT NULL,
-        tool_type TEXT NOT NULL,
-        target TEXT,
-        success INTEGER NOT NULL DEFAULT 1,
-        duration_ms INTEGER,
-        parameters TEXT,
-        result TEXT,
-        result_uuid TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      );
-    `);
-  }
-
-  private createSessionEventsTable(): void {
-    this.requireDb().exec(`
-      CREATE TABLE IF NOT EXISTS session_events (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        event_type TEXT NOT NULL,
-        description TEXT,
-        metadata TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      );
-    `);
-  }
-
-  private createSessionMessagesTable(): void {
-    this.requireDb().exec(`
-      CREATE TABLE IF NOT EXISTS session_messages (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        uuid TEXT,
-        parent_uuid TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      );
-    `);
-  }
-
   private createConnectionsTable(): void {
-    this.requireControlDb().exec(`
+    this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS connections (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -541,7 +402,7 @@ export class DatabaseManager {
   }
 
   private createS3CredentialsTable(): void {
-    this.requireControlDb().exec(`
+    this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS connection_s3_credentials (
         connection_id TEXT PRIMARY KEY REFERENCES connections(id) ON DELETE CASCADE,
         region TEXT NOT NULL,
@@ -559,7 +420,7 @@ export class DatabaseManager {
   }
 
   private createPasskeyStateTable(): void {
-    this.requireControlDb().exec(`
+    this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS passkey_state (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         kdf_salt TEXT NOT NULL,
@@ -574,7 +435,7 @@ export class DatabaseManager {
   }
 
   private createSourceCheckpointsTable(): void {
-    this.requireControlDb().exec(`
+    this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS source_checkpoints (
         source_id TEXT PRIMARY KEY,
         source_type TEXT NOT NULL,
@@ -589,7 +450,7 @@ export class DatabaseManager {
   }
 
   private createUiPreferencesTable(): void {
-    this.requireControlDb().exec(`
+    this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS ui_preferences (
         key TEXT PRIMARY KEY,
         value TEXT,
@@ -619,13 +480,6 @@ export class DatabaseManager {
     const db = this.requireDb();
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC)');
-    db.exec(
-      'CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id)',
-    );
-    db.exec('CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id)');
-    db.exec(
-      'CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id)',
-    );
   }
 
   private requireDb(): Database {
@@ -633,19 +487,9 @@ export class DatabaseManager {
     return this.db;
   }
 
-  private requireControlDb(): Database {
-    if (!this.controlDb) throw new Error('Control database not initialized');
-    return this.controlDb;
-  }
-
-  /** Returns the raw analytics database handle (for tests and diagnostics). */
-  getAnalyticsDb(): Database {
-    return this.requireDb();
-  }
-
-  /** Returns the raw control database handle (for tests and diagnostics). */
+  /** Returns the raw database handle (for tests and diagnostics). */
   getControlDb(): Database {
-    return this.requireControlDb();
+    return this.requireDb();
   }
 
   // ==================== Project operations ====================
@@ -715,23 +559,13 @@ export class DatabaseManager {
     this.tryExecReadableId(sql, bind);
   }
 
-  /** Deletes a project and cascades to its sessions and their child rows. */
+  /** Deletes a project and cascades to its sessions and session files. */
   deleteProject(id: string): void {
     const db = this.requireDb();
     db.transaction(() => {
-      const sessionIds = db.selectValues('SELECT id FROM sessions WHERE project_id = ?', [id]);
-      for (const sessionId of sessionIds) {
-        this.deleteSessionRows(String(sessionId));
-      }
+      db.exec({ sql: 'DELETE FROM session_files WHERE project_id = ?', bind: [id] });
       db.exec({ sql: 'DELETE FROM sessions WHERE project_id = ?', bind: [id] });
       db.exec({ sql: 'DELETE FROM projects WHERE id = ?', bind: [id] });
-    });
-  }
-
-  private touchProject(projectId: string): void {
-    this.requireDb().exec({
-      sql: 'UPDATE projects SET updated_at = ? WHERE id = ?',
-      bind: [Date.now(), projectId],
     });
   }
 
@@ -778,9 +612,9 @@ export class DatabaseManager {
 
   // ==================== Connection operations ====================
 
-  /** Creates a new S3 storage connection in the control database. */
+  /** Creates a new S3 storage connection. */
   createConnection(connection: Connection): void {
-    this.requireControlDb().exec({
+    this.requireDb().exec({
       sql: `INSERT INTO connections (id, name, storage_type, sync_only_new, last_sync_at, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)`,
       bind: [
@@ -802,7 +636,7 @@ export class DatabaseManager {
   ): void {
     const existing = this.getConnection(connectionId);
     if (!existing) throw new Error(`Connection not found: ${connectionId}`);
-    const db = this.requireControlDb();
+    const db = this.requireDb();
     db.exec({
       sql: 'UPDATE connections SET name = ?, sync_only_new = ?, last_sync_at = ?, updated_at = ? WHERE id = ?',
       bind: [
@@ -819,7 +653,7 @@ export class DatabaseManager {
 
   /** Deletes a connection; S3 credentials cascade. */
   deleteConnection(connectionId: string): void {
-    this.requireControlDb().exec({
+    this.requireDb().exec({
       sql: 'DELETE FROM connections WHERE id = ?',
       bind: [connectionId],
     });
@@ -827,22 +661,20 @@ export class DatabaseManager {
 
   /** Lists all connections, newest first. */
   getConnections(): Connection[] {
-    const rows = this.requireControlDb().selectObjects(
+    const rows = this.requireDb().selectObjects(
       'SELECT * FROM connections ORDER BY created_at DESC',
     );
     return rows.map((row) => rowToConnection(row as Record<string, unknown>));
   }
 
   private getConnection(id: string): Connection | null {
-    const row = this.requireControlDb().selectObject('SELECT * FROM connections WHERE id = ?', [
-      id,
-    ]);
+    const row = this.requireDb().selectObject('SELECT * FROM connections WHERE id = ?', [id]);
     return row ? rowToConnection(row as Record<string, unknown>) : null;
   }
 
   /** Stores (or replaces) encrypted S3 credentials for a connection. */
   saveS3Credentials(credentials: StoredS3Credentials): void {
-    this.requireControlDb().exec({
+    this.requireDb().exec({
       sql: `INSERT INTO connection_s3_credentials (
         connection_id, region, endpoint, bucket, access_key_id,
         secret_access_key_ct, secret_access_key_iv, session_token_ct, session_token_iv,
@@ -871,7 +703,7 @@ export class DatabaseManager {
 
   /** Returns the encrypted S3 credentials for a connection, if any. */
   getS3Credentials(connectionId: string): StoredS3Credentials | null {
-    const row = this.requireControlDb().selectObject(
+    const row = this.requireDb().selectObject(
       'SELECT * FROM connection_s3_credentials WHERE connection_id = ?',
       [connectionId],
     );
@@ -880,7 +712,7 @@ export class DatabaseManager {
 
   /** Wipes all stored S3 credentials and passkey state (forgot-passkey flow). */
   deleteAllCredentials(): void {
-    const db = this.requireControlDb();
+    const db = this.requireDb();
     db.exec('DELETE FROM connection_s3_credentials');
     db.exec('DELETE FROM passkey_state');
   }
@@ -889,13 +721,13 @@ export class DatabaseManager {
 
   /** Returns the singleton passkey vault state, if one exists. */
   getPasskeyState(): PasskeyState | null {
-    const row = this.requireControlDb().selectObject('SELECT * FROM passkey_state WHERE id = 1');
+    const row = this.requireDb().selectObject('SELECT * FROM passkey_state WHERE id = 1');
     return row ? rowToPasskeyState(row as Record<string, unknown>) : null;
   }
 
   /** Saves or replaces the singleton passkey vault state. */
   savePasskeyState(state: PasskeyState): void {
-    this.requireControlDb().exec({
+    this.requireDb().exec({
       sql: `INSERT INTO passkey_state (
         id, kdf_salt, verifier_iv, verifier_ct, webauthn_credential_id,
         webauthn_wrapped_key, webauthn_expires_at, created_at
@@ -935,7 +767,7 @@ export class DatabaseManager {
       );
     }
 
-    const db = this.requireControlDb();
+    const db = this.requireDb();
     const now = Date.now();
     const existing = db.selectObject(
       'SELECT created_at FROM source_checkpoints WHERE source_id = ?',
@@ -970,7 +802,7 @@ export class DatabaseManager {
 
   /** Returns a single source checkpoint, or null if none exists. */
   getSourceCheckpoint(sourceId: string): SourceCheckpoint | null {
-    const row = this.requireControlDb().selectObject(
+    const row = this.requireDb().selectObject(
       'SELECT * FROM source_checkpoints WHERE source_id = ?',
       [sourceId],
     );
@@ -979,7 +811,7 @@ export class DatabaseManager {
 
   /** Lists all source checkpoints, most recently updated first. */
   getSourceCheckpoints(): SourceCheckpoint[] {
-    const rows = this.requireControlDb().selectObjects(
+    const rows = this.requireDb().selectObjects(
       'SELECT * FROM source_checkpoints ORDER BY updated_at DESC',
     );
     return rows.map((row) => rowToSourceCheckpoint(row as Record<string, unknown>));
@@ -989,7 +821,7 @@ export class DatabaseManager {
 
   /** Stores or replaces a UI preference value in the control database. */
   setUiPreference(key: string, value: string): void {
-    this.requireControlDb().exec({
+    this.requireDb().exec({
       sql: `INSERT INTO ui_preferences (key, value, updated_at)
             VALUES (?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET
@@ -1001,306 +833,26 @@ export class DatabaseManager {
 
   /** Returns a UI preference value, or null if it has never been set. */
   getUiPreference(key: string): string | null {
-    const row = this.requireControlDb().selectObject(
-      'SELECT value FROM ui_preferences WHERE key = ?',
-      [key],
-    ) as { value: string | null } | undefined;
+    const row = this.requireDb().selectObject('SELECT value FROM ui_preferences WHERE key = ?', [
+      key,
+    ]) as { value: string | null } | undefined;
     return row?.value ?? null;
   }
 
-  // ==================== Analytics activation ====================
-
-  /** Returns the stored analytics activation state, or null if never set. */
-  getAnalyticsActivationState(): AnalyticsActivationState | null {
-    return parseActivationState(this.getUiPreference(ACTIVATION_STATE_KEY));
-  }
-
-  /** Stores the analytics activation state in the control database. */
-  setAnalyticsActivationState(state: AnalyticsActivationState): void {
-    this.setUiPreference(ACTIVATION_STATE_KEY, serializeActivationState(state));
-  }
-
-  /**
-   * Activates the fresh analytics database.
-   *
-   * This is a one-way operation for the analytics database: existing analytics
-   * rows are reset (not backfilled) so the new schema starts clean. Control
-   * data (connections, vault, checkpoints, UI preferences) is preserved.
-   * Source-retention choices are captured and stored alongside the state.
-   */
-  activateAnalyticsDatabase(retention: SourceRetentionControls): AnalyticsActivationState {
-    const state: AnalyticsActivationState = {
-      mode: 'new',
-      activatedAt: Date.now(),
-      retention,
-      disclosureConfirmed: true,
-    };
-    this.setAnalyticsActivationState(state);
-    this.resetAnalyticsDatabase();
-    return state;
-  }
-
-  /**
-   * Rolls back to the legacy application mode.
-   *
-   * This updates the UI state; the new analytics database file is left
-   * untouched so the user can re-activate later. The old database remains
-   * accessible through the legacy worker for read-only export.
-   */
-  rollbackToLegacyMode(): AnalyticsActivationState {
-    const state: AnalyticsActivationState = {
-      mode: 'legacy',
-      activatedAt: this.getAnalyticsActivationState()?.activatedAt,
-      retention: this.getAnalyticsActivationState()?.retention ?? DEFAULT_SOURCE_RETENTION,
-      disclosureConfirmed: true,
-    };
-    this.setAnalyticsActivationState(state);
-    return state;
-  }
-
-  /** Returns the source-retention controls stored in the activation state. */
-  getSourceRetentionControls(): SourceRetentionControls {
-    return this.getAnalyticsActivationState()?.retention ?? DEFAULT_SOURCE_RETENTION;
-  }
-
-  // ==================== Session operations ====================
-
-  /** Inserts a brand new session row and bumps the project's session count. */
-  saveSession(session: DashboardSession): void {
-    const db = this.requireDb();
-    db.transaction(() => {
-      this.insertSessionRow(session);
-      this.writeChildRows(session);
-      db.exec({
-        sql: 'UPDATE projects SET session_count = session_count + 1, updated_at = ? WHERE id = ?',
-        bind: [Date.now(), session.project_id],
-      });
-    });
-  }
-
-  /**
-   * Replaces an existing session's row and child rows in place (same `id`,
-   * so URLs/links to it keep working), without touching the project's
-   * session count. Used both for re-uploads of the same external session
-   * (matched by `external_id`) and for folding in subagent data.
-   */
-  replaceSession(session: DashboardSession): void {
-    const db = this.requireDb();
-    db.transaction(() => {
-      this.deleteSessionRows(session.id);
-      db.exec({ sql: 'DELETE FROM sessions WHERE id = ?', bind: [session.id] });
-      this.insertSessionRow(session);
-      this.writeChildRows(session);
-      this.touchProject(session.project_id);
-    });
-  }
-
-  /**
-   * Inserts `session` if its `external_id` isn't already present in this
-   * project, otherwise replaces the existing row in place (reusing its
-   * `id`) - so re-uploading the same session updates it instead of creating
-   * a duplicate. Returns the effective session id (the existing one on
-   * update, or `session.id` on insert).
-   */
-  upsertSessionByExternalId(session: DashboardSession): string {
-    const existing = session.external_id
-      ? this.findSessionByExternalId(session.project_id, session.external_id)
-      : null;
-
-    if (!existing) {
-      this.saveSession(session);
-      return session.id;
-    }
-
-    // Reuse the existing row's id (so links to it keep working), which
-    // means every child row's `session_id` foreign key must be remapped too
-    // - they were generated against `session.id`, not `existing.id`.
-    this.replaceSession({
-      ...session,
-      id: existing.id,
-      tool_executions: session.tool_executions.map((tool) => ({
-        ...tool,
-        session_id: existing.id,
-      })),
-      events: session.events.map((event) => ({ ...event, session_id: existing.id })),
-      messages: session.messages.map((message) => ({ ...message, session_id: existing.id })),
-    });
-    return existing.id;
-  }
-
-  findSessionByExternalId(projectId: string, externalId: string): DashboardSession | null {
-    const row = this.requireDb().selectObject(
-      'SELECT * FROM sessions WHERE project_id = ? AND external_id = ?',
-      [projectId, externalId],
-    ) as unknown as SessionRow | undefined;
-    return row ? this.hydrateSession(row) : null;
-  }
-
-  private insertSessionRow(session: DashboardSession): void {
-    this.requireDb().exec({
-      sql: `INSERT INTO sessions (
-              id, project_id, source, title, started_at, ended_at,
-              input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-              total_tokens, cost_usd, model, model_usage, tasks, external_id, subagents,
-              context_compactions, total_turns, files_read, files_written, agent_invocations,
-              sync_session_id, sync_status, sync_details
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      bind: [
-        session.id,
-        session.project_id,
-        session.source,
-        session.title ?? '',
-        session.started_at,
-        session.ended_at,
-        session.input_tokens,
-        session.output_tokens,
-        session.cache_creation_tokens ?? 0,
-        session.cache_read_tokens ?? 0,
-        session.total_tokens,
-        session.cost_usd ?? null,
-        session.model ?? null,
-        session.models && session.models.length > 0 ? JSON.stringify(session.models) : null,
-        session.tasks && session.tasks.length > 0 ? JSON.stringify(session.tasks) : null,
-        session.external_id ?? null,
-        session.subagents && session.subagents.length > 0
-          ? JSON.stringify(session.subagents)
-          : null,
-        session.context_compactions ?? 0,
-        session.total_turns ?? 0,
-        session.files_read ?? 0,
-        session.files_written ?? 0,
-        session.agent_invocations ?? 0,
-        session.sync_session_id ?? null,
-        session.sync_status ?? null,
-        session.sync_details ?? null,
-      ],
-    });
-  }
-
-  private writeChildRows(session: DashboardSession): void {
-    const db = this.requireDb();
-
-    for (const tool of session.tool_executions) {
-      db.exec({
-        sql: `INSERT INTO tool_executions
-              (id, session_id, timestamp, tool_name, tool_type, target, success, duration_ms, parameters, result, result_uuid)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        bind: [
-          tool.id,
-          tool.session_id,
-          tool.timestamp,
-          tool.tool_name,
-          tool.tool_type,
-          tool.target ?? null,
-          tool.success ? 1 : 0,
-          tool.duration_ms ?? null,
-          tool.parameters ? JSON.stringify(tool.parameters) : null,
-          tool.result ?? null,
-          tool.result_uuid ?? null,
-        ],
-      });
-    }
-
-    for (const event of session.events) {
-      db.exec({
-        sql: `INSERT INTO session_events
-              (id, session_id, timestamp, event_type, description, metadata)
-              VALUES (?, ?, ?, ?, ?, ?)`,
-        bind: [
-          event.id,
-          event.session_id,
-          event.timestamp,
-          event.event_type,
-          event.description ?? null,
-          event.metadata ? JSON.stringify(event.metadata) : null,
-        ],
-      });
-    }
-
-    for (const message of session.messages ?? []) {
-      db.exec({
-        sql: `INSERT INTO session_messages (id, session_id, role, content, timestamp, uuid, parent_uuid)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        bind: [
-          message.id,
-          message.session_id,
-          message.role,
-          message.content,
-          message.timestamp,
-          message.uuid ?? null,
-          message.parent_uuid ?? null,
-        ],
-      });
-    }
-  }
-
-  getSessionsByProject(projectId: string, limit?: number, offset?: number): DashboardSession[] {
-    const params: (string | number)[] = [projectId];
-    const pagination = limit !== undefined;
-    if (pagination) {
-      params.push(limit, offset ?? 0);
-    }
-    const rows = this.requireDb().selectObjects(
-      `SELECT * FROM sessions
-       WHERE project_id = ?
-       ORDER BY ended_at DESC, started_at DESC${pagination ? ' LIMIT ? OFFSET ?' : ''}`,
-      params,
-    ) as unknown as SessionRow[];
-    return rows.map((row) => this.hydrateSession(row));
-  }
-
-  /**
-   * Filters a project's sessions by title or by transcript message content
-   * (case-insensitive substring match).
-   */
-  searchSessions(
-    projectId: string,
-    query: string,
-    limit?: number,
-    offset?: number,
-  ): DashboardSession[] {
-    const like = `%${query}%`;
-    const params: (string | number)[] = [projectId, like, like];
-    const pagination = limit !== undefined;
-    if (pagination) {
-      params.push(limit, offset ?? 0);
-    }
-    const rows = this.requireDb().selectObjects(
-      `SELECT s.* FROM sessions s
-       WHERE s.project_id = ?
-         AND (s.title LIKE ? COLLATE NOCASE
-              OR EXISTS (
-                SELECT 1 FROM session_messages m
-                WHERE m.session_id = s.id AND m.content LIKE ? COLLATE NOCASE
-              ))
-       ORDER BY s.ended_at DESC, s.started_at DESC${pagination ? ' LIMIT ? OFFSET ?' : ''}`,
-      params,
-    ) as unknown as SessionRow[];
-    return rows.map((row) => this.hydrateSession(row));
-  }
-
-  getSession(id: string): DashboardSession | null {
-    const row = this.requireDb().selectObject('SELECT * FROM sessions WHERE id = ?', [
-      id,
-    ]) as unknown as SessionRow | undefined;
-    return row ? this.hydrateSession(row) : null;
-  }
+  // ==================== Session sync state ====================
 
   /** Finds a session by its remote sync id within a project. */
   getSessionBySyncId(projectId: string, syncSessionId: string): DashboardSession | null {
     const row = this.requireDb().selectObject(
-      'SELECT id FROM sessions WHERE project_id = ? AND sync_session_id = ?',
+      'SELECT * FROM sessions WHERE project_id = ? AND sync_session_id = ?',
       [projectId, syncSessionId],
-    ) as unknown as { id: string } | undefined;
-    return row ? this.getSession(row.id) : null;
+    ) as unknown as SessionRow | undefined;
+    return row ? rowToSession(row) : null;
   }
 
   /**
    * Inserts a sync stub or updates an existing session's stub-relevant
-   * columns. Parsed-content columns (metrics, child rows, transcript) are
-   * never overwritten by this call - the contract with the real parse path
-   * is that `sync_session_id`, `sync_status`, and the manifest mirror
-   * columns are left intact when the full parse lands later.
+   * columns. Parsed-content columns are never overwritten by this call.
    */
   upsertSessionStub(stub: SessionStub): void {
     const db = this.requireDb();
@@ -1398,8 +950,11 @@ export class DatabaseManager {
 
   /** Writes all sync mirror columns from a manifest onto a session row. */
   updateSessionManifest(sessionId: string, manifest: SyncManifest): void {
-    if (!this.getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
-    this.requireDb().exec({
+    const db = this.requireDb();
+    const exists = db.selectObject('SELECT id FROM sessions WHERE id = ?', [sessionId]);
+    if (!exists) throw new Error(`Session not found: ${sessionId}`);
+
+    db.exec({
       sql: `UPDATE sessions SET
         sync_session_id = ?, sync_schema_version = ?, sync_harness = ?, sync_harness_version = ?,
         sync_manifest_model = ?, sync_started_at = ?, sync_ended_at = ?, sync_duration_ms = ?,
@@ -1481,115 +1036,6 @@ export class DatabaseManager {
     });
   }
 
-  /** Deletes a session and decrements the project counter. */
-  deleteSession(id: string): void {
-    const db = this.requireDb();
-    db.transaction(() => {
-      const row = db.selectObject('SELECT project_id FROM sessions WHERE id = ?', [id]);
-      this.deleteSessionRows(id);
-      db.exec({ sql: 'DELETE FROM sessions WHERE id = ?', bind: [id] });
-      if (row) {
-        db.exec({
-          sql: 'UPDATE projects SET session_count = MAX(session_count - 1, 0), updated_at = ? WHERE id = ?',
-          bind: [Date.now(), String(row.project_id)],
-        });
-      }
-    });
-  }
-
-  private deleteSessionRows(sessionId: string): void {
-    const db = this.requireDb();
-    db.exec({ sql: 'DELETE FROM session_messages WHERE session_id = ?', bind: [sessionId] });
-    db.exec({ sql: 'DELETE FROM session_events WHERE session_id = ?', bind: [sessionId] });
-    db.exec({ sql: 'DELETE FROM tool_executions WHERE session_id = ?', bind: [sessionId] });
-  }
-
-  private hydrateSession(row: SessionRow): DashboardSession {
-    const { model_usage, tasks, subagents, ...rest } = row;
-    return {
-      ...rest,
-      sync_session_id: rest.sync_session_id ?? undefined,
-      sync_status: isSessionSyncStatus(rest.sync_status) ? rest.sync_status : undefined,
-      sync_details: rest.sync_details ?? undefined,
-      cache_creation_tokens: rest.cache_creation_tokens ?? 0,
-      cache_read_tokens: rest.cache_read_tokens ?? 0,
-      cost_usd: rest.cost_usd ?? undefined,
-      model: rest.model ?? undefined,
-      external_id: rest.external_id ?? undefined,
-      models: model_usage ? safeJsonParseArray<ModelTokenUsage>(model_usage) : [],
-      source: rest.source as DashboardSession['source'],
-      tool_executions: this.getToolExecutionsForSession(rest.id),
-      events: this.getSessionEventsForSession(rest.id),
-      messages: this.getMessagesForSession(rest.id),
-      tasks: tasks ? safeJsonParseArray<SessionTask>(tasks) : [],
-      subagents: subagents ? safeJsonParseArray<SubagentUsage>(subagents) : [],
-    };
-  }
-
-  private getToolExecutionsForSession(sessionId: string): ToolExecution[] {
-    const rows = this.requireDb().selectObjects(
-      'SELECT * FROM tool_executions WHERE session_id = ? ORDER BY timestamp ASC',
-      [sessionId],
-    ) as unknown as ToolExecutionRow[];
-    return rows.map((row) => ({
-      ...row,
-      success: Boolean(row.success),
-      target: row.target ?? undefined,
-      duration_ms: row.duration_ms ?? undefined,
-      parameters: row.parameters ? safeJsonParse(row.parameters) : undefined,
-      result: row.result ?? undefined,
-      result_uuid: row.result_uuid ?? undefined,
-    }));
-  }
-
-  private getSessionEventsForSession(sessionId: string): SessionEvent[] {
-    const rows = this.requireDb().selectObjects(
-      'SELECT * FROM session_events WHERE session_id = ? ORDER BY timestamp ASC',
-      [sessionId],
-    ) as unknown as EventRow[];
-    return rows.map((row) => ({
-      id: row.id,
-      session_id: row.session_id,
-      timestamp: row.timestamp,
-      event_type: row.event_type,
-      description: row.description ?? '',
-      metadata: row.metadata ? safeJsonParse(row.metadata) : undefined,
-    }));
-  }
-
-  private getMessagesForSession(sessionId: string): TranscriptMessage[] {
-    const rows = this.requireDb().selectObjects(
-      'SELECT * FROM session_messages WHERE session_id = ? ORDER BY timestamp ASC',
-      [sessionId],
-    ) as unknown as MessageRow[];
-    return rows.map((row) => ({
-      ...row,
-      role: row.role as TranscriptMessage['role'],
-      uuid: row.uuid ?? undefined,
-      parent_uuid: row.parent_uuid ?? undefined,
-    }));
-  }
-
-  // ==================== Sync boot reconciliation ====================
-
-  /**
-   * Crash-recovery primitive: set every 'syncing' project to 'in_sync' and
-   * every 'pending'/'processing' session to 'failed'. Runs as one atomic
-   * transaction spanning the whole database.
-   */
-  reconcileSyncStates(sessionDetails: string): void {
-    const db = this.requireDb();
-    db.transaction(() => {
-      db.exec("UPDATE projects SET sync_status = 'in_sync' WHERE sync_status = 'syncing'");
-      db.exec({
-        sql: "UPDATE sessions SET sync_status = 'failed', sync_details = ? WHERE sync_status IN ('pending', 'processing')",
-        bind: [sessionDetails],
-      });
-    });
-  }
-
-  // ==================== Session file operations ====================
-
   /** Lists all file records for a session, ordered by path. */
   getSessionFiles(sessionId: string): SessionFileRecord[] {
     const rows = this.requireDb().selectObjects(
@@ -1622,92 +1068,39 @@ export class DatabaseManager {
     });
   }
 
-  // ==================== Metrics ====================
-
-  getProjectMetrics(projectId: string): SessionMetrics {
-    const sessions = this.getSessionsByProject(projectId);
-
-    const metrics: SessionMetrics = {
-      total_sessions: sessions.length,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_creation_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_tokens: 0,
-      total_cost_usd: 0,
-      total_tool_executions: 0,
-      avg_session_duration_ms: 0,
-      models_used: [],
-    };
-
-    const models = new Set<string>();
-    let totalDuration = 0;
-
-    for (const session of sessions) {
-      metrics.total_input_tokens += session.input_tokens;
-      metrics.total_output_tokens += session.output_tokens;
-      metrics.total_cache_creation_tokens += session.cache_creation_tokens ?? 0;
-      metrics.total_cache_read_tokens += session.cache_read_tokens ?? 0;
-      metrics.total_tokens += session.total_tokens;
-      metrics.total_cost_usd += session.cost_usd ?? 0;
-      metrics.total_tool_executions += session.tool_executions.length;
-      totalDuration += Math.max(0, session.ended_at - session.started_at);
-      if (session.model) models.add(session.model);
-    }
-
-    metrics.avg_session_duration_ms = sessions.length > 0 ? totalDuration / sessions.length : 0;
-    metrics.models_used = Array.from(models);
-    return metrics;
+  /** Deletes all file records for a session. */
+  deleteSessionFiles(sessionId: string): void {
+    this.requireDb().exec({
+      sql: 'DELETE FROM session_files WHERE session_id = ?',
+      bind: [sessionId],
+    });
   }
 
-  // ==================== Analytics reset ====================
+  // ==================== Sync boot reconciliation ====================
 
   /**
-   * Resets the analytics database by dropping all analytics tables and
-   * rebuilding a fresh schema. The control database (vault, connections,
-   * checkpoints, UI preferences) is untouched. No cross-database transaction
-   * is used.
+   * Crash-recovery primitive: set every 'syncing' project to 'in_sync' and
+   * every 'pending'/'processing' session to 'failed'. Runs as one atomic
+   * transaction.
    */
-  resetAnalyticsDatabase(): void {
-    const sqlite3 = this.sqlite3;
-    if (!sqlite3) throw new Error('Database not initialized');
-
-    if (this.db) {
-      this.db.close();
-      this.db = null;
-    }
-
-    this.db = this.openDatabase(this.analyticsFilename, 'analytics');
+  reconcileSyncStates(sessionDetails: string): void {
     const db = this.requireDb();
-
-    db.exec('PRAGMA foreign_keys = OFF;');
-    for (const index of ANALYTICS_INDEXES) {
-      db.exec(`DROP INDEX IF EXISTS ${index}`);
-    }
-    for (const table of ANALYTICS_TABLES) {
-      db.exec(`DROP TABLE IF EXISTS ${table}`);
-    }
-    db.exec('PRAGMA foreign_keys = ON;');
-
-    this.createAnalyticsTables();
-    this.migrate();
+    db.transaction(() => {
+      db.exec("UPDATE projects SET sync_status = 'in_sync' WHERE sync_status = 'syncing'");
+      db.exec({
+        sql: "UPDATE sessions SET sync_status = 'failed', sync_details = ? WHERE sync_status IN ('pending', 'processing')",
+        bind: [sessionDetails],
+      });
+    });
   }
 
   // ==================== Export ====================
 
-  /** Serializes the analytics database as bytes (a valid SQLite file). */
-  exportDatabase(): Uint8Array {
+  /** Serializes the control database as bytes (a valid SQLite file). */
+  exportControlDatabase(): Uint8Array {
     const db = this.requireDb();
     const sqlite3 = this.sqlite3;
     if (!sqlite3 || !db.pointer) throw new Error('Database not initialized');
-    return sqlite3.capi.sqlite3_js_db_export(db.pointer);
-  }
-
-  /** Serializes the control database as bytes (a valid SQLite file). */
-  exportControlDatabase(): Uint8Array {
-    const db = this.requireControlDb();
-    const sqlite3 = this.sqlite3;
-    if (!sqlite3 || !db.pointer) throw new Error('Control database not initialized');
     return sqlite3.capi.sqlite3_js_db_export(db.pointer);
   }
 
@@ -1715,10 +1108,6 @@ export class DatabaseManager {
     if (this.db) {
       this.db.close();
       this.db = null;
-    }
-    if (this.controlDb) {
-      this.controlDb.close();
-      this.controlDb = null;
     }
   }
 }
@@ -1734,6 +1123,39 @@ function rowToProject(row: Record<string, unknown>): Project {
     readable_id: typeof row.readable_id === 'string' ? row.readable_id : undefined,
     sync_status: isProjectSyncStatus(row.sync_status) ? row.sync_status : undefined,
     connection_id: typeof row.connection_id === 'string' ? row.connection_id : undefined,
+  };
+}
+
+function rowToSession(row: SessionRow): DashboardSession {
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    source: row.source as DashboardSession['source'],
+    title: row.title,
+    started_at: row.started_at,
+    ended_at: row.ended_at,
+    input_tokens: row.input_tokens,
+    output_tokens: row.output_tokens,
+    cache_creation_tokens: row.cache_creation_tokens,
+    cache_read_tokens: row.cache_read_tokens,
+    total_tokens: row.total_tokens,
+    cost_usd: row.cost_usd ?? undefined,
+    model: row.model ?? undefined,
+    models: [],
+    context_compactions: row.context_compactions,
+    total_turns: row.total_turns,
+    files_read: row.files_read,
+    files_written: row.files_written,
+    agent_invocations: row.agent_invocations,
+    tool_executions: [],
+    events: [],
+    messages: [],
+    tasks: [],
+    external_id: row.external_id ?? undefined,
+    subagents: [],
+    sync_session_id: row.sync_session_id ?? undefined,
+    sync_status: isSessionSyncStatus(row.sync_status) ? row.sync_status : undefined,
+    sync_details: row.sync_details ?? undefined,
   };
 }
 

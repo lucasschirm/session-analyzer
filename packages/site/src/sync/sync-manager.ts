@@ -22,6 +22,7 @@ import {
 } from '@lucasschirm/sal-sync-core';
 import { toastManager } from '../components/toast-container';
 import { type DbClient, dbClient } from '../db/db-client';
+import { generateId } from '../lib/id';
 import { describeS3Error } from '../lib/s3-errors';
 import type {
   Connection,
@@ -30,10 +31,7 @@ import type {
   SessionFileRecord,
   SessionStub,
 } from '../types';
-import { parseInWorker } from '../workers/parser-client';
-import { generateId } from '../workers/session-builder';
 import { decryptField, isUnlocked, unlock } from './credential-crypto';
-import { createFileProcessingBridge } from './file-processing-bridge';
 import type {
   FileSummary,
   FileToDownload,
@@ -1588,11 +1586,8 @@ export class SyncManager extends EventTarget {
   }
 }
 
-/** App-wide singleton, wired to the TSK0008 file-processing bridge. */
-const fileBridge = createFileProcessingBridge(dbClient, parseInWorker);
+/** App-wide sync singleton. */
 export const syncManager = new SyncManager({
-  onFileDownloaded: fileBridge.onFileDownloaded,
-  onSyncComplete: fileBridge.onSyncComplete,
   onWarning: (warning) => toastManager.warning('Sync warning', { message: warning }),
   onRunSummary: (summary) => {
     if (summary.state === 'failed' && summary.warnings.length > 0) {

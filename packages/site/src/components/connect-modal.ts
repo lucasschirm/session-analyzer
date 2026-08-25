@@ -4,11 +4,11 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { dbClient } from '../db/db-client';
+import { generateId } from '../lib/id';
 import { hintForS3Error } from '../lib/s3-errors';
 import { encryptField, isUnlocked } from '../sync/credential-crypto';
 import { syncManager } from '../sync/sync-manager';
 import type { Connection, StoredS3Credentials } from '../types';
-import { generateId } from '../workers/session-builder';
 
 /** View the modal is currently showing. */
 type ModalView = 'list' | 'form';

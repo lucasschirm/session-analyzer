@@ -135,7 +135,7 @@ export function evidenceLinkHref(
 ): string {
   switch (link.entityType) {
     case 'project':
-      return `#/projects/${link.entityId}?returnContext=${encodeURIComponent(
+      return `#/projects/${link.entityId}/behavior?returnContext=${encodeURIComponent(
         buildComponentEcosystemQueryString(returnParams),
       )}`;
     case 'session':
@@ -158,7 +158,7 @@ export function originHref(params: ComponentEcosystemParams): string | null {
       return `#/portfolio?${params.returnContext}`;
     case 'project':
       return params.project
-        ? `#/projects/${params.project}?returnContext=${encodeURIComponent(params.returnContext)}`
+        ? `#/projects/${params.project}/behavior?returnContext=${encodeURIComponent(params.returnContext)}`
         : null;
     case 'session':
       return params.project ? `#/sessions/${params.project}` : null;

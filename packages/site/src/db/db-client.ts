@@ -11,16 +11,13 @@ import type {
   PasskeyState,
   Project,
   SessionFileRecord,
-  SessionMetrics,
   SessionStub,
   SessionSyncStatus,
   StoredS3Credentials,
   SyncManifest,
 } from '../types';
-import type { AnalyticsActivationState, SourceRetentionControls } from './activation-state';
-import type { CommittedGenerationReceipt, FallbackReason, SourceCheckpoint } from './database';
+import type { FallbackReason, SourceCheckpoint } from './database';
 import type { DbDatabaseHandle, DbRequest, DbRequestPayload, DbResponse } from './db-protocol';
-import { LegacyDbClient } from './legacy-db-client';
 
 interface PendingCall {
   requestType: DbRequest['type'];
@@ -60,6 +57,8 @@ export class DbClient {
     return this.worker !== null;
   }
 
+  // ==================== Project operations ====================
+
   createProject(project: Project): Promise<void> {
     return this.call({ type: 'createProject', project }) as Promise<void>;
   }
@@ -83,73 +82,7 @@ export class DbClient {
     return this.call({ type: 'deleteProject', projectId }) as Promise<void>;
   }
 
-  saveSession(session: DashboardSession): Promise<void> {
-    return this.call({ type: 'saveSession', session }) as Promise<void>;
-  }
-
-  /** Inserts, or - if `session.external_id` already exists in this project - updates in place. Resolves with the effective session id. */
-  upsertSessionByExternalId(session: DashboardSession): Promise<string> {
-    return this.call({ type: 'upsertSessionByExternalId', session }) as Promise<string>;
-  }
-
-  /** Replaces an existing session's row and child rows in place (same id). */
-  replaceSession(session: DashboardSession): Promise<void> {
-    return this.call({ type: 'replaceSession', session }) as Promise<void>;
-  }
-
-  findSessionByExternalId(projectId: string, externalId: string): Promise<DashboardSession | null> {
-    return this.call({
-      type: 'findSessionByExternalId',
-      projectId,
-      externalId,
-    }) as Promise<DashboardSession | null>;
-  }
-
-  getSessionsByProject(
-    projectId: string,
-    limit?: number,
-    offset?: number,
-  ): Promise<DashboardSession[]> {
-    return this.call({
-      type: 'getSessionsByProject',
-      projectId,
-      limit,
-      offset,
-    }) as Promise<DashboardSession[]>;
-  }
-
-  searchSessions(
-    projectId: string,
-    query: string,
-    limit?: number,
-    offset?: number,
-  ): Promise<DashboardSession[]> {
-    return this.call({
-      type: 'searchSessions',
-      projectId,
-      query,
-      limit,
-      offset,
-    }) as Promise<DashboardSession[]>;
-  }
-
-  getSession(sessionId: string): Promise<DashboardSession | null> {
-    return this.call({ type: 'getSession', sessionId }) as Promise<DashboardSession | null>;
-  }
-
-  deleteSession(sessionId: string): Promise<void> {
-    return this.call({ type: 'deleteSession', sessionId }) as Promise<void>;
-  }
-
-  getProjectMetrics(projectId: string): Promise<SessionMetrics> {
-    return this.call({ type: 'getProjectMetrics', projectId }) as Promise<SessionMetrics>;
-  }
-
-  exportDatabase(): Promise<Uint8Array> {
-    return this.call({ type: 'exportDatabase' }) as Promise<Uint8Array>;
-  }
-
-  // ==================== Connections ====================
+  // ==================== Connection operations ====================
 
   /** Creates a new remote storage connection. */
   createConnection(connection: Connection): Promise<void> {
@@ -292,6 +225,11 @@ export class DbClient {
     return this.call({ type: 'upsertSessionFile', file }) as Promise<void>;
   }
 
+  /** Deletes all file records for a session. */
+  deleteSessionFiles(sessionId: string): Promise<void> {
+    return this.call({ type: 'deleteSessionFiles', sessionId }) as Promise<void>;
+  }
+
   // ==================== Source checkpoints and UI preferences ====================
 
   /**
@@ -301,7 +239,7 @@ export class DbClient {
   commitSourceCheckpoint(
     sourceId: string,
     checkpoint: SourceCheckpoint,
-    receipt: CommittedGenerationReceipt,
+    receipt: { generationId: string; committedAt?: number },
   ): Promise<void> {
     return this.call({
       type: 'commitSourceCheckpoint',
@@ -331,19 +269,11 @@ export class DbClient {
     return this.call({ type: 'getUiPreference', key }) as Promise<string | null>;
   }
 
-  /** Resets the analytics database without touching control data. */
-  resetAnalyticsDatabase(): Promise<void> {
-    return this.call({ type: 'resetAnalyticsDatabase' }) as Promise<void>;
-  }
+  // ==================== Export ====================
 
   /** Serializes the control database as bytes. */
   exportControlDatabase(): Promise<Uint8Array> {
     return this.call({ type: 'exportControlDatabase' }) as Promise<Uint8Array>;
-  }
-
-  /** Returns a handle describing the analytics database connection. */
-  getAnalyticsDb(): Promise<DbDatabaseHandle> {
-    return this.call({ type: 'getAnalyticsDb' }) as Promise<DbDatabaseHandle>;
   }
 
   /** Returns a handle describing the control database connection. */
@@ -351,69 +281,9 @@ export class DbClient {
     return this.call({ type: 'getControlDb' }) as Promise<DbDatabaseHandle>;
   }
 
-  // ==================== Analytics activation ====================
-
-  /** Returns the stored analytics activation state. */
-  getAnalyticsActivationState(): Promise<AnalyticsActivationState | null> {
-    return this.call({
-      type: 'getAnalyticsActivationState',
-    }) as Promise<AnalyticsActivationState | null>;
-  }
-
-  /** Stores the analytics activation state. */
-  setAnalyticsActivationState(state: AnalyticsActivationState): Promise<void> {
-    return this.call({ type: 'setAnalyticsActivationState', state }) as Promise<void>;
-  }
-
-  /**
-   * Activates the fresh analytics database.
-   *
-   * The activation is one-way for the analytics database: existing rows are
-   * reset and not backfilled. Control data is preserved.
-   */
-  activateAnalyticsDatabase(retention: SourceRetentionControls): Promise<AnalyticsActivationState> {
-    return this.call({
-      type: 'activateAnalyticsDatabase',
-      retention,
-    }) as Promise<AnalyticsActivationState>;
-  }
-
-  /** Rolls back to the legacy read-only application mode. */
-  rollbackToLegacyMode(): Promise<AnalyticsActivationState> {
-    return this.call({ type: 'rollbackToLegacyMode' }) as Promise<AnalyticsActivationState>;
-  }
-
-  /** Returns the source-retention controls stored in the activation state. */
-  getSourceRetentionControls(): Promise<SourceRetentionControls> {
-    return this.call({ type: 'getSourceRetentionControls' }) as Promise<SourceRetentionControls>;
-  }
-
-  /** Exports the pre-split legacy database from a separate read-only worker. */
-  async exportLegacyDatabase(filename = '/session-analyzer.sqlite3'): Promise<Uint8Array> {
-    const legacyClient = new LegacyDbClient();
-    try {
-      await legacyClient.ensureReady(filename);
-      return await legacyClient.exportDatabase();
-    } finally {
-      await legacyClient.close();
-    }
-  }
-
-  /** Exports the legacy database and triggers a browser download with a warning. */
-  async exportAndDownloadLegacy(filename = '/session-analyzer.sqlite3'): Promise<void> {
-    const bytes = await this.exportLegacyDatabase(filename);
-    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `session-analyzer-legacy-${new Date().toISOString().slice(0, 10)}.sqlite`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  }
-
   /** Exports the SQLite file and triggers a browser download. */
   async exportAndDownload(): Promise<void> {
-    const bytes = await this.exportDatabase();
+    const bytes = await this.exportControlDatabase();
     const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -426,7 +296,7 @@ export class DbClient {
   private call(payload: DbRequestPayload): Promise<unknown> {
     if (!this.worker) {
       // Lazy initialization: the worker is created on first use and the
-      // 'init' message is queued ahead of this request.
+      // 'init' request is queued ahead of this request.
       this.ensureReady();
     }
     const worker = this.worker;
@@ -455,10 +325,7 @@ export class DbClient {
     if (pendingCall.requestType === 'init') {
       this.fallbackReason = response.fallbackReason;
       pendingCall.resolve(response.storage ?? 'memory');
-    } else if (
-      pendingCall.requestType === 'exportDatabase' ||
-      pendingCall.requestType === 'exportControlDatabase'
-    ) {
+    } else if (pendingCall.requestType === 'exportControlDatabase') {
       pendingCall.resolve(response.bytes ?? new Uint8Array());
     } else {
       pendingCall.resolve(response.result);

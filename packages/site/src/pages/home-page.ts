@@ -273,7 +273,7 @@ export class HomePage extends LitElement {
 
   private openProject(project: Project): void {
     const slug = project.readable_id || project.id;
-    navigateTo(`/projects/${slug}`);
+    navigateTo(`/projects/${slug}/behavior`);
   }
 
   private isProjectSyncing(project: Project): boolean {

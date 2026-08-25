@@ -249,7 +249,7 @@ export function projectSessionsToRows(
     sessionId: row.sessionId,
     lastUsed: row.lastUsed,
     metrics: row.metricValues.map((m) => `${m.label}: ${formatMetricValue(m)}`).join(' • '),
-    projectHref: `#/projects/${row.projectId}?returnContext=${encodeURIComponent(
+    projectHref: `#/projects/${row.projectId}/behavior?returnContext=${encodeURIComponent(
       buildComponentEcosystemQueryString(params),
     )}`,
     sessionHref: `#/sessions/${row.sessionId}`,
