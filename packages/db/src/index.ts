@@ -10,6 +10,7 @@ export * from './manual-ingestion.js';
 export * from './metric-registry.js';
 export * from './model-pricing.js';
 export * from './ports.js';
+export * from './project-behavior.js';
 export * from './rebuild-frontiers.js';
 export * from './reprocessing.js';
 export * from './rollup-reconciliation.js';
