@@ -13,7 +13,7 @@ import './home-page';
 import './portfolio/portfolio-view';
 import './project-behavior/project-behavior-view';
 import './project-view';
-import './session-dashboard';
+import './session-evidence/session-evidence-view';
 import './indicator-details';
 import './session-transcript-page';
 import './manual-import/manual-import-page';
@@ -24,7 +24,7 @@ import './manual-import/manual-import-page';
  *
  * - `#/`                                   -> Home (projects CRUD)
  * - `#/projects/:projectId`                -> Project View (upload + sessions)
- * - `#/sessions/:sessionId`                -> Session Dashboard (metrics)
+ * - `#/sessions/:sessionId`                -> Session Evidence (precomputed analytics view)
  * - `#/sessions/:sessionId/indicator/:key` -> Indicator Details (drill-down)
  * - `#/sessions/:sessionId/transcript`     -> Session Transcript (subagent cards inline, full width)
  * - `#/sessions/:sessionId/transcript/:agentId` -> Session Transcript, split with that subagent's column open
@@ -156,7 +156,7 @@ export class AppRoot extends LitElement {
       {
         path: '/sessions/:sessionId',
         render: (params) =>
-          html`<session-dashboard session-id=${params.sessionId ?? ''}></session-dashboard>`,
+          html`<session-evidence-view session-id=${params.sessionId ?? ''}></session-evidence-view>`,
       },
       {
         path: '/sessions/:sessionId/indicator/:indicator',
