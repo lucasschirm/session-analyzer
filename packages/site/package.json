@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "preverify": "pnpm -r --filter !site build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -28,8 +29,10 @@
   "dependencies": {
     "@lit-labs/router": "^0.1.4",
     "@lucasschirm/sal-claude-session-parser": "workspace:*",
+    "@lucasschirm/sal-db": "workspace:*",
     "@lucasschirm/sal-db-core": "workspace:*",
     "@lucasschirm/sal-sync-core": "workspace:*",
+    "@lucasschirm/sal-transformer": "workspace:*",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
     "dompurify": "^3.4.13",
     "lit": "^3.3.3",
