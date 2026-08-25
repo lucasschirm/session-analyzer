@@ -18,6 +18,7 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "verify": "pnpm -r build && pnpm -r --parallel run verify",
+    "analytics-gates": "node scripts/analytics-gates/run-all-gates.mjs",
     "prepare": "husky"
   },
   "author": "",
