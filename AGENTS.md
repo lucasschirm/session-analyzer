@@ -73,6 +73,7 @@ Claude Code plugin that bundles the sync engine.
 │   │   │   └── workers/          # Web Worker for session parsing + client helper
 │   │   ├── tests/
 │   │   │   ├── unit/             # Vitest unit tests
+│   │   │   ├── perf/             # Vitest performance and read-budget tests
 │   │   │   └── e2e/              # Playwright E2E tests + fixture session files
 │   │   ├── public/               # coi-sw.js (COOP/COEP for GitHub Pages), .nojekyll
 │   │   ├── index.html            # Entry HTML file (dark theme variables)
