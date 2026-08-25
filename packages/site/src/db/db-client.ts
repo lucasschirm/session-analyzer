@@ -17,8 +17,10 @@ import type {
   StoredS3Credentials,
   SyncManifest,
 } from '../types';
+import type { AnalyticsActivationState, SourceRetentionControls } from './activation-state';
 import type { CommittedGenerationReceipt, FallbackReason, SourceCheckpoint } from './database';
 import type { DbDatabaseHandle, DbRequest, DbRequestPayload, DbResponse } from './db-protocol';
+import { LegacyDbClient } from './legacy-db-client';
 
 interface PendingCall {
   requestType: DbRequest['type'];
@@ -347,6 +349,66 @@ export class DbClient {
   /** Returns a handle describing the control database connection. */
   getControlDb(): Promise<DbDatabaseHandle> {
     return this.call({ type: 'getControlDb' }) as Promise<DbDatabaseHandle>;
+  }
+
+  // ==================== Analytics activation ====================
+
+  /** Returns the stored analytics activation state. */
+  getAnalyticsActivationState(): Promise<AnalyticsActivationState | null> {
+    return this.call({
+      type: 'getAnalyticsActivationState',
+    }) as Promise<AnalyticsActivationState | null>;
+  }
+
+  /** Stores the analytics activation state. */
+  setAnalyticsActivationState(state: AnalyticsActivationState): Promise<void> {
+    return this.call({ type: 'setAnalyticsActivationState', state }) as Promise<void>;
+  }
+
+  /**
+   * Activates the fresh analytics database.
+   *
+   * The activation is one-way for the analytics database: existing rows are
+   * reset and not backfilled. Control data is preserved.
+   */
+  activateAnalyticsDatabase(retention: SourceRetentionControls): Promise<AnalyticsActivationState> {
+    return this.call({
+      type: 'activateAnalyticsDatabase',
+      retention,
+    }) as Promise<AnalyticsActivationState>;
+  }
+
+  /** Rolls back to the legacy read-only application mode. */
+  rollbackToLegacyMode(): Promise<AnalyticsActivationState> {
+    return this.call({ type: 'rollbackToLegacyMode' }) as Promise<AnalyticsActivationState>;
+  }
+
+  /** Returns the source-retention controls stored in the activation state. */
+  getSourceRetentionControls(): Promise<SourceRetentionControls> {
+    return this.call({ type: 'getSourceRetentionControls' }) as Promise<SourceRetentionControls>;
+  }
+
+  /** Exports the pre-split legacy database from a separate read-only worker. */
+  async exportLegacyDatabase(filename = '/session-analyzer.sqlite3'): Promise<Uint8Array> {
+    const legacyClient = new LegacyDbClient();
+    try {
+      await legacyClient.ensureReady(filename);
+      return await legacyClient.exportDatabase();
+    } finally {
+      await legacyClient.close();
+    }
+  }
+
+  /** Exports the legacy database and triggers a browser download with a warning. */
+  async exportAndDownloadLegacy(filename = '/session-analyzer.sqlite3'): Promise<void> {
+    const bytes = await this.exportLegacyDatabase(filename);
+    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `session-analyzer-legacy-${new Date().toISOString().slice(0, 10)}.sqlite`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   /** Exports the SQLite file and triggers a browser download. */

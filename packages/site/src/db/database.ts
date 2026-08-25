@@ -29,6 +29,14 @@ import type {
   ToolExecution,
   TranscriptMessage,
 } from '../types';
+import {
+  ACTIVATION_STATE_KEY,
+  type AnalyticsActivationState,
+  DEFAULT_SOURCE_RETENTION,
+  parseActivationState,
+  type SourceRetentionControls,
+  serializeActivationState,
+} from './activation-state';
 
 export type StorageBackend = 'opfs' | 'memory';
 export type FallbackReason = 'locked' | 'unsupported';
@@ -998,6 +1006,61 @@ export class DatabaseManager {
       [key],
     ) as { value: string | null } | undefined;
     return row?.value ?? null;
+  }
+
+  // ==================== Analytics activation ====================
+
+  /** Returns the stored analytics activation state, or null if never set. */
+  getAnalyticsActivationState(): AnalyticsActivationState | null {
+    return parseActivationState(this.getUiPreference(ACTIVATION_STATE_KEY));
+  }
+
+  /** Stores the analytics activation state in the control database. */
+  setAnalyticsActivationState(state: AnalyticsActivationState): void {
+    this.setUiPreference(ACTIVATION_STATE_KEY, serializeActivationState(state));
+  }
+
+  /**
+   * Activates the fresh analytics database.
+   *
+   * This is a one-way operation for the analytics database: existing analytics
+   * rows are reset (not backfilled) so the new schema starts clean. Control
+   * data (connections, vault, checkpoints, UI preferences) is preserved.
+   * Source-retention choices are captured and stored alongside the state.
+   */
+  activateAnalyticsDatabase(retention: SourceRetentionControls): AnalyticsActivationState {
+    const state: AnalyticsActivationState = {
+      mode: 'new',
+      activatedAt: Date.now(),
+      retention,
+      disclosureConfirmed: true,
+    };
+    this.setAnalyticsActivationState(state);
+    this.resetAnalyticsDatabase();
+    return state;
+  }
+
+  /**
+   * Rolls back to the legacy application mode.
+   *
+   * This updates the UI state; the new analytics database file is left
+   * untouched so the user can re-activate later. The old database remains
+   * accessible through the legacy worker for read-only export.
+   */
+  rollbackToLegacyMode(): AnalyticsActivationState {
+    const state: AnalyticsActivationState = {
+      mode: 'legacy',
+      activatedAt: this.getAnalyticsActivationState()?.activatedAt,
+      retention: this.getAnalyticsActivationState()?.retention ?? DEFAULT_SOURCE_RETENTION,
+      disclosureConfirmed: true,
+    };
+    this.setAnalyticsActivationState(state);
+    return state;
+  }
+
+  /** Returns the source-retention controls stored in the activation state. */
+  getSourceRetentionControls(): SourceRetentionControls {
+    return this.getAnalyticsActivationState()?.retention ?? DEFAULT_SOURCE_RETENTION;
   }
 
   // ==================== Session operations ====================
