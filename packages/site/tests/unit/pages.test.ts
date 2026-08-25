@@ -5,6 +5,7 @@ import '../../src/pages/home-page';
 import '../../src/pages/portfolio/portfolio-view';
 import '../../src/pages/project-view';
 import '../../src/pages/session-dashboard';
+import '../../src/pages/session-evidence/session-evidence-view';
 import '../../src/pages/indicator-details';
 import '../../src/pages/session-transcript-page';
 import type { AnalyticsToken } from '@lucasschirm/sal-db';
@@ -13,6 +14,7 @@ import type { IndicatorDetails } from '../../src/pages/indicator-details';
 import type { PortfolioView } from '../../src/pages/portfolio/portfolio-view';
 import type { ProjectView } from '../../src/pages/project-view';
 import type { SessionDashboard } from '../../src/pages/session-dashboard';
+
 import type { SessionTranscriptPage } from '../../src/pages/session-transcript-page';
 import { isUnlocked } from '../../src/sync/credential-crypto';
 import { syncManager } from '../../src/sync/sync-manager';
@@ -42,9 +44,23 @@ const portfolioMock = vi.hoisted(() => ({
   getProjectList: vi.fn(),
 }));
 
+const sessionMock = vi.hoisted(() => ({
+  getSummary: vi.fn(),
+  getContextTimingSeries: vi.fn(),
+  getRootChildBreakdown: vi.fn(),
+  getComponentFacts: vi.fn(),
+  getValidationSummary: vi.fn(),
+  getEvidencePages: vi.fn(),
+  getTranscriptPages: vi.fn(),
+}));
+
+const searchMock = vi.hoisted(() => ({
+  getRootSessionTree: vi.fn(),
+}));
+
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
-  analyticsClient: { portfolio: portfolioMock },
+  analyticsClient: { portfolio: portfolioMock, session: sessionMock, search: searchMock },
 }));
 
 async function flush(element: LitElement): Promise<void> {
