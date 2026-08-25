@@ -17,6 +17,7 @@ export interface AnalyticsQuery {
   readonly analysisReleaseId?: string;
   readonly generationId?: string;
   readonly comparabilityGroupId?: string;
+  readonly portfolioId?: string;
   readonly timeRange?: TimeRange;
   readonly filters?: readonly Filter[];
   readonly cursor?: string;
@@ -51,7 +52,14 @@ export interface ProjectListItem {
   readonly name: string;
   readonly sessionCount: number;
   readonly lastSessionAt?: string;
+  readonly source: string;
+  readonly harness: string;
+  readonly completeness: Coverage;
+  readonly finality: 'open' | 'final' | 'censored' | 'partial' | 'superseded' | 'unknown';
+  readonly reprocessing: 'local' | 'remote_reacquirable' | 'unavailable' | 'unknown';
+  readonly issueState: 'clean' | 'issues' | 'fatal' | 'unknown';
   readonly coverage: Coverage;
+  readonly token: AnalyticsToken;
 }
 
 export interface PortfolioOverview {
@@ -60,6 +68,7 @@ export interface PortfolioOverview {
   readonly projectCount: number;
   readonly sessionCount: number;
   readonly componentCounts: Readonly<Record<string, number>>;
+  readonly unusedOfferedComponents: readonly string[];
 }
 
 export interface PortfolioTrendSeries {
@@ -73,6 +82,7 @@ export interface ComponentUtilizationRow {
   readonly projectCount: number;
   readonly sessionCount: number;
   readonly loadRate?: MetricValueDto;
+  readonly token: AnalyticsToken;
 }
 
 export interface ComponentUtilizationPage extends CursorPage<ComponentUtilizationRow> {}
@@ -82,6 +92,7 @@ export interface ModelHarnessCohort {
   readonly harness: string;
   readonly sessionCount: number;
   readonly metricValues: readonly MetricValueDto[];
+  readonly token: AnalyticsToken;
 }
 
 export interface ModelHarnessCohortPage extends CursorPage<ModelHarnessCohort> {}
