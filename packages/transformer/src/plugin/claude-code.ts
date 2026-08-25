@@ -44,6 +44,10 @@ import type { MetricCapability } from '../metric.js';
 import type { Provenance, SourcePointer } from '../provenance.js';
 import type { SessionSummary } from '../session.js';
 import {
+  deriveClaudeCodeAttributionMetrics,
+  getClaudeCodeAttributionMetricCapabilities,
+} from './claude-code-attribution-metrics.js';
+import {
   CLAUDE_CODE_METRIC_DEFINITION_VERSION,
   deriveClaudeCodeMetrics,
   getClaudeCodeMetricCapabilities,
@@ -1178,6 +1182,7 @@ export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = 
     return [
       ...getClaudeCodeMetricCapabilities(bundle),
       ...getClaudeCodeOptimizationMetricCapabilities(bundle),
+      ...getClaudeCodeAttributionMetricCapabilities(bundle),
     ];
   },
 
@@ -1257,16 +1262,33 @@ export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = 
         context,
         rootArtifactId,
       );
+      const attributionMetrics = deriveClaudeCodeAttributionMetrics(
+        session,
+        allEvidence,
+        bundle,
+        context,
+        rootArtifactId,
+      );
 
-      const allMetricValues = [...metrics.metricValues, ...optimizationMetrics.metricValues];
+      const allMetricValues = [
+        ...metrics.metricValues,
+        ...optimizationMetrics.metricValues,
+        ...attributionMetrics.metricValues,
+      ];
       const allMetricProvenance = [
         ...metrics.metricProvenance,
         ...optimizationMetrics.metricProvenance,
+        ...attributionMetrics.metricProvenance,
       ];
-      const allCapabilities = [...metrics.capabilities, ...optimizationMetrics.capabilities];
+      const allCapabilities = [
+        ...metrics.capabilities,
+        ...optimizationMetrics.capabilities,
+        ...attributionMetrics.capabilities,
+      ];
       const allUnavailableReasons = [
         ...metrics.unavailableReasons,
         ...optimizationMetrics.unavailableReasons,
+        ...attributionMetrics.unavailableReasons,
       ];
 
       const allProvenance = [
@@ -1300,6 +1322,7 @@ export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = 
     const failureCaps = [
       ...getClaudeCodeMetricCapabilities(bundle),
       ...getClaudeCodeOptimizationMetricCapabilities(bundle),
+      ...getClaudeCodeAttributionMetricCapabilities(bundle),
     ];
     return {
       bundleHash: context.sourceFingerprint,
