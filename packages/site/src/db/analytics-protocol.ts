@@ -38,6 +38,41 @@ export interface AnalyticsBackendReport {
   };
 }
 
+/**
+ * A single artifact supplied by the manual-import UI.
+ *
+ * Only the relative path, media type, and content cross the worker boundary.
+ * The worker computes hashes and sizes as needed.
+ */
+export interface ManualArtifactPayload {
+  readonly relativePath: string;
+  readonly mediaType: string;
+  readonly content: string;
+  readonly sha256?: string;
+  readonly size?: number;
+  readonly status?: string;
+}
+
+/**
+ * Serializable request body for a manual ingestion bundle.
+ */
+export interface ManualIngestionBundleRequest {
+  readonly artifacts: readonly ManualArtifactPayload[];
+  readonly source?: {
+    readonly sourceId: string;
+    readonly environmentId?: string;
+    readonly projectId?: string;
+    readonly sessionId?: string;
+  };
+  readonly harness?: string;
+  readonly harnessVersion?: string;
+  readonly projectId: string;
+  readonly sessionId: string;
+  readonly workspaceId?: string;
+  readonly repositoryId?: string;
+  readonly importBatchId?: string;
+}
+
 interface BaseRequest {
   readonly id: number;
 }
@@ -62,6 +97,22 @@ export interface RetainSyncArtifactRequest extends BaseRequest {
   readonly artifact: ResolvedArtifact;
 }
 
+export interface DetectManualHarnessRequest extends BaseRequest {
+  readonly type: 'detectManualHarness';
+  readonly artifacts: readonly ManualArtifactPayload[];
+}
+
+export interface IngestManualBundleRequest extends BaseRequest {
+  readonly type: 'ingestManualBundle';
+  readonly bundle: ManualIngestionBundleRequest;
+}
+
+export interface ResolveManualConflictRequest extends BaseRequest {
+  readonly type: 'resolveManualConflict';
+  readonly bundle: ManualIngestionBundleRequest;
+  readonly resolution: 'replace' | 'keep';
+}
+
 export interface CloseRequest extends BaseRequest {
   readonly type: 'close';
 }
@@ -71,6 +122,9 @@ export type AnalyticsRequest =
   | GetBackendRequest
   | QueryRequest
   | RetainSyncArtifactRequest
+  | DetectManualHarnessRequest
+  | IngestManualBundleRequest
+  | ResolveManualConflictRequest
   | CloseRequest;
 
 export type AnalyticsRequestPayload =
@@ -78,6 +132,9 @@ export type AnalyticsRequestPayload =
   | Omit<GetBackendRequest, 'id'>
   | Omit<QueryRequest, 'id'>
   | Omit<RetainSyncArtifactRequest, 'id'>
+  | Omit<DetectManualHarnessRequest, 'id'>
+  | Omit<IngestManualBundleRequest, 'id'>
+  | Omit<ResolveManualConflictRequest, 'id'>
   | Omit<CloseRequest, 'id'>;
 
 interface BaseResponse {
