@@ -15,6 +15,7 @@ import './project-view';
 import './session-dashboard';
 import './indicator-details';
 import './session-transcript-page';
+import './manual-import/manual-import-page';
 
 /**
  * Root application shell: header, hash-based routing outlet and database
@@ -26,6 +27,7 @@ import './session-transcript-page';
  * - `#/sessions/:sessionId/indicator/:key` -> Indicator Details (drill-down)
  * - `#/sessions/:sessionId/transcript`     -> Session Transcript (subagent cards inline, full width)
  * - `#/sessions/:sessionId/transcript/:agentId` -> Session Transcript, split with that subagent's column open
+ * - `#/manual-import`                      -> Manual Import (transcript/partial upload)
  */
 @customElement('app-root')
 export class AppRoot extends LitElement {
@@ -173,6 +175,10 @@ export class AppRoot extends LitElement {
             agent-id=${params.agentId ?? ''}
           ></session-transcript-page>`,
       },
+      {
+        path: '/manual-import',
+        render: () => html`<manual-import-page></manual-import-page>`,
+      },
     ],
     {
       render: () => html`
@@ -263,6 +269,7 @@ export class AppRoot extends LitElement {
           <nav>
             <a href="#/portfolio">Portfolio</a>
             <a href="#/">Home</a>
+            <a href="#/manual-import">Manual Import</a>
           </nav>
         </div>
       </header>

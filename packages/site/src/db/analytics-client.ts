@@ -10,6 +10,8 @@ import type {
   AnalyticsDataSource,
   ArtifactVersionView,
   ComponentEcosystemView,
+  IngestionReceipt,
+  ManualIngestionDetection,
   MetadataView,
   PortfolioView,
   ProjectBehaviorView,
@@ -22,9 +24,11 @@ import type {
   AnalyticsRequest,
   AnalyticsRequestPayload,
   AnalyticsResponse,
+  ManualArtifactPayload,
+  ManualIngestionBundleRequest,
 } from './analytics-protocol';
 
-export type { AnalyticsBackendReport };
+export type { AnalyticsBackendReport, ManualArtifactPayload, ManualIngestionBundleRequest };
 
 export type CreateWorkerFactory = () => Worker;
 
@@ -37,6 +41,18 @@ function postRequest(worker: Worker, request: AnalyticsRequest): void {
   worker.postMessage(request);
 }
 
+export interface ManualImportClient {
+  /** Detect which harness (if any) matches the supplied artifacts. */
+  detect(artifacts: ManualArtifactPayload[]): Promise<ManualIngestionDetection>;
+  /** Ingest a manually supplied artifact bundle as a partial generation. */
+  ingest(bundle: ManualIngestionBundleRequest): Promise<IngestionReceipt>;
+  /** Resolve a manual-import conflict by replacing or keeping the existing generation. */
+  resolveConflict(
+    bundle: ManualIngestionBundleRequest,
+    resolution: 'replace' | 'keep',
+  ): Promise<IngestionReceipt>;
+}
+
 export class AnalyticsClient implements AnalyticsDataSource {
   readonly portfolio: PortfolioView;
   readonly project: ProjectBehaviorView;
@@ -45,6 +61,7 @@ export class AnalyticsClient implements AnalyticsDataSource {
   readonly artifact: ArtifactVersionView;
   readonly search: ProjectSessionSearchView;
   readonly metadata: MetadataView;
+  readonly manual: ManualImportClient;
 
   private worker: Worker | null = null;
   private readonly createWorker: CreateWorkerFactory;
@@ -68,6 +85,7 @@ export class AnalyticsClient implements AnalyticsDataSource {
     this.artifact = this.createViewClient<ArtifactVersionView>('artifact');
     this.search = this.createViewClient<ProjectSessionSearchView>('search');
     this.metadata = this.createViewClient<MetadataView>('metadata');
+    this.manual = this.createManualClient();
   }
 
   private ensureWorker(): Worker {
@@ -94,6 +112,27 @@ export class AnalyticsClient implements AnalyticsDataSource {
         return (...args: unknown[]) => this.query(viewName, method, args);
       },
     });
+  }
+
+  private createManualClient(): ManualImportClient {
+    return {
+      detect: (artifacts) =>
+        this.postAndReturn<ManualIngestionDetection>({
+          type: 'detectManualHarness',
+          artifacts,
+        }),
+      ingest: (bundle) =>
+        this.postAndReturn<IngestionReceipt>({
+          type: 'ingestManualBundle',
+          bundle,
+        }),
+      resolveConflict: (bundle, resolution) =>
+        this.postAndReturn<IngestionReceipt>({
+          type: 'resolveManualConflict',
+          bundle,
+          resolution,
+        }),
+    };
   }
 
   private rejectAll(message: string): void {
@@ -131,6 +170,14 @@ export class AnalyticsClient implements AnalyticsDataSource {
       this.ensureReady();
     }
     return this.send(request);
+  }
+
+  private async postAndReturn<T>(request: AnalyticsRequestPayload): Promise<T> {
+    const response = await this.call(request);
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+    return response.result as T;
   }
 
   private async query(view: string, method: string, args: unknown[]): Promise<unknown> {
