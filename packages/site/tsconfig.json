@@ -10,6 +10,6 @@
       "@types/*": ["./src/types/*"]
     }
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "../db-core/tests/conformance/**/*.ts"],
   "exclude": ["node_modules"]
 }

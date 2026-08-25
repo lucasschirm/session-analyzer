@@ -33,6 +33,34 @@ import type {
 export type StorageBackend = 'opfs' | 'memory';
 export type FallbackReason = 'locked' | 'unsupported';
 
+/**
+ * Receipt proving an analytics generation was committed. The checkpoint
+ * commit path requires this so control-side progress is only persisted
+ * after analytics has accepted the data.
+ */
+export interface CommittedGenerationReceipt {
+  /** Opaque id of the committed analytics generation. */
+  generationId: string;
+  /** Timestamp when the generation was committed, in milliseconds. */
+  committedAt?: number;
+}
+
+/**
+ * A source checkpoint stored in the control database. It tracks the last
+ * successfully ingested sequence/cursor for a source and the generation
+ * that produced it.
+ */
+export interface SourceCheckpoint {
+  source_id: string;
+  source_type: string;
+  last_sequence?: string;
+  last_cursor?: string;
+  committed_generation_id?: string;
+  committed_at?: number;
+  created_at?: number;
+  updated_at?: number;
+}
+
 interface SessionRow {
   id: string;
   project_id: string;
@@ -240,47 +268,108 @@ function generateReadableId(name: string, used: Set<string>): string {
   return `${base}-${counter}`;
 }
 
+const ANALYTICS_TABLES = [
+  'session_files',
+  'session_messages',
+  'session_events',
+  'tool_executions',
+  'sessions',
+  'projects',
+];
+
+const ANALYTICS_INDEXES = [
+  'idx_sessions_project',
+  'idx_sessions_started',
+  'idx_tool_executions_session',
+  'idx_session_events_session',
+  'idx_session_messages_session',
+  'idx_sessions_external_id',
+  'idx_projects_readable_id',
+  'idx_sessions_sync_session',
+  'idx_sessions_sync_status',
+];
+
 export class DatabaseManager {
+  /** Analytics database (projects, sessions, events, etc.). */
   private db: Database | null = null;
+  /** Site control database (connections, vault, checkpoints, UI prefs). */
+  private controlDb: Database | null = null;
   protected sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | null = null;
-  storage: StorageBackend = 'memory';
+  private analyticsStorage: StorageBackend = 'memory';
+  private controlStorage: StorageBackend = 'memory';
+  private analyticsFilename = '/session-analytics.sqlite3';
+  private controlFilename = '/session-analyzer-control.sqlite3';
+
+  get storage(): StorageBackend {
+    return this.analyticsStorage === 'opfs' && this.controlStorage === 'opfs' ? 'opfs' : 'memory';
+  }
+
   fallbackReason?: FallbackReason;
 
   /**
-   * Initializes the SQLite WASM runtime and opens the database.
-   * Uses OPFS persistence when the VFS is available. If the OPFS file is
-   * already locked by another tab, or OPFS is unsupported, falls back to an
-   * in-memory database and records the reason on `fallbackReason`.
+   * Initializes the SQLite WASM runtime and opens two databases:
+   * an analytics database and a site control database. Each gets its own
+   * connection and OPFS file so they cannot share a lock. Falls back to
+   * in-memory for either when OPFS is unavailable or locked.
    */
-  async initialize(filename = '/session-analyzer.sqlite3'): Promise<StorageBackend> {
-    if (this.db) return this.storage;
+  async initialize(
+    analyticsFilename = '/session-analytics.sqlite3',
+    controlFilename = '/session-analyzer-control.sqlite3',
+  ): Promise<StorageBackend> {
+    if (this.db && this.controlDb) return this.storage;
+
+    this.analyticsFilename = analyticsFilename;
+    this.controlFilename = controlFilename;
 
     if (!this.sqlite3) this.sqlite3 = await sqlite3InitModule();
+
+    this.db = this.openDatabase(this.analyticsFilename, 'analytics');
+    this.controlDb = this.openDatabase(this.controlFilename, 'control');
+
+    this.db.exec('PRAGMA foreign_keys = ON;');
+    this.controlDb.exec('PRAGMA foreign_keys = ON;');
+    this.createTables();
+    this.migrate();
+    return this.storage;
+  }
+
+  private openDatabase(filename: string, label: 'analytics' | 'control'): Database {
     const sqlite3 = this.sqlite3;
+    if (!sqlite3) throw new Error('Database not initialized');
 
     if (sqlite3.oo1.OpfsDb) {
       try {
-        this.db = new sqlite3.oo1.OpfsDb(filename, 'c');
-        this.storage = 'opfs';
+        const db = new sqlite3.oo1.OpfsDb(filename, 'c');
+        if (label === 'analytics') {
+          this.analyticsStorage = 'opfs';
+        } else {
+          this.controlStorage = 'opfs';
+        }
+        return db;
       } catch (error) {
         if (isOpfsLockedError(error, sqlite3.capi)) {
           this.fallbackReason = 'locked';
         } else {
           throw error;
         }
-        this.db = new sqlite3.oo1.DB(':memory:', 'c');
-        this.storage = 'memory';
+        const db = new sqlite3.oo1.DB(':memory:', 'c');
+        if (label === 'analytics') {
+          this.analyticsStorage = 'memory';
+        } else {
+          this.controlStorage = 'memory';
+        }
+        return db;
       }
-    } else {
-      this.db = new sqlite3.oo1.DB(':memory:', 'c');
-      this.storage = 'memory';
-      this.fallbackReason = 'unsupported';
     }
 
-    this.db.exec('PRAGMA foreign_keys = ON;');
-    this.createTables();
-    this.migrate();
-    return this.storage;
+    const db = new sqlite3.oo1.DB(':memory:', 'c');
+    if (label === 'analytics') {
+      this.analyticsStorage = 'memory';
+    } else {
+      this.controlStorage = 'memory';
+    }
+    this.fallbackReason = 'unsupported';
+    return db;
   }
 
   /**
@@ -316,16 +405,26 @@ export class DatabaseManager {
   }
 
   private createTables(): void {
+    this.createAnalyticsTables();
+    this.createControlTables();
+  }
+
+  private createAnalyticsTables(): void {
     this.createProjectsTable();
     this.createSessionsTable();
     this.createToolExecutionsTable();
     this.createSessionEventsTable();
     this.createSessionMessagesTable();
+    this.createSessionFilesTable();
+    this.createIndexes();
+  }
+
+  private createControlTables(): void {
     this.createConnectionsTable();
     this.createS3CredentialsTable();
     this.createPasskeyStateTable();
-    this.createSessionFilesTable();
-    this.createIndexes();
+    this.createSourceCheckpointsTable();
+    this.createUiPreferencesTable();
   }
 
   private createProjectsTable(): void {
@@ -420,7 +519,7 @@ export class DatabaseManager {
   }
 
   private createConnectionsTable(): void {
-    this.requireDb().exec(`
+    this.requireControlDb().exec(`
       CREATE TABLE IF NOT EXISTS connections (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -434,7 +533,7 @@ export class DatabaseManager {
   }
 
   private createS3CredentialsTable(): void {
-    this.requireDb().exec(`
+    this.requireControlDb().exec(`
       CREATE TABLE IF NOT EXISTS connection_s3_credentials (
         connection_id TEXT PRIMARY KEY REFERENCES connections(id) ON DELETE CASCADE,
         region TEXT NOT NULL,
@@ -452,7 +551,7 @@ export class DatabaseManager {
   }
 
   private createPasskeyStateTable(): void {
-    this.requireDb().exec(`
+    this.requireControlDb().exec(`
       CREATE TABLE IF NOT EXISTS passkey_state (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         kdf_salt TEXT NOT NULL,
@@ -462,6 +561,31 @@ export class DatabaseManager {
         webauthn_wrapped_key TEXT,
         webauthn_expires_at INTEGER,
         created_at INTEGER NOT NULL
+      );
+    `);
+  }
+
+  private createSourceCheckpointsTable(): void {
+    this.requireControlDb().exec(`
+      CREATE TABLE IF NOT EXISTS source_checkpoints (
+        source_id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        last_sequence TEXT,
+        last_cursor TEXT,
+        committed_generation_id TEXT,
+        committed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+  }
+
+  private createUiPreferencesTable(): void {
+    this.requireControlDb().exec(`
+      CREATE TABLE IF NOT EXISTS ui_preferences (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at INTEGER NOT NULL
       );
     `);
   }
@@ -499,6 +623,21 @@ export class DatabaseManager {
   private requireDb(): Database {
     if (!this.db) throw new Error('Database not initialized');
     return this.db;
+  }
+
+  private requireControlDb(): Database {
+    if (!this.controlDb) throw new Error('Control database not initialized');
+    return this.controlDb;
+  }
+
+  /** Returns the raw analytics database handle (for tests and diagnostics). */
+  getAnalyticsDb(): Database {
+    return this.requireDb();
+  }
+
+  /** Returns the raw control database handle (for tests and diagnostics). */
+  getControlDb(): Database {
+    return this.requireControlDb();
   }
 
   // ==================== Project operations ====================
@@ -631,9 +770,9 @@ export class DatabaseManager {
 
   // ==================== Connection operations ====================
 
-  /** Creates a new S3 storage connection. */
+  /** Creates a new S3 storage connection in the control database. */
   createConnection(connection: Connection): void {
-    this.requireDb().exec({
+    this.requireControlDb().exec({
       sql: `INSERT INTO connections (id, name, storage_type, sync_only_new, last_sync_at, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)`,
       bind: [
@@ -655,7 +794,7 @@ export class DatabaseManager {
   ): void {
     const existing = this.getConnection(connectionId);
     if (!existing) throw new Error(`Connection not found: ${connectionId}`);
-    const db = this.requireDb();
+    const db = this.requireControlDb();
     db.exec({
       sql: 'UPDATE connections SET name = ?, sync_only_new = ?, last_sync_at = ?, updated_at = ? WHERE id = ?',
       bind: [
@@ -672,7 +811,7 @@ export class DatabaseManager {
 
   /** Deletes a connection; S3 credentials cascade. */
   deleteConnection(connectionId: string): void {
-    this.requireDb().exec({
+    this.requireControlDb().exec({
       sql: 'DELETE FROM connections WHERE id = ?',
       bind: [connectionId],
     });
@@ -680,20 +819,22 @@ export class DatabaseManager {
 
   /** Lists all connections, newest first. */
   getConnections(): Connection[] {
-    const rows = this.requireDb().selectObjects(
+    const rows = this.requireControlDb().selectObjects(
       'SELECT * FROM connections ORDER BY created_at DESC',
     );
     return rows.map((row) => rowToConnection(row as Record<string, unknown>));
   }
 
   private getConnection(id: string): Connection | null {
-    const row = this.requireDb().selectObject('SELECT * FROM connections WHERE id = ?', [id]);
+    const row = this.requireControlDb().selectObject('SELECT * FROM connections WHERE id = ?', [
+      id,
+    ]);
     return row ? rowToConnection(row as Record<string, unknown>) : null;
   }
 
   /** Stores (or replaces) encrypted S3 credentials for a connection. */
   saveS3Credentials(credentials: StoredS3Credentials): void {
-    this.requireDb().exec({
+    this.requireControlDb().exec({
       sql: `INSERT INTO connection_s3_credentials (
         connection_id, region, endpoint, bucket, access_key_id,
         secret_access_key_ct, secret_access_key_iv, session_token_ct, session_token_iv,
@@ -722,7 +863,7 @@ export class DatabaseManager {
 
   /** Returns the encrypted S3 credentials for a connection, if any. */
   getS3Credentials(connectionId: string): StoredS3Credentials | null {
-    const row = this.requireDb().selectObject(
+    const row = this.requireControlDb().selectObject(
       'SELECT * FROM connection_s3_credentials WHERE connection_id = ?',
       [connectionId],
     );
@@ -731,7 +872,7 @@ export class DatabaseManager {
 
   /** Wipes all stored S3 credentials and passkey state (forgot-passkey flow). */
   deleteAllCredentials(): void {
-    const db = this.requireDb();
+    const db = this.requireControlDb();
     db.exec('DELETE FROM connection_s3_credentials');
     db.exec('DELETE FROM passkey_state');
   }
@@ -740,13 +881,13 @@ export class DatabaseManager {
 
   /** Returns the singleton passkey vault state, if one exists. */
   getPasskeyState(): PasskeyState | null {
-    const row = this.requireDb().selectObject('SELECT * FROM passkey_state WHERE id = 1');
+    const row = this.requireControlDb().selectObject('SELECT * FROM passkey_state WHERE id = 1');
     return row ? rowToPasskeyState(row as Record<string, unknown>) : null;
   }
 
   /** Saves or replaces the singleton passkey vault state. */
   savePasskeyState(state: PasskeyState): void {
-    this.requireDb().exec({
+    this.requireControlDb().exec({
       sql: `INSERT INTO passkey_state (
         id, kdf_salt, verifier_iv, verifier_ct, webauthn_credential_id,
         webauthn_wrapped_key, webauthn_expires_at, created_at
@@ -767,6 +908,96 @@ export class DatabaseManager {
         state.created_at,
       ],
     });
+  }
+
+  // ==================== Source checkpoint operations ====================
+
+  /**
+   * Commits a source checkpoint in the control database, but only after
+   * validating a non-empty generation id receipt from analytics ingestion.
+   */
+  commitSourceCheckpoint(
+    sourceId: string,
+    checkpoint: SourceCheckpoint,
+    receipt: CommittedGenerationReceipt,
+  ): void {
+    if (!receipt?.generationId?.trim()) {
+      throw new Error(
+        'A valid CommittedGenerationReceipt with a non-empty generationId is required',
+      );
+    }
+
+    const db = this.requireControlDb();
+    const now = Date.now();
+    const existing = db.selectObject(
+      'SELECT created_at FROM source_checkpoints WHERE source_id = ?',
+      [sourceId],
+    ) as { created_at: number } | undefined;
+    const createdAt = existing?.created_at ?? now;
+
+    db.exec({
+      sql: `INSERT INTO source_checkpoints (
+        source_id, source_type, last_sequence, last_cursor,
+        committed_generation_id, committed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source_id) DO UPDATE SET
+        source_type = excluded.source_type,
+        last_sequence = excluded.last_sequence,
+        last_cursor = excluded.last_cursor,
+        committed_generation_id = excluded.committed_generation_id,
+        committed_at = excluded.committed_at,
+        updated_at = excluded.updated_at`,
+      bind: [
+        sourceId,
+        checkpoint.source_type,
+        checkpoint.last_sequence ?? null,
+        checkpoint.last_cursor ?? null,
+        receipt.generationId,
+        receipt.committedAt ?? now,
+        createdAt,
+        now,
+      ],
+    });
+  }
+
+  /** Returns a single source checkpoint, or null if none exists. */
+  getSourceCheckpoint(sourceId: string): SourceCheckpoint | null {
+    const row = this.requireControlDb().selectObject(
+      'SELECT * FROM source_checkpoints WHERE source_id = ?',
+      [sourceId],
+    );
+    return row ? rowToSourceCheckpoint(row as Record<string, unknown>) : null;
+  }
+
+  /** Lists all source checkpoints, most recently updated first. */
+  getSourceCheckpoints(): SourceCheckpoint[] {
+    const rows = this.requireControlDb().selectObjects(
+      'SELECT * FROM source_checkpoints ORDER BY updated_at DESC',
+    );
+    return rows.map((row) => rowToSourceCheckpoint(row as Record<string, unknown>));
+  }
+
+  // ==================== UI preference operations ====================
+
+  /** Stores or replaces a UI preference value in the control database. */
+  setUiPreference(key: string, value: string): void {
+    this.requireControlDb().exec({
+      sql: `INSERT INTO ui_preferences (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+              value = excluded.value,
+              updated_at = excluded.updated_at`,
+      bind: [key, value, Date.now()],
+    });
+  }
+
+  /** Returns a UI preference value, or null if it has never been set. */
+  getUiPreference(key: string): string | null {
+    const row = this.requireControlDb().selectObject(
+      'SELECT value FROM ui_preferences WHERE key = ?',
+      [key],
+    ) as { value: string | null } | undefined;
+    return row?.value ?? null;
   }
 
   // ==================== Session operations ====================
@@ -1366,9 +1597,42 @@ export class DatabaseManager {
     return metrics;
   }
 
+  // ==================== Analytics reset ====================
+
+  /**
+   * Resets the analytics database by dropping all analytics tables and
+   * rebuilding a fresh schema. The control database (vault, connections,
+   * checkpoints, UI preferences) is untouched. No cross-database transaction
+   * is used.
+   */
+  resetAnalyticsDatabase(): void {
+    const sqlite3 = this.sqlite3;
+    if (!sqlite3) throw new Error('Database not initialized');
+
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+    }
+
+    this.db = this.openDatabase(this.analyticsFilename, 'analytics');
+    const db = this.requireDb();
+
+    db.exec('PRAGMA foreign_keys = OFF;');
+    for (const index of ANALYTICS_INDEXES) {
+      db.exec(`DROP INDEX IF EXISTS ${index}`);
+    }
+    for (const table of ANALYTICS_TABLES) {
+      db.exec(`DROP TABLE IF EXISTS ${table}`);
+    }
+    db.exec('PRAGMA foreign_keys = ON;');
+
+    this.createAnalyticsTables();
+    this.migrate();
+  }
+
   // ==================== Export ====================
 
-  /** Serializes the whole database file as bytes (a valid SQLite file). */
+  /** Serializes the analytics database as bytes (a valid SQLite file). */
   exportDatabase(): Uint8Array {
     const db = this.requireDb();
     const sqlite3 = this.sqlite3;
@@ -1376,10 +1640,22 @@ export class DatabaseManager {
     return sqlite3.capi.sqlite3_js_db_export(db.pointer);
   }
 
+  /** Serializes the control database as bytes (a valid SQLite file). */
+  exportControlDatabase(): Uint8Array {
+    const db = this.requireControlDb();
+    const sqlite3 = this.sqlite3;
+    if (!sqlite3 || !db.pointer) throw new Error('Control database not initialized');
+    return sqlite3.capi.sqlite3_js_db_export(db.pointer);
+  }
+
   close(): void {
     if (this.db) {
       this.db.close();
       this.db = null;
+    }
+    if (this.controlDb) {
+      this.controlDb.close();
+      this.controlDb = null;
     }
   }
 }
@@ -1455,5 +1731,19 @@ function rowToSessionFile(row: Record<string, unknown>): SessionFileRecord {
     size: Number(row.size),
     status: row.status as SessionFileRecord['status'],
     updated_at: Number(row.updated_at),
+  };
+}
+
+function rowToSourceCheckpoint(row: Record<string, unknown>): SourceCheckpoint {
+  return {
+    source_id: String(row.source_id),
+    source_type: String(row.source_type),
+    last_sequence: typeof row.last_sequence === 'string' ? row.last_sequence : undefined,
+    last_cursor: typeof row.last_cursor === 'string' ? row.last_cursor : undefined,
+    committed_generation_id:
+      typeof row.committed_generation_id === 'string' ? row.committed_generation_id : undefined,
+    committed_at: typeof row.committed_at === 'number' ? row.committed_at : undefined,
+    created_at: typeof row.created_at === 'number' ? row.created_at : undefined,
+    updated_at: typeof row.updated_at === 'number' ? row.updated_at : undefined,
   };
 }

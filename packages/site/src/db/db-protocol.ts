@@ -15,7 +15,12 @@ import type {
   StoredS3Credentials,
   SyncManifest,
 } from '../types';
-import type { FallbackReason } from './database';
+import type { CommittedGenerationReceipt, FallbackReason, SourceCheckpoint } from './database';
+
+export interface DbDatabaseHandle {
+  filename: string;
+  pointer: number;
+}
 
 export type DbRequest =
   | { id: number; type: 'init' }
@@ -78,7 +83,22 @@ export type DbRequest =
   | { id: number; type: 'failStaleSessions'; projectId: string; details: string }
   | { id: number; type: 'reconcileSyncStates'; sessionDetails: string }
   | { id: number; type: 'getSessionFiles'; sessionId: string }
-  | { id: number; type: 'upsertSessionFile'; file: SessionFileRecord };
+  | { id: number; type: 'upsertSessionFile'; file: SessionFileRecord }
+  | {
+      id: number;
+      type: 'commitSourceCheckpoint';
+      sourceId: string;
+      checkpoint: SourceCheckpoint;
+      receipt: CommittedGenerationReceipt;
+    }
+  | { id: number; type: 'getSourceCheckpoint'; sourceId: string }
+  | { id: number; type: 'getSourceCheckpoints' }
+  | { id: number; type: 'setUiPreference'; key: string; value: string }
+  | { id: number; type: 'getUiPreference'; key: string }
+  | { id: number; type: 'resetAnalyticsDatabase' }
+  | { id: number; type: 'exportControlDatabase' }
+  | { id: number; type: 'getAnalyticsDb' }
+  | { id: number; type: 'getControlDb' };
 
 export interface DbSuccessResponse {
   id: number;

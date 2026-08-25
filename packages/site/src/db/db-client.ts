@@ -17,8 +17,8 @@ import type {
   StoredS3Credentials,
   SyncManifest,
 } from '../types';
-import type { FallbackReason } from './database';
-import type { DbRequest, DbRequestPayload, DbResponse } from './db-protocol';
+import type { CommittedGenerationReceipt, FallbackReason, SourceCheckpoint } from './database';
+import type { DbDatabaseHandle, DbRequest, DbRequestPayload, DbResponse } from './db-protocol';
 
 interface PendingCall {
   requestType: DbRequest['type'];
@@ -290,6 +290,65 @@ export class DbClient {
     return this.call({ type: 'upsertSessionFile', file }) as Promise<void>;
   }
 
+  // ==================== Source checkpoints and UI preferences ====================
+
+  /**
+   * Commits a source checkpoint in the control database only after a valid
+   * committed-generation receipt has been provided.
+   */
+  commitSourceCheckpoint(
+    sourceId: string,
+    checkpoint: SourceCheckpoint,
+    receipt: CommittedGenerationReceipt,
+  ): Promise<void> {
+    return this.call({
+      type: 'commitSourceCheckpoint',
+      sourceId,
+      checkpoint,
+      receipt,
+    }) as Promise<void>;
+  }
+
+  /** Returns a single source checkpoint, or null if none exists. */
+  getSourceCheckpoint(sourceId: string): Promise<SourceCheckpoint | null> {
+    return this.call({ type: 'getSourceCheckpoint', sourceId }) as Promise<SourceCheckpoint | null>;
+  }
+
+  /** Lists all source checkpoints, most recently updated first. */
+  getSourceCheckpoints(): Promise<SourceCheckpoint[]> {
+    return this.call({ type: 'getSourceCheckpoints' }) as Promise<SourceCheckpoint[]>;
+  }
+
+  /** Stores or replaces a UI preference value. */
+  setUiPreference(key: string, value: string): Promise<void> {
+    return this.call({ type: 'setUiPreference', key, value }) as Promise<void>;
+  }
+
+  /** Returns a UI preference value, or null if it has never been set. */
+  getUiPreference(key: string): Promise<string | null> {
+    return this.call({ type: 'getUiPreference', key }) as Promise<string | null>;
+  }
+
+  /** Resets the analytics database without touching control data. */
+  resetAnalyticsDatabase(): Promise<void> {
+    return this.call({ type: 'resetAnalyticsDatabase' }) as Promise<void>;
+  }
+
+  /** Serializes the control database as bytes. */
+  exportControlDatabase(): Promise<Uint8Array> {
+    return this.call({ type: 'exportControlDatabase' }) as Promise<Uint8Array>;
+  }
+
+  /** Returns a handle describing the analytics database connection. */
+  getAnalyticsDb(): Promise<DbDatabaseHandle> {
+    return this.call({ type: 'getAnalyticsDb' }) as Promise<DbDatabaseHandle>;
+  }
+
+  /** Returns a handle describing the control database connection. */
+  getControlDb(): Promise<DbDatabaseHandle> {
+    return this.call({ type: 'getControlDb' }) as Promise<DbDatabaseHandle>;
+  }
+
   /** Exports the SQLite file and triggers a browser download. */
   async exportAndDownload(): Promise<void> {
     const bytes = await this.exportDatabase();
@@ -334,7 +393,10 @@ export class DbClient {
     if (pendingCall.requestType === 'init') {
       this.fallbackReason = response.fallbackReason;
       pendingCall.resolve(response.storage ?? 'memory');
-    } else if (pendingCall.requestType === 'exportDatabase') {
+    } else if (
+      pendingCall.requestType === 'exportDatabase' ||
+      pendingCall.requestType === 'exportControlDatabase'
+    ) {
       pendingCall.resolve(response.bytes ?? new Uint8Array());
     } else {
       pendingCall.resolve(response.result);

@@ -206,6 +206,49 @@ const handlers: Record<DbRequest['type'], Handler> = {
     manager.upsertSessionFile((request as DbRequestOf<'upsertSessionFile'>).file);
     return { id: request.id, ok: true };
   },
+
+  commitSourceCheckpoint: (request) => {
+    const req = request as DbRequestOf<'commitSourceCheckpoint'>;
+    manager.commitSourceCheckpoint(req.sourceId, req.checkpoint, req.receipt);
+    return { id: request.id, ok: true };
+  },
+  getSourceCheckpoint: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getSourceCheckpoint((request as DbRequestOf<'getSourceCheckpoint'>).sourceId),
+  }),
+  getSourceCheckpoints: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getSourceCheckpoints(),
+  }),
+  setUiPreference: (request) => {
+    const req = request as DbRequestOf<'setUiPreference'>;
+    manager.setUiPreference(req.key, req.value);
+    return { id: request.id, ok: true };
+  },
+  getUiPreference: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getUiPreference((request as DbRequestOf<'getUiPreference'>).key),
+  }),
+  resetAnalyticsDatabase: (request) => {
+    manager.resetAnalyticsDatabase();
+    return { id: request.id, ok: true };
+  },
+  exportControlDatabase: (request) => ({
+    id: request.id,
+    ok: true,
+    bytes: manager.exportControlDatabase(),
+  }),
+  getAnalyticsDb: (request) => {
+    const db = manager.getAnalyticsDb();
+    return { id: request.id, ok: true, result: { filename: db.filename, pointer: db.pointer } };
+  },
+  getControlDb: (request) => {
+    const db = manager.getControlDb();
+    return { id: request.id, ok: true, result: { filename: db.filename, pointer: db.pointer } };
+  },
 };
 
 async function handleRequest(request: DbRequest): Promise<DbResponse> {

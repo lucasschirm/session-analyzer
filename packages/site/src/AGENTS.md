@@ -29,7 +29,8 @@ src/
 │   ├── database.ts                # DatabaseManager over sqlite3 oo1; extended schema with cache_creation/cache_read tokens, model_usage, tool parameters, and message uuid/parent_uuid; includes sync_status/sync_details/session sync mirror columns and migrate() for backward compatibility
 │   ├── db-protocol.ts             # Typed main-thread <-> worker message protocol
 │   ├── db-worker.ts               # Web Worker hosting SQLite (OPFS when available); enforces strict message ordering via promise queue
-│   └── db-client.ts               # Main-thread proxy with promise correlation
+│   ├── db-client.ts               # Main-thread proxy with promise correlation
+│   └── wasm-sqlite-executor.ts    # db-core SqliteExecutor adapter over @sqlite.org/sqlite-wasm; OPFS when available, in-memory fallback, exposes backend/durability/fallback metadata
 ├── lib/
 │   ├── markdown.ts                # marked + DOMPurify rendering helpers
 │   ├── format.ts                  # Compact number formatting (K/M/B) with full-number tooltips; estimateTokenCount/formatEstimatedTokens for the ~4-chars/token tool-result estimate (no exact tokenizer available client-side)
