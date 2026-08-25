@@ -1,4 +1,5 @@
 import type { AnalyticsQuery, EvidenceLink, Filter, TimeRange } from '@lucasschirm/sal-db';
+import { componentHref } from '../component-ecosystem/component-ecosystem-params';
 
 export interface PortfolioParams {
   project?: string;
@@ -86,7 +87,11 @@ export function evidenceLinkHref(link: EvidenceLink, returnParams?: PortfolioPar
     case 'session':
       return `#/sessions/${link.entityId}`;
     case 'component':
-      return `#/portfolio${buildPortfolioHash({ ...returnParams, component: link.entityId })}`;
+      return componentHref(link.entityId, {
+        ...returnParams,
+        origin: 'portfolio',
+        returnContext: buildPortfolioHash(returnParams ?? {}).slice(1) || undefined,
+      });
     case 'portfolio':
       return `#/portfolio${buildPortfolioHash(returnParams ?? {})}`;
     default:

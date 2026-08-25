@@ -11,7 +11,11 @@ import type {
   PortfolioTrendSeries,
   ProjectListPage,
 } from '@lucasschirm/sal-db';
-import type { ChartSeries, ChartState } from '../../components/charts/chart-types';
+import type {
+  ChartEvidenceLink,
+  ChartSeries,
+  ChartState,
+} from '../../components/charts/chart-types';
 import {
   componentUtilizationToChartSeries,
   type MetricCardView,
@@ -294,6 +298,11 @@ export class PortfolioView extends LitElement {
     if (metric.href) navigateTo(metric.href.replace(/^#/, ''));
   }
 
+  private handlePointClick(event: CustomEvent<ChartEvidenceLink>): void {
+    const link = event.detail;
+    if (link?.href) navigateTo(link.href.replace(/^#/, ''));
+  }
+
   private renderFilters() {
     return html`
       <div class="filter-bar">
@@ -451,7 +460,7 @@ export class PortfolioView extends LitElement {
 
   private renderComponents() {
     const series: ChartSeries | null = this.components.data
-      ? componentUtilizationToChartSeries(this.components.data)
+      ? componentUtilizationToChartSeries(this.components.data, this.filters)
       : null;
     return html`
       <div class="section">
@@ -460,6 +469,7 @@ export class PortfolioView extends LitElement {
           title="Sessions per component"
           .series=${series}
           .state=${this.chartState(this.components.state)}
+          @point-click=${this.handlePointClick}
         ></analytics-chart>
       </div>
     `;

@@ -10,6 +10,7 @@ import type {
 } from '@lucasschirm/sal-db';
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
+import { componentHref } from '../component-ecosystem/component-ecosystem-params';
 import type { PortfolioParams } from './portfolio-params';
 import { buildPortfolioHash, evidenceLinkHref } from './portfolio-params';
 
@@ -47,18 +48,32 @@ export function trendToChartSeries(trend: PortfolioTrendSeries, metricId?: strin
   };
 }
 
-export function componentUtilizationToChartSeries(page: ComponentUtilizationPage): ChartSeries {
+export function componentUtilizationToChartSeries(
+  page: ComponentUtilizationPage,
+  params?: PortfolioParams,
+): ChartSeries {
   const buckets: ChartBucket[] = page.items.map((row: ComponentUtilizationRow) => ({
     x: row.componentId,
     y: row.sessionCount,
     label: `${row.componentId} (${row.kind})`,
     series: row.kind,
-    evidenceLink: row.token.evidenceLinks[0]
-      ? {
-          label: row.token.evidenceLinks[0].label,
-          href: evidenceLinkHref(row.token.evidenceLinks[0]),
-        }
-      : undefined,
+    evidenceLink: {
+      label: `Open ${row.componentId}`,
+      href: componentHref(row.componentId, {
+        project: params?.project,
+        harness: params?.harness,
+        model: params?.model,
+        mode: params?.mode,
+        timeStart: params?.timeStart,
+        timeEnd: params?.timeEnd,
+        analysisRelease: params?.analysisRelease,
+        comparabilityGroup: params?.comparabilityGroup,
+        generation: params?.generation,
+        kind: row.kind,
+        origin: 'portfolio',
+        returnContext: buildPortfolioHash(params ?? {}).slice(1) || undefined,
+      }),
+    },
   }));
 
   return {
