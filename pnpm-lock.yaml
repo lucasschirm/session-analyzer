@@ -105,12 +105,18 @@ importers:
       '@lucasschirm/sal-claude-session-parser':
         specifier: workspace:*
         version: link:../parsers/claude-session-parser
+      '@lucasschirm/sal-db':
+        specifier: workspace:*
+        version: link:../db
       '@lucasschirm/sal-db-core':
         specifier: workspace:*
         version: link:../db-core
       '@lucasschirm/sal-sync-core':
         specifier: workspace:*
         version: link:../sync-core
+      '@lucasschirm/sal-transformer':
+        specifier: workspace:*
+        version: link:../transformer
       '@sqlite.org/sqlite-wasm':
         specifier: 3.53.0-build1
         version: 3.53.0-build1
