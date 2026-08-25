@@ -115,3 +115,34 @@ pnpm test:e2e       # Run E2E tests
 Equivalent commands scoped to the site package directly:
 `cd packages/site && pnpm dev` (etc.), or `pnpm --filter site <script>` from
 anywhere in the workspace.
+
+## Analytics packages
+The monorepo also contains the analytics data platform packages:
+
+- `packages/db-core/` (`@lucasschirm/sal-db-core`) — Runtime-independent SQLite schema, migrations, stores, and generation control.
+- `packages/db/` (`@lucasschirm/sal-db`) — Application-facing ingestion, aggregation, reprocessing, and analytics data-source facade.
+- `packages/transformer/` (`@lucasschirm/sal-transformer`) — Pure, deterministic transformer plugin registry and conformance suite.
+- `packages/sync-core/` (`@lucasschirm/sal-sync-core`) — Shared manifest and sync contract types.
+- `packages/parsers/claude-session-parser/` (`@lucasschirm/sal-claude-session-parser`) — Pure Claude Code session parser.
+- `packages/plugins/claude-session-sync/` (`@lucasschirm/claude-session-sync`) — Claude Code plugin bundles for the sync engine.
+
+See the per-package `AGENTS.md` files for source maps and invariants.
+
+## CI maintenance gates
+
+- `scripts/analytics-gates/` — Standalone CI maintenance gate scripts; see `scripts/analytics-gates/AGENTS.md`.
+- `.github/workflows/analytics-gates.yml` — GitHub Actions workflow that runs the maintenance gates on pull requests.
+- `package.json` `analytics-gates` script — Entry point for the full gate suite.
+
+## Agent rules and skills
+
+- `.agents/rules/` — Project-specific behavioral rules:
+  aggregates-expose-sample-size, analytics-domain-distinctions, coder-rules,
+  component-identity-not-display-name, filterable-table-pattern,
+  frontend-coding-style, harness-plugins-conformance, lifecycle-removal-snapshots,
+  manifest-backed-classification, metric-meaning-versioning, missing-is-never-zero,
+  no-canonical-metrics-in-lit, schema-change-tests, sql-only-in-db-core,
+  transformers-never-write-sqlite, workspace-rules.
+- `.agents/skills/` — Project-specific reusable skills:
+  add-analytics-view, add-db-migration, add-harness-integration,
+  add-session-metric, reprocess-analytics.
