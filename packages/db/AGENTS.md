@@ -11,6 +11,8 @@ Package name: `@lucasschirm/sal-db`
 src/
 ├── index.ts              # Public barrel export
 ├── analytics.ts          # AnalyticsDataSource interface, queries, filters, and view result types
+├── analytics-portfolio.ts # Portfolio analytics view implementation
+├── analytics-session.ts  # Session, component, search, artifact, and metadata view implementation
 ├── artifact-diff.ts      # Artifact diffing, canonicalization, and behavioral field extraction
 ├── component-lifecycle.ts # Component ecosystem ingestion and lifecycle event handling
 ├── configuration.ts      # Configuration snapshot capture and environment/project binding
@@ -32,6 +34,7 @@ src/
 tests/
 ├── forbidden-imports.test.ts          # Asserts no site/Lit/WASM/Worker/HTTP imports in src/
 └── unit/
+    ├── analytics-session.test.ts      # Session, component, search, artifact, and metadata view tests
     ├── component-lifecycle.test.ts    # Component lifecycle event and identity tests
     ├── configuration.test.ts          # Configuration snapshot and binding tests
     ├── contracts.test.ts              # Ingestion and analytics contract tests
