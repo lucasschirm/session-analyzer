@@ -1,6 +1,6 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
-import type { UploadedFile } from '../lib/subagents';
+import type { UploadedFile } from '../lib/uploaded-file';
 
 /**
  * Drag-and-drop upload zone.

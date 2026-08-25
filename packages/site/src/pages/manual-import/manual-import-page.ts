@@ -18,7 +18,7 @@ import type {
   ManualIngestionBundleRequest,
 } from '../../db/analytics-client';
 import { AnalyticsClient } from '../../db/analytics-client';
-import type { UploadedFile } from '../../lib/subagents';
+import type { UploadedFile } from '../../lib/uploaded-file';
 import { navigateTo } from '../../router';
 
 /**

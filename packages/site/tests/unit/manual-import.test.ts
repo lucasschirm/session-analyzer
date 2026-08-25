@@ -19,7 +19,7 @@ import type {
   ManualImportUpload,
   ManualUploadSelection,
 } from '../../src/components/manual-import/manual-import-upload';
-import type { UploadedFile } from '../../src/lib/subagents';
+import type { UploadedFile } from '../../src/lib/uploaded-file';
 import type { ManualImportPage } from '../../src/pages/manual-import/manual-import-page';
 
 async function flush(element: LitElement): Promise<void> {

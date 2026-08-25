@@ -12,27 +12,21 @@ import { syncManager } from '../sync/sync-manager';
 import './home-page';
 import './portfolio/portfolio-view';
 import './project-behavior/project-behavior-view';
-import './project-view';
 import './session-evidence/session-evidence-view';
-import './indicator-details';
-import './session-transcript-page';
 import './manual-import/manual-import-page';
 import './component-ecosystem/component-ecosystem-view';
 import './artifact-diff/artifact-diff-view';
-import './activation/activation-page';
 
 /**
  * Root application shell: header, hash-based routing outlet and database
  * lifecycle. Routes:
  *
  * - `#/`                                   -> Home (projects CRUD)
- * - `#/projects/:projectId`                -> Project View (upload + sessions)
+ * - `#/projects/:projectId/behavior`       -> Project Behavior (precomputed analytics view)
  * - `#/sessions/:sessionId`                -> Session Evidence (precomputed analytics view)
- * - `#/sessions/:sessionId/indicator/:key` -> Indicator Details (drill-down)
- * - `#/sessions/:sessionId/transcript`     -> Session Transcript (subagent cards inline, full width)
- * - `#/sessions/:sessionId/transcript/:agentId` -> Session Transcript, split with that subagent's column open
  * - `#/manual-import`                      -> Manual Import (transcript/partial upload)
- * - `#/activation`                         -> Fresh analytics database activation
+ * - `#/components`                         -> Component Ecosystem
+ * - `#/artifact-diff`                      -> Artifact Diff
  */
 @customElement('app-root')
 export class AppRoot extends LitElement {
@@ -153,37 +147,9 @@ export class AppRoot extends LitElement {
           html`<project-behavior-view project-id=${params.projectId ?? ''}></project-behavior-view>`,
       },
       {
-        path: '/projects/:projectId',
-        render: (params) =>
-          html`<project-view project-id=${params.projectId ?? ''}></project-view>`,
-      },
-      {
         path: '/sessions/:sessionId',
         render: (params) =>
           html`<session-evidence-view session-id=${params.sessionId ?? ''}></session-evidence-view>`,
-      },
-      {
-        path: '/sessions/:sessionId/indicator/:indicator',
-        render: (params) =>
-          html`<indicator-details
-            session-id=${params.sessionId ?? ''}
-            indicator=${params.indicator ?? ''}
-          ></indicator-details>`,
-      },
-      {
-        path: '/sessions/:sessionId/transcript',
-        render: (params) =>
-          html`<session-transcript-page
-            session-id=${params.sessionId ?? ''}
-          ></session-transcript-page>`,
-      },
-      {
-        path: '/sessions/:sessionId/transcript/:agentId',
-        render: (params) =>
-          html`<session-transcript-page
-            session-id=${params.sessionId ?? ''}
-            agent-id=${params.agentId ?? ''}
-          ></session-transcript-page>`,
       },
       {
         path: '/manual-import',
@@ -199,10 +165,6 @@ export class AppRoot extends LitElement {
           html`<component-ecosystem-view
             component-id=${params.componentId ?? ''}
           ></component-ecosystem-view>`,
-      },
-      {
-        path: '/activation',
-        render: () => html`<activation-page></activation-page>`,
       },
       {
         path: '/artifact-diff*',
@@ -300,7 +262,6 @@ export class AppRoot extends LitElement {
             <a href="#/components">Components</a>
             <a href="#/">Home</a>
             <a href="#/manual-import">Manual Import</a>
-            <a href="#/activation">Activation</a>
           </nav>
         </div>
       </header>

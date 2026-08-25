@@ -43,64 +43,6 @@ const handlers: Record<DbRequest['type'], Handler> = {
     manager.deleteProject((request as DbRequestOf<'deleteProject'>).projectId);
     return { id: request.id, ok: true };
   },
-  saveSession: (request) => {
-    manager.saveSession((request as DbRequestOf<'saveSession'>).session);
-    return { id: request.id, ok: true };
-  },
-  upsertSessionByExternalId: (request) => ({
-    id: request.id,
-    ok: true,
-    result: manager.upsertSessionByExternalId(
-      (request as DbRequestOf<'upsertSessionByExternalId'>).session,
-    ),
-  }),
-  replaceSession: (request) => {
-    manager.replaceSession((request as DbRequestOf<'replaceSession'>).session);
-    return { id: request.id, ok: true };
-  },
-  findSessionByExternalId: (request) => {
-    const req = request as DbRequestOf<'findSessionByExternalId'>;
-    return {
-      id: request.id,
-      ok: true,
-      result: manager.findSessionByExternalId(req.projectId, req.externalId),
-    };
-  },
-  getSessionsByProject: (request) => {
-    const req = request as DbRequestOf<'getSessionsByProject'>;
-    return {
-      id: request.id,
-      ok: true,
-      result: manager.getSessionsByProject(req.projectId, req.limit, req.offset),
-    };
-  },
-  searchSessions: (request) => {
-    const req = request as DbRequestOf<'searchSessions'>;
-    return {
-      id: request.id,
-      ok: true,
-      result: manager.searchSessions(req.projectId, req.query, req.limit, req.offset),
-    };
-  },
-  getSession: (request) => ({
-    id: request.id,
-    ok: true,
-    result: manager.getSession((request as DbRequestOf<'getSession'>).sessionId),
-  }),
-  deleteSession: (request) => {
-    manager.deleteSession((request as DbRequestOf<'deleteSession'>).sessionId);
-    return { id: request.id, ok: true };
-  },
-  getProjectMetrics: (request) => ({
-    id: request.id,
-    ok: true,
-    result: manager.getProjectMetrics((request as DbRequestOf<'getProjectMetrics'>).projectId),
-  }),
-  exportDatabase: (request) => ({
-    id: request.id,
-    ok: true,
-    bytes: manager.exportDatabase(),
-  }),
 
   createConnection: (request) => {
     manager.createConnection((request as DbRequestOf<'createConnection'>).connection);
@@ -206,6 +148,10 @@ const handlers: Record<DbRequest['type'], Handler> = {
     manager.upsertSessionFile((request as DbRequestOf<'upsertSessionFile'>).file);
     return { id: request.id, ok: true };
   },
+  deleteSessionFiles: (request) => {
+    manager.deleteSessionFiles((request as DbRequestOf<'deleteSessionFiles'>).sessionId);
+    return { id: request.id, ok: true };
+  },
 
   commitSourceCheckpoint: (request) => {
     const req = request as DbRequestOf<'commitSourceCheckpoint'>;
@@ -232,47 +178,15 @@ const handlers: Record<DbRequest['type'], Handler> = {
     ok: true,
     result: manager.getUiPreference((request as DbRequestOf<'getUiPreference'>).key),
   }),
-  resetAnalyticsDatabase: (request) => {
-    manager.resetAnalyticsDatabase();
-    return { id: request.id, ok: true };
-  },
   exportControlDatabase: (request) => ({
     id: request.id,
     ok: true,
     bytes: manager.exportControlDatabase(),
   }),
-  getAnalyticsDb: (request) => {
-    const db = manager.getAnalyticsDb();
-    return { id: request.id, ok: true, result: { filename: db.filename, pointer: db.pointer } };
-  },
   getControlDb: (request) => {
     const db = manager.getControlDb();
     return { id: request.id, ok: true, result: { filename: db.filename, pointer: db.pointer } };
   },
-  getAnalyticsActivationState: (request) => ({
-    id: request.id,
-    ok: true,
-    result: manager.getAnalyticsActivationState(),
-  }),
-  setAnalyticsActivationState: (request) => {
-    const req = request as DbRequestOf<'setAnalyticsActivationState'>;
-    manager.setAnalyticsActivationState(req.state);
-    return { id: request.id, ok: true };
-  },
-  activateAnalyticsDatabase: (request) => {
-    const req = request as DbRequestOf<'activateAnalyticsDatabase'>;
-    return { id: request.id, ok: true, result: manager.activateAnalyticsDatabase(req.retention) };
-  },
-  rollbackToLegacyMode: (request) => ({
-    id: request.id,
-    ok: true,
-    result: manager.rollbackToLegacyMode(),
-  }),
-  getSourceRetentionControls: (request) => ({
-    id: request.id,
-    ok: true,
-    result: manager.getSourceRetentionControls(),
-  }),
 };
 
 async function handleRequest(request: DbRequest): Promise<DbResponse> {
