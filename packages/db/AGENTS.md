@@ -33,6 +33,11 @@ src/
 ```
 tests/
 ├── forbidden-imports.test.ts          # Asserts no site/Lit/WASM/Worker/HTTP imports in src/
+├── fixtures/                          # Benchmark fixtures and generator helpers
+│   ├── benchmark.ts                   # Deterministic fixture generator and benchmark transformer
+│   └── index.ts                       # Public fixture re-exports
+├── perf/                              # Performance and budget tests
+│   └── benchmark.perf.test.ts         # Ingestion, read-budget, query-plan, and reconciliation gates
 └── unit/
     ├── analytics-session.test.ts      # Session, component, search, artifact, and metadata view tests
     ├── component-lifecycle.test.ts    # Component lifecycle event and identity tests
