@@ -2,11 +2,13 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FRESH_SCHEMA_SQL } from '@lucasschirm/sal-db-core';
+import { MANIFEST_SCHEMA_VERSION } from '@lucasschirm/sal-sync-core';
 import { createDefaultRegistry } from '@lucasschirm/sal-transformer';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import { createAnalyticsDataSource } from '../../src/analytics.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';
+import type { VerifiedManifestBundle } from '../../src/manifest.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, '../../../parsers/claude-session-parser/tests/fixtures');
@@ -200,5 +202,88 @@ describe('ingestion to portfolio pipeline', () => {
       'SELECT COUNT(*) AS c FROM portfolio_daily_rollups',
     );
     expect(rollupsAfter[0]?.c).toBe(rollupsBefore[0]?.c);
+  });
+
+  /**
+   * Regression: the sync flow (ingestManifest) must materialize rollups and
+   * distributions just like the manual flow (ingestManual). Previously
+   * commitAtomic skipped rollup materialization, so synced sessions produced
+   * metric values but portfolio charts stayed empty.
+   */
+  it('ingestManifest (sync flow) materializes rollups and populates portfolio overview', async () => {
+    const executor = await createExecutor();
+    const { orchestrator, hasher } = await setupIngestion(executor);
+
+    const content = readFixture('t2-happy-path.jsonl');
+    const sha256 = await hasher.hash(content);
+    const relativePath = 'session/transcript.jsonl';
+
+    const bundle: VerifiedManifestBundle = {
+      manifest: {
+        schemaVersion: MANIFEST_SCHEMA_VERSION,
+        projectId: 'project-sync-portfolio',
+        sessionId: 'sess-sync-1',
+        harness: 'claude-code',
+        harnessVersion: '0.1.0',
+        syncVersion: '0.1.0',
+        pluginVersion: '0.1.0',
+        transcriptsCaptured: true,
+        mainTranscriptRelativePath: relativePath,
+        artifacts: [
+          {
+            relativePath,
+            mediaType: 'application/jsonl',
+            sha256,
+            size: content.length,
+            status: 'uploaded',
+          },
+        ],
+        syncRuns: [],
+      },
+      source: {
+        sourceId: 'sync',
+        environmentId: 'dev',
+        projectId: 'project-sync-portfolio',
+        sessionId: 'sess-sync-1',
+      },
+      resolvedArtifacts: [
+        {
+          relativePath,
+          mediaType: 'application/jsonl',
+          sha256,
+          size: content.length,
+          content,
+        },
+      ],
+      integrityVerified: false,
+    };
+
+    const receipt = await orchestrator.ingestManifest(bundle);
+    expect(receipt.status).toBe('committed');
+
+    // Metric values must exist.
+    const { rows: metricRows } = await executor.exec(
+      'SELECT COUNT(*) AS c FROM metric_values WHERE generation_id = ?',
+      [receipt.generationId],
+    );
+    expect(metricRows[0]?.c).toBeGreaterThan(0);
+
+    // Rollup contributions must be materialized (the regression).
+    const { rows: contributionRows } = await executor.exec(
+      'SELECT COUNT(*) AS c FROM rollup_contributions',
+    );
+    expect(contributionRows[0]?.c).toBeGreaterThan(0);
+
+    // Portfolio daily rollups must be materialized (the regression).
+    const { rows: dailyRollupRows } = await executor.exec(
+      'SELECT COUNT(*) AS c FROM portfolio_daily_rollups',
+    );
+    expect(dailyRollupRows[0]?.c).toBeGreaterThan(0);
+
+    // Portfolio overview must reflect the synced session.
+    const dataSource = createAnalyticsDataSource(executor);
+    const overview = await dataSource.portfolio.getOverview({});
+    expect(overview.sessionCount).toBeGreaterThanOrEqual(1);
+    expect(overview.headlineMetrics.length).toBeGreaterThan(0);
   });
 });

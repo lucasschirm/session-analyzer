@@ -216,6 +216,48 @@ describe('AnalyticsClient', () => {
     expect(request.artifact.sha256).toBe('abc');
   });
 
+  /**
+   * Regression: the sync flow must feed manifests into the analytics ingestion
+   * pipeline. If the client does not post `ingestSyncManifest`, synced sessions
+   * never produce metrics and portfolio charts stay empty.
+   */
+  it('posts ingestSyncManifest with manifest and source and unwraps the receipt', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const manifest = {
+      schemaVersion: 2,
+      projectId: 'p1',
+      sessionId: 's1',
+      harness: 'claude-code',
+      mainTranscriptRelativePath: 'session/transcript.jsonl',
+      artifacts: [],
+      syncRuns: [],
+    };
+    const source = { sourceId: 'sync', projectId: 'p1', sessionId: 's1' };
+
+    const promise = client.ingestSyncManifest(manifest, source);
+    expect(worker.posted[1].type).toBe('ingestSyncManifest');
+    const request = worker.posted[1] as Extract<AnalyticsRequest, { type: 'ingestSyncManifest' }>;
+    expect(request.manifest).toEqual(manifest);
+    expect(request.source).toEqual(source);
+
+    const receipt = { generationId: 'gen-1', status: 'committed', issueIds: [] };
+    worker.respond({ id: request.id, ok: true, result: receipt });
+
+    await expect(promise).resolves.toEqual(receipt);
+  });
+
+  it('rejects ingestSyncManifest when the worker reports an error', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.ingestSyncManifest({ artifacts: [] }, { sourceId: 'sync' });
+    worker.respond({ id: worker.posted[1].id, ok: false, error: 'ingest failed' });
+
+    await expect(promise).rejects.toThrow('ingest failed');
+  });
+
   it('does not carry SQL implementation types across the worker boundary', async () => {
     // A query request should only contain DTO fields.
     const query: AnalyticsRequest = {
