@@ -899,6 +899,12 @@ export async function applySessionRollupContributions(
       input.previousGenerationId,
     ]);
   }
+  // Also delete any existing contributions for the current generation so the
+  // function is idempotent when called multiple times for the same generation.
+  await tx.exec('DELETE FROM rollup_contributions WHERE session_id = ? AND generation_id = ?', [
+    input.sessionId,
+    input.generationId,
+  ]);
   const metrics = await listAdditiveMetricValues(tx, input.sessionId, input.generationId);
   const { groups, keys: builtKeys } = buildContributionGroups(session, metrics, input, policy);
   for (const group of groups.values()) {

@@ -42,6 +42,7 @@ import type {
   TransformResult,
   UnknownArtifactBundle,
 } from '@lucasschirm/sal-transformer';
+import { rebuildAffectedDistributions } from './distributions.js';
 import type { ManualIngestionBundle, VerifiedManifestBundle } from './manifest.js';
 import type {
   ArtifactBlobStore,
@@ -49,6 +50,7 @@ import type {
   ArtifactResolver,
   ContentHasher,
 } from './ports.js';
+import { applySessionRollupContributions } from './rollup-reconciliation.js';
 
 export interface IngestionIssue {
   readonly code: string;
@@ -520,6 +522,17 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         );
 
         // 7. Commit the generation: supersede previous, set session current_generation_id.
+        //    Capture the previous generation ID first so rollup contributions can
+        //    subtract old values before inserting new ones.
+        const { rows: prevGenRows } = await tx.exec(
+          'SELECT current_generation_id FROM sessions WHERE id = ?',
+          [commit.sessionId],
+        );
+        const previousGenerationId =
+          prevGenRows[0]?.current_generation_id === null ||
+          prevGenRows[0]?.current_generation_id === undefined
+            ? undefined
+            : String(prevGenRows[0].current_generation_id);
         await commitGeneration(tx, commit.sessionId, commit.generationId);
 
         // Child sessions also switch visibility to the same root generation.
@@ -531,6 +544,35 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
             ]);
           }
         }
+
+        // 8. Materialize rollup contributions and distribution buckets for the
+        //    new generation so portfolio/project charts are populated at
+        //    ingestion time rather than requiring a separate reprocessing step.
+        await applySessionRollupContributions(tx, {
+          sessionId: commit.sessionId,
+          generationId: commit.generationId,
+          previousGenerationId: previousGenerationId ?? undefined,
+          analysisReleaseId: commit.analysisReleaseId,
+          isRoot: true,
+        });
+        for (const summary of result.sessionSummaries) {
+          if (summary.sessionId !== commit.sessionId) {
+            await applySessionRollupContributions(tx, {
+              sessionId: summary.sessionId,
+              generationId: commit.generationId,
+              previousGenerationId: previousGenerationId ?? undefined,
+              analysisReleaseId: commit.analysisReleaseId,
+              isRoot: false,
+            });
+          }
+        }
+        await rebuildAffectedDistributions(tx, {
+          sessionId: commit.sessionId,
+          generationId: commit.generationId,
+          previousGenerationId: previousGenerationId ?? undefined,
+          analysisReleaseId: commit.analysisReleaseId,
+          isRoot: true,
+        });
       });
 
       return this.committedReceipt({
