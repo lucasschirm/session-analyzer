@@ -258,6 +258,31 @@ export class AnalyticsClient implements AnalyticsDataSource {
     }
   }
 
+  /**
+   * Ingest a sync manifest bundle into the analytics pipeline. Artifacts must
+   * have been previously retained via `retainSyncArtifact` so the worker can
+   * resolve them from the blob store or sync cache.
+   */
+  async ingestSyncManifest(
+    manifest: unknown,
+    source: {
+      sourceId: string;
+      environmentId?: string;
+      projectId?: string;
+      sessionId?: string;
+    },
+  ): Promise<IngestionReceipt> {
+    const response = await this.call({
+      type: 'ingestSyncManifest',
+      manifest,
+      source,
+    });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+    return response.result as IngestionReceipt;
+  }
+
   async close(): Promise<void> {
     const response = await this.call({ type: 'close' });
     if (!response.ok) {

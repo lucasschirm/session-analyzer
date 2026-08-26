@@ -113,6 +113,17 @@ export interface ResolveManualConflictRequest extends BaseRequest {
   readonly resolution: 'replace' | 'keep';
 }
 
+export interface IngestSyncManifestRequest extends BaseRequest {
+  readonly type: 'ingestSyncManifest';
+  readonly manifest: unknown;
+  readonly source: {
+    readonly sourceId: string;
+    readonly environmentId?: string;
+    readonly projectId?: string;
+    readonly sessionId?: string;
+  };
+}
+
 export interface CloseRequest extends BaseRequest {
   readonly type: 'close';
 }
@@ -125,6 +136,7 @@ export type AnalyticsRequest =
   | DetectManualHarnessRequest
   | IngestManualBundleRequest
   | ResolveManualConflictRequest
+  | IngestSyncManifestRequest
   | CloseRequest;
 
 export type AnalyticsRequestPayload =
@@ -135,6 +147,7 @@ export type AnalyticsRequestPayload =
   | Omit<DetectManualHarnessRequest, 'id'>
   | Omit<IngestManualBundleRequest, 'id'>
   | Omit<ResolveManualConflictRequest, 'id'>
+  | Omit<IngestSyncManifestRequest, 'id'>
   | Omit<CloseRequest, 'id'>;
 
 interface BaseResponse {

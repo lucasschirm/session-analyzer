@@ -21,6 +21,7 @@ import {
   type SyncManifest,
 } from '@lucasschirm/sal-sync-core';
 import { toastManager } from '../components/toast-container';
+import { analyticsClient } from '../db/analytics-client';
 import { type DbClient, dbClient } from '../db/db-client';
 import { generateId } from '../lib/id';
 import { describeS3Error } from '../lib/s3-errors';
@@ -94,9 +95,13 @@ export interface SyncManagerOptions {
   /** Factory for the S3 client used during project discovery. */
   createS3Client?: (config: S3ClientConfig) => S3Client;
   /** Async seam for processing a downloaded file buffer. */
-  onFileDownloaded?: (sessionId: string, file: DownloadedFile) => Promise<void>;
+  onFileDownloaded?: (sessionId: string, file: DownloadedFile, projectId: string) => Promise<void>;
   /** Async seam for forcing completion when the sync worker signals a session is complete. */
-  onSyncComplete?: (sessionId: string) => Promise<void>;
+  onSyncComplete?: (
+    sessionId: string,
+    manifest: SyncManifest | undefined,
+    projectId: string,
+  ) => Promise<void>;
   /** Async seam for resolving a missing project manifest. */
   onProjectMissing?: (folder: string) => Promise<ProjectManifestInput | null>;
   /** Async seam for requesting the passkey from the user. */
@@ -131,6 +136,7 @@ interface SessionSyncState extends SessionProgressState {
   firstFile: boolean;
   pendingFiles: number;
   completeReceived: boolean;
+  manifest?: SyncManifest;
 }
 
 interface ProjectSyncState {
@@ -221,8 +227,16 @@ export class SyncManager extends EventTarget {
   private readonly createWorker: () => Worker;
   private readonly createS3Client: (config: S3ClientConfig) => S3Client;
   private readonly createBroadcastChannel: (name: string) => BroadcastChannel;
-  private readonly onFileDownloaded: (sessionId: string, file: DownloadedFile) => Promise<void>;
-  private readonly onSyncComplete: (sessionId: string) => Promise<void>;
+  private readonly onFileDownloaded: (
+    sessionId: string,
+    file: DownloadedFile,
+    projectId: string,
+  ) => Promise<void>;
+  private readonly onSyncComplete: (
+    sessionId: string,
+    manifest: SyncManifest | undefined,
+    projectId: string,
+  ) => Promise<void>;
   private readonly onProjectMissing?: (folder: string) => Promise<ProjectManifestInput | null>;
   private readonly onPasskeyRequired?: () => Promise<string>;
   private readonly onRunSummary?: (summary: RunSummary) => void;
@@ -809,6 +823,7 @@ export class SyncManager extends EventTarget {
     await this.db.updateSessionManifest(localSession.id, manifest);
 
     const sessionState = this.getOrCreateSessionState(project, remoteSessionId, localSession.id);
+    sessionState.manifest = manifest;
 
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
     const mainArtifact = this.findMainArtifact(manifest, mainPath);
@@ -1141,12 +1156,16 @@ export class SyncManager extends EventTarget {
     await this.upsertDownloadedFile(project, session, message);
     session.pendingFiles++;
 
-    this.onFileDownloaded(session.localSessionId, {
-      path: message.file,
-      hash: message.hash,
-      size: message.content.byteLength,
-      content: message.content,
-    })
+    this.onFileDownloaded(
+      session.localSessionId,
+      {
+        path: message.file,
+        hash: message.hash,
+        size: message.content.byteLength,
+        content: message.content,
+      },
+      project.projectId,
+    )
       .then(() => this.onFileProcessed(session, message))
       .catch(() => this.onFileProcessFailed(session, message));
 
@@ -1228,7 +1247,7 @@ export class SyncManager extends EventTarget {
       await this.reconcileCompleteFile(project, session, file);
     }
 
-    await this.onSyncComplete(session.localSessionId);
+    await this.onSyncComplete(session.localSessionId, session.manifest, project.projectId);
 
     project.sessionsDone++;
     await this.maybeCompleteSession(session);
@@ -1596,5 +1615,26 @@ export const syncManager = new SyncManager({
         hint: 'Click the progress bar in the header for full details.',
       });
     }
+  },
+  onFileDownloaded: async (_sessionId, file, _projectId) => {
+    // Retain each downloaded file in the analytics blob store so the
+    // analytics worker can resolve artifacts during manifest ingestion.
+    await analyticsClient.retainSyncArtifact({
+      sha256: file.hash,
+      size: file.size,
+      relativePath: file.path,
+      mediaType: 'application/octet-stream',
+      content: new Uint8Array(file.content),
+    });
+  },
+  onSyncComplete: async (_sessionId, manifest, projectId) => {
+    if (!manifest) return;
+    // Feed the completed sync manifest into the analytics ingestion pipeline
+    // so metric values and rollups are materialized for portfolio charts.
+    await analyticsClient.ingestSyncManifest(manifest, {
+      sourceId: 'sync',
+      projectId,
+      sessionId: manifest.sessionId,
+    });
   },
 });

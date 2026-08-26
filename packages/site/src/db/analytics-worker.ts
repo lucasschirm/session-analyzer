@@ -21,8 +21,10 @@ import {
   type ManualIngestionFlowInput,
   ManualIngestionOrchestrator,
   type ResolvedArtifact,
+  type VerifiedManifestBundle,
 } from '@lucasschirm/sal-db';
 import { ANALYTICS_SCHEMA_NAME, MIGRATIONS, MigrationRunner } from '@lucasschirm/sal-db-core';
+import { parseSyncManifest } from '@lucasschirm/sal-sync-core';
 import { createDefaultRegistry, type TransformerRegistry } from '@lucasschirm/sal-transformer';
 import type {
   AnalyticsBackendReport,
@@ -298,6 +300,45 @@ async function handleResolveManualConflict(
   }
 }
 
+async function handleIngestSyncManifest(
+  state: AnalyticsWorkerState,
+  request: Extract<AnalyticsRequest, { type: 'ingestSyncManifest' }>,
+): Promise<AnalyticsResponse> {
+  try {
+    const manifest = parseSyncManifest(request.manifest as unknown as Record<string, unknown>);
+    const source = {
+      sourceId: request.source.sourceId ?? manifest.sourceEnvironmentNamespace ?? 'default',
+      environmentId: request.source.environmentId ?? manifest.environmentId,
+      projectId: request.source.projectId ?? manifest.projectId,
+      sessionId: request.source.sessionId ?? manifest.sessionId,
+    };
+
+    // Resolve artifacts from the blob store / sync cache that were retained
+    // during sync file download.
+    const resolvedArtifacts: ResolvedArtifact[] = [];
+    for (const artifact of manifest.artifacts) {
+      const resolved = await state.context.resolver.resolve({
+        sha256: artifact.sha256,
+        size: artifact.size ?? 0,
+        relativePath: artifact.relativePath,
+        mediaType: artifact.mediaType ?? 'application/octet-stream',
+      });
+      resolvedArtifacts.push(resolved);
+    }
+
+    const bundle: VerifiedManifestBundle = {
+      manifest,
+      source,
+      resolvedArtifacts,
+      integrityVerified: false,
+    };
+    const receipt = await state.ingestion.ingestManifest(bundle);
+    return { id: 0, ok: true, result: receipt };
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
 async function handleQuery(
   state: AnalyticsWorkerState,
   request: Extract<AnalyticsRequest, { type: 'query' }>,
@@ -364,6 +405,8 @@ export async function handleAnalyticsRequest(
         return await handleIngestManualBundle(state, request);
       case 'resolveManualConflict':
         return await handleResolveManualConflict(state, request);
+      case 'ingestSyncManifest':
+        return await handleIngestSyncManifest(state, request);
       case 'close':
         await state.executor.close();
         statePromise = null;
