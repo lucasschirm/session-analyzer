@@ -68,3 +68,4 @@ docs/superpowers
 .devin/rules
 .devin/skills
 .playwright-mcp
+packages/plugins/claude-session-sync/bin-e2e
