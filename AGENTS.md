@@ -139,11 +139,19 @@ See the per-package `AGENTS.md` files for source maps and invariants.
 
 - `.agents/rules/` — Project-specific behavioral rules:
   aggregates-expose-sample-size, analytics-domain-distinctions, coder-rules,
-  component-identity-not-display-name, filterable-table-pattern,
+  component-identity-not-display-name, e2e-coverage-required,
+  filterable-table-pattern,
   frontend-coding-style, harness-plugins-conformance, lifecycle-removal-snapshots,
   manifest-backed-classification, metric-meaning-versioning, missing-is-never-zero,
-  no-canonical-metrics-in-lit, schema-change-tests, sql-only-in-db-core,
+  no-canonical-metrics-in-lit, no-silent-empty-states, schema-change-tests,
+  sql-only-in-db-core, sync-progress-observability,
   transformers-never-write-sqlite, workspace-rules.
 - `.agents/skills/` — Project-specific reusable skills:
-  add-analytics-view, add-db-migration, add-harness-integration,
-  add-session-metric, reprocess-analytics.
+  add-analytics-view, add-db-migration, add-e2e-test, add-harness-integration,
+  add-pipeline-e2e-test, add-session-metric, reprocess-analytics,
+  triage-e2e-failure.
+- `.agents/agents/` — Project-specific agent definitions:
+  db-migration-reviewer, e2e-failure-fixer, e2e-test-implementer,
+  e2e-test-maintainer, e2e-test-planner, harness-integration-reviewer,
+  lit-performance-optmizer, metric-schema-reviewer, pr-review,
+  task-orchestrator, ts-best-practices, ui-chart-reviewer.
