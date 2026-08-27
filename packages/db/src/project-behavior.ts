@@ -387,6 +387,7 @@ export async function getSessionTrendSeries(
       time: rollup.dayBucket,
       value,
       metricId: definition.metricId,
+      label: definition.label,
       comparabilityGroupId: rollup.comparabilityGroupId,
     });
   }

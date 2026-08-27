@@ -314,16 +314,33 @@ async function handleIngestSyncManifest(
     };
 
     // Resolve artifacts from the blob store / sync cache that were retained
-    // during sync file download.
+    // during sync file download. The sync worker downloads session-scoped
+    // files (transcript + subagents) and workspace/global config artifacts
+    // (MCP, settings, skills, agents, rules). Any artifact not retained
+    // (e.g. skipped or failed uploads) is skipped gracefully instead of
+    // aborting the entire ingestion.
+    //
+    // The blob store returns artifacts with relativePath='' (it's keyed by
+    // sha256 only), so we restore the manifest's relativePath/mediaType on
+    // the resolved artifact — the transformer's classifier needs the original
+    // path (e.g. "transcript.jsonl" or ".claude/settings.json").
     const resolvedArtifacts: ResolvedArtifact[] = [];
     for (const artifact of manifest.artifacts) {
-      const resolved = await state.context.resolver.resolve({
-        sha256: artifact.sha256,
-        size: artifact.size ?? 0,
-        relativePath: artifact.relativePath,
-        mediaType: artifact.mediaType ?? 'application/octet-stream',
-      });
-      resolvedArtifacts.push(resolved);
+      try {
+        const resolved = await state.context.resolver.resolve({
+          sha256: artifact.sha256,
+          size: artifact.size ?? 0,
+          relativePath: artifact.relativePath,
+          mediaType: artifact.mediaType ?? 'application/octet-stream',
+        });
+        resolvedArtifacts.push({
+          ...resolved,
+          relativePath: artifact.relativePath,
+          mediaType: artifact.mediaType ?? resolved.mediaType ?? 'application/octet-stream',
+        });
+      } catch {
+        // Artifact not retained by sync (e.g. skipped/failed upload) — skip.
+      }
     }
 
     const bundle: VerifiedManifestBundle = {
@@ -380,6 +397,37 @@ async function handleRetainSyncArtifact(
   }
 }
 
+async function handleResolveProjectId(
+  state: AnalyticsWorkerState,
+  request: Extract<AnalyticsRequest, { type: 'resolveProjectId' }>,
+): Promise<AnalyticsResponse> {
+  try {
+    const candidate = request.projectId;
+    // First check if it's already an internal analytics project id.
+    const { rows: direct } = await state.executor.exec(
+      'SELECT id FROM projects WHERE id = ? LIMIT 1',
+      [candidate],
+    );
+    if (direct.length > 0) {
+      return { id: 0, ok: true, result: candidate };
+    }
+    // Otherwise resolve via source_projects.native_project_id.
+    const { rows } = await state.executor.exec(
+      `SELECT sp.project_id
+       FROM source_projects sp
+       WHERE sp.native_project_id = ?
+       LIMIT 1`,
+      [candidate],
+    );
+    if (rows.length > 0) {
+      return { id: 0, ok: true, result: String(rows[0].project_id) };
+    }
+    return { id: 0, ok: true, result: null };
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
 export async function handleAnalyticsRequest(
   request: AnalyticsRequest,
 ): Promise<AnalyticsResponse> {
@@ -407,6 +455,8 @@ export async function handleAnalyticsRequest(
         return await handleResolveManualConflict(state, request);
       case 'ingestSyncManifest':
         return await handleIngestSyncManifest(state, request);
+      case 'resolveProjectId':
+        return await handleResolveProjectId(state, request);
       case 'close':
         await state.executor.close();
         statePromise = null;

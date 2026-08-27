@@ -1197,7 +1197,7 @@ export class ArtifactBlobStore {
   static async insert(queryable: Queryable, input: InsertArtifactBlobInput): Promise<void> {
     const now = Date.now();
     await queryable.exec(
-      `INSERT INTO artifact_blobs (
+      `INSERT OR REPLACE INTO artifact_blobs (
         sha256, media_type, retention_class, content, size, redaction_scheme, key_domain_id,
         sensitive_digest, redaction_change_marker, is_redacted, verified_at, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

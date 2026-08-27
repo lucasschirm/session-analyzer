@@ -1,5 +1,4 @@
 import type {
-  ComponentRollup,
   PortfolioDailyRollup,
   PortfolioDimensionRollup,
   PortfolioDistribution,
@@ -9,7 +8,6 @@ import type {
 } from '@lucasschirm/sal-db-core';
 import {
   ComponentIdentityStore,
-  ComponentRollupStore,
   MetricDefinitionStore,
   PortfolioDailyRollupStore,
   PortfolioDimensionRollupStore,
@@ -264,15 +262,6 @@ function isDimensionRollupInQuery(
   return true;
 }
 
-function isComponentRollupInQuery(rollup: ComponentRollup, query: AnalyticsQuery): boolean {
-  if (query.analysisReleaseId && rollup.analysisReleaseId !== query.analysisReleaseId) return false;
-  if (query.comparabilityGroupId && rollup.comparabilityGroupId !== query.comparabilityGroupId) {
-    return false;
-  }
-  if (query.generationId && rollup.generationId !== query.generationId) return false;
-  return true;
-}
-
 function makeBaseToken(
   analysisReleaseId: string,
   generationId: string,
@@ -383,6 +372,74 @@ async function countSessionsInPortfolio(
   return asNumber(rows[0]?.c);
 }
 
+async function sumTotalTokensInPortfolio(
+  queryable: Queryable,
+  portfolioId: string,
+  query: AnalyticsQuery,
+): Promise<number> {
+  const generationId = query.generationId;
+  const sql = generationId
+    ? `SELECT COALESCE(SUM(r.value_sum), 0) AS total
+       FROM portfolio_daily_rollups r
+       JOIN metric_definitions d ON d.id = r.metric_definition_id
+       WHERE r.portfolio_id = ? AND r.generation_id = ?
+         AND d.metric_id = 'claude:tokens:total:inclusive'`
+    : `SELECT COALESCE(SUM(r.value_sum), 0) AS total
+       FROM portfolio_daily_rollups r
+       JOIN metric_definitions d ON d.id = r.metric_definition_id
+       WHERE r.portfolio_id = ?
+         AND d.metric_id = 'claude:tokens:total:inclusive'`;
+  const params = generationId ? [portfolioId, generationId] : [portfolioId];
+  const { rows } = await queryable.exec(sql, params);
+  return asNumber(rows[0]?.total);
+}
+
+async function countDistinctModelsInPortfolio(
+  queryable: Queryable,
+  portfolioId: string,
+  query: AnalyticsQuery,
+): Promise<number> {
+  const generationId = query.generationId;
+  const sql = generationId
+    ? `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
+       FROM normalized_events e
+       JOIN sessions s ON s.id = e.session_id
+       JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ? AND s.current_generation_id = ?
+         AND e.event_type = 'model_request'
+         AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL`
+    : `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
+       FROM normalized_events e
+       JOIN sessions s ON s.id = e.session_id
+       JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ?
+         AND e.event_type = 'model_request'
+         AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL`;
+  const params = generationId ? [portfolioId, generationId] : [portfolioId];
+  const { rows } = await queryable.exec(sql, params);
+  return asNumber(rows[0]?.c);
+}
+
+async function countDistinctHarnessesInPortfolio(
+  queryable: Queryable,
+  portfolioId: string,
+  query: AnalyticsQuery,
+): Promise<number> {
+  const generationId = query.generationId;
+  const sql = generationId
+    ? `SELECT COUNT(DISTINCT s.harness) AS c
+       FROM sessions s
+       JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ? AND s.current_generation_id = ?`
+    : `SELECT COUNT(DISTINCT s.harness) AS c
+       FROM sessions s
+       JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ?`;
+  const params = generationId ? [portfolioId, generationId] : [portfolioId];
+  const { rows } = await queryable.exec(sql, params);
+  return asNumber(rows[0]?.c);
+}
+
 async function countComponentsByKind(
   queryable: Queryable,
   portfolioId: string,
@@ -407,10 +464,19 @@ async function findUnusedOfferedComponents(
   query: AnalyticsQuery,
 ): Promise<readonly string[]> {
   const allIdentities = await ComponentIdentityStore.listByPortfolio(queryable, portfolioId);
-  const allRollups = await ComponentRollupStore.listByPortfolio(queryable, portfolioId);
-  const usedIds = new Set(
-    allRollups.filter((r) => isComponentRollupInQuery(r, query)).map((r) => r.componentId),
+  // component_rollups is not populated by the current ingestion pipeline.
+  // Use session_component_exposures to determine which components are
+  // actually used (exposed) in at least one session.
+  const { rows: usedRows } = await queryable.exec(
+    `SELECT DISTINCT sce.component_id
+     FROM session_component_exposures sce
+     JOIN sessions s ON s.id = sce.session_id
+     JOIN projects p ON p.id = s.project_id
+     WHERE p.portfolio_id = ?
+       AND (? IS NULL OR sce.generation_id = ?)`,
+    [portfolioId, query.generationId ?? null, query.generationId ?? null],
   );
+  const usedIds = new Set(usedRows.map((r) => asString(r.component_id)));
   return allIdentities.filter((i) => !usedIds.has(i.id)).map((i) => i.id);
 }
 
@@ -449,6 +515,9 @@ export async function getPortfolioOverview(
       sessionCount: 0,
       componentCounts: {},
       unusedOfferedComponents: [],
+      totalTokens: 0,
+      modelCount: 0,
+      harnessCount: 0,
     };
   }
 
@@ -486,6 +555,9 @@ export async function getPortfolioOverview(
   const sessionCount = await countSessionsInPortfolio(queryable, portfolioId, query);
   const componentCounts = await countComponentsByKind(queryable, portfolioId);
   const unusedOfferedComponents = await findUnusedOfferedComponents(queryable, portfolioId, query);
+  const totalTokens = await sumTotalTokensInPortfolio(queryable, portfolioId, query);
+  const modelCount = await countDistinctModelsInPortfolio(queryable, portfolioId, query);
+  const harnessCount = await countDistinctHarnessesInPortfolio(queryable, portfolioId, query);
 
   const countToken: AnalyticsToken = {
     ...overviewToken,
@@ -527,6 +599,9 @@ export async function getPortfolioOverview(
     sessionCount,
     componentCounts,
     unusedOfferedComponents,
+    totalTokens,
+    modelCount,
+    harnessCount,
   };
 }
 
@@ -555,6 +630,7 @@ export async function getPortfolioTrends(
       time: rollup.dayBucket,
       value,
       metricId: definition.metricId,
+      label: definition.label,
       comparabilityGroupId: rollup.comparabilityGroupId,
     });
   }
@@ -594,60 +670,40 @@ export async function getComponentUtilization(
   const comparabilityGroupId = query.comparabilityGroupId ?? null;
   const generationId = query.generationId ?? null;
 
+  // Aggregate component utilization from session_component_exposures, which
+  // is populated during ingestion. The component_rollups and
+  // session_component_stats tables are not populated by the current ingestion
+  // pipeline, so querying them yields no rows. session_component_exposures
+  // tracks which components are available in which sessions; we count
+  // distinct sessions and projects per component and join to
+  // component_identities for the kind. Invocation/success counts are not
+  // available from this table, so loadRate is null until a rollup pipeline
+  // is added.
   const { rows: rollupRows } = await queryable.exec(
     `SELECT
-       cr.component_id,
+       sce.component_id,
        ci.kind,
-       COUNT(DISTINCT cr.project_id) AS project_count,
-       SUM(cr.invocation_count) AS total_invocations,
-       SUM(cr.success_count) AS total_success,
-       SUM(cr.failure_count) AS total_failure,
-       SUM(cr.cancellation_count) AS total_cancellation
-     FROM component_rollups cr
-     JOIN component_identities ci ON ci.id = cr.component_id
-     WHERE cr.portfolio_id = ?
-       AND (? IS NULL OR cr.analysis_release_id = ?)
-       AND (? IS NULL OR cr.comparability_group_id = ?)
-       AND (? IS NULL OR cr.generation_id = ?)
-     GROUP BY cr.component_id, ci.kind
-     ORDER BY cr.component_id`,
-    [
-      portfolioId,
-      analysisReleaseId,
-      analysisReleaseId,
-      comparabilityGroupId,
-      comparabilityGroupId,
-      generationId,
-      generationId,
-    ],
-  );
-
-  const { rows: sessionRows } = await queryable.exec(
-    `SELECT
-       scs.component_id,
-       COUNT(DISTINCT scs.session_id) AS session_count
-     FROM session_component_stats scs
-     JOIN sessions s ON s.id = scs.session_id
+       COUNT(DISTINCT sce.session_id) AS session_count,
+       COUNT(DISTINCT s.project_id) AS project_count
+     FROM session_component_exposures sce
+     JOIN sessions s ON s.id = sce.session_id
      JOIN projects p ON p.id = s.project_id
+     LEFT JOIN component_identities ci ON ci.id = sce.component_id
      WHERE p.portfolio_id = ?
-       AND (? IS NULL OR scs.generation_id = ?)
-     GROUP BY scs.component_id`,
+       AND (? IS NULL OR sce.generation_id = ?)
+     GROUP BY sce.component_id, ci.kind
+     ORDER BY sce.component_id`,
     [portfolioId, generationId, generationId],
   );
-
-  const sessionCounts = new Map<string, number>();
-  for (const row of sessionRows) {
-    sessionCounts.set(asString(row.component_id), asNumber(row.session_count));
-  }
 
   const items: ComponentUtilizationRow[] = [];
   for (const row of rollupRows) {
     const componentId = asString(row.component_id);
-    const kind = asString(row.kind);
+    const kind = asString(row.kind ?? 'unknown');
     const projectCount = asNumber(row.project_count);
-    const totalInvocations = asNumber(row.total_invocations);
-    const totalSuccess = asNumber(row.total_success);
-    const sessionCount = sessionCounts.get(componentId) ?? 0;
+    const totalInvocations = 0;
+    const totalSuccess = 0;
+    const sessionCount = asNumber(row.session_count);
 
     const reliability = totalInvocations > 0 ? totalSuccess / totalInvocations : null;
     const token = makeBaseToken(

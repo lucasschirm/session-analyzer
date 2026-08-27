@@ -11,8 +11,21 @@ import type {
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import { formatFullNumber } from '../../lib/format';
+import { filterByScope, metricLabel } from '../portfolio/portfolio-chart-helpers';
+import type { SessionsScope } from '../portfolio/portfolio-params';
 import type { ProjectBehaviorParams } from './project-behavior-params';
 import { evidenceLinkHref } from './project-behavior-params';
+
+const TOKEN_METRIC_PREFIXES = [
+  'claude:tokens:cache_creation:',
+  'claude:tokens:cache_read:',
+  'claude:tokens:total:',
+  'claude:tokens:output:',
+];
+
+function isTokenMetric(metricId: string): boolean {
+  return TOKEN_METRIC_PREFIXES.some((prefix) => metricId.startsWith(prefix));
+}
 
 export function formatMetricValue(metric: MetricValueDto | undefined): string {
   if (!metric) return '—';
@@ -41,7 +54,7 @@ export function summaryToMetricCards(
       metric.evidenceLinks.find((l) => l.entityType === 'session') ?? metric.evidenceLinks[0];
     return {
       metricId: metric.metricId,
-      label: metric.label || metric.metricId,
+      label: metricLabel(metric.metricId, metric.label),
       value: formatMetricValue(metric),
       sub: `${coverageN(metric)} • ${metric.coverage} • ${metric.confidence}`,
       href: link ? evidenceLinkHref(link, params) : undefined,
@@ -52,20 +65,19 @@ export function summaryToMetricCards(
 
 export function sessionTrendToChartSeries(
   trend: SessionTrendSeries,
-  metricId?: string,
+  scope: SessionsScope = 'main',
 ): ChartSeries {
-  const buckets: ChartBucket[] = trend.series
-    .filter((p) => !metricId || p.metricId === metricId)
-    .map((p) => ({
-      x: p.time,
-      y: p.value,
-      label: `${p.time}: ${formatChartValue(p.value)}`,
-      series: p.metricId,
-    }));
+  const filtered = filterByScope(trend.series, scope).filter((p) => !isTokenMetric(p.metricId));
+  const buckets: ChartBucket[] = filtered.map((p) => ({
+    x: p.time,
+    y: p.value,
+    label: `${p.time}: ${formatChartValue(p.value)}`,
+    series: metricLabel(p.metricId, p.label),
+  }));
 
   return {
-    seriesId: metricId ?? 'session-trend',
-    label: metricId ? `Trend: ${metricId}` : 'Session-to-session context growth',
+    seriesId: 'session-trend',
+    label: 'Session Metrics',
     chartType: 'time_series',
     xLabel: 'Time',
     yLabel: 'Value',
@@ -73,15 +85,40 @@ export function sessionTrendToChartSeries(
   };
 }
 
+export function sessionTokenTrendToChartSeries(
+  trend: SessionTrendSeries,
+  scope: SessionsScope = 'main',
+): ChartSeries {
+  const filtered = filterByScope(trend.series, scope).filter((p) => isTokenMetric(p.metricId));
+  const buckets: ChartBucket[] = filtered.map((p) => ({
+    x: p.time,
+    y: p.value,
+    label: `${p.time}: ${formatChartValue(p.value)}`,
+    series: metricLabel(p.metricId, p.label),
+  }));
+
+  return {
+    seriesId: 'session-token-trend',
+    label: 'Token usage trends',
+    chartType: 'time_series',
+    xLabel: 'Time',
+    yLabel: 'Tokens',
+    buckets,
+  };
+}
+
 export function headlineMetricsToDistributionSeries(summary: ProjectBehaviorSummary): ChartSeries {
   const buckets: ChartBucket[] = summary.headlineMetrics
     .filter((m) => m.value !== null)
-    .map((m) => ({
-      x: m.label || m.metricId,
-      y: m.value,
-      label: `${m.label || m.metricId}: ${formatChartValue(m.value, m.unit)}`,
-      series: m.metricId,
-    }));
+    .map((m) => {
+      const label = metricLabel(m.metricId, m.label);
+      return {
+        x: label,
+        y: m.value,
+        label: `${label}: ${formatChartValue(m.value, m.unit)}`,
+        series: m.metricId,
+      };
+    });
 
   return {
     seriesId: 'metric-distributions',

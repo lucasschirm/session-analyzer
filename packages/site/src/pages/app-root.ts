@@ -117,8 +117,6 @@ export class AppRoot extends LitElement {
     main {
       padding: 24px;
       padding-bottom: 56px;
-      max-width: 1200px;
-      margin: 0 auto;
     }
 
     .app-error {

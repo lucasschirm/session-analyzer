@@ -7,12 +7,108 @@ import type {
   PortfolioTrendSeries,
   ProjectListItem,
   ProjectListPage,
+  TimeSeriesPoint,
 } from '@lucasschirm/sal-db';
+import { tryMetricIdToLabel } from '@lucasschirm/sal-transformer';
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import { componentHref } from '../component-ecosystem/component-ecosystem-params';
-import type { PortfolioParams } from './portfolio-params';
+import type { PortfolioParams, SessionsScope } from './portfolio-params';
 import { buildPortfolioHash, evidenceLinkHref } from './portfolio-params';
+
+// ---------------------------------------------------------------------------
+// Sessions scope filtering (shared by portfolio and project-behavior)
+// ---------------------------------------------------------------------------
+
+/** Metric IDs that belong to the token usage chart (split out from main trend). */
+const TOKEN_METRIC_PREFIXES = [
+  'claude:tokens:cache_creation:',
+  'claude:tokens:cache_read:',
+  'claude:tokens:total:',
+  'claude:tokens:output:',
+];
+
+function isTokenMetric(metricId: string): boolean {
+  return TOKEN_METRIC_PREFIXES.some((prefix) => metricId.startsWith(prefix));
+}
+
+/**
+ * Strips the trailing scope suffix (" (root-only)" / " (inclusive)") from a
+ * metric label. The scope is already conveyed by the Sessions filter, so the
+ * suffix is redundant in chart legends and axis labels.
+ */
+export function stripScopeSuffix(label: string): string {
+  return label.replace(/\s*\((root-only|inclusive)\)\s*$/, '');
+}
+
+/** tryMetricIdToLabel with the scope suffix stripped. */
+export function metricLabel(metricId: string, fallback?: string): string {
+  const raw = tryMetricIdToLabel(metricId) ?? fallback ?? metricId;
+  return stripScopeSuffix(raw);
+}
+
+/**
+ * Converts a TimeSeriesPoint value for the wall_ms metric from milliseconds
+ * to minutes, so that old DB data (stored in ms) displays consistently with
+ * the new minutes-based metric definition.
+ */
+function normalizeWallMsPoint(p: TimeSeriesPoint): TimeSeriesPoint {
+  if (p.metricId.startsWith('claude:duration:wall_ms:') && p.value !== null) {
+    return { ...p, value: p.value / 60_000 };
+  }
+  return p;
+}
+
+/**
+ * Filters and transforms TimeSeriesPoint[] by sessions scope.
+ * - `main` → root_only metrics only
+ * - `all` → inclusive metrics only
+ * - `sub_agents` → computes inclusive - root_only per metric/time
+ */
+export function filterByScope(
+  points: readonly TimeSeriesPoint[],
+  scope: SessionsScope,
+): TimeSeriesPoint[] {
+  if (scope === 'main') {
+    return points.filter((p) => p.metricId.endsWith(':root_only')).map(normalizeWallMsPoint);
+  }
+  if (scope === 'all') {
+    return points.filter((p) => p.metricId.endsWith(':inclusive')).map(normalizeWallMsPoint);
+  }
+  // sub_agents: compute inclusive - root_only for each metric base + time
+  const inclusive = new Map<string, TimeSeriesPoint>();
+  const rootOnly = new Map<string, TimeSeriesPoint>();
+  for (const p of points) {
+    const base = p.metricId.replace(/:(root_only|inclusive)$/, '');
+    const key = `${base}|${p.time}`;
+    if (p.metricId.endsWith(':inclusive')) {
+      inclusive.set(key, p);
+    } else if (p.metricId.endsWith(':root_only')) {
+      rootOnly.set(key, p);
+    }
+  }
+  const result: TimeSeriesPoint[] = [];
+  for (const [key, incPoint] of inclusive) {
+    const rootPoint = rootOnly.get(key);
+    const base = incPoint.metricId.replace(/:inclusive$/, '');
+    const subAgentMetricId = `${base}:sub_agents`;
+    const incValue = incPoint.value ?? 0;
+    const rootValue = rootPoint?.value ?? 0;
+    let delta = incValue - rootValue;
+    // Convert wall_ms delta from ms to minutes
+    if (base.startsWith('claude:duration:wall_ms')) {
+      delta = delta / 60_000;
+    }
+    result.push({
+      time: incPoint.time,
+      value: delta,
+      metricId: subAgentMetricId,
+      label: metricLabel(`${base}:root_only`, incPoint.label),
+      comparabilityGroupId: incPoint.comparabilityGroupId,
+    });
+  }
+  return result;
+}
 
 function valueForMetric(
   row: { metricValues: readonly MetricValueDto[] },
@@ -25,25 +121,49 @@ function valueForMetric(
 }
 
 function _metricLabel(metric: MetricValueDto): string {
-  return metric.label || metric.metricId;
+  return metricLabel(metric.metricId, metric.label);
 }
 
-export function trendToChartSeries(trend: PortfolioTrendSeries, metricId?: string): ChartSeries {
-  const buckets: ChartBucket[] = trend.series
-    .filter((p) => !metricId || p.metricId === metricId)
-    .map((p) => ({
-      x: p.time,
-      y: p.value,
-      label: `${p.time}: ${formatChartValue(p.value)}`,
-      series: p.metricId,
-    }));
+export function trendToChartSeries(
+  trend: PortfolioTrendSeries,
+  scope: SessionsScope = 'main',
+): ChartSeries {
+  const filtered = filterByScope(trend.series, scope).filter((p) => !isTokenMetric(p.metricId));
+  const buckets: ChartBucket[] = filtered.map((p) => ({
+    x: p.time,
+    y: p.value,
+    label: `${p.time}: ${formatChartValue(p.value)}`,
+    series: metricLabel(p.metricId, p.label),
+  }));
 
   return {
-    seriesId: metricId ?? 'trend',
-    label: metricId ?? 'Trends',
+    seriesId: 'trend',
+    label: 'Session Metrics',
     chartType: 'time_series',
     xLabel: 'Time',
     yLabel: 'Value',
+    buckets,
+  };
+}
+
+export function tokenTrendToChartSeries(
+  trend: PortfolioTrendSeries,
+  scope: SessionsScope = 'main',
+): ChartSeries {
+  const filtered = filterByScope(trend.series, scope).filter((p) => isTokenMetric(p.metricId));
+  const buckets: ChartBucket[] = filtered.map((p) => ({
+    x: p.time,
+    y: p.value,
+    label: `${p.time}: ${formatChartValue(p.value)}`,
+    series: metricLabel(p.metricId, p.label),
+  }));
+
+  return {
+    seriesId: 'token-trend',
+    label: 'Token usage trends',
+    chartType: 'time_series',
+    xLabel: 'Time',
+    yLabel: 'Tokens',
     buckets,
   };
 }
@@ -127,13 +247,25 @@ export function overviewToMetricCards(
   overview: PortfolioOverview,
   params: PortfolioParams,
 ): MetricCardView[] {
+  const skillCount = overview.componentCounts['skill'] ?? 0;
+  const otherComponentCount = Object.entries(overview.componentCounts)
+    .filter(([kind]) => kind !== 'skill')
+    .reduce((sum, [, count]) => sum + count, 0);
+
+  const subForMetric: Record<string, string> = {
+    'portfolio-project-count': `${formatChartValue(overview.totalTokens)} Tokens`,
+    'portfolio-session-count': `${overview.modelCount} Models`,
+    'portfolio-component-count': `${overview.harnessCount} Harness`,
+    'portfolio-unused-components': `${skillCount} Skills • ${otherComponentCount} Others`,
+  };
+
   return overview.headlineMetrics.map((metric) => {
     const link = metric.evidenceLinks[0];
     return {
       metricId: metric.metricId,
-      label: metric.label || metric.metricId,
+      label: metricLabel(metric.metricId, metric.label),
       value: formatMetricValue(metric),
-      sub: `${coverageN(metric)} • ${metric.coverage} • ${metric.confidence}`,
+      sub: subForMetric[metric.metricId] ?? '',
       href: link ? evidenceLinkHref(link, params) : undefined,
     };
   });
@@ -144,9 +276,6 @@ export interface ProjectRowView {
   name: string;
   sessionCount: number;
   harness: string;
-  source: string;
-  completeness: string;
-  finality: string;
   href: string;
 }
 
@@ -159,10 +288,7 @@ export function projectListToRows(
     name: project.name,
     sessionCount: project.sessionCount,
     harness: project.harness,
-    source: project.source,
-    completeness: project.completeness,
-    finality: project.finality,
-    href: `#/projects/${project.projectId}/behavior?returnContext=${encodeURIComponent(
+    href: `#/projects/${project.name}/behavior?returnContext=${encodeURIComponent(
       buildPortfolioHash(params).slice(1),
     )}`,
   }));

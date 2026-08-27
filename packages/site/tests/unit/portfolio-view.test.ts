@@ -94,6 +94,9 @@ function overviewFixture(overrides: Partial<PortfolioOverview> = {}): PortfolioO
     sessionCount: 12,
     componentCounts: { tool: 5, agent: 2 },
     unusedOfferedComponents: ['unused-component'],
+    totalTokens: 1_234_567,
+    modelCount: 2,
+    harnessCount: 1,
     ...overrides,
   };
 }
@@ -102,8 +105,20 @@ function trendsFixture(overrides: Partial<PortfolioTrendSeries> = {}): Portfolio
   return {
     token: tokenFixture(),
     series: [
-      { time: '2024-01-01', value: 100, metricId: 'total_tokens', comparabilityGroupId: 'cgrp-1' },
-      { time: '2024-01-02', value: 150, metricId: 'total_tokens', comparabilityGroupId: 'cgrp-1' },
+      {
+        time: '2024-01-01',
+        value: 100,
+        metricId: 'total_tokens',
+        label: 'Total tokens',
+        comparabilityGroupId: 'cgrp-1',
+      },
+      {
+        time: '2024-01-02',
+        value: 150,
+        metricId: 'total_tokens',
+        label: 'Total tokens',
+        comparabilityGroupId: 'cgrp-1',
+      },
     ],
     ...overrides,
   };
@@ -214,7 +229,7 @@ describe('portfolio-view', () => {
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    expect(shadowText(root, 'analytics-chart')).toMatch(/no data points/i);
+    expect(allShadowTexts(root, 'analytics-chart').join(' ')).toMatch(/Session Metrics/i);
     expect(root.textContent).toContain('No projects found');
   });
 
@@ -245,7 +260,7 @@ describe('portfolio-view', () => {
     link.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(window.location.hash).toContain('#/projects/p1/behavior?returnContext=');
+    expect(window.location.hash).toContain('#/projects/Project%20One/behavior?returnContext=');
   });
 
   it('applies filters and updates the hash', async () => {

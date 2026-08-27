@@ -7,6 +7,7 @@ import type {
   SessionTree,
   SessionTreeNode,
 } from '@lucasschirm/sal-db';
+import { tryMetricIdToLabel } from '@lucasschirm/sal-transformer';
 import type { ChartBucket, ChartSeries, TableRow } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import type { MetricCardView } from '../portfolio/portfolio-chart-helpers';
@@ -103,7 +104,7 @@ export function summaryToMetricCards(
     const link = metric.evidenceLinks[0];
     return {
       metricId: metric.metricId,
-      label: metric.label || metric.metricId,
+      label: tryMetricIdToLabel(metric.metricId) ?? metric.label,
       value: formatChartValue(metric.value, metric.unit),
       sub: `${coverageN(metric)} • ${metric.coverage} • ${metric.confidence}`,
       href: link ? evidenceLinkHref(link, params) : undefined,

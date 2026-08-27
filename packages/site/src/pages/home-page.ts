@@ -22,6 +22,8 @@ export class HomePage extends LitElement {
   static styles = css`
     :host {
       display: block;
+      max-width: 1200px;
+      margin: 0 auto;
     }
 
     .home-page {

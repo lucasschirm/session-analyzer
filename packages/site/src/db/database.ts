@@ -129,6 +129,7 @@ const COLUMN_MIGRATIONS = [
   'ALTER TABLE sessions ADD COLUMN sync_main_transcript_relative_path TEXT',
   'ALTER TABLE sessions ADD COLUMN sync_artifacts TEXT',
   'ALTER TABLE sessions ADD COLUMN sync_runs TEXT',
+  'ALTER TABLE session_files ADD COLUMN etag TEXT',
 ] as const;
 
 const LOCKED_MESSAGE_RE =
@@ -468,6 +469,7 @@ export class DatabaseManager {
         path TEXT NOT NULL,
         scope TEXT NOT NULL,
         sha256 TEXT NOT NULL,
+        etag TEXT,
         size INTEGER NOT NULL,
         status TEXT NOT NULL,
         updated_at INTEGER NOT NULL,
@@ -1049,11 +1051,11 @@ export class DatabaseManager {
   upsertSessionFile(file: SessionFileRecord): void {
     this.requireDb().exec({
       sql: `INSERT INTO session_files (
-        id, project_id, session_id, path, scope, sha256, size, status, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, project_id, session_id, path, scope, sha256, etag, size, status, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id, path) DO UPDATE SET
-        scope = excluded.scope, sha256 = excluded.sha256, size = excluded.size,
-        status = excluded.status, updated_at = excluded.updated_at`,
+        scope = excluded.scope, sha256 = excluded.sha256, etag = excluded.etag,
+        size = excluded.size, status = excluded.status, updated_at = excluded.updated_at`,
       bind: [
         file.id,
         file.project_id,
@@ -1061,6 +1063,7 @@ export class DatabaseManager {
         file.path,
         file.scope,
         file.sha256,
+        file.etag ?? null,
         file.size,
         file.status,
         file.updated_at,
@@ -1213,6 +1216,7 @@ function rowToSessionFile(row: Record<string, unknown>): SessionFileRecord {
     path: String(row.path),
     scope: row.scope as SessionFileRecord['scope'],
     sha256: String(row.sha256),
+    etag: typeof row.etag === 'string' ? row.etag : undefined,
     size: Number(row.size),
     status: row.status as SessionFileRecord['status'],
     updated_at: Number(row.updated_at),

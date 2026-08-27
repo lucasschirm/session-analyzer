@@ -13,6 +13,7 @@ import type {
 } from '@lucasschirm/sal-db';
 import type { ChartSeries, ChartState } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
+import type { SessionsScope } from '../portfolio/portfolio-params';
 import {
   type ComparisonRowView,
   comparisonPageToRows,
@@ -22,6 +23,7 @@ import {
   type MetricCardView,
   type OutlierRowView,
   outlierPageToRows,
+  sessionTokenTrendToChartSeries,
   sessionTrendToChartSeries,
   summaryToMetricCards,
 } from './project-behavior-chart-helpers';
@@ -226,6 +228,9 @@ export class ProjectBehaviorPage extends LitElement {
 
   @state() private globalError: string | null = null;
 
+  /** Internal analytics project id resolved from the URL's project id. */
+  private resolvedProjectId: string | null = null;
+
   @state() private summary: PanelState<ProjectBehaviorSummary> = { data: null, state: 'idle' };
 
   @state() private trends: PanelState<SessionTrendSeries> = { data: null, state: 'idle' };
@@ -269,16 +274,35 @@ export class ProjectBehaviorPage extends LitElement {
     this.globalState = 'loading';
     this.globalError = null;
 
+    // Resolve the URL project id (which may be a native/sync project id) to
+    // the internal analytics project id used by all analytics queries.
+    try {
+      const resolved = await analyticsClient.resolveProjectId(this.projectId);
+      this.resolvedProjectId = resolved;
+      if (!resolved) {
+        this.globalState = 'empty';
+        this.globalError = null;
+        this.loading = false;
+        return;
+      }
+    } catch {
+      this.globalState = 'error';
+      this.globalError = 'Failed to resolve project id.';
+      this.loading = false;
+      return;
+    }
+
+    const analyticsProjectId = this.resolvedProjectId ?? this.projectId;
     const parsed = parseProjectBehaviorHash(window.location.hash);
     this.filters = { ...parsed, projectId: this.projectId };
     const query = projectBehaviorParamsToQuery(this.filters);
 
     const [summary, trends, timeline, outliers, comparisons] = await Promise.allSettled([
-      analyticsClient.project.getSummary(this.projectId, query),
-      analyticsClient.project.getSessionTrendSeries(this.projectId, query),
-      analyticsClient.project.getConfigurationTimeline(this.projectId, query),
-      analyticsClient.project.getOutliers(this.projectId, query),
-      analyticsClient.project.getComparisons(this.projectId, query),
+      analyticsClient.project.getSummary(analyticsProjectId, query),
+      analyticsClient.project.getSessionTrendSeries(analyticsProjectId, query),
+      analyticsClient.project.getConfigurationTimeline(analyticsProjectId, query),
+      analyticsClient.project.getOutliers(analyticsProjectId, query),
+      analyticsClient.project.getComparisons(analyticsProjectId, query),
     ]);
 
     this.summary = panelStateFromResult(summary, (d) => d.headlineMetrics.length === 0);
@@ -422,15 +446,15 @@ export class ProjectBehaviorPage extends LitElement {
           />
         </label>
         <label>
-          Scope
+          Sessions
           <select
-            .value=${this.filters.scope ?? ''}
+            .value=${this.filters.sessions ?? 'main'}
             @change=${(e: Event) =>
-              this.updateFilter('scope', (e.target as HTMLSelectElement).value)}
+              this.updateFilter('sessions', (e.target as HTMLSelectElement).value)}
           >
-            <option value="">All</option>
-            <option value="root">Root</option>
-            <option value="inclusive">Inclusive</option>
+            <option value="main">Main</option>
+            <option value="all">All</option>
+            <option value="sub_agents">Sub Agents</option>
           </select>
         </label>
         <label>
@@ -525,16 +549,28 @@ export class ProjectBehaviorPage extends LitElement {
   }
 
   private renderTrends() {
+    const scope: SessionsScope = this.filters.sessions ?? 'main';
+    const tokenSeries: ChartSeries | null = this.trends.data
+      ? sessionTokenTrendToChartSeries(this.trends.data, scope)
+      : null;
     const series: ChartSeries | null = this.trends.data
-      ? sessionTrendToChartSeries(this.trends.data)
+      ? sessionTrendToChartSeries(this.trends.data, scope)
       : null;
     return html`
       <div class="section">
-        <h2>Session-to-session context growth</h2>
+        <h2>Session Metrics</h2>
         <analytics-chart
-          title="Session-to-session context growth"
+          title="Token usage trends"
+          description="Per-session token totals — cache write, cache read, output, and total tokens — so you can track how token consumption grows across consecutive sessions."
+          .series=${tokenSeries}
+          .state=${this.chartState(this.trends.state)}
+        ></analytics-chart>
+        <analytics-chart
+          title="Session Metrics"
+          description="Per-session metric totals over time — duration, turns, tool/skill/agent invocations, and more — so you can see how context and activity grow across consecutive sessions in this project."
           .series=${series}
           .state=${this.chartState(this.trends.state)}
+          style="margin-top: 24px;"
         ></analytics-chart>
       </div>
     `;
@@ -549,6 +585,7 @@ export class ProjectBehaviorPage extends LitElement {
         <h2>Cost / time / outcome distributions</h2>
         <analytics-chart
           title="Cost / time / outcome distributions"
+          description="How cost, wall-clock duration, and outcome metrics are distributed across sessions in this project, highlighting typical ranges and outliers."
           .series=${series}
           .state=${this.chartState(this.summary.state)}
         ></analytics-chart>
@@ -565,6 +602,7 @@ export class ProjectBehaviorPage extends LitElement {
         <h2>Configuration timeline</h2>
         <analytics-chart
           title="Configuration timeline"
+          description="Changes to model, mode, and other configuration settings across sessions, annotated on a timeline so you can correlate configuration shifts with performance changes."
           .series=${series}
           .state=${this.chartState(this.timeline.state)}
         ></analytics-chart>

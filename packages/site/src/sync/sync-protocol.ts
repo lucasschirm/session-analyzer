@@ -80,6 +80,9 @@ export interface SessionSyncMessage {
   sync: boolean;
   exists: boolean;
   filesToDownload?: FileToDownload[];
+  /** Local file records with ETags, used by the worker to skip unchanged files
+   * when falling back to listing-based discovery (no manifest hashes). */
+  localFileEtas?: Record<string, string>;
 }
 
 /** Main→Worker: abort the sync and release resources. */
@@ -161,6 +164,7 @@ export interface SessionFileDownloadedMessage {
   sessionId: string;
   file: string;
   hash: string;
+  etag?: string;
   content: ArrayBuffer;
 }
 

@@ -284,6 +284,7 @@ export interface SessionFileRecord {
   path: string;
   scope: 'session' | 'workspace' | 'global' | 'runtime';
   sha256: string;
+  etag?: string;
   size: number;
   status: 'downloaded' | 'processed' | 'failed';
   updated_at: number;

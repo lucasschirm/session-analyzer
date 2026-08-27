@@ -1,4 +1,5 @@
 import type { AnalyticsQuery, EvidenceLink, Filter, TimeRange } from '@lucasschirm/sal-db';
+import type { SessionsScope } from '../portfolio/portfolio-params';
 
 export interface ProjectBehaviorParams {
   projectId: string;
@@ -10,14 +11,14 @@ export interface ProjectBehaviorParams {
   mode?: string;
   component?: string;
   taskCohort?: string;
-  scope?: 'root' | 'inclusive';
+  sessions?: SessionsScope;
   confidence?: string;
   analysisRelease?: string;
   comparabilityGroup?: string;
   generation?: string;
 }
 
-const DEFAULT_PARAMS: Omit<ProjectBehaviorParams, 'projectId'> = {};
+const DEFAULT_PARAMS: Omit<ProjectBehaviorParams, 'projectId'> = { sessions: 'main' };
 
 export function parseProjectBehaviorHash(hash: string): ProjectBehaviorParams {
   const clean = hash.replace(/^#/, '');
@@ -39,8 +40,7 @@ export function parseProjectBehaviorHash(hash: string): ProjectBehaviorParams {
   if (params.get('mode')) result.mode = params.get('mode') ?? undefined;
   if (params.get('component')) result.component = params.get('component') ?? undefined;
   if (params.get('taskCohort')) result.taskCohort = params.get('taskCohort') ?? undefined;
-  if (params.get('scope'))
-    result.scope = (params.get('scope') as 'root' | 'inclusive') ?? undefined;
+  if (params.get('sessions')) result.sessions = (params.get('sessions') as SessionsScope) ?? 'main';
   if (params.get('confidence')) result.confidence = params.get('confidence') ?? undefined;
   if (params.get('analysisRelease'))
     result.analysisRelease = params.get('analysisRelease') ?? undefined;
@@ -72,7 +72,6 @@ export function projectBehaviorParamsToQuery(params: ProjectBehaviorParams): Ana
     filters.push({ field: 'componentId', operator: 'eq', value: params.component });
   if (params.taskCohort)
     filters.push({ field: 'taskCohort', operator: 'eq', value: params.taskCohort });
-  if (params.scope) filters.push({ field: 'scope', operator: 'eq', value: params.scope });
   if (params.confidence)
     filters.push({ field: 'confidence', operator: 'eq', value: params.confidence });
 

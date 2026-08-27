@@ -282,8 +282,8 @@ export class PasskeyModal extends LitElement {
   private async handleCreateSubmit(event: Event): Promise<void> {
     event.preventDefault();
 
-    if (this.passkey.length < 8) {
-      this.error = 'Passkey must be at least 8 characters.';
+    if (this.passkey.length < 4) {
+      this.error = 'Passkey must be at least 4 characters.';
       return;
     }
 
@@ -385,7 +385,7 @@ export class PasskeyModal extends LitElement {
           type="password"
           .value=${this.passkey}
           @input=${this.handlePasskeyInput}
-          minlength="8"
+          minlength="4"
           required
           autocomplete="new-password"
         />

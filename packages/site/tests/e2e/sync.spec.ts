@@ -767,3 +767,72 @@ test('large transcript syncs and renders compact token counts', async ({ page })
   // 500 assistant turns * 2000 tokens = 1,000,000, rendered as "1M".
   await expect(metricsGrid).toContainText('1M', { timeout: 30000 });
 });
+
+// =============================================================================
+// Scenario 18: One broken session (unresolvable artifact) does not stop the run
+// =============================================================================
+
+test('unresolvable artifact in one session does not stop the sync run', async ({ page }) => {
+  const bucket = new FixtureBucket();
+  bucket.addProject('break-proj', 'Break Project', '');
+  bucket.addSession('break-proj', 'good-session', {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+  bucket.addSession('break-proj', 'bad-session', {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+
+  const baseManifest = buildSessionManifest('break-proj', 'bad-session', [
+    {
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      content: fixtureBuffer('claude-session.jsonl'),
+    },
+  ]);
+  const badManifest = {
+    ...baseManifest,
+    artifacts: [
+      ...baseManifest.artifacts,
+      {
+        projectId: 'break-proj',
+        sessionId: 'bad-session',
+        scope: 'session' as const,
+        relativePath: 'extra.json',
+        sha256: 'b605112ded2cd14de8874940abbfca0ca2904ae657ac02492a96ffc75964ff23',
+        size: 0,
+        status: 'uploaded' as const,
+      },
+    ],
+  };
+  bucket.setManifestContent('break-proj', 'bad-session', Buffer.from(JSON.stringify(badManifest)));
+
+  attachLoggers(page);
+  await startSyncFromHome(page, bucket);
+
+  // Open the sync status modal while the run is active and verify the broken
+  // session is flagged (warning icon), then close and let the run complete.
+  const modal = await openSyncStatusModal(page);
+  await expect(modal).toContainText('bad-session', { timeout: 15000 });
+  await expect(modal).toContainText('good-session', { timeout: 15000 });
+  await modal.getByRole('button', { name: 'Close' }).click();
+  await expect(modal).toBeHidden();
+
+  await waitForSyncIdle(page);
+
+  // The run should complete without a "Sync failed" error toast; the good
+  // session should still be imported, leaving two sessions in the project.
+  await expect(page.locator('.toast.error')).not.toBeVisible();
+  await expect(page.getByRole('button', { name: /2 sessions/ })).toBeVisible({ timeout: 10000 });
+});

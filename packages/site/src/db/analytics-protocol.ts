@@ -128,6 +128,11 @@ export interface CloseRequest extends BaseRequest {
   readonly type: 'close';
 }
 
+export interface ResolveProjectIdRequest extends BaseRequest {
+  readonly type: 'resolveProjectId';
+  readonly projectId: string;
+}
+
 export type AnalyticsRequest =
   | InitRequest
   | GetBackendRequest
@@ -137,6 +142,7 @@ export type AnalyticsRequest =
   | IngestManualBundleRequest
   | ResolveManualConflictRequest
   | IngestSyncManifestRequest
+  | ResolveProjectIdRequest
   | CloseRequest;
 
 export type AnalyticsRequestPayload =
@@ -148,6 +154,7 @@ export type AnalyticsRequestPayload =
   | Omit<IngestManualBundleRequest, 'id'>
   | Omit<ResolveManualConflictRequest, 'id'>
   | Omit<IngestSyncManifestRequest, 'id'>
+  | Omit<ResolveProjectIdRequest, 'id'>
   | Omit<CloseRequest, 'id'>;
 
 interface BaseResponse {

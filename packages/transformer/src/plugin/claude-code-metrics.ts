@@ -340,16 +340,20 @@ export function getClaudeCodeMetricDefinitions(): readonly MetricDefinition[] {
   for (const scope of ['root_only', 'inclusive'] as const) {
     const scopeLabel = scope === 'root_only' ? 'root-only' : 'inclusive';
     const tokenClasses = [
-      ['input', 'Input tokens reported by the model provider.'],
-      ['output', 'Output tokens reported by the model provider.'],
-      ['cache_creation', 'Cache-creation (cache-write) tokens reported by the provider.'],
-      ['cache_read', 'Cache-read tokens reported by the provider.'],
+      ['input', 'Input tokens', 'Input tokens reported by the model provider.'],
+      ['output', 'Output tokens', 'Output tokens reported by the model provider.'],
+      [
+        'cache_creation',
+        'Cache write tokens',
+        'Cache-creation (cache-write) tokens reported by the provider.',
+      ],
+      ['cache_read', 'Cache-read tokens', 'Cache-read tokens reported by the provider.'],
     ] as const;
-    for (const [cls, desc] of tokenClasses) {
+    for (const [cls, label, desc] of tokenClasses) {
       defs.push(
         metricDefinition(
           `claude:tokens:${cls}:${scope}`,
-          `${cls} tokens (${scopeLabel})`,
+          `${label} (${scopeLabel})`,
           `${desc} Scope: ${scopeLabel}.`,
           'tokens',
           'token',
@@ -393,11 +397,11 @@ export function getClaudeCodeMetricDefinitions(): readonly MetricDefinition[] {
     defs.push(
       metricDefinition(
         `claude:duration:wall_ms:${scope}`,
-        `Wall duration (${scopeLabel})`,
-        `Time between the first and last observed event. Scope: ${scopeLabel}.`,
+        `Session duration`,
+        `Time between the first and last observed event, in minutes. Scope: ${scopeLabel}.`,
         'time',
-        'ms',
-        'integer',
+        'minutes',
+        'real',
         'derived',
         [],
         scope,
@@ -999,7 +1003,7 @@ export function deriveClaudeCodeMetrics(
     let value: number | null = null;
     let reason: string | undefined;
     if (first !== undefined && last !== undefined) {
-      value = last - first;
+      value = (last - first) / 60_000;
     } else {
       reason = 'no event timestamps';
     }

@@ -106,6 +106,12 @@ function isClaudeArtifactKind(kind: string): boolean {
 function toTextContent(content: unknown): string | undefined {
   if (typeof content === 'string') return content;
   if (content === null || content === undefined) return undefined;
+  if (content instanceof Uint8Array) {
+    return decodeUtf8(content);
+  }
+  if (content instanceof ArrayBuffer) {
+    return decodeUtf8(new Uint8Array(content));
+  }
   if (typeof content === 'object') {
     try {
       return JSON.stringify(content);
@@ -114,6 +120,38 @@ function toTextContent(content: unknown): string | undefined {
     }
   }
   return String(content);
+}
+
+/** Minimal UTF-8 decoder for byte arrays. The transformer package targets
+ *  ES2021 with no DOM lib, so TextDecoder is unavailable at type-check time. */
+function decodeUtf8(bytes: Uint8Array): string {
+  let result = '';
+  let i = 0;
+  while (i < bytes.length) {
+    const b1 = bytes[i++];
+    if (b1 < 0x80) {
+      result += String.fromCharCode(b1);
+    } else if (b1 < 0xc0) {
+      // Invalid leading byte — skip.
+    } else if (b1 < 0xe0) {
+      const b2 = bytes[i++];
+      result += String.fromCharCode(((b1 & 0x1f) << 6) | (b2 & 0x3f));
+    } else if (b1 < 0xf0) {
+      const b2 = bytes[i++];
+      const b3 = bytes[i++];
+      result += String.fromCharCode(((b1 & 0x0f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f));
+    } else {
+      const b2 = bytes[i++];
+      const b3 = bytes[i++];
+      const b4 = bytes[i++];
+      const codePoint =
+        ((b1 & 0x07) << 18) | ((b2 & 0x3f) << 12) | ((b3 & 0x3f) << 6) | (b4 & 0x3f);
+      // Convert to UTF-16 surrogate pair.
+      const adjusted = codePoint - 0x10000;
+      result += String.fromCharCode(0xd800 + (adjusted >> 10), 0xdc00 + (adjusted & 0x3ff));
+    }
+  }
+  return result;
 }
 
 function normalizeSlashes(input: string): string {
@@ -1049,7 +1087,10 @@ function makeProvenanceFromArtifacts(
 
 export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = {
   id: CLAUDE_CODE_TRANSFORMER_ID,
-  harnesses: [CLAUDE_CODE_TRANSFORMER_ID],
+  // 'claude' is the harness identifier written by the Claude Code sync plugin
+  // (@lucasschirm/claude-session-sync); 'claude-code' is the canonical
+  // transformer id. Both resolve to this transformer.
+  harnesses: [CLAUDE_CODE_TRANSFORMER_ID, 'claude'],
   transformerVersion: CLAUDE_CODE_TRANSFORMER_VERSION,
   ontologyVersion: CLAUDE_CODE_ONTOLOGY_VERSION,
 

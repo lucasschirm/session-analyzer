@@ -460,7 +460,7 @@ describe('SessionSyncWorker', () => {
     const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
       { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
       { scope: 'session', relativePath: 'subagents/agent-1.jsonl', content: 'sub line\n' },
-      { scope: 'global', relativePath: 'ignored.jsonl', content: 'cas line\n' },
+      { scope: 'global', relativePath: 'settings.json', content: '{"env":{}}\n' },
     ]);
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
@@ -476,7 +476,9 @@ describe('SessionSyncWorker', () => {
     const files = fileMessages.map((m) => m.message.file);
     expect(files).toContain('transcript.jsonl');
     expect(files).toContain('subagents/agent-1.jsonl');
-    expect(files).not.toContain('global/ignored.jsonl');
+    // Workspace/global config artifacts are now downloaded so the transformer
+    // can extract component identities (MCP, settings, skills, agents, rules).
+    expect(files).toContain('global/settings.json');
   });
 
   it('downloads the main transcript before other files', async () => {
@@ -628,7 +630,7 @@ describe('SessionSyncWorker', () => {
     await flush();
 
     await vi.waitUntil(() => client.pendingKeys().length === 4);
-    expect(client.maxInFlight).toBeLessThanOrEqual(4);
+    expect(client.maxInFlight).toBeLessThanOrEqual(8);
 
     for (const key of client.pendingKeys()) {
       client.resolve(key, client.getBuffer(key));
@@ -848,8 +850,8 @@ describe('SessionSyncWorker', () => {
     client.resolve(mainKey, client.getBuffer(mainKey));
     await flush();
 
-    await vi.waitUntil(() => client.pendingKeys().length === 4);
-    expect(client.maxInFlight).toBeLessThanOrEqual(4);
+    await vi.waitUntil(() => client.pendingKeys().length === 5);
+    expect(client.maxInFlight).toBeLessThanOrEqual(8);
 
     worker.handleMessage(cancelMessage());
     await flush();

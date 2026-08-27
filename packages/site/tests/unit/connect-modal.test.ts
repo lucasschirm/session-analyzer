@@ -32,6 +32,7 @@ const mockSyncManager = vi.hoisted(() => {
       listeners[type] = listeners[type].filter((l) => l !== listener);
     }),
     requestRun: vi.fn(),
+    registerEphemeralConnection: vi.fn(),
     getSnapshot: vi.fn(
       () =>
         ({ readOnly: false, activeRun: null, queuedRuns: [] as string[] }) as {
@@ -511,7 +512,7 @@ describe('connect-modal', () => {
     expect(mockDbClient.saveS3Credentials).not.toHaveBeenCalled();
   });
 
-  it('disables the sync button for in-memory connections with a tooltip', async () => {
+  it('enables the sync button for in-memory connections', async () => {
     const modal = await mount(document.createElement('connect-modal') as ConnectModal);
     modal.open = true;
     await flush(modal);
@@ -525,15 +526,38 @@ describe('connect-modal', () => {
     fillInput(root, '#connection-bucket', 'memory-bucket');
     fillInput(root, '#connection-access-key', 'AKIAIOSFODNN7EXAMPLE');
     fillInput(root, '#connection-secret-key', 'secret-key');
-
-    clickButtonByText(root, 'Save');
-    await flush(modal);
+    await modal.updateComplete;
 
     const syncButton = Array.from(root.querySelectorAll('button')).find((b) =>
       b.textContent?.trim().includes('Sync'),
     ) as HTMLButtonElement;
-    expect(syncButton.disabled).toBe(true);
-    expect(syncButton.title).toBe('Save to local storage to enable sync.');
+    expect(syncButton.disabled).toBe(false);
+  });
+
+  it('syncs an in-memory connection by registering it with the sync manager', async () => {
+    const modal = await mount(document.createElement('connect-modal') as ConnectModal);
+    let closed = 0;
+    modal.addEventListener('modal-close', () => closed++);
+    modal.open = true;
+    await flush(modal);
+
+    const root = shadow(modal);
+    (root.querySelector('.primary') as HTMLButtonElement).click();
+    await modal.updateComplete;
+
+    fillInput(root, '#connection-name', 'In-Memory S3');
+    fillInput(root, '#connection-region', 'us-east-1');
+    fillInput(root, '#connection-bucket', 'memory-bucket');
+    fillInput(root, '#connection-access-key', 'AKIAIOSFODNN7EXAMPLE');
+    fillInput(root, '#connection-secret-key', 'secret-key');
+    await modal.updateComplete;
+
+    clickButtonByText(root, 'Sync');
+    await flush(modal);
+
+    expect(mockSyncManager.registerEphemeralConnection).toHaveBeenCalledTimes(1);
+    expect(mockSyncManager.requestRun).toHaveBeenCalledTimes(1);
+    expect(closed).toBe(1);
   });
 
   it('closes the modal when the overlay is clicked', async () => {

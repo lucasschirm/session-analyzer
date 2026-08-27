@@ -119,7 +119,7 @@ export class EchartsBase extends LitElement {
 
     .chart-container {
       width: 100%;
-      height: 300px;
+      height: var(--chart-height, 400px);
       border: 1px solid var(--md-sys-color-outline, #2a303c);
       border-radius: 8px;
       background: var(--md-sys-color-surface, #171a21);
@@ -225,8 +225,9 @@ export class EchartsBase extends LitElement {
     try {
       this.chartInstance = echarts.init(container, undefined, {
         renderer: 'svg',
-        width: 400,
-        height: 300,
+        // Width and height are omitted so ECharts uses the container's CSS
+        // dimensions (width: 100%, height: var(--chart-height, 300px)).
+        // The ResizeObserver below handles dynamic resizing.
       });
       this.resizeObserver = new ResizeObserver(() => this.handleResize());
       this.resizeObserver.observe(container);
@@ -333,7 +334,6 @@ export class EchartsBase extends LitElement {
       <div class="echarts-base">
         <div class="chart-header">
           ${this.renderStateBadge()}
-          <span class="summary">${this.ariaDescription}</span>
         </div>
         ${
           this.chartError

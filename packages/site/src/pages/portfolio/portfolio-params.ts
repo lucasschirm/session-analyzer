@@ -1,6 +1,8 @@
 import type { AnalyticsQuery, EvidenceLink, Filter, TimeRange } from '@lucasschirm/sal-db';
 import { componentHref } from '../component-ecosystem/component-ecosystem-params';
 
+export type SessionsScope = 'all' | 'main' | 'sub_agents';
+
 export interface PortfolioParams {
   project?: string;
   harness?: string;
@@ -13,9 +15,10 @@ export interface PortfolioParams {
   analysisRelease?: string;
   comparabilityGroup?: string;
   generation?: string;
+  sessions?: SessionsScope;
 }
 
-const DEFAULT_PARAMS: PortfolioParams = {};
+const DEFAULT_PARAMS: PortfolioParams = { sessions: 'main' };
 
 export function parsePortfolioHash(hash: string): PortfolioParams {
   const clean = hash.replace(/^#/, '');
@@ -39,6 +42,7 @@ export function parsePortfolioHash(hash: string): PortfolioParams {
   if (params.get('comparabilityGroup'))
     result.comparabilityGroup = params.get('comparabilityGroup') ?? undefined;
   if (params.get('generation')) result.generation = params.get('generation') ?? undefined;
+  if (params.get('sessions')) result.sessions = (params.get('sessions') as SessionsScope) ?? 'main';
 
   return result;
 }

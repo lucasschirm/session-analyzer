@@ -23,6 +23,7 @@ import {
   overviewToMetricCards,
   type ProjectRowView,
   projectListToRows,
+  tokenTrendToChartSeries,
   trendToChartSeries,
 } from './portfolio-chart-helpers';
 import {
@@ -30,6 +31,7 @@ import {
   type PortfolioParams,
   parsePortfolioHash,
   portfolioParamsToQuery,
+  type SessionsScope,
 } from './portfolio-params';
 
 type LoadState = 'idle' | 'loading' | 'ok' | 'empty' | 'partial' | 'error';
@@ -342,6 +344,17 @@ export class PortfolioView extends LitElement {
           </select>
         </label>
         <label>
+          Sessions
+          <select
+            .value=${this.filters.sessions ?? 'main'}
+            @change=${(e: Event) => this.updateFilter('sessions', (e.target as HTMLSelectElement).value)}
+          >
+            <option value="main">Main</option>
+            <option value="all">All</option>
+            <option value="sub_agents">Sub Agents</option>
+          </select>
+        </label>
+        <label>
           Component
           <input
             type="text"
@@ -443,16 +456,28 @@ export class PortfolioView extends LitElement {
   }
 
   private renderTrends() {
+    const scope: SessionsScope = this.filters.sessions ?? 'main';
+    const tokenSeries: ChartSeries | null = this.trends.data
+      ? tokenTrendToChartSeries(this.trends.data, scope)
+      : null;
     const series: ChartSeries | null = this.trends.data
-      ? trendToChartSeries(this.trends.data)
+      ? trendToChartSeries(this.trends.data, scope)
       : null;
     return html`
       <div class="section">
         <h2>Trends</h2>
         <analytics-chart
-          title="Portfolio trends over time"
+          title="Token usage trends"
+          description="Daily token totals — cache write, cache read, output, and total tokens — so you can track how token consumption evolves over time."
+          .series=${tokenSeries}
+          .state=${this.chartState(this.trends.state)}
+        ></analytics-chart>
+        <analytics-chart
+          title="Session Metrics"
+          description="Daily totals for every metric across all sessions in the portfolio — wall-clock duration, turns, tool/skill/agent invocations, file operations, commands, validations, compaction events, and edit cycles."
           .series=${series}
           .state=${this.chartState(this.trends.state)}
+          style="margin-top: 24px;"
         ></analytics-chart>
       </div>
     `;
@@ -467,6 +492,7 @@ export class PortfolioView extends LitElement {
         <h2>Component utilization</h2>
         <analytics-chart
           title="Sessions per component"
+          description="Number of sessions that used each component, helping you spot which tools and integrations are most active across the portfolio."
           .series=${series}
           .state=${this.chartState(this.components.state)}
           @point-click=${this.handlePointClick}
@@ -484,6 +510,7 @@ export class PortfolioView extends LitElement {
         <h2>Model × harness cohorts</h2>
         <analytics-chart
           title="Sessions by model and harness"
+          description="Session counts grouped by model and harness, showing which model-harness combinations are used most frequently."
           .series=${series}
           .state=${this.chartState(this.cohorts.state)}
         ></analytics-chart>
@@ -510,9 +537,6 @@ export class PortfolioView extends LitElement {
               <th scope="col">Name</th>
               <th scope="col">Sessions</th>
               <th scope="col">Harness</th>
-              <th scope="col">Source</th>
-              <th scope="col">Completeness</th>
-              <th scope="col">Finality</th>
             </tr>
           </thead>
           <tbody>
@@ -525,9 +549,6 @@ export class PortfolioView extends LitElement {
                   }}>${row.name}</a></td>
                   <td>${row.sessionCount}</td>
                   <td>${row.harness}</td>
-                  <td>${row.source}</td>
-                  <td>${row.completeness}</td>
-                  <td>${row.finality}</td>
                 </tr>
               `,
             )}

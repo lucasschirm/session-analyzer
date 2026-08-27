@@ -318,7 +318,7 @@ describe('artifact-diff-view', () => {
     ) as LitElement;
     expect(chart).not.toBeNull();
     const shadow = chart.shadowRoot as ShadowRoot;
-    expect(shadow.querySelector('.chart-summary')).not.toBeNull();
+    expect(shadow.querySelector('.summary-toggle')).not.toBeNull();
 
     const echartsBase = shadow.querySelector('echarts-base') as LitElement;
     expect(echartsBase).not.toBeNull();

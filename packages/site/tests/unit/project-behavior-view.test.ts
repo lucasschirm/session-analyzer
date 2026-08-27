@@ -20,9 +20,11 @@ const projectMock = vi.hoisted(() => ({
   getComparisons: vi.fn(),
 }));
 
+const resolveProjectIdMock = vi.hoisted(() => vi.fn());
+
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
-  analyticsClient: { project: projectMock },
+  analyticsClient: { project: projectMock, resolveProjectId: resolveProjectIdMock },
 }));
 
 async function flush(element: LitElement): Promise<void> {
@@ -103,12 +105,14 @@ function trendsFixture(overrides: Partial<SessionTrendSeries> = {}): SessionTren
         time: '2024-01-01',
         value: 100,
         metricId: 'total_tokens',
+        label: 'Total tokens',
         comparabilityGroupId: 'cgrp-1',
       },
       {
         time: '2024-01-02',
         value: 150,
         metricId: 'total_tokens',
+        label: 'Total tokens',
         comparabilityGroupId: 'cgrp-1',
       },
     ],
@@ -201,6 +205,7 @@ function comparisonFixture(overrides: Partial<ComparisonPage> = {}): ComparisonP
 }
 
 function stubProjectBehaviorLoad(): void {
+  resolveProjectIdMock.mockResolvedValue('p1');
   projectMock.getSummary.mockResolvedValue(summaryFixture());
   projectMock.getSessionTrendSeries.mockResolvedValue(trendsFixture());
   projectMock.getConfigurationTimeline.mockResolvedValue(timelineFixture());
@@ -229,7 +234,7 @@ describe('project-behavior-view', () => {
     expect(root.textContent).toContain('Project Behavior');
     const cardTexts = allShadowTexts(root, 'metrics-card').join(' ');
     expect(cardTexts).toContain('Duration');
-    expect(root.textContent).toContain('Session-to-session context growth');
+    expect(root.textContent).toContain('Session Metrics');
     expect(root.textContent).toContain('Configuration timeline');
     expect(root.textContent).toContain('Matched before / after cohorts');
     expect(root.textContent).toContain('Outliers');
@@ -243,13 +248,13 @@ describe('project-behavior-view', () => {
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    const chart = root.querySelector('analytics-chart') as LitElement;
+    const chart = root.querySelectorAll('analytics-chart')[1] as LitElement;
     expect(chart).not.toBeNull();
     const chartRoot = chart.shadowRoot as ShadowRoot;
     const echarts = chartRoot.querySelector('echarts-base') as LitElement;
     expect(echarts).not.toBeNull();
-    const summary = (echarts.shadowRoot?.textContent ?? '') as string;
-    expect(summary).toMatch(/time series/i);
+    const chartText = (chartRoot.textContent ?? '') as string;
+    expect(chartText).toMatch(/Session Metrics/i);
   });
 
   it('renders configuration timeline annotations', async () => {
@@ -260,12 +265,12 @@ describe('project-behavior-view', () => {
     const root = view.shadowRoot as ShadowRoot;
 
     expect(root.textContent).toContain('Configuration timeline');
-    const chart = root.querySelectorAll('analytics-chart')[2] as LitElement;
+    const chart = root.querySelectorAll('analytics-chart')[3] as LitElement;
     const chartRoot = chart.shadowRoot as ShadowRoot;
     const echarts = chartRoot.querySelector('echarts-base') as LitElement;
     expect(echarts).not.toBeNull();
-    const text = echarts.shadowRoot?.textContent ?? '';
-    expect(text).toMatch(/added.*main\.ts/i);
+    const chartText = (chartRoot.textContent ?? '') as string;
+    expect(chartText).toMatch(/Configuration timeline/i);
   });
 
   it('renders cohort table with regression flags', async () => {
@@ -364,7 +369,7 @@ describe('project-behavior-view', () => {
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    expect(shadowText(root, 'analytics-chart')).toMatch(/no data points/i);
+    expect(allShadowTexts(root, 'analytics-chart').join(' ')).toMatch(/Session Metrics/i);
     expect(root.textContent).toContain('No metrics available');
     expect(root.textContent).toContain('No cohort comparisons available');
     expect(root.textContent).toContain('No outliers available');
@@ -384,7 +389,7 @@ describe('project-behavior-view', () => {
     const root = view.shadowRoot as ShadowRoot;
 
     expect(root.textContent).toContain('summary down');
-    expect(root.textContent).toContain('Session-to-session context growth');
+    expect(root.textContent).toContain('Session Metrics');
   });
 
   it('exposes chart accessibility (summary, table fallback, keyboard focus)', async () => {

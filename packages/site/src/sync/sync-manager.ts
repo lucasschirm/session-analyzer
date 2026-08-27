@@ -49,7 +49,7 @@ import type {
   WorkerErrorMessage,
 } from './sync-protocol';
 
-const MAX_PARALLEL_PROJECT_WORKERS = 3;
+const MAX_PARALLEL_PROJECT_WORKERS = 5;
 const BROADCAST_CHANNEL_NAME = 'sal-sync';
 const HEARTBEAT_INTERVAL_MS = 2000;
 const HEARTBEAT_TIMEOUT_MS = 5000;
@@ -80,6 +80,7 @@ export interface ProjectManifestInput {
 export interface DownloadedFile {
   path: string;
   hash: string;
+  etag?: string;
   size: number;
   content: ArrayBuffer;
 }
@@ -137,6 +138,12 @@ interface SessionSyncState extends SessionProgressState {
   pendingFiles: number;
   completeReceived: boolean;
   manifest?: SyncManifest;
+  /** In-flight `onFileDownloaded` (retain) promises; awaited before ingestion. */
+  retainPromises: Promise<void>[];
+  /** True when the session did not exist locally before this run. */
+  isNew: boolean;
+  /** True when an existing session had at least one file downloaded this run. */
+  wasUpdated: boolean;
 }
 
 interface ProjectSyncState {
@@ -152,6 +159,8 @@ interface ProjectSyncState {
   filesDownloaded: number;
   filesFailed: number;
   bytesReceived: number;
+  /** True when the project was created during this run (not pre-existing). */
+  isNew: boolean;
   /** Optional list of session ids to restrict this project worker to. */
   targetSessionIds?: string[];
 }
@@ -204,6 +213,7 @@ interface ProjectSnapshot {
   filesDownloaded: number;
   filesFailed: number;
   bytesReceived: number;
+  isNew: boolean;
 }
 
 interface SessionSnapshot {
@@ -214,6 +224,8 @@ interface SessionSnapshot {
   filesDownloaded: number;
   filesFailed: number;
   bytesReceived: number;
+  isNew: boolean;
+  wasUpdated: boolean;
 }
 
 /**
@@ -255,6 +267,15 @@ export class SyncManager extends EventTarget {
   private readOnly = false;
   private activeRun: SyncRun | null = null;
   private runQueue: SyncRun[] = [];
+
+  /**
+   * In-memory connections registered by the UI for syncing without persisting
+   * credentials to the database. Keyed by connection id.
+   */
+  private ephemeralConnections = new Map<
+    string,
+    { connection: Connection; s3Config: S3ClientConfig }
+  >();
 
   constructor(options: SyncManagerOptions = {}) {
     super();
@@ -305,6 +326,16 @@ export class SyncManager extends EventTarget {
     if (this.findRunForConnection(connectionId)) return;
     this.runQueue.push(this.createRun(connectionId));
     this.processQueue();
+  }
+
+  /**
+   * Register an in-memory connection so it can be synced without persisting
+   * credentials to the database. The connection and S3 config are held in
+   * memory for the lifetime of the page session and used directly by
+   * {@link prepareRunCredentials} when a run is started for this connection id.
+   */
+  registerEphemeralConnection(connection: Connection, s3Config: S3ClientConfig): void {
+    this.ephemeralConnections.set(connection.id, { connection, s3Config });
   }
 
   /**
@@ -468,6 +499,9 @@ export class SyncManager extends EventTarget {
   }
 
   private async resolveS3Credentials(connectionId: string): Promise<S3ClientConfig | null> {
+    const ephemeral = this.ephemeralConnections.get(connectionId);
+    if (ephemeral) return ephemeral.s3Config;
+
     const stored = await this.db.getS3Credentials(connectionId);
     if (!stored) return null;
 
@@ -548,7 +582,7 @@ export class SyncManager extends EventTarget {
       if (input) {
         const project = await this.createLocalProject(run, folder, input.name, input.description);
         await this.putProjectManifest(run, folder, input.name, input.description);
-        this.queueProjectForSync(run, folder, project.id);
+        this.queueProjectForSync(run, folder, project.id, undefined, true);
         return;
       }
     }
@@ -556,9 +590,11 @@ export class SyncManager extends EventTarget {
     // The manifest is metadata; the worker discovers sessions from the S3
     // folder structure. Create/find a local project and queue it for sync.
     // The manifest will be created/updated on S3 so it exists next time.
+    const existingProject = await this.db.getProjectByReadableId(folder);
     const project = await this.findOrCreateLocalProject(run, folder);
+    const isNew = !existingProject;
     await this.putProjectManifest(run, folder, folder, undefined).catch(() => undefined);
-    this.queueProjectForSync(run, folder, project.id);
+    this.queueProjectForSync(run, folder, project.id, undefined, isNew);
   }
 
   /** Finds an existing local project by readable id, or creates one. */
@@ -606,7 +642,7 @@ export class SyncManager extends EventTarget {
       manifest.name,
       manifest.description,
     );
-    this.queueProjectForSync(run, manifest.projectId, project.id);
+    this.queueProjectForSync(run, manifest.projectId, project.id, undefined, true);
   }
 
   private async createLocalProject(
@@ -634,6 +670,7 @@ export class SyncManager extends EventTarget {
     projectId: string,
     localProjectId: string,
     targetSessionIds?: string[],
+    isNew = false,
   ): void {
     const state: ProjectSyncState = {
       projectId,
@@ -648,6 +685,7 @@ export class SyncManager extends EventTarget {
       filesDownloaded: 0,
       filesFailed: 0,
       bytesReceived: 0,
+      isNew,
       targetSessionIds,
     };
     run.projects.set(projectId, state);
@@ -822,7 +860,12 @@ export class SyncManager extends EventTarget {
     const localRunCount = await this.db.getSyncRunCount(existingId);
     await this.db.updateSessionManifest(localSession.id, manifest);
 
-    const sessionState = this.getOrCreateSessionState(project, remoteSessionId, localSession.id);
+    const sessionState = this.getOrCreateSessionState(
+      project,
+      remoteSessionId,
+      localSession.id,
+      existing === null,
+    );
     sessionState.manifest = manifest;
 
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
@@ -833,7 +876,27 @@ export class SyncManager extends EventTarget {
     }
 
     const shouldSync = await this.isSyncNeeded(existing, localRunCount, manifest);
-    if (!shouldSync) {
+    // Even if the sync run count hasn't changed, check whether workspace/global
+    // config artifacts are missing from the local session_files table. Sessions
+    // synced before the config-artifact download fix won't have these files,
+    // so the transformer never sees them and component data stays empty.
+    // Force a re-download + re-ingestion when missing config artifacts are detected.
+    let forceForConfigArtifacts = false;
+    if (!shouldSync && existing) {
+      const inScope = this.filterInScopeArtifacts(manifest.artifacts, mainPath);
+      const configArtifacts = inScope.filter(
+        (a) => a.scope === 'workspace' || a.scope === 'global',
+      );
+      if (configArtifacts.length > 0) {
+        const localFiles = await this.db.getSessionFiles(localSession.id);
+        const localPaths = new Set(localFiles.map((f) => f.path));
+        forceForConfigArtifacts = configArtifacts.some((a) => {
+          const file = this.artifactToFile(a, mainPath);
+          return !localPaths.has(file.file);
+        });
+      }
+    }
+    if (!shouldSync && !forceForConfigArtifacts) {
       await this.markSessionInSync(
         sessionState,
         project,
@@ -847,7 +910,16 @@ export class SyncManager extends EventTarget {
       return;
     }
 
-    const filesToDownload = await this.computeFilesToDownload(localSession.id, manifest, mainPath);
+    // For sessions that previously failed, force a full re-download so the
+    // analytics blob store is re-populated. The control DB may mark files as
+    // 'processed' from a prior run, but the analytics artifact_blobs table can
+    // be empty if that run's retain calls were interrupted (page reload, HMR,
+    // worker crash). Skipping re-download leaves ingestion unable to resolve
+    // artifacts, so the session can never recover.
+    const wasFailed = existing?.sync_status === 'failed';
+    const filesToDownload = wasFailed
+      ? undefined
+      : await this.computeFilesToDownload(localSession.id, manifest, mainPath);
     if (filesToDownload !== undefined && filesToDownload.length === 0) {
       await this.markSessionInSync(
         sessionState,
@@ -864,8 +936,15 @@ export class SyncManager extends EventTarget {
 
     sessionState.syncStatus = 'pending';
     await this.db.setSessionSyncStatus(localSession.id, 'pending');
+    const localFileEtas = await this.buildLocalFileEtas(localSession.id);
     worker.postMessage(
-      this.buildSyncMessage(remoteSessionId, true, existing !== null, filesToDownload ?? undefined),
+      this.buildSyncMessage(
+        remoteSessionId,
+        true,
+        existing !== null,
+        filesToDownload ?? undefined,
+        localFileEtas,
+      ),
     );
     this.emitChange();
   }
@@ -947,6 +1026,7 @@ export class SyncManager extends EventTarget {
     project: ProjectSyncState,
     sessionId: string,
     localSessionId = '',
+    isNew = false,
   ): SessionSyncState {
     const existing = project.sessions.get(sessionId);
     if (existing) {
@@ -966,6 +1046,9 @@ export class SyncManager extends EventTarget {
       filesDownloaded: 0,
       filesFailed: 0,
       bytesReceived: 0,
+      retainPromises: [],
+      isNew,
+      wasUpdated: false,
     };
     project.sessions.set(sessionId, state);
     return state;
@@ -1015,9 +1098,17 @@ export class SyncManager extends EventTarget {
   ): ManifestArtifact[] {
     return artifacts.filter(
       (artifact) =>
-        artifact.scope === 'session' &&
-        (artifact.status === 'uploaded' || artifact.status === 'skipped') &&
-        (artifact.relativePath === mainPath || this.isSubagentFile(artifact.relativePath)),
+        // Session-scoped transcripts and subagent files.
+        (artifact.scope === 'session' &&
+          (artifact.status === 'uploaded' || artifact.status === 'skipped') &&
+          (artifact.relativePath === mainPath || this.isSubagentFile(artifact.relativePath))) ||
+        // Workspace/global config artifacts (MCP, settings, skills, agents,
+        // rules) needed by the transformer to populate component data.
+        // Include 'skipped' artifacts (already in CAS from a prior session's
+        // sync) so they are downloaded to the local blob store and made
+        // available to the transformer during ingestion.
+        ((artifact.scope === 'workspace' || artifact.scope === 'global') &&
+          (artifact.status === 'uploaded' || artifact.status === 'skipped')),
     );
   }
 
@@ -1065,7 +1156,7 @@ export class SyncManager extends EventTarget {
         project_id: projectId,
         session_id: sessionId,
         path: file.file,
-        scope: 'session',
+        scope: artifact.scope,
         sha256: file.hash,
         size: file.size,
         status: 'processed',
@@ -1080,6 +1171,7 @@ export class SyncManager extends EventTarget {
     sync: boolean,
     exists: boolean,
     filesToDownload?: FileToDownload[],
+    localFileEtas?: Record<string, string>,
   ): SessionSyncMessage {
     return {
       type: 'SESSION_SYNC',
@@ -1087,7 +1179,23 @@ export class SyncManager extends EventTarget {
       sync,
       exists,
       filesToDownload,
+      localFileEtas,
     };
+  }
+
+  /** Build a path→etag map for locally stored files, used by the worker to
+   * skip downloads when the S3 listing ETag hasn't changed. */
+  private async buildLocalFileEtas(
+    localSessionId: string,
+  ): Promise<Record<string, string> | undefined> {
+    const files = await this.db.getSessionFiles(localSessionId);
+    const etas: Record<string, string> = {};
+    for (const file of files) {
+      if (file.etag && file.status === 'processed') {
+        etas[file.path] = file.etag;
+      }
+    }
+    return Object.keys(etas).length > 0 ? etas : undefined;
   }
 
   private handleSessionSyncProgress(
@@ -1147,6 +1255,12 @@ export class SyncManager extends EventTarget {
     const session = project.sessions.get(message.sessionId);
     if (!session) return;
 
+    // An existing session receiving at least one file download this run is
+    // considered "updated" for the final-results summary.
+    if (!session.isNew) {
+      session.wasUpdated = true;
+    }
+
     if (session.firstFile) {
       session.firstFile = false;
       session.syncStatus = 'processing';
@@ -1156,18 +1270,23 @@ export class SyncManager extends EventTarget {
     await this.upsertDownloadedFile(project, session, message);
     session.pendingFiles++;
 
-    this.onFileDownloaded(
+    const retainPromise = this.onFileDownloaded(
       session.localSessionId,
       {
         path: message.file,
         hash: message.hash,
+        etag: message.etag,
         size: message.content.byteLength,
         content: message.content,
       },
       project.projectId,
     )
       .then(() => this.onFileProcessed(session, message))
-      .catch(() => this.onFileProcessFailed(session, message));
+      .catch((error) => {
+        console.error(`File download processing failed for ${message.file}:`, error);
+        this.onFileProcessFailed(session, message);
+      });
+    session.retainPromises.push(retainPromise);
 
     this.emitChange();
   }
@@ -1185,6 +1304,7 @@ export class SyncManager extends EventTarget {
       path: message.file,
       scope: this.fileScope(message.file),
       sha256: message.hash,
+      etag: message.etag,
       size: message.content.byteLength,
       status: 'downloaded',
       updated_at: Date.now(),
@@ -1247,7 +1367,28 @@ export class SyncManager extends EventTarget {
       await this.reconcileCompleteFile(project, session, file);
     }
 
-    await this.onSyncComplete(session.localSessionId, session.manifest, project.projectId);
+    // Wait for all in-flight artifact retain calls to settle before feeding
+    // the manifest into the analytics ingestion pipeline. Without this, the
+    // worker's SESSION_SYNC_COMPLETE can arrive before `retainSyncArtifact`
+    // has finished, causing `ingestSyncManifest` to fail with
+    // "Artifact not resolvable".
+    if (session.retainPromises.length > 0) {
+      await Promise.allSettled(session.retainPromises);
+      session.retainPromises.length = 0;
+    }
+
+    try {
+      await this.onSyncComplete(session.localSessionId, session.manifest, project.projectId);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      const details = this.formatSyncDetails('INGEST_FAILED', messageText);
+      console.error(`Session sync ingest failed for ${message.sessionId}: ${details}`, error);
+      session.syncStatus = 'failed';
+      project.sessionsFailed++;
+      await this.db.setSessionSyncStatus(session.localSessionId, 'failed', details);
+      this.emitChange();
+      return;
+    }
 
     project.sessionsDone++;
     await this.maybeCompleteSession(session);
@@ -1309,14 +1450,12 @@ export class SyncManager extends EventTarget {
   ): Promise<void> {
     const session = project.sessions.get(message.sessionId);
     if (!session) return;
+    const details = this.formatSyncDetails(message.error.code, message.error.message);
+    console.error(`Session sync failed for ${message.sessionId}: ${details}`);
     session.syncStatus = 'failed';
     session.completeReceived = true;
     project.sessionsFailed++;
-    await this.db.setSessionSyncStatus(
-      session.localSessionId,
-      'failed',
-      this.formatSyncDetails(message.error.code, message.error.message),
-    );
+    await this.db.setSessionSyncStatus(session.localSessionId, 'failed', details);
     this.emitChange();
   }
 
@@ -1336,6 +1475,7 @@ export class SyncManager extends EventTarget {
     message: WorkerErrorMessage,
   ): Promise<void> {
     const details = this.formatSyncDetails(message.error.code, message.error.message);
+    console.error(`Worker error for ${project.projectId}: ${details}`);
     this.pushWarning(run, `${project.projectId}: ${details}`);
     await this.closeWorkerSlot(run, project, worker, details, true);
   }
@@ -1347,6 +1487,7 @@ export class SyncManager extends EventTarget {
     error: Error,
   ): void {
     const details = this.formatSyncDetails('WORKER_ERROR', error.message);
+    console.error(`Worker fatal for ${project.projectId}: ${details}`, error);
     this.pushWarning(run, `${project.projectId}: ${details}`);
     this.closeWorkerSlot(run, project, worker, details, true).catch(() => undefined);
   }
@@ -1377,10 +1518,10 @@ export class SyncManager extends EventTarget {
 
   private checkRunComplete(run: SyncRun): void {
     if (run.activeWorkers.size > 0 || run.projectQueue.length > 0) return;
-    const anyFailed = Array.from(run.projects.values()).some(
-      (project) => project.sessionsFailed > 0,
+    const anyErrored = Array.from(run.projects.values()).some(
+      (project) => project.status === 'failed',
     );
-    this.endRun(run, anyFailed ? 'failed' : 'done');
+    this.endRun(run, anyErrored ? 'failed' : 'done');
   }
 
   private endRun(run: SyncRun, state: SyncRunState): void {
@@ -1390,9 +1531,14 @@ export class SyncManager extends EventTarget {
     this.broadcast({ type: 'run-finished', snapshot: this.buildSnapshot() });
 
     if (run.connection) {
-      this.db
-        .updateConnection(run.connectionId, { last_sync_at: Date.now() })
-        .catch(() => undefined);
+      const ephemeral = this.ephemeralConnections.get(run.connectionId);
+      if (ephemeral) {
+        ephemeral.connection = { ...ephemeral.connection, last_sync_at: Date.now() };
+      } else {
+        this.db
+          .updateConnection(run.connectionId, { last_sync_at: Date.now() })
+          .catch(() => undefined);
+      }
     }
 
     this.onRunSummary?.(this.summarizeRun(run));
@@ -1407,6 +1553,7 @@ export class SyncManager extends EventTarget {
   }
 
   private failRun(run: SyncRun, reason: string): void {
+    console.error(`Sync run failed: ${reason}`);
     for (const worker of run.activeWorkers) {
       worker.postMessage({ type: 'CANCEL' } as SyncMessageToWorker);
       worker.terminate();
@@ -1419,6 +1566,7 @@ export class SyncManager extends EventTarget {
   private abortActiveRun(details: string): void {
     const run = this.activeRun;
     if (!run) return;
+    console.error(`Sync run aborted: ${details}`);
     run.cancelled = true;
     this.pushWarning(run, details);
 
@@ -1551,6 +1699,7 @@ export class SyncManager extends EventTarget {
       filesDownloaded: project.filesDownloaded,
       filesFailed: project.filesFailed,
       bytesReceived: project.bytesReceived,
+      isNew: project.isNew,
     }));
   }
 
@@ -1566,6 +1715,8 @@ export class SyncManager extends EventTarget {
           filesDownloaded: session.filesDownloaded,
           filesFailed: session.filesFailed,
           bytesReceived: session.bytesReceived,
+          isNew: session.isNew,
+          wasUpdated: session.wasUpdated,
         });
       }
     }
@@ -1595,6 +1746,8 @@ export class SyncManager extends EventTarget {
   }
 
   private async getConnection(connectionId: string): Promise<Connection | null> {
+    const ephemeral = this.ephemeralConnections.get(connectionId);
+    if (ephemeral) return ephemeral.connection;
     const connections = await this.db.getConnections();
     return connections.find((c) => c.id === connectionId) ?? null;
   }
@@ -1631,10 +1784,17 @@ export const syncManager = new SyncManager({
     if (!manifest) return;
     // Feed the completed sync manifest into the analytics ingestion pipeline
     // so metric values and rollups are materialized for portfolio charts.
-    await analyticsClient.ingestSyncManifest(manifest, {
+    const receipt = await analyticsClient.ingestSyncManifest(manifest, {
       sourceId: 'sync',
       projectId,
       sessionId: manifest.sessionId,
     });
+    if (receipt.status === 'failed' && receipt.issueIds.length > 0) {
+      const detail =
+        receipt.issueIds.length > 0
+          ? `ingestion issues: ${receipt.issueIds.join(', ')}`
+          : 'ingestion failed';
+      throw new Error(`INGEST_FAILED: ${detail}`);
+    }
   },
 });

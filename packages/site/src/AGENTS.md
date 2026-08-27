@@ -26,7 +26,7 @@ src/
 │   ├── project-selector.ts        # Project dropdown (input component)
 │   ├── project-sync-indicator.ts  # Small spinner that opens the project sync status modal when clicked
 │   ├── project-sync-status-modal.ts # Per-project and full-run sync status modal with project/session progress and file counts
-│   ├── sync-progress-bar.ts       # Global sync progress bar with live P/S/F counts, queued-run suffix, cancel button, and full sync-status modal
+│   ├── sync-progress-bar.ts       # Global sync progress bar with live P/S/F counts, queued-run suffix, cancel button, final-results summary with unicode icons (files/new projects/new sessions/sessions updated) shown for 6s after completion, and full sync-status modal
 │   ├── sync-status-bar.ts         # Bottom-fixed sync discovery indicator ("Found: X Projects / Y Sessions / Z sessions pending") shown while a run is active or queued
 │   ├── toast-container.ts         # ToastManager singleton + fixed-position toast stack (error/warning/info/success); error toasts are sticky, others auto-dismiss; sync warnings and run failures are wired to toasts via the manager
 │   └── upload-zone.ts             # Drag & drop + file picker upload zone

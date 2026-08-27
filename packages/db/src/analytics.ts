@@ -48,6 +48,7 @@ export interface TimeSeriesPoint {
   readonly time: string;
   readonly value: number | null;
   readonly metricId: string;
+  readonly label: string;
   readonly comparabilityGroupId: string;
 }
 
@@ -81,6 +82,9 @@ export interface PortfolioOverview {
   readonly sessionCount: number;
   readonly componentCounts: Readonly<Record<string, number>>;
   readonly unusedOfferedComponents: readonly string[];
+  readonly totalTokens: number;
+  readonly modelCount: number;
+  readonly harnessCount: number;
 }
 
 export interface PortfolioTrendSeries {

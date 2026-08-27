@@ -16,11 +16,52 @@ function groupBySeries(buckets: readonly ChartBucket[]): Map<string, ChartBucket
   return groups;
 }
 
+const LEGEND_TEXT_COLOR = '#c4cad6';
+const AXIS_TEXT_COLOR = '#9aa4b2';
+
 const baseGrid = { left: '3%', right: '4%', bottom: '3%', containLabel: true };
-const baseTooltip = { trigger: 'axis' };
-const baseLegend = { type: 'scroll' };
-const baseXAxis = { type: 'category', nameLocation: 'middle', nameGap: 24 };
-const baseYAxis = { type: 'value', nameLocation: 'middle', nameGap: 36 };
+const baseTooltip = {
+  trigger: 'axis',
+  backgroundColor: '#1f242e',
+  borderColor: '#3a4150',
+  textStyle: { color: '#e6e9ef' },
+};
+const baseLegend = {
+  type: 'plain',
+  top: 0,
+  textStyle: { color: LEGEND_TEXT_COLOR },
+  inactiveColor: '#4a5260',
+  pageTextStyle: { color: LEGEND_TEXT_COLOR },
+};
+const baseXAxis = {
+  type: 'category',
+  nameLocation: 'middle',
+  nameGap: 24,
+  axisLabel: { color: AXIS_TEXT_COLOR },
+  axisLine: { lineStyle: { color: '#3a4150' } },
+  splitLine: { lineStyle: { color: '#252b36' } },
+  nameTextStyle: { color: AXIS_TEXT_COLOR },
+};
+const baseYAxis = {
+  type: 'value',
+  nameLocation: 'middle',
+  nameGap: 36,
+  axisLabel: { color: AXIS_TEXT_COLOR },
+  axisLine: { lineStyle: { color: '#3a4150' } },
+  splitLine: { lineStyle: { color: '#252b36' } },
+  nameTextStyle: { color: AXIS_TEXT_COLOR },
+};
+const baseDataZoom = [
+  { type: 'inside', start: 0, end: 100 },
+  {
+    type: 'slider',
+    start: 0,
+    end: 100,
+    height: 20,
+    bottom: 8,
+    textStyle: { color: AXIS_TEXT_COLOR },
+  },
+];
 
 function buildSeries(
   type: 'line' | 'bar',
@@ -29,17 +70,19 @@ function buildSeries(
   stacked = false,
   area = false,
 ): unknown[] {
-  return Array.from(groups.entries()).map(([name, buckets]) => {
-    const byX = new Map(buckets.map((b) => [String(b.x), b.y]));
-    return {
-      name: name || 'value',
-      type,
-      stack: stacked ? 'total' : undefined,
-      areaStyle: area ? {} : undefined,
-      emphasis: { focus: 'series' },
-      data: xAxisData.map((x) => byX.get(x) ?? null),
-    };
-  });
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => (a || '').localeCompare(b || ''))
+    .map(([name, buckets]) => {
+      const byX = new Map(buckets.map((b) => [String(b.x), b.y]));
+      return {
+        name: name || 'value',
+        type,
+        stack: stacked ? 'total' : undefined,
+        areaStyle: area ? {} : undefined,
+        emphasis: { focus: 'series' },
+        data: xAxisData.map((x) => byX.get(x) ?? null),
+      };
+    });
 }
 
 function timeSeriesOption(series: ChartSeries): EChartsCoreOption {
@@ -49,9 +92,10 @@ function timeSeriesOption(series: ChartSeries): EChartsCoreOption {
     aria: { enabled: true },
     tooltip: baseTooltip,
     legend: baseLegend,
-    grid: baseGrid,
+    grid: { ...baseGrid, bottom: '12%' },
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
+    dataZoom: baseDataZoom,
     series: buildSeries('line', xAxisData, groups),
     animation: false,
   } as EChartsCoreOption;
@@ -64,9 +108,10 @@ function stackedBarOption(series: ChartSeries): EChartsCoreOption {
     aria: { enabled: true },
     tooltip: baseTooltip,
     legend: baseLegend,
-    grid: baseGrid,
+    grid: { ...baseGrid, bottom: '12%' },
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
+    dataZoom: baseDataZoom,
     series: buildSeries('bar', xAxisData, groups, true),
     animation: false,
   } as EChartsCoreOption;
@@ -79,9 +124,10 @@ function stackedAreaOption(series: ChartSeries): EChartsCoreOption {
     aria: { enabled: true },
     tooltip: baseTooltip,
     legend: baseLegend,
-    grid: baseGrid,
+    grid: { ...baseGrid, bottom: '12%' },
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
+    dataZoom: baseDataZoom,
     series: buildSeries('line', xAxisData, groups, true, true),
     animation: false,
   } as EChartsCoreOption;
@@ -115,9 +161,10 @@ function percentileBandsOption(series: ChartSeries): EChartsCoreOption {
     aria: { enabled: true },
     tooltip: baseTooltip,
     legend: baseLegend,
-    grid: baseGrid,
+    grid: { ...baseGrid, bottom: '12%' },
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
+    dataZoom: baseDataZoom,
     series: buildSeries('line', xAxisData, groups, false, true),
     animation: false,
   } as EChartsCoreOption;

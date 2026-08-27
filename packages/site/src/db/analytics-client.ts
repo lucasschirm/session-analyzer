@@ -283,6 +283,22 @@ export class AnalyticsClient implements AnalyticsDataSource {
     return response.result as IngestionReceipt;
   }
 
+  /**
+   * Resolve a project identifier (which may be a native/sync project id or an
+   * internal analytics project id) to the internal analytics project id used
+   * by all analytics queries. Returns null if no matching project exists.
+   */
+  async resolveProjectId(projectId: string): Promise<string | null> {
+    const response = await this.call({
+      type: 'resolveProjectId',
+      projectId,
+    });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+    return (response.result as string | null) ?? null;
+  }
+
   async close(): Promise<void> {
     const response = await this.call({ type: 'close' });
     if (!response.ok) {

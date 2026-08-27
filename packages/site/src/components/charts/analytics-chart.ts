@@ -1,5 +1,5 @@
 import { css, html, LitElement } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import './echarts-base';
 import { toEChartsOption } from './chart-helpers';
 import type { ChartSeries, ChartState } from './chart-types';
@@ -29,11 +29,40 @@ export class AnalyticsChart extends LitElement {
       gap: 12px;
     }
 
+    .chart-title-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
     .chart-title {
       margin: 0;
       font-size: 16px;
       font-weight: 600;
       color: var(--md-sys-color-on-surface, #e6e9ef);
+    }
+
+    .summary-toggle {
+      background: none;
+      border: none;
+      padding: 0;
+      font-size: 13px;
+      font-weight: 400;
+      color: var(--md-sys-color-primary, #4f8cff);
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .summary-toggle:hover {
+      text-decoration: underline;
+    }
+
+    .chart-description {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
     }
 
     .chart-summary {
@@ -49,6 +78,10 @@ export class AnalyticsChart extends LitElement {
 
   @property({ type: String }) title = '';
 
+  @property({ type: String }) description = '';
+
+  @state() private summaryVisible = false;
+
   private get option() {
     return this.series ? toEChartsOption(this.series) : null;
   }
@@ -57,11 +90,41 @@ export class AnalyticsChart extends LitElement {
     return this.series ? textualSummary(this.series, this.state) : '';
   }
 
+  private toggleSummary(e: Event): void {
+    e.preventDefault();
+    this.summaryVisible = !this.summaryVisible;
+  }
+
   render() {
+    const hasSummary = Boolean(this.summary);
     return html`
       <div class="analytics-chart">
-        ${this.title ? html`<h3 class="chart-title">${this.title}</h3>` : ''}
-        <p class="chart-summary">${this.summary}</p>
+        ${
+          this.title
+            ? html`
+              <div class="chart-title-row">
+                <h3 class="chart-title">${this.title}</h3>
+                ${
+                  hasSummary
+                    ? html`<button
+                      class="summary-toggle"
+                      type="button"
+                      @click=${this.toggleSummary}
+                    >
+                      ${this.summaryVisible ? 'Hide summary' : 'Show summary'}
+                    </button>`
+                    : ''
+                }
+              </div>
+            `
+            : ''
+        }
+        ${this.description ? html`<p class="chart-description">${this.description}</p>` : ''}
+        ${
+          this.summaryVisible && hasSummary
+            ? html`<p class="chart-summary">${this.summary}</p>`
+            : ''
+        }
         <echarts-base
           .option=${this.option}
           .series=${this.series}

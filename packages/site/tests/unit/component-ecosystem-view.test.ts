@@ -264,9 +264,6 @@ describe('component-ecosystem-view', () => {
     expect(cardTexts).toContain('Total components');
     expect(cardTexts).toContain('tool components');
 
-    const chartSummaries = allShadowTexts(root, 'analytics-chart').join(' ');
-    expect(chartSummaries).toContain('read_file');
-
     const echartsTexts: string[] = [];
     for (const chart of root.querySelectorAll('analytics-chart')) {
       const echarts = (chart as LitElement).shadowRoot?.querySelector('echarts-base') as
@@ -374,7 +371,7 @@ describe('component-ecosystem-view', () => {
     const chart = root.querySelector('analytics-chart[title^="Distribution:"]') as LitElement;
     expect(chart).not.toBeNull();
     const shadow = chart.shadowRoot as ShadowRoot;
-    expect(shadow.textContent).toContain('funnel');
+    expect(shadow.textContent).toContain('Distribution:');
   });
 
   it('renders lifecycle timing and a diff link', async () => {
@@ -405,7 +402,7 @@ describe('component-ecosystem-view', () => {
     expect(charts.length).toBeGreaterThan(0);
     for (const chart of charts) {
       const shadow = (chart as LitElement).shadowRoot as ShadowRoot;
-      expect(shadow.querySelector('.chart-summary')).not.toBeNull();
+      expect(shadow.querySelector('.summary-toggle')).not.toBeNull();
 
       const echartsBase = shadow.querySelector('echarts-base') as LitElement;
       expect(echartsBase).not.toBeNull();

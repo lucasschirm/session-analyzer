@@ -5,7 +5,7 @@ Remote sync orchestration. Downloaded session buffers are retained by the analyt
 ## Files
 
 - **credential-crypto.ts** — Encrypts and decrypts S3 credential fields stored in the project record using the user's passkey.
-- **sync-manager.ts** — Main-thread sync state machine: project/session discovery, worker queue, manifest diffing, and lifecycle hooks (`onWarning` wired to `toast-container.ts` for real-time toast notifications, and `onRunSummary` for failed-run toasts). Missing project manifests without an `onProjectMissing` handler now push a warning instead of being silently skipped.
+- **sync-manager.ts** — Main-thread sync state machine: project/session discovery, worker queue, manifest diffing, and lifecycle hooks (`onWarning` wired to `toast-container.ts` for real-time toast notifications, and `onRunSummary` for failed-run toasts). Missing project manifests without an `onProjectMissing` handler now push a warning instead of being silently skipped. Snapshots track `isNew` on projects and `isNew`/`wasUpdated` on sessions for the progress bar's final-results summary.
 - **sync-protocol.ts** — Typed WebWorker messages exchanged between `SyncManager` and `session-sync.worker.ts`.
 
 ## Key relationships

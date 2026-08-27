@@ -42,6 +42,7 @@ import type {
   TransformResult,
   UnknownArtifactBundle,
 } from '@lucasschirm/sal-transformer';
+import { ComponentLifecycleEngine } from './component-lifecycle.js';
 import { rebuildAffectedDistributions } from './distributions.js';
 import type { ManualIngestionBundle, VerifiedManifestBundle } from './manifest.js';
 import type {
@@ -521,6 +522,10 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
           result,
         );
 
+        // 6b. Apply the configuration snapshot (components, lifecycle events,
+        //     exposures) so component ecosystem and utilization views have data.
+        await this.upsertConfigurationSnapshot(tx, canonical, commit, result);
+
         // 7. Commit the generation: supersede previous, set session current_generation_id.
         //    Capture the previous generation ID first so rollup contributions can
         //    subtract old values before inserting new ones.
@@ -619,10 +624,8 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     const ingestionSourceId = deterministicIngestionSourceId(portfolioId, nativeSourceId);
     const projectId = `prj-${deterministicId('project', portfolioId, nativeProjectId)}`;
     const sourceProjectId = deterministicSourceProjectId(ingestionSourceId, nativeProjectId);
-    const nativeEnvironmentId = manifest.environmentId ?? null;
-    const environmentId = nativeEnvironmentId
-      ? deterministicEnvironmentId(ingestionSourceId, nativeEnvironmentId)
-      : null;
+    const nativeEnvironmentId = manifest.environmentId ?? 'default';
+    const environmentId = deterministicEnvironmentId(ingestionSourceId, nativeEnvironmentId);
 
     return {
       tenantId,
@@ -994,6 +997,12 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         def.version,
       );
       if (existing) {
+        if (existing.label !== def.label || existing.description !== def.description) {
+          await MetricDefinitionStore.update(tx, existing.id, {
+            label: def.label,
+            description: def.description,
+          });
+        }
         map.set(def.metricId, existing.id);
       } else {
         const statisticalPolicyId = await this.ensureStatisticalPolicyFor(
@@ -1180,6 +1189,62 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         });
       }
     }
+  }
+
+  private async upsertConfigurationSnapshot(
+    tx: SqliteTransaction,
+    canonical: CanonicalIdentity,
+    commit: AtomicGenerationCommit,
+    result: TransformResult,
+  ): Promise<void> {
+    const snapshot = result.configurationSnapshot;
+    if (!snapshot || snapshot.components.length === 0) return;
+
+    const harness = commit.manifest?.harness ?? 'unknown';
+    const harnessVersion = commit.manifest?.harnessVersion;
+    const captureTime = snapshot.captureTime
+      ? new Date(snapshot.captureTime).getTime()
+      : Date.now();
+    // The transformer doesn't set temporalRole for Claude Code sessions.
+    // Default to 'pre_session' so that session_component_exposures are created
+    // (applyExposures only runs for 'pre_session' and 'runtime' roles).
+    // Without exposures, the component utilization chart has no data.
+    const temporalRole = snapshot.temporalRole ?? 'pre_session';
+
+    // Build manifest artifact references from the manifest's artifacts array.
+    // These are used by the configuration snapshot engine to:
+    //   - classify artifacts by kind (skill, agent, rule, mcp, settings)
+    //   - resolve component source pointers (sha256: and path: references)
+    //   - compute snapshot completeness per component kind
+    // Passing an empty array causes source scope/pointer resolution to fail
+    // and completeness to be computed without artifact status context.
+    const manifestArtifacts = (commit.manifest?.artifacts ?? []).map((a) => ({
+      relativePath: a.relativePath,
+      sha256: a.sha256,
+      size: a.size,
+      status: a.status,
+      mediaType: a.mediaType,
+      harness,
+      scope: a.scope,
+    }));
+
+    const engine = new ComponentLifecycleEngine(canonical.portfolioId);
+    await engine.apply(tx, {
+      portfolioId: canonical.portfolioId,
+      environmentId: canonical.environmentId ?? '',
+      projectId: canonical.projectId,
+      sessionId: commit.sessionId,
+      generationId: commit.generationId,
+      harness,
+      harnessVersion,
+      ordering: 0,
+      captureTime,
+      ingestionTime: Date.now(),
+      temporalRole,
+      manifestArtifacts,
+      components: snapshot.components,
+      completeness: snapshot.completeness,
+    });
   }
 
   private mapFinality(finality?: string): 'open' | 'final' | 'censored' {

@@ -331,4 +331,171 @@ describe('DefaultIngestionOrchestrator', () => {
     );
     expect(generations[0]?.c).toBe(1);
   });
+
+  it('populates component_identities, exposures, and configuration_snapshots when config artifacts are present', async () => {
+    const transcriptContent = readFixture('t2-happy-path.jsonl');
+    const skillContent = readFixture('e2e-skill-csv-wrangler.md');
+    const agentContent = readFixture('e2e-agent-docs-drafter.md');
+    const ruleContent = readFixture('e2e-rule-style.md');
+    const mcpContent = readFixture('e2e-mcp.json');
+    const settingsContent = readFixture('e2e-settings-project.json');
+
+    const hasher = createSha256ContentHasher();
+    const transcriptHash = await hasher.hash(transcriptContent);
+    const skillHash = await hasher.hash(skillContent);
+    const agentHash = await hasher.hash(agentContent);
+    const ruleHash = await hasher.hash(ruleContent);
+    const mcpHash = await hasher.hash(mcpContent);
+    const settingsHash = await hasher.hash(settingsContent);
+
+    const projectId = 'project-config';
+    const sessionId = 'sess-config-1';
+    const transcriptPath = 'transcript.jsonl';
+
+    const configArtifacts = [
+      {
+        relativePath: '.claude/skills/csv-wrangler/SKILL.md',
+        sha256: skillHash,
+        size: skillContent.length,
+        content: skillContent,
+        scope: 'workspace' as const,
+        status: 'uploaded' as const,
+        mediaType: 'text/markdown',
+      },
+      {
+        relativePath: '.claude/agents/docs-drafter.md',
+        sha256: agentHash,
+        size: agentContent.length,
+        content: agentContent,
+        scope: 'workspace' as const,
+        status: 'uploaded' as const,
+        mediaType: 'text/markdown',
+      },
+      {
+        relativePath: '.claude/rules/style.md',
+        sha256: ruleHash,
+        size: ruleContent.length,
+        content: ruleContent,
+        scope: 'workspace' as const,
+        status: 'uploaded' as const,
+        mediaType: 'text/markdown',
+      },
+      {
+        relativePath: '.mcp.json',
+        sha256: mcpHash,
+        size: mcpContent.length,
+        content: mcpContent,
+        scope: 'workspace' as const,
+        status: 'uploaded' as const,
+        mediaType: 'application/json',
+      },
+      {
+        relativePath: '.claude/settings.json',
+        sha256: settingsHash,
+        size: settingsContent.length,
+        content: settingsContent,
+        scope: 'workspace' as const,
+        status: 'uploaded' as const,
+        mediaType: 'application/json',
+      },
+    ];
+
+    const manifest = {
+      schemaVersion: MANIFEST_SCHEMA_VERSION,
+      projectId,
+      sessionId,
+      harness: 'claude-code',
+      harnessVersion: '0.1.0',
+      syncVersion: '0.1.0',
+      pluginVersion: '0.1.0',
+      transcriptsCaptured: true,
+      mainTranscriptRelativePath: transcriptPath,
+      artifacts: [
+        {
+          relativePath: transcriptPath,
+          mediaType: 'application/jsonl',
+          sha256: transcriptHash,
+          size: transcriptContent.length,
+          status: 'uploaded' as const,
+          scope: 'session' as const,
+          projectId,
+          sessionId,
+        },
+        ...configArtifacts.map((a) => ({
+          relativePath: a.relativePath,
+          mediaType: a.mediaType,
+          sha256: a.sha256,
+          size: a.size,
+          status: a.status,
+          scope: a.scope,
+          projectId,
+          sessionId,
+        })),
+      ],
+      syncRuns: [],
+    };
+
+    const executor = await createExecutor();
+    const orchestrator = await setupIngestion(executor);
+
+    const receipt = await orchestrator.ingestManifest({
+      manifest,
+      source: { sourceId: 'default', environmentId: 'dev', projectId, sessionId },
+      resolvedArtifacts: [
+        {
+          relativePath: transcriptPath,
+          mediaType: 'application/jsonl',
+          sha256: transcriptHash,
+          size: transcriptContent.length,
+          content: transcriptContent,
+        },
+        ...configArtifacts.map((a) => ({
+          relativePath: a.relativePath,
+          mediaType: a.mediaType,
+          sha256: a.sha256,
+          size: a.size,
+          content: a.content,
+        })),
+      ],
+      integrityVerified: false,
+    });
+
+    expect(receipt.status).toBe('committed');
+    expect(receipt.issueIds).toEqual([]);
+
+    // component_identities must be populated with skills, agents, rules, mcp, settings
+    const { rows: componentRows } = await executor.exec(
+      'SELECT kind, COUNT(*) AS c FROM component_identities GROUP BY kind ORDER BY kind',
+    );
+    expect(componentRows.length).toBeGreaterThan(0);
+    const kinds = new Set(componentRows.map((r) => r.kind));
+    expect(kinds.has('skill')).toBe(true);
+    expect(kinds.has('agent')).toBe(true);
+    expect(kinds.has('rule')).toBe(true);
+    expect(kinds.has('mcp_server')).toBe(true);
+    expect(kinds.has('setting')).toBe(true);
+
+    // configuration_snapshots must be populated
+    const { rows: snapshotRows } = await executor.exec(
+      'SELECT COUNT(*) AS c FROM configuration_snapshots WHERE generation_id = ?',
+      [receipt.generationId],
+    );
+    expect(snapshotRows[0]?.c).toBeGreaterThan(0);
+
+    // session_component_exposures must be populated (temporalRole defaults to pre_session)
+    const { rows: exposureRows } = await executor.exec(
+      'SELECT COUNT(*) AS c FROM session_component_exposures WHERE session_id = ?',
+      [receipt.sessionId],
+    );
+    expect(exposureRows[0]?.c).toBeGreaterThan(0);
+
+    // snapshot_components must link components to the snapshot
+    const { rows: snapshotComponentRows } = await executor.exec(
+      `SELECT COUNT(*) AS c FROM snapshot_components sc
+       JOIN configuration_snapshots cs ON cs.id = sc.snapshot_id
+       WHERE cs.generation_id = ?`,
+      [receipt.generationId],
+    );
+    expect(snapshotComponentRows[0]?.c).toBeGreaterThan(0);
+  });
 });

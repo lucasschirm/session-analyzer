@@ -176,8 +176,23 @@ async function runFullScopeSync(
 }
 
 /**
- * Run a session-only sync (transcripts only). Used for subsequent sessions
- * after the first one has already captured workspace/global config.
+ * Run a session sync that also re-discovers workspace/global config artifacts.
+ *
+ * Workspace and global config artifacts are content-addressed (CAS) and shared
+ * across sessions in the same workspace. The first session's full sync uploads
+ * them; subsequent sessions will find them already in CAS (status: 'skipped').
+ *
+ * The manifest for every session MUST list workspace/global artifacts so the
+ * dashboard sync worker can download them and the transformer can extract
+ * component identities (skills, agents, rules, MCP servers, settings). Without
+ * these artifacts in the manifest, the component utilization chart stays empty
+ * because the transformer never sees the config files.
+ *
+ * Re-discovering config artifacts on every session is cheap: the discovery
+ * layer reads file metadata and computes SHA-256 hashes, but the upload layer
+ * skips files that are already in CAS with the same hash. The manifest gets
+ * the full artifact list with 'skipped' status for already-uploaded CAS
+ * objects, which the dashboard sync worker downloads from CAS on demand.
  */
 async function runSessionOnlySync(
   config: SyncConfig,
@@ -192,9 +207,14 @@ async function runSessionOnlySync(
   session.startedAt = session.startedAt ?? new Date().toISOString();
   await stateStore.setSession(hookInput.session_id, session);
 
-  const discovery = await discoverSession({
+  // Use full discovery (workspace + global + session) so the manifest includes
+  // config artifacts. They will be marked 'skipped' by the upload layer since
+  // they're already in CAS, but they appear in the manifest so the dashboard
+  // can download them from CAS and feed them to the transformer.
+  const discovery = await discover({
     projectId: config.projectId,
     sessionId: hookInput.session_id,
+    workspaceRoot: hookInput.cwd,
     transcriptPath: hookInput.transcript_path,
     captureTranscripts: config.captureTranscripts,
     limits: config.limits,

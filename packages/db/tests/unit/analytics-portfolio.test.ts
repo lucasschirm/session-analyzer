@@ -12,7 +12,7 @@ import {
   PortfolioDistributionStore,
   PortfolioStore,
   ProjectStore,
-  SessionComponentStatStore,
+  SessionComponentExposureStore,
   SessionStore,
   SourceManifestStore,
   SourceProjectStore,
@@ -346,6 +346,18 @@ describe('analytics-portfolio', () => {
       outcomeDistribution: '{}',
       generationId: 'gen-overview',
     });
+    // Mark the "used" component as exposed in a session so
+    // findUnusedOfferedComponents (which now reads from
+    // session_component_exposures) treats it as used.
+    await SessionComponentExposureStore.insert(executor, {
+      sessionId: 'se-overview',
+      componentId: usedComponentId,
+      environmentId: ENV_ID,
+      status: 'loaded',
+      startSequence: 0,
+      startTime: BASE_TIME,
+      generationId: 'gen-overview',
+    });
 
     const overview = await getPortfolioOverview(executor, {
       portfolioId: PORTFOLIO_ID,
@@ -469,19 +481,14 @@ describe('analytics-portfolio', () => {
       outcomeDistribution: '{}',
       generationId: 'gen-comp',
     });
-    await SessionComponentStatStore.insert(executor, {
+    await SessionComponentExposureStore.insert(executor, {
       sessionId: 'se-comp',
-      generationId: 'gen-comp',
       componentId,
-      componentVersionId: null,
-      kind: 'tool',
-      availability: '{}',
-      context: '{}',
-      invocationCount: 10,
-      payloadCount: 0,
-      payloadBytes: 0,
-      statusCounts: '{}',
-      outcomeState: null,
+      environmentId: ENV_ID,
+      status: 'loaded',
+      startSequence: 0,
+      startTime: BASE_TIME,
+      generationId: 'gen-comp',
     });
 
     const page = await getComponentUtilization(executor, {
@@ -497,7 +504,9 @@ describe('analytics-portfolio', () => {
     expect(row?.kind).toBe('tool');
     expect(row?.projectCount).toBe(1);
     expect(row?.sessionCount).toBe(1);
-    expect(row?.loadRate?.value).toBe(0.8);
+    // loadRate is null because session_component_exposures does not carry
+    // invocation/success counts (no rollup pipeline populates them yet).
+    expect(row?.loadRate?.value).toBeNull();
     expect(row?.loadRate?.comparabilityGroupId).toBe(COMPARABILITY_GROUP_ID);
     expect(row?.token.generationId).toBe('gen-comp');
     expect(row?.token.comparabilityGroupId).toBe(COMPARABILITY_GROUP_ID);
