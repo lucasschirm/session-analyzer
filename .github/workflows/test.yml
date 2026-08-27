@@ -47,11 +47,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build parser, sync-core, and sync dist (needed for downstream typechecks)
-        run: |
-          pnpm --filter @lucasschirm/sal-sync-core build
-          pnpm --filter @lucasschirm/sal-claude-session-parser build
-          pnpm --filter @lucasschirm/sal-sync build
+      - name: Build library dist (needed for downstream typechecks)
+        # Build all publishable library packages in topological parallel order,
+        # excluding the plugin (esbuild bundle) and site (Vite production build)
+        # whose dist output is not consumed by any typecheck target.
+        run: pnpm -r --filter '!site' --filter '!@lucasschirm/claude-session-sync' build
 
       - name: Typecheck all packages
         run: pnpm -r typecheck
