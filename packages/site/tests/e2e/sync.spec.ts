@@ -951,3 +951,50 @@ test('UX-006: export after sync includes session rows', async ({ page }) => {
   expect(counts.projects).toBe(1);
   expect(counts.sessions).toBeGreaterThan(0);
 });
+
+// =============================================================================
+// UX-004: Sync completion triggers the ingestion seam.
+//
+// Regression guard for TSK0005: the SyncManager singleton wires
+// onFileDownloaded/onSyncComplete to real analytics retention + ingestion/rollup
+// (commit b32d019, 2026-08-25). Pre-fix, both defaults were no-ops, so a synced
+// session would be created in the control DB but never contribute analytics.
+// This test exercises the production wiring end-to-end: it would fail on the
+// aggregate metric assertion if either seam reverted to no-op.
+// =============================================================================
+
+test('UX-004: sync completion makes the synced session queryable in the dashboard', async ({
+  page,
+}) => {
+  const bucket = new FixtureBucket();
+  bucket.addProject('ux004-proj', 'UX-004 Project', 'Sync ingestion seam test');
+  bucket.addSession('ux004-proj', 'e2e-claude-session', {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+  await waitForSyncIdle(page);
+
+  // The synced session must appear in the project's session list on the home
+  // page (control DB). This proves the sync manager discovered the session and
+  // the sync worker reached the completed state for this project.
+  await page.goto('/');
+  const projectCard = page.locator('.project-card', { hasText: 'UX-004 Project' });
+  await expect(projectCard).toBeVisible({ timeout: 10000 });
+  await expect(projectCard).toContainText('1 session', { timeout: 10000 });
+
+  // The same session must also contribute to an aggregate metric on the
+  // Project Behavior page (analytics DB). This proves onFileDownloaded retained
+  // the transcript in the analytics blob store and onSyncComplete triggered
+  // ingestion and rollup. If either seam were the pre-TSK0005 no-op, the chart
+  // would render empty and this assertion would fail.
+  await openProjectByName(page, 'UX-004 Project');
+  await expectChartContains(page, 'Token usage trends', 'Total tokens');
+});
