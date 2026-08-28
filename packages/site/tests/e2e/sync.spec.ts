@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
+import { verifyExportContents } from './helpers/export-verify.js';
 import {
   buildSessionManifest,
   FixtureBucket,
@@ -912,6 +913,43 @@ test('unresolvable artifact in one session does not stop the sync run', async ({
   await expect(page.locator('.project-card', { hasText: /2 sessions/ })).toBeVisible({
     timeout: 10000,
   });
+});
+
+// =============================================================================
+// UX-006: Export content verification
+// =============================================================================
+
+test('UX-006: export after sync includes session rows', async ({ page }) => {
+  const bucket = new FixtureBucket();
+  bucket.addProject('ux-006-proj', 'UX-006 Project', 'Export content verification');
+  bucket.addSession('ux-006-proj', 'e2e-claude-session', {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+  await waitForSyncIdle(page);
+
+  // Go back to the home page and export the control database.
+  await page.goto('/');
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Export Database' }).click(),
+  ]);
+
+  expect(download.suggestedFilename()).toMatch(/session-analyzer-.*\.sqlite$/);
+
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const counts = await verifyExportContents(downloadPath);
+  expect(counts.projects).toBe(1);
+  expect(counts.sessions).toBeGreaterThan(0);
 });
 
 // =============================================================================
