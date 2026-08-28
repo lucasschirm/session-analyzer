@@ -1,6 +1,6 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
-import type { UploadedFile } from '../lib/subagents';
+import type { UploadedFile } from '../lib/uploaded-file';
 
 /**
  * Drag-and-drop upload zone.
@@ -101,6 +101,7 @@ export class UploadZone extends LitElement {
     const input = event.target as HTMLInputElement;
     this.emitUploads(
       Array.from(input.files ?? []).map((file) => ({ file, relativePath: file.name })),
+      'picker',
     );
     input.value = '';
   }
@@ -150,22 +151,29 @@ export class UploadZone extends LitElement {
       const uploads = (
         await Promise.all(entries.map((entry) => readEntryRecursive(entry, '')))
       ).flat();
-      this.emitUploads(uploads);
+      this.emitUploads(uploads, 'drop-folder');
       return;
     }
 
     this.emitUploads(
       Array.from(dataTransfer.files ?? []).map((file) => ({ file, relativePath: file.name })),
+      'drop-flat',
     );
   }
 
-  private emitUploads(uploads: UploadedFile[]): void {
+  private emitUploads(
+    uploads: UploadedFile[],
+    source: 'picker' | 'drop-flat' | 'drop-folder',
+  ): void {
     const relevant = uploads.filter((upload) => /\.(json|jsonl|log)$/i.test(upload.file.name));
     if (relevant.length === 0) return;
 
+    const pathPreserved =
+      source === 'drop-folder' || relevant.some((upload) => upload.relativePath.includes('/'));
+
     this.dispatchEvent(
       new CustomEvent('files-selected', {
-        detail: { files: relevant },
+        detail: { files: relevant, source, pathPreserved },
         bubbles: true,
         composed: true,
       }),

@@ -170,52 +170,6 @@ export interface Project {
   connection_id?: string;
 }
 
-export interface SessionMetrics {
-  total_sessions: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_cache_creation_tokens: number;
-  total_cache_read_tokens: number;
-  total_tokens: number;
-  total_cost_usd: number;
-  total_tool_executions: number;
-  avg_session_duration_ms: number;
-  models_used: string[];
-}
-
-/** Drill-down indicator keys supported by the Indicator Details page. */
-export type IndicatorKey =
-  | 'tokens'
-  | 'compactions'
-  | 'turns'
-  | 'tools'
-  | 'files_read'
-  | 'files_written'
-  | 'agents'
-  | 'skills'
-  | 'diagnostics'
-  | 'tasks';
-
-// Parser types
-export interface ParsedSession {
-  session: DashboardSession;
-  parseErrors: ParseError[];
-}
-
-export interface ParseError {
-  line?: number;
-  message: string;
-  raw_data?: string;
-}
-
-export interface ParserResult {
-  sessions: ParsedSession[];
-  summary: {
-    total_parsed: number;
-    total_errors: number;
-  };
-}
-
 /** Project-level sync state: idle (NULL), currently syncing, or fully in sync. */
 export type ProjectSyncStatus = 'in_sync' | 'syncing';
 
@@ -330,6 +284,7 @@ export interface SessionFileRecord {
   path: string;
   scope: 'session' | 'workspace' | 'global' | 'runtime';
   sha256: string;
+  etag?: string;
   size: number;
   status: 'downloaded' | 'processed' | 'failed';
   updated_at: number;

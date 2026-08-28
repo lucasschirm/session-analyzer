@@ -15,9 +15,11 @@ import {
   DEFAULT_SYNC_TIMEOUTS,
   ENV_SAL_STORAGE_URL,
   MANIFEST_SCHEMA_VERSION,
+  MANIFEST_SCHEMA_VERSION_LATEST,
   type SessionData,
   STORAGE_CONFIG_FIELDS,
   type StorageConfig,
+  SUPPORTED_MANIFEST_SCHEMA_VERSIONS,
   SYNC_ERROR_CATALOG,
   SYNC_SCHEMA_VERSION,
   SYNC_VERSION,
@@ -37,6 +39,8 @@ describe('versions', () => {
   it('exposes schema and package version constants', () => {
     expect(SYNC_SCHEMA_VERSION).toBe(1);
     expect(MANIFEST_SCHEMA_VERSION).toBe(2);
+    expect(MANIFEST_SCHEMA_VERSION_LATEST).toBe(3);
+    expect(SUPPORTED_MANIFEST_SCHEMA_VERSIONS).toEqual([2, 3]);
     expect(CAPTURE_ALLOWLIST_VERSION).toBe(2);
     expect(SYNC_VERSION).toBe('0.1.0');
     expect(UNKNOWN_HARNESS_VERSION).toBe('unknown');

@@ -87,14 +87,14 @@ describe('passkey-modal', () => {
     );
     const root = shadow(modal);
 
-    fillInput(root, '#passkey-input', 'short');
-    fillInput(root, '#confirm-passkey-input', 'short');
+    fillInput(root, '#passkey-input', 'abc');
+    fillInput(root, '#confirm-passkey-input', 'abc');
     await modal.updateComplete;
 
     root.querySelector('form')?.dispatchEvent(new Event('submit', { cancelable: true }));
     await modal.updateComplete;
 
-    expect(root.textContent).toContain('at least 8');
+    expect(root.textContent).toContain('at least 4');
     expect(createPasskey).not.toHaveBeenCalled();
   });
 

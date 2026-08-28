@@ -36,7 +36,7 @@ const SUBAGENT_META_PATTERN = 'subagents/*.meta.json';
  * Storage-relative name for the main transcript file within the `session` scope.
  *
  * The on-disk filename is `<sessionId>.jsonl`, but the S3 key already includes
- * the sessionId at `<projectId>/<sessionId>/session/...`, so we use a fixed
+ * the sessionId at `<projectId>/<sessionId>/...`, so we use a fixed
  * name to avoid repeating the sessionId in the key.
  */
 export const MAIN_TRANSCRIPT_STORAGE_NAME = 'transcript.jsonl';

@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SourceCheckpoint } from '../../src/db/database';
 import { DbClient } from '../../src/db/db-client';
 import type { DbRequest, DbResponse } from '../../src/db/db-protocol';
 import type {
   Connection,
-  PasskeyState,
+  Project,
   SessionFileRecord,
   SessionStub,
   StoredS3Credentials,
-  SyncManifest,
 } from '../../src/types';
 
 /** Minimal Worker double that records posted messages and lets tests reply. */
 class FakeWorker {
-  onmessage: ((event: MessageEvent) => void) | null = null;
+  onmessage: ((event: MessageEvent<DbResponse>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   posted: DbRequest[] = [];
 
@@ -21,12 +21,36 @@ class FakeWorker {
   }
 
   respond(response: DbResponse): void {
-    this.onmessage?.({ data: response } as MessageEvent);
+    this.onmessage?.({ data: response } as MessageEvent<DbResponse>);
   }
 
   fail(message: string): void {
     this.onerror?.({ message } as ErrorEvent);
   }
+}
+
+function sampleProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: 'p1',
+    name: 'Project One',
+    description: 'desc',
+    created_at: 1,
+    updated_at: 2,
+    session_count: 0,
+    ...overrides,
+  };
+}
+
+function sampleConnection(overrides: Partial<Connection> = {}): Connection {
+  return {
+    id: 'c1',
+    name: 'Conn One',
+    storage_type: 's3',
+    sync_only_new: false,
+    created_at: 1,
+    updated_at: 2,
+    ...overrides,
+  };
 }
 
 describe('DbClient', () => {
@@ -38,253 +62,306 @@ describe('DbClient', () => {
     client = new DbClient(() => worker as unknown as Worker);
   });
 
-  it('initializes once and reports the storage backend', async () => {
+  // ---------------- ensureReady ----------------
+
+  it('ensureReady sends init and resolves with the storage backend', async () => {
     const ready = client.ensureReady();
     expect(worker.posted.length).toBe(1);
     expect(worker.posted[0].type).toBe('init');
 
     worker.respond({ id: worker.posted[0].id, ok: true, storage: 'opfs' });
     await expect(ready).resolves.toBe('opfs');
+  });
 
-    // Second call reuses the first initialization.
+  it('ensureReady only initializes once', async () => {
+    const ready = client.ensureReady();
+    worker.respond({ id: worker.posted[0].id, ok: true, storage: 'opfs' });
+    await expect(ready).resolves.toBe('opfs');
+
+    // Second call reuses the cached init promise; no new init posted.
     await expect(client.ensureReady()).resolves.toBe('opfs');
     expect(worker.posted.length).toBe(1);
   });
 
-  it('correlates concurrent requests by id', async () => {
-    void client.ensureReady();
-    worker.respond({ id: 1, ok: true, storage: 'memory' });
-
-    const projectsPromise = client.getProjects();
-    const projectPromise = client.getProject('p1');
-
-    worker.respond({ id: 3, ok: true, result: { id: 'p1', name: 'One' } });
-    worker.respond({ id: 2, ok: true, result: [{ id: 'p1' }] });
-
-    await expect(projectsPromise).resolves.toEqual([{ id: 'p1' }]);
-    await expect(projectPromise).resolves.toEqual({ id: 'p1', name: 'One' });
-    expect(worker.posted.map((request) => request.type)).toEqual([
-      'init',
-      'getProjects',
-      'getProject',
-    ]);
-  });
-
-  it('rejects when the worker reports an error response', async () => {
-    void client.ensureReady();
-    worker.respond({ id: 1, ok: true, storage: 'memory' });
-
-    const promise = client.getProjects();
-    worker.respond({ id: worker.posted[1].id, ok: false, error: 'boom' });
-
-    await expect(promise).rejects.toThrow('boom');
-  });
-
-  it('rejects all pending calls on worker failure', async () => {
+  it('ensureReady defaults to memory when storage is omitted', async () => {
     const ready = client.ensureReady();
-    const projects = client.getProjects();
-
-    worker.fail('worker crashed');
-
-    await expect(ready).rejects.toThrow('worker crashed');
-    await expect(projects).rejects.toThrow('worker crashed');
+    worker.respond({ id: worker.posted[0].id, ok: true });
+    await expect(ready).resolves.toBe('memory');
   });
+
+  // ---------------- Lazy init ----------------
 
   it('lazily initializes on the first ordinary call', async () => {
     const promise = client.getProjects();
+    // First posted message is the auto-queued init.
     expect(worker.posted[0].type).toBe('init');
-    worker.respond({ id: 1, ok: true, storage: 'memory' });
-    worker.respond({ id: 2, ok: true, result: [] });
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+    worker.respond({ id: 2, ok: true, result: [sampleProject()] });
 
-    await expect(promise).resolves.toEqual([]);
+    await expect(promise).resolves.toEqual([sampleProject()]);
   });
 
-  it('resolves exportDatabase with the transferred bytes', async () => {
+  // ---------------- storageReady getter ----------------
+
+  it('storageReady is false before init and true after', async () => {
+    expect(client.storageReady).toBe(false);
+    const ready = client.ensureReady();
+    expect(client.storageReady).toBe(true);
+    worker.respond({ id: worker.posted[0].id, ok: true, storage: 'opfs' });
+    await expect(ready).resolves.toBe('opfs');
+    expect(client.storageReady).toBe(true);
+  });
+
+  // ---------------- Request correlation ----------------
+
+  it('correlates concurrent calls by id', async () => {
     void client.ensureReady();
-    worker.respond({ id: 1, ok: true, storage: 'memory' });
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const a = client.getProject('p1');
+    const b = client.getProjects();
+
+    worker.respond({ id: 3, ok: true, result: [sampleProject()] });
+    worker.respond({ id: 2, ok: true, result: sampleProject() });
+
+    await expect(b).resolves.toEqual([sampleProject()]);
+    await expect(a).resolves.toEqual(sampleProject());
+    expect(worker.posted.map((r) => r.type)).toEqual(['init', 'getProject', 'getProjects']);
+  });
+
+  // ---------------- Error response ----------------
+
+  it('rejects when the worker reports an error response', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const promise = client.getProject('p1');
+    worker.respond({ id: worker.posted[1].id, ok: false, error: 'not found' });
+
+    await expect(promise).rejects.toThrow('not found');
+  });
+
+  // ---------------- failAll ----------------
+
+  it('failAll rejects all pending calls on worker error', async () => {
+    const ready = client.ensureReady();
+    const projects = client.getProjects();
+
+    const readyAssertion = expect(ready).rejects.toThrow('worker crashed');
+    const projectsAssertion = expect(projects).rejects.toThrow('worker crashed');
+
+    worker.fail('worker crashed');
+
+    await readyAssertion;
+    await projectsAssertion;
+  });
+
+  // ---------------- fallbackReason ----------------
+
+  it('sets fallbackReason on init when the worker reports it', async () => {
+    const ready = client.ensureReady();
+    worker.respond({
+      id: worker.posted[0].id,
+      ok: true,
+      storage: 'memory',
+      fallbackReason: 'unsupported',
+    });
+    await expect(ready).resolves.toBe('memory');
+    expect(client.fallbackReason).toBe('unsupported');
+  });
+
+  it('leaves fallbackReason undefined when init uses opfs', async () => {
+    const ready = client.ensureReady();
+    worker.respond({ id: worker.posted[0].id, ok: true, storage: 'opfs' });
+    await expect(ready).resolves.toBe('opfs');
+    expect(client.fallbackReason).toBeUndefined();
+  });
+
+  // ---------------- exportControlDatabase ----------------
+
+  it('exportControlDatabase resolves with bytes', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
 
     const bytes = new Uint8Array([1, 2, 3]);
-    const promise = client.exportDatabase();
+    const promise = client.exportControlDatabase();
     worker.respond({ id: worker.posted[1].id, ok: true, bytes });
 
-    await expect(promise).resolves.toBe(bytes);
+    await expect(promise).resolves.toEqual(bytes);
   });
 
-  it('posts the full payloads for write operations', async () => {
+  it('exportControlDatabase resolves with empty bytes when omitted', async () => {
     void client.ensureReady();
-    worker.respond({ id: 1, ok: true, storage: 'memory' });
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
 
-    const project = {
-      id: 'p1',
-      name: 'N',
-      description: 'D',
-      created_at: 1,
-      updated_at: 1,
-      session_count: 0,
-    };
+    const promise = client.exportControlDatabase();
+    worker.respond({ id: worker.posted[1].id, ok: true });
+
+    await expect(promise).resolves.toEqual(new Uint8Array());
+  });
+
+  // ---------------- Typed method payloads ----------------
+
+  it('posts the correct request type and payload for typed methods', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const project = sampleProject();
     void client.createProject(project);
-    void client.updateProject('p1', { name: 'N2' });
+    void client.getProjects();
+    void client.getProject('p1');
     void client.deleteProject('p1');
-    void client.searchSessions('p1', 'query');
-    void client.deleteSession('s1');
-
-    expect(worker.posted[1]).toMatchObject({ type: 'createProject', project });
-    expect(worker.posted[2]).toMatchObject({
-      type: 'updateProject',
-      projectId: 'p1',
-      fields: { name: 'N2' },
-    });
-    expect(worker.posted[3]).toMatchObject({ type: 'deleteProject', projectId: 'p1' });
-    expect(worker.posted[4]).toMatchObject({
-      type: 'searchSessions',
-      projectId: 'p1',
-      query: 'query',
-    });
-    expect(worker.posted[5]).toMatchObject({ type: 'deleteSession', sessionId: 's1' });
-  });
-
-  it('exports and triggers a download', async () => {
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    const createObjectURLSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url');
-    const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-
-    void client.ensureReady();
-    worker.respond({ id: 1, ok: true, storage: 'memory' });
-
-    const promise = client.exportAndDownload();
-    worker.respond({
-      id: worker.posted[1].id,
-      ok: true,
-      bytes: new Uint8Array([83, 81, 76, 105, 116, 101]),
-    });
-    await promise;
-
-    expect(clickSpy).toHaveBeenCalled();
-    expect(createObjectURLSpy).toHaveBeenCalled();
-    expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:mock-url');
-
-    clickSpy.mockRestore();
-    createObjectURLSpy.mockRestore();
-    revokeObjectURLSpy.mockRestore();
-  });
-
-  it('stores the fallback reason reported by init', async () => {
-    const ready = client.ensureReady();
-    worker.respond({ id: 1, ok: true, storage: 'memory', fallbackReason: 'locked' });
-    await expect(ready).resolves.toBe('memory');
-    expect(client.fallbackReason).toBe('locked');
-  });
-
-  it('posts sync, connection, passkey and session-file payloads', () => {
-    void client.ensureReady();
-    worker.respond({ id: 1, ok: true, storage: 'memory' });
-
-    const connection: Connection = {
-      id: 'c1',
-      name: 'S3 Dev',
-      storage_type: 's3',
-      sync_only_new: true,
-      created_at: 1,
-      updated_at: 2,
-    };
-    const credentials: StoredS3Credentials = {
+    void client.createConnection(sampleConnection());
+    void client.saveS3Credentials({
       connection_id: 'c1',
       region: 'us-east-1',
-      bucket: 'dev',
-      access_key_id: 'AKIA...',
+      bucket: 'b',
+      access_key_id: 'ak',
       secret_access_key_ct: 'ct',
       secret_access_key_iv: 'iv',
       created_at: 1,
       updated_at: 2,
-    };
-    const passkey: PasskeyState = {
-      id: 1,
-      kdf_salt: 'salt',
-      verifier_iv: 'iv',
-      verifier_ct: 'ct',
-      created_at: 1,
-    };
+    } satisfies StoredS3Credentials);
     const stub: SessionStub = {
-      id: 'stub',
+      id: 's1',
       project_id: 'p1',
-      source: 'sync',
-      title: 'Stub',
-      started_at: '2026-01-01T00:00:00.000Z',
-      ended_at: '2026-01-01T00:00:00.000Z',
-      sync_session_id: 'remote-1',
+      source: 'claude',
+      title: 't',
+      started_at: '2024-01-01T00:00:00Z',
+      ended_at: '2024-01-01T01:00:00Z',
+      sync_session_id: 'sync-1',
       sync_status: 'pending',
     };
-    const manifest: SyncManifest = {
-      sessionId: 'remote-1',
-      schemaVersion: 1,
-      artifacts: [{ path: 't.json' }],
-      syncRuns: [{ id: 'run-1' }],
-    };
+    void client.upsertSessionStub(stub);
+    void client.setSessionSyncStatus('s1', 'in_sync');
     const file: SessionFileRecord = {
       id: 'f1',
       project_id: 'p1',
       session_id: 's1',
-      path: 't.json',
+      path: 'a.jsonl',
       scope: 'session',
-      sha256: 'deadbeef',
-      size: 42,
+      sha256: 'h',
+      size: 10,
       status: 'downloaded',
       updated_at: 1,
     };
-
-    void client.createConnection(connection);
-    void client.updateConnection('c1', { name: 'S3 Prod' });
-    void client.deleteConnection('c1');
-    void client.getConnections();
-    void client.saveS3Credentials(credentials);
-    void client.getS3Credentials('c1');
-    void client.deleteAllCredentials();
-    void client.getPasskeyState();
-    void client.savePasskeyState(passkey);
-    void client.getProjectByReadableId('my-project');
-    void client.setProjectSyncStatus('p1', 'syncing');
-    void client.backfillReadableIds();
-    void client.getSessionBySyncId('p1', 'remote-1');
-    void client.upsertSessionStub(stub);
-    void client.setSessionSyncStatus('stub', 'in_sync', 'ok');
-    void client.updateSessionManifest('stub', manifest);
-    void client.getSyncRunCount('stub');
-    void client.failStaleSessions('p1', 'worker lost');
-    void client.reconcileSyncStates('restarted');
     void client.getSessionFiles('s1');
-    void client.upsertSessionFile(file);
-
-    const types = worker.posted.slice(1).map((request) => request.type);
-    expect(types).toEqual([
-      'createConnection',
-      'updateConnection',
-      'deleteConnection',
-      'getConnections',
-      'saveS3Credentials',
-      'getS3Credentials',
-      'deleteAllCredentials',
-      'getPasskeyState',
-      'savePasskeyState',
-      'getProjectByReadableId',
-      'setProjectSyncStatus',
-      'backfillReadableIds',
-      'getSessionBySyncId',
-      'upsertSessionStub',
-      'setSessionSyncStatus',
-      'updateSessionManifest',
-      'getSyncRunCount',
-      'failStaleSessions',
-      'reconcileSyncStates',
-      'getSessionFiles',
-      'upsertSessionFile',
-    ]);
-
-    const createRequest = worker.posted[1] as DbRequest & { type: 'createConnection' };
-    expect(createRequest.connection).toEqual(connection);
-
-    const fileRequest = worker.posted[worker.posted.length - 1] as DbRequest & {
-      type: 'upsertSessionFile';
+    void client.setUiPreference('theme', 'dark');
+    void client.getUiPreference('theme');
+    const checkpoint: SourceCheckpoint = {
+      source_id: 'src1',
+      source_type: 'sync',
     };
-    expect(fileRequest.file).toEqual(file);
+    void client.commitSourceCheckpoint('src1', checkpoint, { generationId: 'gen-1' });
+    void client.getSourceCheckpoint('src1');
+
+    expect(worker.posted[1]).toMatchObject({ type: 'createProject', project });
+    expect(worker.posted[2]).toMatchObject({ type: 'getProjects' });
+    expect(worker.posted[3]).toMatchObject({ type: 'getProject', projectId: 'p1' });
+    expect(worker.posted[4]).toMatchObject({ type: 'deleteProject', projectId: 'p1' });
+    expect(worker.posted[5]).toMatchObject({
+      type: 'createConnection',
+      connection: sampleConnection(),
+    });
+    expect(worker.posted[6]).toMatchObject({
+      type: 'saveS3Credentials',
+      credentials: {
+        connection_id: 'c1',
+        region: 'us-east-1',
+        bucket: 'b',
+        access_key_id: 'ak',
+      },
+    });
+    expect(worker.posted[7]).toMatchObject({ type: 'upsertSessionStub', stub });
+    expect(worker.posted[8]).toMatchObject({
+      type: 'setSessionSyncStatus',
+      sessionId: 's1',
+      status: 'in_sync',
+    });
+    expect(worker.posted[9]).toMatchObject({ type: 'getSessionFiles', sessionId: 's1' });
+    expect(worker.posted[10]).toMatchObject({
+      type: 'setUiPreference',
+      key: 'theme',
+      value: 'dark',
+    });
+    expect(worker.posted[11]).toMatchObject({ type: 'getUiPreference', key: 'theme' });
+    expect(worker.posted[12]).toMatchObject({
+      type: 'commitSourceCheckpoint',
+      sourceId: 'src1',
+      checkpoint,
+      receipt: { generationId: 'gen-1' },
+    });
+    expect(worker.posted[13]).toMatchObject({
+      type: 'getSourceCheckpoint',
+      sourceId: 'src1',
+    });
+  });
+
+  it('forwards setSessionSyncStatus details when provided', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    void client.setSessionSyncStatus('s1', 'failed', 'timeout');
+    expect(worker.posted[1]).toMatchObject({
+      type: 'setSessionSyncStatus',
+      sessionId: 's1',
+      status: 'failed',
+      details: 'timeout',
+    });
+  });
+
+  it('resolves typed method results from the worker result field', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const promise = client.getProjects();
+    worker.respond({ id: worker.posted[1].id, ok: true, result: [sampleProject()] });
+    await expect(promise).resolves.toEqual([sampleProject()]);
+  });
+
+  it('getSourceCheckpoint resolves with the result', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const checkpoint: SourceCheckpoint = {
+      source_id: 'src1',
+      source_type: 'sync',
+      last_sequence: '10',
+    };
+    const promise = client.getSourceCheckpoint('src1');
+    worker.respond({ id: worker.posted[1].id, ok: true, result: checkpoint });
+    await expect(promise).resolves.toEqual(checkpoint);
+  });
+
+  // ---------------- exportAndDownload ----------------
+
+  it('exportAndDownload creates a blob and triggers a download', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const bytes = new Uint8Array([9, 9, 9]);
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fake-url');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const clickSpy = vi.fn();
+    const anchor = { href: '', download: '', click: clickSpy } as unknown as HTMLAnchorElement;
+    const createElementSpy = vi.spyOn(document, 'createElement').mockReturnValue(anchor);
+
+    // Kick off the download flow; it posts exportControlDatabase synchronously.
+    const promise = client.exportAndDownload();
+    expect(worker.posted[1].type).toBe('exportControlDatabase');
+    worker.respond({ id: worker.posted[1].id, ok: true, bytes });
+    await promise;
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:fake-url');
+    expect(createElementSpy).toHaveBeenCalledWith('a');
+    expect(clickSpy).toHaveBeenCalled();
+    expect((anchor as unknown as { download: string }).download).toMatch(
+      /^session-analyzer-\d{4}-\d{2}-\d{2}\.sqlite$/,
+    );
+
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+    createElementSpy.mockRestore();
   });
 });

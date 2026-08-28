@@ -51,11 +51,13 @@ jspm_packages/
 jam/
 web_modules/
 package-lock.json
+playwright-report
 
 
 # Custom
 tmp
 docs/superpowers
+.superpowers
 .worktrees
 .claude/scheduled_tasks.lock
 .claude/agents
@@ -66,3 +68,4 @@ docs/superpowers
 .devin/rules
 .devin/skills
 .playwright-mcp
+packages/plugins/claude-session-sync/bin-e2e

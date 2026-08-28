@@ -100,13 +100,13 @@ class MockS3Client implements S3Client {
     if (this.listSessionObjectsResult) {
       return this.listSessionObjectsResult;
     }
-    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/session/`;
+    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/`;
     const result: S3ListObjectEntry[] = [];
     for (const [key, buffer] of this.store) {
       if (key.startsWith(prefix) && !key.endsWith('/')) {
         const parsed = parseObjectKey(key);
         if (parsed?.scope === 'session' && parsed.relativePath) {
-          result.push({ key, size: buffer.byteLength });
+          result.push({ key, size: buffer.byteLength, etag: `"${key}-etag"` });
         }
       }
     }
@@ -216,7 +216,7 @@ async function buildFileInfo(file: TestFile, mainPath: string) {
   const bytes = encoder.encode(file.content);
   const hash = await sha256Hex(bytes);
   return {
-    file: `${file.scope}/${file.relativePath}`,
+    file: file.scope === 'session' ? file.relativePath : `${file.scope}/${file.relativePath}`,
     scope: file.scope,
     relativePath: file.relativePath,
     hash,
@@ -452,7 +452,7 @@ describe('SessionSyncWorker', () => {
       message: SessionFileDownloadedMessage;
     }>;
     expect(fileMessages.length).toBe(1);
-    expect(fileMessages[0].message.file).toBe('session/transcript.jsonl');
+    expect(fileMessages[0].message.file).toBe('transcript.jsonl');
   });
 
   it('falls back to the in-scope manifest list when filesToDownload is omitted', async () => {
@@ -460,7 +460,7 @@ describe('SessionSyncWorker', () => {
     const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
       { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
       { scope: 'session', relativePath: 'subagents/agent-1.jsonl', content: 'sub line\n' },
-      { scope: 'global', relativePath: 'ignored.jsonl', content: 'cas line\n' },
+      { scope: 'global', relativePath: 'settings.json', content: '{"env":{}}\n' },
     ]);
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
@@ -474,9 +474,11 @@ describe('SessionSyncWorker', () => {
       message: SessionFileDownloadedMessage;
     }>;
     const files = fileMessages.map((m) => m.message.file);
-    expect(files).toContain('session/transcript.jsonl');
-    expect(files).toContain('session/subagents/agent-1.jsonl');
-    expect(files).not.toContain('global/ignored.jsonl');
+    expect(files).toContain('transcript.jsonl');
+    expect(files).toContain('subagents/agent-1.jsonl');
+    // Workspace/global config artifacts are now downloaded so the transformer
+    // can extract component identities (MCP, settings, skills, agents, rules).
+    expect(files).toContain('global/settings.json');
   });
 
   it('downloads the main transcript before other files', async () => {
@@ -580,7 +582,7 @@ describe('SessionSyncWorker', () => {
       content: ArrayBuffer;
     };
     const postedEntry = posted.find((p) => p.message === fileMessage);
-    expect(fileMessage.file).toBe('session/transcript.jsonl');
+    expect(fileMessage.file).toBe('transcript.jsonl');
     expect(postedEntry?.transfer).toHaveLength(1);
     expect(postedEntry?.transfer?.[0]).toBe(fileMessage.content);
 
@@ -628,7 +630,7 @@ describe('SessionSyncWorker', () => {
     await flush();
 
     await vi.waitUntil(() => client.pendingKeys().length === 4);
-    expect(client.maxInFlight).toBeLessThanOrEqual(4);
+    expect(client.maxInFlight).toBeLessThanOrEqual(8);
 
     for (const key of client.pendingKeys()) {
       client.resolve(key, client.getBuffer(key));
@@ -681,9 +683,9 @@ describe('SessionSyncWorker', () => {
       { scope: 'session', relativePath: 'subagents/agent-1.jsonl', content: 'sub line\n' },
     ]);
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
-    const bad = downloads.find(
-      (f) => f.file === 'session/subagents/agent-1.jsonl',
-    ) as FileToDownload & { content: string };
+    const bad = downloads.find((f) => f.file === 'subagents/agent-1.jsonl') as FileToDownload & {
+      content: string;
+    };
     client.putBuffer(
       buildObjectKey({
         projectId: 'proj',
@@ -707,7 +709,7 @@ describe('SessionSyncWorker', () => {
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
 
     const complete = findOne(posted, 'SESSION_SYNC_COMPLETE') as SessionSyncCompleteMessage;
-    const subagent = complete.files.find((f) => f.file === 'session/subagents/agent-1.jsonl');
+    const subagent = complete.files.find((f) => f.file === 'subagents/agent-1.jsonl');
     expect(subagent?.status).toBe('failed');
     const done = findOne(posted, 'WORKER_DONE') as { synced: number; failed: number };
     expect(done.synced).toBe(1);
@@ -848,8 +850,8 @@ describe('SessionSyncWorker', () => {
     client.resolve(mainKey, client.getBuffer(mainKey));
     await flush();
 
-    await vi.waitUntil(() => client.pendingKeys().length === 4);
-    expect(client.maxInFlight).toBeLessThanOrEqual(4);
+    await vi.waitUntil(() => client.pendingKeys().length === 5);
+    expect(client.maxInFlight).toBeLessThanOrEqual(8);
 
     worker.handleMessage(cancelMessage());
     await flush();
@@ -958,11 +960,11 @@ describe('SessionSyncWorker', () => {
       message: SessionFileDownloadedMessage;
     }>;
     const files = fileMessages.map((m) => m.message.file);
-    expect(files).toContain('session/transcript.jsonl');
-    expect(files).toContain('session/subagents/agent-orphan.jsonl');
+    expect(files).toContain('transcript.jsonl');
+    expect(files).toContain('subagents/agent-orphan.jsonl');
 
     const complete = findOne(posted, 'SESSION_SYNC_COMPLETE') as SessionSyncCompleteMessage;
-    const orphan = complete.files.find((f) => f.file === 'session/subagents/agent-orphan.jsonl');
+    const orphan = complete.files.find((f) => f.file === 'subagents/agent-orphan.jsonl');
     expect(orphan).not.toBeUndefined();
     expect(orphan?.status).toBe('downloaded');
   });

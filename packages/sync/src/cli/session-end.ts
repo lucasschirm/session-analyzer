@@ -145,7 +145,9 @@ export async function sessionEnd(options: CliOptions = {}): Promise<CommandResul
       const discoveryDuration = Date.now() - discoveryStart;
 
       const sanitizationStart = Date.now();
-      const candidateResults = await buildCandidates(discovery, config);
+      const candidateResults = await buildCandidates(discovery, config, {
+        projectRoot: input.cwd,
+      });
       const sanitizationDuration = Date.now() - sanitizationStart;
 
       for (const error of discovery.errors) {

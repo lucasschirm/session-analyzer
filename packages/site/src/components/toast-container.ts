@@ -110,6 +110,14 @@ export class ToastManager extends EventTarget {
       );
     }
 
+    if (type === 'error') {
+      const logParts = [`Toast error: ${title}`];
+      if (toast.message) logParts.push(`message: ${toast.message}`);
+      if (toast.hint) logParts.push(`hint: ${toast.hint}`);
+      if (toast.link) logParts.push(`link: ${toast.link}`);
+      console.error(logParts.join(' | '));
+    }
+
     this.emitChange();
     return id;
   }

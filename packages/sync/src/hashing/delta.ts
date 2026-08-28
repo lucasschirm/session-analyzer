@@ -13,6 +13,7 @@ import type {
 import {
   DEFAULT_PLUGIN_VERSION,
   MANIFEST_SCHEMA_VERSION,
+  StorageError,
   SYNC_ERROR_CATALOG,
   SYNC_VERSION,
   type SyncErrorCode,
@@ -261,6 +262,42 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
       result.bytesChanged += item.size;
       changed.push(item);
     } else {
+      // The local state says this artifact was already uploaded with this
+      // hash. For session-scoped files (which are not content-addressed and
+      // therefore not self-verifying), HEAD-check the remote object to guard
+      // against a wiped/reset bucket: if the object is missing, re-upload it
+      // instead of silently skipping.
+      const isSessionScoped = item.artifact.scope === 'session';
+      if (isSessionScoped && storageAdapter?.headObject) {
+        try {
+          const head = await storageAdapter.headObject({
+            projectId: item.artifact.projectId,
+            sessionId: item.artifact.sessionId,
+            scope: item.artifact.scope,
+            relativePath: item.artifact.relativePath,
+            contentSha256: item.artifact.sha256,
+          });
+          if (!head) {
+            // Remote object is missing despite local state claiming it was
+            // uploaded. Re-upload to restore consistency.
+            result.filesChanged += 1;
+            result.bytesChanged += item.size;
+            changed.push(item);
+            continue;
+          }
+        } catch (err) {
+          // Only mapped StorageError failures (network/auth/transient) fall
+          // back to trusting local state. Unexpected errors (e.g. a
+          // programming defect) must propagate so the caller reports a
+          // failure instead of silently skipping.
+          if (err instanceof StorageError) {
+            // Trust local state and skip rather than blocking the sync on
+            // an unverified storage error.
+          } else {
+            throw err;
+          }
+        }
+      }
       result.filesSkipped += 1;
       result.filesUnchanged += 1;
       result.skipped.push(item.artifact);

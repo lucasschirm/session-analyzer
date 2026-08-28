@@ -79,9 +79,13 @@
   <script>
     // The OPFS VFS of SQLite WASM needs SharedArrayBuffer, which requires
     // COOP/COEP response headers. GitHub Pages cannot set them, so a small
-    // service worker injects the headers there. Dev/preview servers send the
-    // headers directly, so this registration is scoped to the Pages domain.
-    if ('serviceWorker' in navigator && location.hostname.endsWith('github.io')) {
+    // service worker injects the headers there and also runtime-caches
+    // same-origin assets for offline use. Skip the default Vite dev port
+    // so development is not served from the SW cache.
+    const isDevServer =
+      (location.hostname === 'localhost' || location.hostname === '127.0.0.1') &&
+      (location.port === '3000' || location.port === '5173');
+    if ('serviceWorker' in navigator && !isDevServer) {
       navigator.serviceWorker.register('coi-sw.js').catch(() => {
         /* OPFS falls back to in-memory storage when SAB is unavailable. */
       });

@@ -1,8 +1,19 @@
-import type { ArtifactScope, ManifestArtifact } from '../artifact.js';
+import type {
+  ArtifactCollectionOutcome,
+  ArtifactRole,
+  ArtifactScope,
+  ManifestArtifact,
+} from '../artifact.js';
 import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '../errors.js';
 import type { SyncRun, SyncTrigger } from '../sync-run.js';
-import { MANIFEST_SCHEMA_VERSION } from '../versions.js';
-import type { SyncManifest } from './contract.js';
+import { MANIFEST_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION_LATEST } from '../versions.js';
+import type {
+  CategoryCoverageDetail,
+  DiscoveryCompleteness,
+  ManifestFinality,
+  SourceTombstone,
+  SyncManifest,
+} from './contract.js';
 
 class ManifestParseError extends Error {
   constructor(
@@ -14,8 +25,24 @@ class ManifestParseError extends Error {
   }
 }
 
+const SUPPORTED_SCHEMA_VERSIONS = [MANIFEST_SCHEMA_VERSION, MANIFEST_SCHEMA_VERSION_LATEST];
+
 const VALID_SCOPES: ArtifactScope[] = ['session', 'workspace', 'global', 'runtime'];
 const VALID_STATUSES = ['uploaded', 'failed', 'skipped', 'pending'] as const;
+const VALID_COLLECTION_OUTCOMES: ArtifactCollectionOutcome[] = [
+  'collected',
+  'failed',
+  'skipped',
+  'pending',
+  'unsupported',
+];
+const VALID_FINALITIES: ManifestFinality[] = ['final', 'partial', 'superseded'];
+const VALID_DISCOVERY_COMPLETENESS: DiscoveryCompleteness[] = [
+  'complete',
+  'partial',
+  'unsupported',
+  'unknown',
+];
 
 const VALID_TRIGGERS: SyncTrigger[] = [
   'session-start',
@@ -37,6 +64,11 @@ const KNOWN_ARTIFACT_FIELDS = [
   'sha256',
   'size',
   'status',
+  'role',
+  'mediaType',
+  'encoding',
+  'collectionOutcome',
+  'collectionReason',
 ];
 
 const KNOWN_SYNC_RUN_FIELDS = [
@@ -62,6 +94,18 @@ const KNOWN_TOP_LEVEL_FIELDS = [
   'sessionId',
   'harness',
   'harnessVersion',
+  'sourceEnvironmentNamespace',
+  'environmentId',
+  'finality',
+  'occurrenceTime',
+  'ingestionTime',
+  'captureTime',
+  'sequenceNumber',
+  'workspaceId',
+  'repositoryId',
+  'scopeChain',
+  'collectorVersion',
+  'sanitizationPolicyVersion',
   'model',
   'startedAt',
   'endedAt',
@@ -71,6 +115,9 @@ const KNOWN_TOP_LEVEL_FIELDS = [
   'pluginVersion',
   'transcriptsCaptured',
   'mainTranscriptRelativePath',
+  'expectedCategoryCoverage',
+  'categoryCoverage',
+  'sourceTombstones',
   'artifacts',
   'syncRuns',
 ];
@@ -134,6 +181,17 @@ function assertNumber(value: unknown, field: string): number {
   return value;
 }
 
+function parseOptionalStringArray(value: unknown, field: string): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new ManifestParseError(
+      'SYNC_JSON_PARSE_FAILED',
+      `${field} must be an array of strings when present`,
+    );
+  }
+  return value.map((item, index) => assertString(item, `${field}[${index}]`));
+}
+
 function collectExtras(record: Record<string, unknown>, known: string[]): Record<string, unknown> {
   const extras: Record<string, unknown> = {};
   for (const key of Object.keys(record)) {
@@ -166,10 +224,29 @@ function parseArtifactStatus(value: unknown): ManifestArtifact['status'] {
   return status as ManifestArtifact['status'];
 }
 
+function parseOptionalArtifactRole(value: unknown): ArtifactRole | undefined {
+  if (value === undefined) return undefined;
+  return assertOptionalString(value, 'artifact.role') as ArtifactRole | undefined;
+}
+
+function parseOptionalCollectionOutcome(value: unknown): ArtifactCollectionOutcome | undefined {
+  if (value === undefined) return undefined;
+  const outcome = assertString(value, 'artifact.collectionOutcome');
+  if (!VALID_COLLECTION_OUTCOMES.includes(outcome as ArtifactCollectionOutcome)) {
+    throw new ManifestParseError(
+      'SYNC_JSON_PARSE_FAILED',
+      `artifact.collectionOutcome must be one of ${VALID_COLLECTION_OUTCOMES.join(', ')}`,
+    );
+  }
+  return outcome as ArtifactCollectionOutcome;
+}
+
 function parseArtifact(input: unknown): ManifestArtifact {
   const record = assertRecord(input, 'each artifact');
   const scope = parseArtifactScope(record.scope);
   const status = parseArtifactStatus(record.status);
+  const role = parseOptionalArtifactRole(record.role);
+  const collectionOutcome = parseOptionalCollectionOutcome(record.collectionOutcome);
   return {
     projectId: assertString(record.projectId, 'artifact.projectId'),
     sessionId: assertString(record.sessionId, 'artifact.sessionId'),
@@ -178,6 +255,11 @@ function parseArtifact(input: unknown): ManifestArtifact {
     sha256: assertString(record.sha256, 'artifact.sha256'),
     size: assertNumber(record.size, 'artifact.size'),
     status,
+    role,
+    mediaType: assertOptionalString(record.mediaType, 'artifact.mediaType'),
+    encoding: assertOptionalString(record.encoding, 'artifact.encoding'),
+    collectionOutcome,
+    collectionReason: assertOptionalString(record.collectionReason, 'artifact.collectionReason'),
     ...collectExtras(record, KNOWN_ARTIFACT_FIELDS),
   } as unknown as ManifestArtifact;
 }
@@ -224,24 +306,168 @@ function parseSyncRun(input: unknown): SyncRun {
   } as unknown as SyncRun;
 }
 
+function parseOptionalFinality(value: unknown): ManifestFinality | undefined {
+  if (value === undefined) return undefined;
+  const finality = assertString(value, 'finality');
+  if (!VALID_FINALITIES.includes(finality as ManifestFinality)) {
+    throw new ManifestParseError(
+      'SYNC_JSON_PARSE_FAILED',
+      `finality must be one of ${VALID_FINALITIES.join(', ')}`,
+    );
+  }
+  return finality as ManifestFinality;
+}
+
+function parseDiscoveryCompleteness(value: unknown, field: string): DiscoveryCompleteness {
+  if (value === undefined) return 'unknown';
+  const completeness = assertString(value, field);
+  if (!VALID_DISCOVERY_COMPLETENESS.includes(completeness as DiscoveryCompleteness)) {
+    throw new ManifestParseError(
+      'SYNC_JSON_PARSE_FAILED',
+      `${field} must be one of ${VALID_DISCOVERY_COMPLETENESS.join(', ')}`,
+    );
+  }
+  return completeness as DiscoveryCompleteness;
+}
+
+function parseCategoryCoverageDetail(input: unknown, field: string): CategoryCoverageDetail {
+  if (input === undefined) {
+    return { discoveryCompleteness: 'unknown' };
+  }
+  const record = assertRecord(input, field);
+  return {
+    discoveryCompleteness: parseDiscoveryCompleteness(
+      record.discoveryCompleteness,
+      `${field}.discoveryCompleteness`,
+    ),
+    reasons: parseOptionalStringArray(record.reasons, `${field}.reasons`),
+  };
+}
+
+function parseCategoryCoverage(
+  value: unknown,
+  field: string,
+): Record<string, CategoryCoverageDetail> {
+  if (value === undefined) return {};
+  const record = assertRecord(value, field);
+  const coverage: Record<string, CategoryCoverageDetail> = {};
+  for (const key of Object.keys(record)) {
+    coverage[key] = parseCategoryCoverageDetail(record[key], `${field}.${key}`);
+  }
+  return coverage;
+}
+
+function buildCategoryCoverage(
+  expected: readonly string[],
+  provided: Record<string, CategoryCoverageDetail>,
+): Record<string, CategoryCoverageDetail> {
+  const coverage: Record<string, CategoryCoverageDetail> = { ...provided };
+  for (const category of expected) {
+    if (coverage[category] === undefined) {
+      coverage[category] = { discoveryCompleteness: 'unknown' };
+    }
+  }
+  return coverage;
+}
+
+function parseSourceTombstone(input: unknown, index: number): SourceTombstone {
+  const record = assertRecord(input, `sourceTombstones[${index}]`);
+  return {
+    sourceType: assertString(record.sourceType, `sourceTombstones[${index}].sourceType`),
+    sourceId: assertString(record.sourceId, `sourceTombstones[${index}].sourceId`),
+    deletedAt: assertString(record.deletedAt, `sourceTombstones[${index}].deletedAt`),
+    reason: assertOptionalString(record.reason, `sourceTombstones[${index}].reason`),
+  };
+}
+
+function parseSourceTombstoneArray(
+  record: Record<string, unknown>,
+  field: string,
+): SourceTombstone[] {
+  const value = record[field];
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new ManifestParseError(
+      'SYNC_JSON_PARSE_FAILED',
+      `${field} must be an array when present`,
+    );
+  }
+  return value.map((item, index) => {
+    try {
+      return parseSourceTombstone(item, index);
+    } catch (err) {
+      if (err instanceof ManifestParseError) {
+        throw new ManifestParseError(err.code, `sourceTombstones[${index}]: ${err.message}`);
+      }
+      throw err;
+    }
+  });
+}
+
 function assertSyncManifestRecord(json: unknown): Record<string, unknown> {
   const record = assertRecord(json, 'Sync manifest');
-  if (record.schemaVersion !== MANIFEST_SCHEMA_VERSION) {
+  if (!SUPPORTED_SCHEMA_VERSIONS.includes(record.schemaVersion as number)) {
     throw new ManifestParseError(
       'MANIFEST_UNSUPPORTED_SCHEMA',
-      `${SYNC_ERROR_CATALOG.MANIFEST_UNSUPPORTED_SCHEMA.description} (expected ${MANIFEST_SCHEMA_VERSION})`,
+      `${SYNC_ERROR_CATALOG.MANIFEST_UNSUPPORTED_SCHEMA.description} (expected one of ${SUPPORTED_SCHEMA_VERSIONS.join(', ')})`,
     );
   }
   return record;
 }
 
-function buildSyncManifest(record: Record<string, unknown>): SyncManifest {
+function buildSyncManifest(
+  record: Record<string, unknown>,
+  version: typeof MANIFEST_SCHEMA_VERSION | typeof MANIFEST_SCHEMA_VERSION_LATEST,
+): SyncManifest {
+  const isV2 = version === MANIFEST_SCHEMA_VERSION;
+
+  const sourceEnvironmentNamespace = assertOptionalString(
+    record.sourceEnvironmentNamespace,
+    'sourceEnvironmentNamespace',
+  );
+  const environmentId = assertOptionalString(record.environmentId, 'environmentId');
+  const finality = parseOptionalFinality(record.finality);
+  const occurrenceTime = assertOptionalString(record.occurrenceTime, 'occurrenceTime');
+  const ingestionTime = assertOptionalString(record.ingestionTime, 'ingestionTime');
+  const captureTime = assertOptionalString(record.captureTime, 'captureTime');
+  const sequenceNumber = assertOptionalNumber(record.sequenceNumber, 'sequenceNumber');
+  const workspaceId = assertOptionalString(record.workspaceId, 'workspaceId');
+  const repositoryId = assertOptionalString(record.repositoryId, 'repositoryId');
+  const scopeChain = parseOptionalStringArray(record.scopeChain, 'scopeChain');
+  const collectorVersion = assertOptionalString(record.collectorVersion, 'collectorVersion');
+  const sanitizationPolicyVersion = assertOptionalString(
+    record.sanitizationPolicyVersion,
+    'sanitizationPolicyVersion',
+  );
+  const expectedCategoryCoverage =
+    parseOptionalStringArray(record.expectedCategoryCoverage, 'expectedCategoryCoverage') ?? [];
+  const rawCategoryCoverage = parseCategoryCoverage(record.categoryCoverage, 'categoryCoverage');
+  const sourceTombstones = parseSourceTombstoneArray(record, 'sourceTombstones');
+
+  const resolvedFinality: ManifestFinality = isV2 ? 'partial' : (finality ?? 'partial');
+
+  const resolvedCategoryCoverage = isV2
+    ? buildCategoryCoverage(expectedCategoryCoverage, {})
+    : buildCategoryCoverage(expectedCategoryCoverage, rawCategoryCoverage);
+
   return {
-    schemaVersion: MANIFEST_SCHEMA_VERSION,
+    schemaVersion: version,
     projectId: assertString(record.projectId, 'projectId'),
     sessionId: assertString(record.sessionId, 'sessionId'),
     harness: assertString(record.harness, 'harness'),
     harnessVersion: assertString(record.harnessVersion, 'harnessVersion'),
+    sourceEnvironmentNamespace,
+    environmentId,
+    finality: resolvedFinality,
+    occurrenceTime,
+    ingestionTime,
+    captureTime,
+    sequenceNumber,
+    workspaceId,
+    repositoryId,
+    scopeChain,
+    collectorVersion,
+    sanitizationPolicyVersion,
     model: assertOptionalString(record.model, 'model'),
     startedAt: assertOptionalString(record.startedAt, 'startedAt'),
     endedAt: assertOptionalString(record.endedAt, 'endedAt'),
@@ -254,9 +480,12 @@ function buildSyncManifest(record: Record<string, unknown>): SyncManifest {
       record.mainTranscriptRelativePath,
       'mainTranscriptRelativePath',
     ),
+    expectedCategoryCoverage,
+    categoryCoverage: resolvedCategoryCoverage,
+    sourceTombstones,
     artifacts: [],
     syncRuns: [],
-  };
+  } as unknown as SyncManifest;
 }
 
 function parseArtifactArray(record: Record<string, unknown>): ManifestArtifact[] {
@@ -313,11 +542,14 @@ function applyUnknownFields(
  * Parse a raw JSON-decoded object into a {@link SyncManifest}.
  *
  * Invariant: every expected field is validated, unknown fields are preserved,
- * and nested artifacts and sync runs are parsed with index-aware errors.
+ * and nested artifacts, sync runs, and tombstones are parsed with index-aware errors.
  */
 export function parseSyncManifest(json: unknown): SyncManifest {
   const record = assertSyncManifestRecord(json);
-  const manifest = buildSyncManifest(record);
+  const version = record.schemaVersion as
+    | typeof MANIFEST_SCHEMA_VERSION
+    | typeof MANIFEST_SCHEMA_VERSION_LATEST;
+  const manifest = buildSyncManifest(record, version);
   manifest.artifacts = parseArtifactArray(record);
   manifest.syncRuns = parseSyncRunArray(record);
   applyUnknownFields(record, manifest, KNOWN_TOP_LEVEL_FIELDS);

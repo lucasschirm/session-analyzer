@@ -142,6 +142,10 @@ Every discovery must be written down before the task is marked COMPLETED. Create
 | Lit component / frontend perf | `lit-performance-optimizer` | Tasks touching `packages/site` Lit components, render cycles, decorators |
 | TypeScript code quality review | `ts-best-practices` | Reviewing a completed task's TS before IN_REVIEW |
 | GitHub PR review | `pr-review` | When a task's work lands in a PR that needs review |
+| Harness integration review | `harness-integration-reviewer` | Reviewing a transformer plugin or parser under `packages/transformer` or `packages/parsers` |
+| Metric / schema / comparability review | `metric-schema-reviewer` | Reviewing a metric definition, schema change, or comparability group under `packages/db-core`, `packages/transformer`, or `packages/db` |
+| Database migration / query / rollup review | `db-migration-reviewer` | Reviewing a schema migration, query, index, rollup, or rebuild frontier under `packages/db-core` or `packages/db` |
+| UI / chart / accessibility / performance review | `ui-chart-reviewer` | Reviewing Lit components, chart components, dashboard views, or DTO consumption under `packages/site` |
 | Read-only exploration / research | `subagent_explore` | When a task needs codebase context gathered before implementation |
 | General implementation (write access) | `subagent_general` | Default for implementing a task that needs file edits / commands |
 | Orchestratorial / small edits | (yourself) | Status updates, notes, discovery logs, small config edits |

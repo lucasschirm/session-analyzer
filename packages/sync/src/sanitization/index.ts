@@ -6,5 +6,6 @@ export * from './contract.js';
 export * from './json.js';
 export * from './jsonl.js';
 export * from './mcp.js';
+export * from './paths.js';
 export { SanitizationError } from './redaction.js';
 export * from './secrets.js';

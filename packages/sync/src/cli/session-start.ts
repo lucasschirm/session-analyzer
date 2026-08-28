@@ -25,6 +25,7 @@ function spawnWatcherWithArgs(
   dataDir: string,
   sessionId: string,
   transcriptPath: string,
+  cwd?: string,
 ): WatcherHandle {
   const args = [
     '--session-id',
@@ -34,6 +35,9 @@ function spawnWatcherWithArgs(
     '--data-dir',
     dataDir,
   ];
+  if (cwd) {
+    args.push('--cwd', cwd);
+  }
   return spawner(args);
 }
 
@@ -112,6 +116,7 @@ export async function sessionStart(options: CliOptions = {}): Promise<CommandRes
         dataDir,
         input.session_id,
         input.transcript_path,
+        input.cwd,
       );
       watcherHandle.unref();
 

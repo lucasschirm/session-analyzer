@@ -129,8 +129,10 @@ function buildLocalPath(
   scope: string,
   relativePath: string,
 ): string | undefined {
+  // `manifest` and `session` scopes omit the scope segment in storage keys,
+  // so the local path mirrors that layout.
   const localPath =
-    scope === 'manifest'
+    scope === 'manifest' || scope === 'session'
       ? path.join(output, projectId, sessionId, relativePath)
       : path.join(output, projectId, sessionId, scope, relativePath);
 

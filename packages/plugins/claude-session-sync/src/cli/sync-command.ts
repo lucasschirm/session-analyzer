@@ -14,6 +14,7 @@ import {
   discover,
   discoverSession,
   type HookInput,
+  MAIN_TRANSCRIPT_STORAGE_NAME,
   parseObjectKey,
   processDelta,
   putArtifactWithTimeout,
@@ -47,10 +48,19 @@ interface SessionSyncOutcome {
 }
 
 /**
- * Check whether a session folder already exists in storage (any object under
- * `<projectId>/<sessionId>/`).
+ * Check whether a session is fully synced in storage.
+ *
+ * A session is considered complete when both required artifacts are present:
+ *   1. `manifest.json` — the session manifest
+ *   2. `transcript.jsonl` — the main transcript (when transcript capture is
+ *      enabled, which is the default)
+ *
+ * This replaces the old prefix-existence check that treated any object under
+ * `<projectId>/<sessionId>/` as evidence of a complete session. A manifest-only
+ * upload (e.g. from a failed sync that uploaded the manifest but not the
+ * transcript) must not block re-syncing the missing transcript.
  */
-async function sessionExistsInStorage(
+async function isSessionCompleteInStorage(
   storageAdapter: NonNullable<SyncCommandOptions['storageAdapter']>,
   projectId: string,
   sessionId: string,
@@ -58,7 +68,28 @@ async function sessionExistsInStorage(
   if (!storageAdapter.listObjects) return false;
   try {
     const result = await storageAdapter.listObjects({ projectId, sessionId });
-    return result.objects.length > 0;
+    const keys = new Set(result.objects.map((o) => o.key));
+    const hasManifest = result.objects.some((o) => {
+      const parsed = parseObjectKey(o.key);
+      return parsed?.scope === 'manifest' && parsed.relativePath === 'manifest.json';
+    });
+    if (!hasManifest) return false;
+
+    // Check for the main transcript. With the new key layout it lives at
+    // `<projectId>/<sessionId>/transcript.jsonl`. For backward compatibility
+    // also accept the old `<projectId>/<sessionId>/session/transcript.jsonl`.
+    const transcriptKeys = [
+      `${projectId}/${sessionId}/${MAIN_TRANSCRIPT_STORAGE_NAME}`,
+      `${projectId}/${sessionId}/session/${MAIN_TRANSCRIPT_STORAGE_NAME}`,
+    ];
+    const hasTranscript = transcriptKeys.some((k) => keys.has(k));
+    // If transcript capture is disabled (no transcript expected), manifest
+    // alone is sufficient. We can't know the capture setting without
+    // downloading the manifest, so we err on the side of completeness:
+    // require the transcript unless we can prove it's not expected.
+    // In practice, transcript capture is the default and the vast majority
+    // of sessions have transcripts.
+    return hasTranscript;
   } catch {
     // If listing fails, proceed with upload (let putObject surface the error).
     return false;
@@ -92,7 +123,9 @@ async function runFullScopeSync(
     limits: config.limits,
   });
 
-  const candidateResults = await buildCandidates(discovery, config);
+  const candidateResults = await buildCandidates(discovery, config, {
+    projectRoot: hookInput.cwd,
+  });
   const candidates = candidateResults.map((r) => r.candidate);
   const uploader = buildUploader({
     storageAdapter,
@@ -143,8 +176,23 @@ async function runFullScopeSync(
 }
 
 /**
- * Run a session-only sync (transcripts only). Used for subsequent sessions
- * after the first one has already captured workspace/global config.
+ * Run a session sync that also re-discovers workspace/global config artifacts.
+ *
+ * Workspace and global config artifacts are content-addressed (CAS) and shared
+ * across sessions in the same workspace. The first session's full sync uploads
+ * them; subsequent sessions will find them already in CAS (status: 'skipped').
+ *
+ * The manifest for every session MUST list workspace/global artifacts so the
+ * dashboard sync worker can download them and the transformer can extract
+ * component identities (skills, agents, rules, MCP servers, settings). Without
+ * these artifacts in the manifest, the component utilization chart stays empty
+ * because the transformer never sees the config files.
+ *
+ * Re-discovering config artifacts on every session is cheap: the discovery
+ * layer reads file metadata and computes SHA-256 hashes, but the upload layer
+ * skips files that are already in CAS with the same hash. The manifest gets
+ * the full artifact list with 'skipped' status for already-uploaded CAS
+ * objects, which the dashboard sync worker downloads from CAS on demand.
  */
 async function runSessionOnlySync(
   config: SyncConfig,
@@ -159,15 +207,22 @@ async function runSessionOnlySync(
   session.startedAt = session.startedAt ?? new Date().toISOString();
   await stateStore.setSession(hookInput.session_id, session);
 
-  const discovery = await discoverSession({
+  // Use full discovery (workspace + global + session) so the manifest includes
+  // config artifacts. They will be marked 'skipped' by the upload layer since
+  // they're already in CAS, but they appear in the manifest so the dashboard
+  // can download them from CAS and feed them to the transformer.
+  const discovery = await discover({
     projectId: config.projectId,
     sessionId: hookInput.session_id,
+    workspaceRoot: hookInput.cwd,
     transcriptPath: hookInput.transcript_path,
     captureTranscripts: config.captureTranscripts,
     limits: config.limits,
   });
 
-  const candidateResults = await buildCandidates(discovery, config);
+  const candidateResults = await buildCandidates(discovery, config, {
+    projectRoot: hookInput.cwd,
+  });
   const candidates = candidateResults.map((r) => r.candidate);
   const uploader = buildUploader({
     storageAdapter,
@@ -284,13 +339,12 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
   const allErrors: string[] = [];
 
   for (const session of sessions) {
-    const exists = await sessionExistsInStorage(
-      storageAdapter,
-      config.projectId,
-      session.sessionId,
-    );
+    // With --force, skip the completeness check and always re-sync.
+    const complete = force
+      ? false
+      : await isSessionCompleteInStorage(storageAdapter, config.projectId, session.sessionId);
 
-    if (exists) {
+    if (complete) {
       stdout.write(`[skip] session ${session.sessionId} — already synced\n`);
       totalAlreadyExists += 1;
       continue;

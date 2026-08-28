@@ -29,12 +29,15 @@ function listXml(prefixes: string[], isTruncated: boolean, nextToken?: string): 
 }
 
 function objectsXml(
-  objects: Array<{ key: string; size: number }>,
+  objects: Array<{ key: string; size: number; etag?: string }>,
   isTruncated: boolean,
   nextToken?: string,
 ): string {
   const contents = objects
-    .map((o) => `<Contents><Key>${o.key}</Key><Size>${o.size}</Size></Contents>`)
+    .map((o) => {
+      const etag = o.etag ? `<ETag>${o.etag}</ETag>` : '';
+      return `<Contents><Key>${o.key}</Key>${etag}<Size>${o.size}</Size></Contents>`;
+    })
     .join('');
   const next = nextToken ? `<NextContinuationToken>${nextToken}</NextContinuationToken>` : '';
   const trunc = `<IsTruncated>${isTruncated}</IsTruncated>`;
@@ -282,10 +285,10 @@ describe('S3FetchClient', () => {
     expect(url.search).not.toContain('%253F');
   });
 
-  it('listSessionObjects encodes the session prefix and returns decoded keys and sizes', async () => {
+  it('listSessionObjects encodes the session prefix and returns decoded keys, sizes, and etags', async () => {
     const projectId = 'my project';
     const sessionId = 'session 1';
-    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/session/`;
+    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/`;
     const key1 = `${prefix}transcript.jsonl`;
     const key2 = `${prefix}subagents/agent-1.jsonl`;
     const mock = vi.fn(
@@ -294,8 +297,8 @@ describe('S3FetchClient', () => {
           new Response(
             objectsXml(
               [
-                { key: key1, size: 42 },
-                { key: key2, size: 7 },
+                { key: key1, size: 42, etag: '"abc123"' },
+                { key: key2, size: 7, etag: '"def456"' },
               ],
               false,
             ),
@@ -306,13 +309,28 @@ describe('S3FetchClient', () => {
     const client = setupClient(BASE_CONFIG, mock);
     const result = await client.listSessionObjects(projectId, sessionId);
     expect(result).toEqual([
-      { key: key1, size: 42 },
-      { key: key2, size: 7 },
+      { key: key1, size: 42, etag: '"abc123"' },
+      { key: key2, size: 7, etag: '"def456"' },
     ]);
     const request = lastRequest(mock);
     const url = urlOf(request);
     expect(url.search).toContain(`prefix=${prefix}`);
     expect(url.search).not.toContain('delimiter');
+  });
+
+  it('listSessionObjects returns entries without etag when the XML omits it', async () => {
+    const projectId = 'proj';
+    const sessionId = 'sess';
+    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/`;
+    const key1 = `${prefix}transcript.jsonl`;
+    const mock = vi.fn(
+      createMockFetch([
+        () => new Response(objectsXml([{ key: key1, size: 10 }], false), { status: 200 }),
+      ]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.listSessionObjects(projectId, sessionId);
+    expect(result).toEqual([{ key: key1, size: 10, etag: undefined }]);
   });
 
   it('streams large downloads and reports incremental progress', async () => {
@@ -333,7 +351,7 @@ describe('S3FetchClient', () => {
     const mock = vi.fn(createMockFetch([() => new Response(stream, { status: 200 })]));
     const client = setupClient(BASE_CONFIG, mock);
     const progress: number[] = [];
-    const result = await client.getObject('p/s/session/transcript.jsonl', {
+    const result = await client.getObject('p/s/transcript.jsonl', {
       streaming: true,
       onProgress: (bytes) => progress.push(bytes),
     });
@@ -361,7 +379,7 @@ describe('S3FetchClient', () => {
       ]),
     );
     const client = setupClient(BASE_CONFIG, mock);
-    const result = await client.getObject('p/s/session/transcript.jsonl', {
+    const result = await client.getObject('p/s/transcript.jsonl', {
       streaming: true,
       stallTimeoutMs: 10,
     });

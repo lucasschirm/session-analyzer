@@ -13,25 +13,46 @@ import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import type {
   Connection,
   DashboardSession,
-  ModelTokenUsage,
   PasskeyState,
   Project,
   ProjectSyncStatus,
-  SessionEvent,
   SessionFileRecord,
-  SessionMetrics,
   SessionStub,
   SessionSyncStatus,
-  SessionTask,
   StoredS3Credentials,
-  SubagentUsage,
   SyncManifest,
-  ToolExecution,
-  TranscriptMessage,
 } from '../types';
 
 export type StorageBackend = 'opfs' | 'memory';
 export type FallbackReason = 'locked' | 'unsupported';
+
+/**
+ * Receipt proving an analytics generation was committed. The checkpoint
+ * commit path requires this so control-side progress is only persisted
+ * after analytics has accepted the data.
+ */
+export interface CommittedGenerationReceipt {
+  /** Opaque id of the committed analytics generation. */
+  generationId: string;
+  /** Timestamp when the generation was committed, in milliseconds. */
+  committedAt?: number;
+}
+
+/**
+ * A source checkpoint stored in the control database. It tracks the last
+ * successfully ingested sequence/cursor for a source and the generation
+ * that produced it.
+ */
+export interface SourceCheckpoint {
+  source_id: string;
+  source_type: string;
+  last_sequence?: string;
+  last_cursor?: string;
+  committed_generation_id?: string;
+  committed_at?: number;
+  created_at?: number;
+  updated_at?: number;
+}
 
 interface SessionRow {
   id: string;
@@ -59,39 +80,20 @@ interface SessionRow {
   sync_session_id: string | null;
   sync_status: string | null;
   sync_details: string | null;
-}
-
-interface EventRow {
-  id: string;
-  session_id: string;
-  timestamp: number;
-  event_type: string;
-  description: string | null;
-  metadata: string | null;
-}
-
-interface MessageRow {
-  id: string;
-  session_id: string;
-  role: string;
-  content: string;
-  timestamp: number;
-  uuid: string | null;
-  parent_uuid: string | null;
-}
-
-interface ToolExecutionRow {
-  id: string;
-  session_id: string;
-  timestamp: number;
-  tool_name: string;
-  tool_type: string;
-  target: string | null;
-  success: number;
-  duration_ms: number | null;
-  parameters: string | null;
-  result: string | null;
-  result_uuid: string | null;
+  sync_schema_version: number | null;
+  sync_harness: string | null;
+  sync_harness_version: string | null;
+  sync_manifest_model: string | null;
+  sync_started_at: string | null;
+  sync_ended_at: string | null;
+  sync_duration_ms: number | null;
+  sync_end_reason: string | null;
+  sync_engine_version: string | null;
+  sync_plugin_version: string | null;
+  sync_transcripts_captured: number | null;
+  sync_main_transcript_relative_path: string | null;
+  sync_artifacts: string | null;
+  sync_runs: string | null;
 }
 
 interface CapiLike {
@@ -107,11 +109,6 @@ const COLUMN_MIGRATIONS = [
   'ALTER TABLE sessions ADD COLUMN tasks TEXT',
   'ALTER TABLE sessions ADD COLUMN external_id TEXT',
   'ALTER TABLE sessions ADD COLUMN subagents TEXT',
-  'ALTER TABLE tool_executions ADD COLUMN parameters TEXT',
-  'ALTER TABLE tool_executions ADD COLUMN result TEXT',
-  'ALTER TABLE tool_executions ADD COLUMN result_uuid TEXT',
-  'ALTER TABLE session_messages ADD COLUMN uuid TEXT',
-  'ALTER TABLE session_messages ADD COLUMN parent_uuid TEXT',
   'ALTER TABLE projects ADD COLUMN readable_id TEXT',
   'ALTER TABLE projects ADD COLUMN sync_status TEXT',
   'ALTER TABLE projects ADD COLUMN connection_id TEXT',
@@ -132,6 +129,7 @@ const COLUMN_MIGRATIONS = [
   'ALTER TABLE sessions ADD COLUMN sync_main_transcript_relative_path TEXT',
   'ALTER TABLE sessions ADD COLUMN sync_artifacts TEXT',
   'ALTER TABLE sessions ADD COLUMN sync_runs TEXT',
+  'ALTER TABLE session_files ADD COLUMN etag TEXT',
 ] as const;
 
 const LOCKED_MESSAGE_RE =
@@ -179,14 +177,6 @@ function parseTimestamp(value: string | number): number {
   if (typeof value === 'number') return value;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? Number(value) || 0 : parsed;
-}
-
-function safeJsonParse<T>(value: string): T | undefined {
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return undefined;
-  }
 }
 
 function safeJsonParseArray<T>(value: string): T[] {
@@ -243,44 +233,55 @@ function generateReadableId(name: string, used: Set<string>): string {
 export class DatabaseManager {
   private db: Database | null = null;
   protected sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | null = null;
-  storage: StorageBackend = 'memory';
+  private storageBackend: StorageBackend = 'memory';
+
+  get storage(): StorageBackend {
+    return this.storageBackend;
+  }
+
   fallbackReason?: FallbackReason;
 
   /**
-   * Initializes the SQLite WASM runtime and opens the database.
-   * Uses OPFS persistence when the VFS is available. If the OPFS file is
-   * already locked by another tab, or OPFS is unsupported, falls back to an
-   * in-memory database and records the reason on `fallbackReason`.
+   * Initializes the SQLite WASM runtime and opens the site control database.
+   * Falls back to in-memory when OPFS is unavailable or locked.
    */
   async initialize(filename = '/session-analyzer.sqlite3'): Promise<StorageBackend> {
     if (this.db) return this.storage;
 
     if (!this.sqlite3) this.sqlite3 = await sqlite3InitModule();
+
+    this.db = this.openDatabase(filename);
+    this.db.exec('PRAGMA foreign_keys = ON;');
+    this.createTables();
+    this.migrate();
+    return this.storage;
+  }
+
+  private openDatabase(filename: string): Database {
     const sqlite3 = this.sqlite3;
+    if (!sqlite3) throw new Error('Database not initialized');
 
     if (sqlite3.oo1.OpfsDb) {
       try {
-        this.db = new sqlite3.oo1.OpfsDb(filename, 'c');
-        this.storage = 'opfs';
+        const db = new sqlite3.oo1.OpfsDb(filename, 'c');
+        this.storageBackend = 'opfs';
+        return db;
       } catch (error) {
         if (isOpfsLockedError(error, sqlite3.capi)) {
           this.fallbackReason = 'locked';
         } else {
           throw error;
         }
-        this.db = new sqlite3.oo1.DB(':memory:', 'c');
-        this.storage = 'memory';
+        const db = new sqlite3.oo1.DB(':memory:', 'c');
+        this.storageBackend = 'memory';
+        return db;
       }
-    } else {
-      this.db = new sqlite3.oo1.DB(':memory:', 'c');
-      this.storage = 'memory';
-      this.fallbackReason = 'unsupported';
     }
 
-    this.db.exec('PRAGMA foreign_keys = ON;');
-    this.createTables();
-    this.migrate();
-    return this.storage;
+    const db = new sqlite3.oo1.DB(':memory:', 'c');
+    this.storageBackend = 'memory';
+    this.fallbackReason = 'unsupported';
+    return db;
   }
 
   /**
@@ -318,13 +319,12 @@ export class DatabaseManager {
   private createTables(): void {
     this.createProjectsTable();
     this.createSessionsTable();
-    this.createToolExecutionsTable();
-    this.createSessionEventsTable();
-    this.createSessionMessagesTable();
+    this.createSessionFilesTable();
     this.createConnectionsTable();
     this.createS3CredentialsTable();
     this.createPasskeyStateTable();
-    this.createSessionFilesTable();
+    this.createSourceCheckpointsTable();
+    this.createUiPreferencesTable();
     this.createIndexes();
   }
 
@@ -366,55 +366,24 @@ export class DatabaseManager {
         files_read INTEGER NOT NULL DEFAULT 0,
         files_written INTEGER NOT NULL DEFAULT 0,
         agent_invocations INTEGER NOT NULL DEFAULT 0,
+        sync_session_id TEXT,
+        sync_status TEXT,
+        sync_details TEXT,
+        sync_schema_version INTEGER,
+        sync_harness TEXT,
+        sync_harness_version TEXT,
+        sync_manifest_model TEXT,
+        sync_started_at TEXT,
+        sync_ended_at TEXT,
+        sync_duration_ms INTEGER,
+        sync_end_reason TEXT,
+        sync_engine_version TEXT,
+        sync_plugin_version TEXT,
+        sync_transcripts_captured INTEGER,
+        sync_main_transcript_relative_path TEXT,
+        sync_artifacts TEXT,
+        sync_runs TEXT,
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-      );
-    `);
-  }
-
-  private createToolExecutionsTable(): void {
-    this.requireDb().exec(`
-      CREATE TABLE IF NOT EXISTS tool_executions (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        tool_name TEXT NOT NULL,
-        tool_type TEXT NOT NULL,
-        target TEXT,
-        success INTEGER NOT NULL DEFAULT 1,
-        duration_ms INTEGER,
-        parameters TEXT,
-        result TEXT,
-        result_uuid TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      );
-    `);
-  }
-
-  private createSessionEventsTable(): void {
-    this.requireDb().exec(`
-      CREATE TABLE IF NOT EXISTS session_events (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        event_type TEXT NOT NULL,
-        description TEXT,
-        metadata TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      );
-    `);
-  }
-
-  private createSessionMessagesTable(): void {
-    this.requireDb().exec(`
-      CREATE TABLE IF NOT EXISTS session_messages (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        uuid TEXT,
-        parent_uuid TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       );
     `);
   }
@@ -466,6 +435,31 @@ export class DatabaseManager {
     `);
   }
 
+  private createSourceCheckpointsTable(): void {
+    this.requireDb().exec(`
+      CREATE TABLE IF NOT EXISTS source_checkpoints (
+        source_id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        last_sequence TEXT,
+        last_cursor TEXT,
+        committed_generation_id TEXT,
+        committed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+  }
+
+  private createUiPreferencesTable(): void {
+    this.requireDb().exec(`
+      CREATE TABLE IF NOT EXISTS ui_preferences (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+  }
+
   private createSessionFilesTable(): void {
     this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS session_files (
@@ -475,6 +469,7 @@ export class DatabaseManager {
         path TEXT NOT NULL,
         scope TEXT NOT NULL,
         sha256 TEXT NOT NULL,
+        etag TEXT,
         size INTEGER NOT NULL,
         status TEXT NOT NULL,
         updated_at INTEGER NOT NULL,
@@ -487,18 +482,16 @@ export class DatabaseManager {
     const db = this.requireDb();
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC)');
-    db.exec(
-      'CREATE INDEX IF NOT EXISTS idx_tool_executions_session ON tool_executions(session_id)',
-    );
-    db.exec('CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id)');
-    db.exec(
-      'CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id)',
-    );
   }
 
   private requireDb(): Database {
     if (!this.db) throw new Error('Database not initialized');
     return this.db;
+  }
+
+  /** Returns the raw database handle (for tests and diagnostics). */
+  getControlDb(): Database {
+    return this.requireDb();
   }
 
   // ==================== Project operations ====================
@@ -568,23 +561,13 @@ export class DatabaseManager {
     this.tryExecReadableId(sql, bind);
   }
 
-  /** Deletes a project and cascades to its sessions and their child rows. */
+  /** Deletes a project and cascades to its sessions and session files. */
   deleteProject(id: string): void {
     const db = this.requireDb();
     db.transaction(() => {
-      const sessionIds = db.selectValues('SELECT id FROM sessions WHERE project_id = ?', [id]);
-      for (const sessionId of sessionIds) {
-        this.deleteSessionRows(String(sessionId));
-      }
+      db.exec({ sql: 'DELETE FROM session_files WHERE project_id = ?', bind: [id] });
       db.exec({ sql: 'DELETE FROM sessions WHERE project_id = ?', bind: [id] });
       db.exec({ sql: 'DELETE FROM projects WHERE id = ?', bind: [id] });
-    });
-  }
-
-  private touchProject(projectId: string): void {
-    this.requireDb().exec({
-      sql: 'UPDATE projects SET updated_at = ? WHERE id = ?',
-      bind: [Date.now(), projectId],
     });
   }
 
@@ -769,227 +752,109 @@ export class DatabaseManager {
     });
   }
 
-  // ==================== Session operations ====================
-
-  /** Inserts a brand new session row and bumps the project's session count. */
-  saveSession(session: DashboardSession): void {
-    const db = this.requireDb();
-    db.transaction(() => {
-      this.insertSessionRow(session);
-      this.writeChildRows(session);
-      db.exec({
-        sql: 'UPDATE projects SET session_count = session_count + 1, updated_at = ? WHERE id = ?',
-        bind: [Date.now(), session.project_id],
-      });
-    });
-  }
+  // ==================== Source checkpoint operations ====================
 
   /**
-   * Replaces an existing session's row and child rows in place (same `id`,
-   * so URLs/links to it keep working), without touching the project's
-   * session count. Used both for re-uploads of the same external session
-   * (matched by `external_id`) and for folding in subagent data.
+   * Commits a source checkpoint in the control database, but only after
+   * validating a non-empty generation id receipt from analytics ingestion.
    */
-  replaceSession(session: DashboardSession): void {
-    const db = this.requireDb();
-    db.transaction(() => {
-      this.deleteSessionRows(session.id);
-      db.exec({ sql: 'DELETE FROM sessions WHERE id = ?', bind: [session.id] });
-      this.insertSessionRow(session);
-      this.writeChildRows(session);
-      this.touchProject(session.project_id);
-    });
-  }
-
-  /**
-   * Inserts `session` if its `external_id` isn't already present in this
-   * project, otherwise replaces the existing row in place (reusing its
-   * `id`) - so re-uploading the same session updates it instead of creating
-   * a duplicate. Returns the effective session id (the existing one on
-   * update, or `session.id` on insert).
-   */
-  upsertSessionByExternalId(session: DashboardSession): string {
-    const existing = session.external_id
-      ? this.findSessionByExternalId(session.project_id, session.external_id)
-      : null;
-
-    if (!existing) {
-      this.saveSession(session);
-      return session.id;
+  commitSourceCheckpoint(
+    sourceId: string,
+    checkpoint: SourceCheckpoint,
+    receipt: CommittedGenerationReceipt,
+  ): void {
+    if (!receipt?.generationId?.trim()) {
+      throw new Error(
+        'A valid CommittedGenerationReceipt with a non-empty generationId is required',
+      );
     }
 
-    // Reuse the existing row's id (so links to it keep working), which
-    // means every child row's `session_id` foreign key must be remapped too
-    // - they were generated against `session.id`, not `existing.id`.
-    this.replaceSession({
-      ...session,
-      id: existing.id,
-      tool_executions: session.tool_executions.map((tool) => ({
-        ...tool,
-        session_id: existing.id,
-      })),
-      events: session.events.map((event) => ({ ...event, session_id: existing.id })),
-      messages: session.messages.map((message) => ({ ...message, session_id: existing.id })),
-    });
-    return existing.id;
-  }
+    const db = this.requireDb();
+    const now = Date.now();
+    const existing = db.selectObject(
+      'SELECT created_at FROM source_checkpoints WHERE source_id = ?',
+      [sourceId],
+    ) as { created_at: number } | undefined;
+    const createdAt = existing?.created_at ?? now;
 
-  findSessionByExternalId(projectId: string, externalId: string): DashboardSession | null {
-    const row = this.requireDb().selectObject(
-      'SELECT * FROM sessions WHERE project_id = ? AND external_id = ?',
-      [projectId, externalId],
-    ) as unknown as SessionRow | undefined;
-    return row ? this.hydrateSession(row) : null;
-  }
-
-  private insertSessionRow(session: DashboardSession): void {
-    this.requireDb().exec({
-      sql: `INSERT INTO sessions (
-              id, project_id, source, title, started_at, ended_at,
-              input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-              total_tokens, cost_usd, model, model_usage, tasks, external_id, subagents,
-              context_compactions, total_turns, files_read, files_written, agent_invocations,
-              sync_session_id, sync_status, sync_details
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    db.exec({
+      sql: `INSERT INTO source_checkpoints (
+        source_id, source_type, last_sequence, last_cursor,
+        committed_generation_id, committed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source_id) DO UPDATE SET
+        source_type = excluded.source_type,
+        last_sequence = excluded.last_sequence,
+        last_cursor = excluded.last_cursor,
+        committed_generation_id = excluded.committed_generation_id,
+        committed_at = excluded.committed_at,
+        updated_at = excluded.updated_at`,
       bind: [
-        session.id,
-        session.project_id,
-        session.source,
-        session.title ?? '',
-        session.started_at,
-        session.ended_at,
-        session.input_tokens,
-        session.output_tokens,
-        session.cache_creation_tokens ?? 0,
-        session.cache_read_tokens ?? 0,
-        session.total_tokens,
-        session.cost_usd ?? null,
-        session.model ?? null,
-        session.models && session.models.length > 0 ? JSON.stringify(session.models) : null,
-        session.tasks && session.tasks.length > 0 ? JSON.stringify(session.tasks) : null,
-        session.external_id ?? null,
-        session.subagents && session.subagents.length > 0
-          ? JSON.stringify(session.subagents)
-          : null,
-        session.context_compactions ?? 0,
-        session.total_turns ?? 0,
-        session.files_read ?? 0,
-        session.files_written ?? 0,
-        session.agent_invocations ?? 0,
-        session.sync_session_id ?? null,
-        session.sync_status ?? null,
-        session.sync_details ?? null,
+        sourceId,
+        checkpoint.source_type,
+        checkpoint.last_sequence ?? null,
+        checkpoint.last_cursor ?? null,
+        receipt.generationId,
+        receipt.committedAt ?? now,
+        createdAt,
+        now,
       ],
     });
   }
 
-  private writeChildRows(session: DashboardSession): void {
-    const db = this.requireDb();
-
-    for (const tool of session.tool_executions) {
-      db.exec({
-        sql: `INSERT INTO tool_executions
-              (id, session_id, timestamp, tool_name, tool_type, target, success, duration_ms, parameters, result, result_uuid)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        bind: [
-          tool.id,
-          tool.session_id,
-          tool.timestamp,
-          tool.tool_name,
-          tool.tool_type,
-          tool.target ?? null,
-          tool.success ? 1 : 0,
-          tool.duration_ms ?? null,
-          tool.parameters ? JSON.stringify(tool.parameters) : null,
-          tool.result ?? null,
-          tool.result_uuid ?? null,
-        ],
-      });
-    }
-
-    for (const event of session.events) {
-      db.exec({
-        sql: `INSERT INTO session_events
-              (id, session_id, timestamp, event_type, description, metadata)
-              VALUES (?, ?, ?, ?, ?, ?)`,
-        bind: [
-          event.id,
-          event.session_id,
-          event.timestamp,
-          event.event_type,
-          event.description ?? null,
-          event.metadata ? JSON.stringify(event.metadata) : null,
-        ],
-      });
-    }
-
-    for (const message of session.messages ?? []) {
-      db.exec({
-        sql: `INSERT INTO session_messages (id, session_id, role, content, timestamp, uuid, parent_uuid)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        bind: [
-          message.id,
-          message.session_id,
-          message.role,
-          message.content,
-          message.timestamp,
-          message.uuid ?? null,
-          message.parent_uuid ?? null,
-        ],
-      });
-    }
+  /** Returns a single source checkpoint, or null if none exists. */
+  getSourceCheckpoint(sourceId: string): SourceCheckpoint | null {
+    const row = this.requireDb().selectObject(
+      'SELECT * FROM source_checkpoints WHERE source_id = ?',
+      [sourceId],
+    );
+    return row ? rowToSourceCheckpoint(row as Record<string, unknown>) : null;
   }
 
-  getSessionsByProject(projectId: string): DashboardSession[] {
+  /** Lists all source checkpoints, most recently updated first. */
+  getSourceCheckpoints(): SourceCheckpoint[] {
     const rows = this.requireDb().selectObjects(
-      'SELECT * FROM sessions WHERE project_id = ? ORDER BY started_at DESC',
-      [projectId],
-    ) as unknown as SessionRow[];
-    return rows.map((row) => this.hydrateSession(row));
+      'SELECT * FROM source_checkpoints ORDER BY updated_at DESC',
+    );
+    return rows.map((row) => rowToSourceCheckpoint(row as Record<string, unknown>));
   }
 
-  /**
-   * Filters a project's sessions by title or by transcript message content
-   * (case-insensitive substring match).
-   */
-  searchSessions(projectId: string, query: string): DashboardSession[] {
-    const like = `%${query}%`;
-    const rows = this.requireDb().selectObjects(
-      `SELECT s.* FROM sessions s
-       WHERE s.project_id = ?
-         AND (s.title LIKE ? COLLATE NOCASE
-              OR EXISTS (
-                SELECT 1 FROM session_messages m
-                WHERE m.session_id = s.id AND m.content LIKE ? COLLATE NOCASE
-              ))
-       ORDER BY s.started_at DESC`,
-      [projectId, like, like],
-    ) as unknown as SessionRow[];
-    return rows.map((row) => this.hydrateSession(row));
+  // ==================== UI preference operations ====================
+
+  /** Stores or replaces a UI preference value in the control database. */
+  setUiPreference(key: string, value: string): void {
+    this.requireDb().exec({
+      sql: `INSERT INTO ui_preferences (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+              value = excluded.value,
+              updated_at = excluded.updated_at`,
+      bind: [key, value, Date.now()],
+    });
   }
 
-  getSession(id: string): DashboardSession | null {
-    const row = this.requireDb().selectObject('SELECT * FROM sessions WHERE id = ?', [
-      id,
-    ]) as unknown as SessionRow | undefined;
-    return row ? this.hydrateSession(row) : null;
+  /** Returns a UI preference value, or null if it has never been set. */
+  getUiPreference(key: string): string | null {
+    const row = this.requireDb().selectObject('SELECT value FROM ui_preferences WHERE key = ?', [
+      key,
+    ]) as { value: string | null } | undefined;
+    return row?.value ?? null;
   }
+
+  // ==================== Session sync state ====================
 
   /** Finds a session by its remote sync id within a project. */
   getSessionBySyncId(projectId: string, syncSessionId: string): DashboardSession | null {
     const row = this.requireDb().selectObject(
-      'SELECT id FROM sessions WHERE project_id = ? AND sync_session_id = ?',
+      'SELECT * FROM sessions WHERE project_id = ? AND sync_session_id = ?',
       [projectId, syncSessionId],
-    ) as unknown as { id: string } | undefined;
-    return row ? this.getSession(row.id) : null;
+    ) as unknown as SessionRow | undefined;
+    return row ? rowToSession(row) : null;
   }
 
   /**
    * Inserts a sync stub or updates an existing session's stub-relevant
-   * columns. Parsed-content columns (metrics, child rows, transcript) are
-   * never overwritten by this call - the contract with the real parse path
-   * is that `sync_session_id`, `sync_status`, and the manifest mirror
-   * columns are left intact when the full parse lands later.
+   * columns. Parsed-content columns are never overwritten by this call.
    */
   upsertSessionStub(stub: SessionStub): void {
     const db = this.requireDb();
@@ -1087,8 +952,11 @@ export class DatabaseManager {
 
   /** Writes all sync mirror columns from a manifest onto a session row. */
   updateSessionManifest(sessionId: string, manifest: SyncManifest): void {
-    if (!this.getSession(sessionId)) throw new Error(`Session not found: ${sessionId}`);
-    this.requireDb().exec({
+    const db = this.requireDb();
+    const exists = db.selectObject('SELECT id FROM sessions WHERE id = ?', [sessionId]);
+    if (!exists) throw new Error(`Session not found: ${sessionId}`);
+
+    db.exec({
       sql: `UPDATE sessions SET
         sync_session_id = ?, sync_schema_version = ?, sync_harness = ?, sync_harness_version = ?,
         sync_manifest_model = ?, sync_started_at = ?, sync_ended_at = ?, sync_duration_ms = ?,
@@ -1170,115 +1038,6 @@ export class DatabaseManager {
     });
   }
 
-  /** Deletes a session and decrements the project counter. */
-  deleteSession(id: string): void {
-    const db = this.requireDb();
-    db.transaction(() => {
-      const row = db.selectObject('SELECT project_id FROM sessions WHERE id = ?', [id]);
-      this.deleteSessionRows(id);
-      db.exec({ sql: 'DELETE FROM sessions WHERE id = ?', bind: [id] });
-      if (row) {
-        db.exec({
-          sql: 'UPDATE projects SET session_count = MAX(session_count - 1, 0), updated_at = ? WHERE id = ?',
-          bind: [Date.now(), String(row.project_id)],
-        });
-      }
-    });
-  }
-
-  private deleteSessionRows(sessionId: string): void {
-    const db = this.requireDb();
-    db.exec({ sql: 'DELETE FROM session_messages WHERE session_id = ?', bind: [sessionId] });
-    db.exec({ sql: 'DELETE FROM session_events WHERE session_id = ?', bind: [sessionId] });
-    db.exec({ sql: 'DELETE FROM tool_executions WHERE session_id = ?', bind: [sessionId] });
-  }
-
-  private hydrateSession(row: SessionRow): DashboardSession {
-    const { model_usage, tasks, subagents, ...rest } = row;
-    return {
-      ...rest,
-      sync_session_id: rest.sync_session_id ?? undefined,
-      sync_status: isSessionSyncStatus(rest.sync_status) ? rest.sync_status : undefined,
-      sync_details: rest.sync_details ?? undefined,
-      cache_creation_tokens: rest.cache_creation_tokens ?? 0,
-      cache_read_tokens: rest.cache_read_tokens ?? 0,
-      cost_usd: rest.cost_usd ?? undefined,
-      model: rest.model ?? undefined,
-      external_id: rest.external_id ?? undefined,
-      models: model_usage ? safeJsonParseArray<ModelTokenUsage>(model_usage) : [],
-      source: rest.source as DashboardSession['source'],
-      tool_executions: this.getToolExecutionsForSession(rest.id),
-      events: this.getSessionEventsForSession(rest.id),
-      messages: this.getMessagesForSession(rest.id),
-      tasks: tasks ? safeJsonParseArray<SessionTask>(tasks) : [],
-      subagents: subagents ? safeJsonParseArray<SubagentUsage>(subagents) : [],
-    };
-  }
-
-  private getToolExecutionsForSession(sessionId: string): ToolExecution[] {
-    const rows = this.requireDb().selectObjects(
-      'SELECT * FROM tool_executions WHERE session_id = ? ORDER BY timestamp ASC',
-      [sessionId],
-    ) as unknown as ToolExecutionRow[];
-    return rows.map((row) => ({
-      ...row,
-      success: Boolean(row.success),
-      target: row.target ?? undefined,
-      duration_ms: row.duration_ms ?? undefined,
-      parameters: row.parameters ? safeJsonParse(row.parameters) : undefined,
-      result: row.result ?? undefined,
-      result_uuid: row.result_uuid ?? undefined,
-    }));
-  }
-
-  private getSessionEventsForSession(sessionId: string): SessionEvent[] {
-    const rows = this.requireDb().selectObjects(
-      'SELECT * FROM session_events WHERE session_id = ? ORDER BY timestamp ASC',
-      [sessionId],
-    ) as unknown as EventRow[];
-    return rows.map((row) => ({
-      id: row.id,
-      session_id: row.session_id,
-      timestamp: row.timestamp,
-      event_type: row.event_type,
-      description: row.description ?? '',
-      metadata: row.metadata ? safeJsonParse(row.metadata) : undefined,
-    }));
-  }
-
-  private getMessagesForSession(sessionId: string): TranscriptMessage[] {
-    const rows = this.requireDb().selectObjects(
-      'SELECT * FROM session_messages WHERE session_id = ? ORDER BY timestamp ASC',
-      [sessionId],
-    ) as unknown as MessageRow[];
-    return rows.map((row) => ({
-      ...row,
-      role: row.role as TranscriptMessage['role'],
-      uuid: row.uuid ?? undefined,
-      parent_uuid: row.parent_uuid ?? undefined,
-    }));
-  }
-
-  // ==================== Sync boot reconciliation ====================
-
-  /**
-   * Crash-recovery primitive: set every 'syncing' project to 'in_sync' and
-   * every 'pending'/'processing' session to 'failed'. Runs as one atomic
-   * transaction spanning the whole database.
-   */
-  reconcileSyncStates(sessionDetails: string): void {
-    const db = this.requireDb();
-    db.transaction(() => {
-      db.exec("UPDATE projects SET sync_status = 'in_sync' WHERE sync_status = 'syncing'");
-      db.exec({
-        sql: "UPDATE sessions SET sync_status = 'failed', sync_details = ? WHERE sync_status IN ('pending', 'processing')",
-        bind: [sessionDetails],
-      });
-    });
-  }
-
-  // ==================== Session file operations ====================
-
   /** Lists all file records for a session, ordered by path. */
   getSessionFiles(sessionId: string): SessionFileRecord[] {
     const rows = this.requireDb().selectObjects(
@@ -1292,11 +1051,11 @@ export class DatabaseManager {
   upsertSessionFile(file: SessionFileRecord): void {
     this.requireDb().exec({
       sql: `INSERT INTO session_files (
-        id, project_id, session_id, path, scope, sha256, size, status, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, project_id, session_id, path, scope, sha256, etag, size, status, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id, path) DO UPDATE SET
-        scope = excluded.scope, sha256 = excluded.sha256, size = excluded.size,
-        status = excluded.status, updated_at = excluded.updated_at`,
+        scope = excluded.scope, sha256 = excluded.sha256, etag = excluded.etag,
+        size = excluded.size, status = excluded.status, updated_at = excluded.updated_at`,
       bind: [
         file.id,
         file.project_id,
@@ -1304,6 +1063,7 @@ export class DatabaseManager {
         file.path,
         file.scope,
         file.sha256,
+        file.etag ?? null,
         file.size,
         file.status,
         file.updated_at,
@@ -1311,48 +1071,36 @@ export class DatabaseManager {
     });
   }
 
-  // ==================== Metrics ====================
+  /** Deletes all file records for a session. */
+  deleteSessionFiles(sessionId: string): void {
+    this.requireDb().exec({
+      sql: 'DELETE FROM session_files WHERE session_id = ?',
+      bind: [sessionId],
+    });
+  }
 
-  getProjectMetrics(projectId: string): SessionMetrics {
-    const sessions = this.getSessionsByProject(projectId);
+  // ==================== Sync boot reconciliation ====================
 
-    const metrics: SessionMetrics = {
-      total_sessions: sessions.length,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_creation_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_tokens: 0,
-      total_cost_usd: 0,
-      total_tool_executions: 0,
-      avg_session_duration_ms: 0,
-      models_used: [],
-    };
-
-    const models = new Set<string>();
-    let totalDuration = 0;
-
-    for (const session of sessions) {
-      metrics.total_input_tokens += session.input_tokens;
-      metrics.total_output_tokens += session.output_tokens;
-      metrics.total_cache_creation_tokens += session.cache_creation_tokens ?? 0;
-      metrics.total_cache_read_tokens += session.cache_read_tokens ?? 0;
-      metrics.total_tokens += session.total_tokens;
-      metrics.total_cost_usd += session.cost_usd ?? 0;
-      metrics.total_tool_executions += session.tool_executions.length;
-      totalDuration += Math.max(0, session.ended_at - session.started_at);
-      if (session.model) models.add(session.model);
-    }
-
-    metrics.avg_session_duration_ms = sessions.length > 0 ? totalDuration / sessions.length : 0;
-    metrics.models_used = Array.from(models);
-    return metrics;
+  /**
+   * Crash-recovery primitive: set every 'syncing' project to 'in_sync' and
+   * every 'pending'/'processing' session to 'failed'. Runs as one atomic
+   * transaction.
+   */
+  reconcileSyncStates(sessionDetails: string): void {
+    const db = this.requireDb();
+    db.transaction(() => {
+      db.exec("UPDATE projects SET sync_status = 'in_sync' WHERE sync_status = 'syncing'");
+      db.exec({
+        sql: "UPDATE sessions SET sync_status = 'failed', sync_details = ? WHERE sync_status IN ('pending', 'processing')",
+        bind: [sessionDetails],
+      });
+    });
   }
 
   // ==================== Export ====================
 
-  /** Serializes the whole database file as bytes (a valid SQLite file). */
-  exportDatabase(): Uint8Array {
+  /** Serializes the control database as bytes (a valid SQLite file). */
+  exportControlDatabase(): Uint8Array {
     const db = this.requireDb();
     const sqlite3 = this.sqlite3;
     if (!sqlite3 || !db.pointer) throw new Error('Database not initialized');
@@ -1378,6 +1126,39 @@ function rowToProject(row: Record<string, unknown>): Project {
     readable_id: typeof row.readable_id === 'string' ? row.readable_id : undefined,
     sync_status: isProjectSyncStatus(row.sync_status) ? row.sync_status : undefined,
     connection_id: typeof row.connection_id === 'string' ? row.connection_id : undefined,
+  };
+}
+
+function rowToSession(row: SessionRow): DashboardSession {
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    source: row.source as DashboardSession['source'],
+    title: row.title,
+    started_at: row.started_at,
+    ended_at: row.ended_at,
+    input_tokens: row.input_tokens,
+    output_tokens: row.output_tokens,
+    cache_creation_tokens: row.cache_creation_tokens,
+    cache_read_tokens: row.cache_read_tokens,
+    total_tokens: row.total_tokens,
+    cost_usd: row.cost_usd ?? undefined,
+    model: row.model ?? undefined,
+    models: [],
+    context_compactions: row.context_compactions,
+    total_turns: row.total_turns,
+    files_read: row.files_read,
+    files_written: row.files_written,
+    agent_invocations: row.agent_invocations,
+    tool_executions: [],
+    events: [],
+    messages: [],
+    tasks: [],
+    external_id: row.external_id ?? undefined,
+    subagents: [],
+    sync_session_id: row.sync_session_id ?? undefined,
+    sync_status: isSessionSyncStatus(row.sync_status) ? row.sync_status : undefined,
+    sync_details: row.sync_details ?? undefined,
   };
 }
 
@@ -1435,8 +1216,23 @@ function rowToSessionFile(row: Record<string, unknown>): SessionFileRecord {
     path: String(row.path),
     scope: row.scope as SessionFileRecord['scope'],
     sha256: String(row.sha256),
+    etag: typeof row.etag === 'string' ? row.etag : undefined,
     size: Number(row.size),
     status: row.status as SessionFileRecord['status'],
     updated_at: Number(row.updated_at),
+  };
+}
+
+function rowToSourceCheckpoint(row: Record<string, unknown>): SourceCheckpoint {
+  return {
+    source_id: String(row.source_id),
+    source_type: String(row.source_type),
+    last_sequence: typeof row.last_sequence === 'string' ? row.last_sequence : undefined,
+    last_cursor: typeof row.last_cursor === 'string' ? row.last_cursor : undefined,
+    committed_generation_id:
+      typeof row.committed_generation_id === 'string' ? row.committed_generation_id : undefined,
+    committed_at: typeof row.committed_at === 'number' ? row.committed_at : undefined,
+    created_at: typeof row.created_at === 'number' ? row.created_at : undefined,
+    updated_at: typeof row.updated_at === 'number' ? row.updated_at : undefined,
   };
 }

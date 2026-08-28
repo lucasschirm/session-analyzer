@@ -11,14 +11,13 @@ import type {
   PasskeyState,
   Project,
   SessionFileRecord,
-  SessionMetrics,
   SessionStub,
   SessionSyncStatus,
   StoredS3Credentials,
   SyncManifest,
 } from '../types';
-import type { FallbackReason } from './database';
-import type { DbRequest, DbRequestPayload, DbResponse } from './db-protocol';
+import type { FallbackReason, SourceCheckpoint } from './database';
+import type { DbDatabaseHandle, DbRequest, DbRequestPayload, DbResponse } from './db-protocol';
 
 interface PendingCall {
   requestType: DbRequest['type'];
@@ -58,6 +57,8 @@ export class DbClient {
     return this.worker !== null;
   }
 
+  // ==================== Project operations ====================
+
   createProject(project: Project): Promise<void> {
     return this.call({ type: 'createProject', project }) as Promise<void>;
   }
@@ -81,53 +82,7 @@ export class DbClient {
     return this.call({ type: 'deleteProject', projectId }) as Promise<void>;
   }
 
-  saveSession(session: DashboardSession): Promise<void> {
-    return this.call({ type: 'saveSession', session }) as Promise<void>;
-  }
-
-  /** Inserts, or - if `session.external_id` already exists in this project - updates in place. Resolves with the effective session id. */
-  upsertSessionByExternalId(session: DashboardSession): Promise<string> {
-    return this.call({ type: 'upsertSessionByExternalId', session }) as Promise<string>;
-  }
-
-  /** Replaces an existing session's row and child rows in place (same id). */
-  replaceSession(session: DashboardSession): Promise<void> {
-    return this.call({ type: 'replaceSession', session }) as Promise<void>;
-  }
-
-  findSessionByExternalId(projectId: string, externalId: string): Promise<DashboardSession | null> {
-    return this.call({
-      type: 'findSessionByExternalId',
-      projectId,
-      externalId,
-    }) as Promise<DashboardSession | null>;
-  }
-
-  getSessionsByProject(projectId: string): Promise<DashboardSession[]> {
-    return this.call({ type: 'getSessionsByProject', projectId }) as Promise<DashboardSession[]>;
-  }
-
-  searchSessions(projectId: string, query: string): Promise<DashboardSession[]> {
-    return this.call({ type: 'searchSessions', projectId, query }) as Promise<DashboardSession[]>;
-  }
-
-  getSession(sessionId: string): Promise<DashboardSession | null> {
-    return this.call({ type: 'getSession', sessionId }) as Promise<DashboardSession | null>;
-  }
-
-  deleteSession(sessionId: string): Promise<void> {
-    return this.call({ type: 'deleteSession', sessionId }) as Promise<void>;
-  }
-
-  getProjectMetrics(projectId: string): Promise<SessionMetrics> {
-    return this.call({ type: 'getProjectMetrics', projectId }) as Promise<SessionMetrics>;
-  }
-
-  exportDatabase(): Promise<Uint8Array> {
-    return this.call({ type: 'exportDatabase' }) as Promise<Uint8Array>;
-  }
-
-  // ==================== Connections ====================
+  // ==================== Connection operations ====================
 
   /** Creates a new remote storage connection. */
   createConnection(connection: Connection): Promise<void> {
@@ -270,9 +225,65 @@ export class DbClient {
     return this.call({ type: 'upsertSessionFile', file }) as Promise<void>;
   }
 
+  /** Deletes all file records for a session. */
+  deleteSessionFiles(sessionId: string): Promise<void> {
+    return this.call({ type: 'deleteSessionFiles', sessionId }) as Promise<void>;
+  }
+
+  // ==================== Source checkpoints and UI preferences ====================
+
+  /**
+   * Commits a source checkpoint in the control database only after a valid
+   * committed-generation receipt has been provided.
+   */
+  commitSourceCheckpoint(
+    sourceId: string,
+    checkpoint: SourceCheckpoint,
+    receipt: { generationId: string; committedAt?: number },
+  ): Promise<void> {
+    return this.call({
+      type: 'commitSourceCheckpoint',
+      sourceId,
+      checkpoint,
+      receipt,
+    }) as Promise<void>;
+  }
+
+  /** Returns a single source checkpoint, or null if none exists. */
+  getSourceCheckpoint(sourceId: string): Promise<SourceCheckpoint | null> {
+    return this.call({ type: 'getSourceCheckpoint', sourceId }) as Promise<SourceCheckpoint | null>;
+  }
+
+  /** Lists all source checkpoints, most recently updated first. */
+  getSourceCheckpoints(): Promise<SourceCheckpoint[]> {
+    return this.call({ type: 'getSourceCheckpoints' }) as Promise<SourceCheckpoint[]>;
+  }
+
+  /** Stores or replaces a UI preference value. */
+  setUiPreference(key: string, value: string): Promise<void> {
+    return this.call({ type: 'setUiPreference', key, value }) as Promise<void>;
+  }
+
+  /** Returns a UI preference value, or null if it has never been set. */
+  getUiPreference(key: string): Promise<string | null> {
+    return this.call({ type: 'getUiPreference', key }) as Promise<string | null>;
+  }
+
+  // ==================== Export ====================
+
+  /** Serializes the control database as bytes. */
+  exportControlDatabase(): Promise<Uint8Array> {
+    return this.call({ type: 'exportControlDatabase' }) as Promise<Uint8Array>;
+  }
+
+  /** Returns a handle describing the control database connection. */
+  getControlDb(): Promise<DbDatabaseHandle> {
+    return this.call({ type: 'getControlDb' }) as Promise<DbDatabaseHandle>;
+  }
+
   /** Exports the SQLite file and triggers a browser download. */
   async exportAndDownload(): Promise<void> {
-    const bytes = await this.exportDatabase();
+    const bytes = await this.exportControlDatabase();
     const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -285,7 +296,7 @@ export class DbClient {
   private call(payload: DbRequestPayload): Promise<unknown> {
     if (!this.worker) {
       // Lazy initialization: the worker is created on first use and the
-      // 'init' message is queued ahead of this request.
+      // 'init' request is queued ahead of this request.
       this.ensureReady();
     }
     const worker = this.worker;
@@ -314,7 +325,7 @@ export class DbClient {
     if (pendingCall.requestType === 'init') {
       this.fallbackReason = response.fallbackReason;
       pendingCall.resolve(response.storage ?? 'memory');
-    } else if (pendingCall.requestType === 'exportDatabase') {
+    } else if (pendingCall.requestType === 'exportControlDatabase') {
       pendingCall.resolve(response.bytes ?? new Uint8Array());
     } else {
       pendingCall.resolve(response.result);

@@ -14,10 +14,12 @@ export class MetricsCard extends LitElement {
   static styles = css`
     :host {
       display: block;
+      height: 100%;
     }
 
     .metrics-card {
       width: 100%;
+      height: 100%;
       background: var(--md-sys-color-surface-container, #1f242e);
       border: 1px solid var(--md-sys-color-outline, #2a303c);
       border-radius: 12px;
@@ -28,6 +30,7 @@ export class MetricsCard extends LitElement {
       color: inherit;
       font: inherit;
       text-align: left;
+      box-sizing: border-box;
     }
 
     button.metrics-card {
@@ -73,6 +76,12 @@ export class MetricsCard extends LitElement {
       font-size: 13px;
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
       margin-top: 2px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      line-clamp: 2;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .sub {

@@ -4,11 +4,11 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { dbClient } from '../db/db-client';
+import { generateId } from '../lib/id';
 import { hintForS3Error } from '../lib/s3-errors';
 import { encryptField, isUnlocked } from '../sync/credential-crypto';
 import { syncManager } from '../sync/sync-manager';
 import type { Connection, StoredS3Credentials } from '../types';
-import { generateId } from '../workers/session-builder';
 
 /** View the modal is currently showing. */
 type ModalView = 'list' | 'form';
@@ -478,7 +478,10 @@ export class ConnectModal extends LitElement {
     const snapshot = syncManager.getSnapshot();
     this.syncReadOnly = snapshot.readOnly;
     const active = new Set<string>(snapshot.queuedRuns);
-    if (snapshot.activeRun) active.add(snapshot.activeRun.connectionId);
+    const runState = snapshot.activeRun?.state;
+    if ((runState === 'running' || runState === 'queued') && snapshot.activeRun) {
+      active.add(snapshot.activeRun.connectionId);
+    }
     this.activeConnectionIds = active;
   };
 
@@ -807,6 +810,8 @@ export class ConnectModal extends LitElement {
     const id = generateId();
     const connection = connectionFromForm(this.form, id, Date.now());
     this.inMemoryConnections.set(id, { connection, s3Config: s3ConfigFromForm(this.form) });
+    this.editingId = id;
+    this.editingInMemory = true;
   }
 
   private updateInMemoryConnection(): void {
@@ -826,12 +831,8 @@ export class ConnectModal extends LitElement {
   }
 
   private async afterSave(thenSync: boolean): Promise<void> {
-    if (thenSync && this.editingId && !this.editingInMemory) {
+    if (thenSync && this.editingId) {
       this.startSync(this.editingId);
-      return;
-    }
-    if (thenSync && !this.form.saveToStorage && (this.isNew() || this.editingInMemory)) {
-      this.formError = 'Save to local storage to enable sync.';
       return;
     }
     this.handleCancelForm();
@@ -852,8 +853,8 @@ export class ConnectModal extends LitElement {
     const connection = isNew
       ? connectionFromForm(this.form, generateId(), now)
       : await this.updatedConnectionFromForm(now);
-    this.editingId = connection.id;
     const credentials = await this.buildStoredCredentials(connection.id, now);
+    this.editingId = connection.id;
     if (isNew) {
       await dbClient.createConnection(connection);
     } else {
@@ -939,6 +940,7 @@ export class ConnectModal extends LitElement {
   }
 
   private startSync(connectionId: string): void {
+    this.registerEphemeralIfNeeded(connectionId);
     syncManager.requestRun(connectionId);
     this.close();
   }
@@ -962,21 +964,30 @@ export class ConnectModal extends LitElement {
 
   private handleRowSync(id: string): void {
     if (this.isRowSyncDisabled(id)) return;
+    this.registerEphemeralIfNeeded(id);
     syncManager.requestRun(id);
     this.close();
   }
 
+  /**
+   * Registers an in-memory connection with the sync manager so it can be
+   * synced without persisting credentials to the database. No-op for
+   * connections that are already stored in the database.
+   */
+  private registerEphemeralIfNeeded(connectionId: string): void {
+    const entry = this.inMemoryConnections.get(connectionId);
+    if (entry) {
+      syncManager.registerEphemeralConnection(entry.connection, entry.s3Config);
+    }
+  }
+
   private isRowSyncDisabled(id: string): boolean {
     if (this.syncReadOnly) return true;
-    const item = this.items.find((i) => i.id === id);
-    if (item?.inMemory) return true;
     return this.activeConnectionIds.has(id);
   }
 
   private rowSyncTooltip(id: string): string {
     if (this.syncReadOnly) return 'Another tab is leading an active sync.';
-    const item = this.items.find((i) => i.id === id);
-    if (item?.inMemory) return 'Save to local storage to enable sync.';
     if (this.activeConnectionIds.has(id)) return 'A sync is already running for this connection.';
     return '';
   }
@@ -986,8 +997,7 @@ export class ConnectModal extends LitElement {
       !this.formIsValid() ||
       this.syncReadOnly ||
       this.saving ||
-      this.activeConnectionIds.has(this.editingId) ||
-      (!this.form.saveToStorage && (this.isNew() || this.editingInMemory))
+      this.activeConnectionIds.has(this.editingId)
     );
   }
 
@@ -995,9 +1005,6 @@ export class ConnectModal extends LitElement {
     if (this.syncReadOnly) return 'Another tab is leading an active sync.';
     if (this.activeConnectionIds.has(this.editingId)) {
       return 'A sync is already running for this connection.';
-    }
-    if (!this.form.saveToStorage && (this.isNew() || this.editingInMemory)) {
-      return 'Save to local storage to enable sync.';
     }
     if (!this.formIsValid()) return 'Fix the highlighted fields before syncing.';
     return '';
@@ -1242,7 +1249,7 @@ export class ConnectModal extends LitElement {
         />
         Save to local storage
       </label>
-      <p class="help-text">Uncheck to keep this connection in memory for this page session only.</p>
+      <p class="help-text">Uncheck to keep this connection in memory for this page session only. Sync works either way.</p>
     `;
   }
 

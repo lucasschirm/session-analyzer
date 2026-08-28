@@ -2,6 +2,7 @@ import process from 'node:process';
 
 import {
   buildStorageAdapterFromStorage,
+  CAS_NAMESPACE_ROOT,
   type ListObjectEntry,
   type ListObjectsResult,
   parseObjectKey,
@@ -168,6 +169,30 @@ function groupByProject(objects: ListObjectEntry[]): Map<string, ProjectSummary>
 
   for (const obj of objects) {
     const parsed = parseObjectKey(obj.key);
+
+    if (parsed?.scope === 'cas') {
+      const casProjectId = CAS_NAMESPACE_ROOT;
+      if (!projects.has(casProjectId)) {
+        projects.set(casProjectId, {
+          projectId: casProjectId,
+          sessionCount: 0,
+          fileCount: 0,
+          totalBytes: 0,
+          lastModified: undefined,
+        });
+      }
+      const casProject = projects.get(casProjectId) as ProjectSummary;
+      casProject.fileCount += 1;
+      casProject.totalBytes += obj.size ?? 0;
+      if (
+        obj.lastModified &&
+        (!casProject.lastModified || obj.lastModified > casProject.lastModified)
+      ) {
+        casProject.lastModified = obj.lastModified;
+      }
+      continue;
+    }
+
     const projectId = parsed?.projectId;
     const sessionId = parsed?.sessionId;
     if (!projectId || !sessionId) continue;
@@ -431,9 +456,10 @@ export async function runListCommand(
       let totalFiles = 0;
       let totalBytes = 0;
       for (const p of sorted) {
+        const sessionsStr = p.projectId === CAS_NAMESPACE_ROOT ? '-' : String(p.sessionCount);
         stdout.write(
           `${padRight(p.projectId, idWidth)}  ` +
-            `${padRight(String(p.sessionCount), sessionsWidth)}  ` +
+            `${padRight(sessionsStr, sessionsWidth)}  ` +
             `${padRight(String(p.fileCount), filesWidth)}  ` +
             `${padRight(formatBytes(p.totalBytes), sizeWidth)}  ` +
             `${padRight(formatDate(p.lastModified), dateWidth)}\n`,

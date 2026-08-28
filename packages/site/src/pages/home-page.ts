@@ -4,6 +4,7 @@ import { repeat } from 'lit/directives/repeat.js';
 import '../components/project-modal';
 import '../components/project-sync-indicator';
 import '../components/project-sync-status-modal';
+import { analyticsClient } from '../db/analytics-client';
 import { dbClient } from '../db/db-client';
 import { navigateTo } from '../router';
 import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
@@ -22,6 +23,8 @@ export class HomePage extends LitElement {
   static styles = css`
     :host {
       display: block;
+      max-width: 1200px;
+      margin: 0 auto;
     }
 
     .home-page {
@@ -195,8 +198,24 @@ export class HomePage extends LitElement {
   }
 
   private handleSyncChange = (event: Event): void => {
+    const wasRunning = this.isRunActive(this.syncSnapshot);
+    const prevProjectIds = new Set(this.syncSnapshot?.projects.map((p) => p.localProjectId) ?? []);
+    const prevSessionCount = this.syncSnapshot?.sessions.length ?? 0;
     this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
+    const runEnded = wasRunning && !this.isRunActive(this.syncSnapshot);
+    const hasNewProjects =
+      this.syncSnapshot?.projects.some((p) => !prevProjectIds.has(p.localProjectId)) ?? false;
+    const sessionCount = this.syncSnapshot?.sessions.length ?? 0;
+    const hasNewSessions = sessionCount > prevSessionCount;
+    if (runEnded || hasNewProjects || hasNewSessions) {
+      void this.loadProjects();
+    }
   };
+
+  private isRunActive(snapshot: SyncManagerSnapshot | null): boolean {
+    if (!snapshot?.activeRun) return false;
+    return snapshot.activeRun.state === 'running' || snapshot.activeRun.state === 'queued';
+  }
 
   private loadingLock = false;
 
@@ -255,8 +274,9 @@ export class HomePage extends LitElement {
     }
   }
 
-  private openProject(projectId: string): void {
-    navigateTo(`/projects/${projectId}`);
+  private openProject(project: Project): void {
+    const slug = project.readable_id || project.id;
+    navigateTo(`/projects/${slug}/behavior`);
   }
 
   private isProjectSyncing(project: Project): boolean {
@@ -286,6 +306,14 @@ export class HomePage extends LitElement {
 
     try {
       await dbClient.deleteProject(project.id);
+      // Also erase from the analytics DB so Portfolio/Project Behavior views
+      // don't keep showing the deleted project's sessions and totals.
+      try {
+        await analyticsClient.deleteProject(project.id);
+      } catch {
+        // Analytics DB may not be initialized or the project may not exist
+        // there — non-fatal, the control DB deletion already succeeded.
+      }
       await this.loadProjects();
     } catch (error) {
       this.error = `Failed to delete project: ${(error as Error).message}`;
@@ -331,11 +359,11 @@ export class HomePage extends LitElement {
                       class="project-card"
                       role="button"
                       tabindex="0"
-                      @click=${() => this.openProject(project.id)}
+                      @click=${() => this.openProject(project)}
                       @keydown=${(event: KeyboardEvent) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault();
-                          this.openProject(project.id);
+                          this.openProject(project);
                         }
                       }}
                     >

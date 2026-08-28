@@ -1,0 +1,4 @@
+{"parentUuid":null,"type":"user","uuid":"u-1","timestamp":"2026-08-01T10:00:00.000Z","sessionId":"s-1","message":{"role":"user","content":"hi"}}
+{"parentUuid":"u-1","type":"assistant","uuid":"a-1","timestamp":"2026-08-01T10:00:01.000Z","sessionId":"s-1","message":{"model":"claude-3-5-sonnet-20241022","role":"assistant","content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"parentUuid":"u-1","type":"assistant","uuid":"a-1","timestamp":"2026-08-01T10:00:01.000Z","sessionId":"s-1","message":{"model":"claude-3-5-sonnet-20241022","role":"assistant","content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}
+{"parentUuid":"a-1","type":"user","uuid":"u-2","timestamp":"2026-08-01T10:00:02.000Z","sessionId":"s-1","message":{"role":"user","content":"ok"}}

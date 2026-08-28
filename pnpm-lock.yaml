@@ -18,6 +18,52 @@ importers:
         specifier: ^17.3.0
         version: 17.3.0
 
+  packages/db:
+    dependencies:
+      '@lucasschirm/sal-db-core':
+        specifier: workspace:*
+        version: link:../db-core
+      '@lucasschirm/sal-sync-core':
+        specifier: workspace:*
+        version: link:../sync-core
+      '@lucasschirm/sal-transformer':
+        specifier: workspace:*
+        version: link:../transformer
+    devDependencies:
+      '@sqlite.org/sqlite-wasm':
+        specifier: 3.53.0-build1
+        version: 3.53.0-build1
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      '@vitest/coverage-v8':
+        specifier: ^4.1.10
+        version: 4.1.10(vitest@4.1.10)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@26.2.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/db-core:
+    devDependencies:
+      '@sqlite.org/sqlite-wasm':
+        specifier: 3.53.0-build1
+        version: 3.53.0-build1
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      '@vitest/coverage-v8':
+        specifier: ^4.1.10
+        version: 4.1.10(vitest@4.1.10)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@26.2.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0))
+
   packages/parsers/claude-session-parser:
     devDependencies:
       '@vitest/coverage-v8':
@@ -59,15 +105,27 @@ importers:
       '@lucasschirm/sal-claude-session-parser':
         specifier: workspace:*
         version: link:../parsers/claude-session-parser
+      '@lucasschirm/sal-db':
+        specifier: workspace:*
+        version: link:../db
+      '@lucasschirm/sal-db-core':
+        specifier: workspace:*
+        version: link:../db-core
       '@lucasschirm/sal-sync-core':
         specifier: workspace:*
         version: link:../sync-core
+      '@lucasschirm/sal-transformer':
+        specifier: workspace:*
+        version: link:../transformer
       '@sqlite.org/sqlite-wasm':
         specifier: 3.53.0-build1
         version: 3.53.0-build1
       dompurify:
         specifier: ^3.4.13
         version: 3.4.13
+      echarts:
+        specifier: 5.5.0
+        version: 5.5.0
       lit:
         specifier: ^3.3.3
         version: 3.3.3
@@ -133,6 +191,25 @@ importers:
       aws4fetch:
         specifier: 1.0.20
         version: 1.0.20
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      '@vitest/coverage-v8':
+        specifier: ^4.1.10
+        version: 4.1.10(vitest@4.1.10)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@26.2.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/transformer:
+    dependencies:
+      '@lucasschirm/sal-claude-session-parser':
+        specifier: workspace:*
+        version: link:../parsers/claude-session-parser
     devDependencies:
       '@types/node':
         specifier: ^26.2.0
@@ -1092,6 +1169,9 @@ packages:
   dompurify@3.4.13:
     resolution: {integrity: sha512-2vmYIoqjze2d+kakP8S/nS5shfsl587kzwEjcGlTdiksUVgFHnFCsLYDVj/JNqJVOQZGSYBTmuycv0PodwmnMQ==}
 
+  echarts@5.5.0:
+    resolution: {integrity: sha512-rNYnNCzqDAPCr4m/fqyUFv7fD9qIsd50S6GDFgO1DxZhncCsNsG7IfUlAlvZe5oSEQxtsjnHiUuppzccry93Xw==}
+
   entities@7.0.1:
     resolution: {integrity: sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA==}
     engines: {node: '>=0.12'}
@@ -1408,6 +1488,9 @@ packages:
     resolution: {integrity: sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==}
     engines: {node: '>=20'}
 
+  tslib@2.3.0:
+    resolution: {integrity: sha512-N82ooyxVNm6h1riLCoyS9e3fuJ3AMG2zIZs2Gd1ATcSFjSA23Q0fzjjZeh0jbJvWVDZ0cJT8yaNNaaXHzueNjg==}
+
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
@@ -1561,6 +1644,9 @@ packages:
     resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
     engines: {node: '>= 14.6'}
     hasBin: true
+
+  zrender@5.5.0:
+    resolution: {integrity: sha512-O3MilSi/9mwoovx77m6ROZM7sXShR/O/JIanvzTwjN3FORfLSr81PsUGd7jlaYOeds9d8tw82oP44+3YucVo+w==}
 
 snapshots:
 
@@ -2299,6 +2385,11 @@ snapshots:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
+  echarts@5.5.0:
+    dependencies:
+      tslib: 2.3.0
+      zrender: 5.5.0
+
   entities@7.0.1: {}
 
   entities@8.0.0: {}
@@ -2652,6 +2743,8 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
+  tslib@2.3.0: {}
+
   tslib@2.8.1: {}
 
   tsx@4.23.12:
@@ -2771,3 +2864,7 @@ snapshots:
 
   yaml@2.9.0:
     optional: true
+
+  zrender@5.5.0:
+    dependencies:
+      tslib: 2.3.0

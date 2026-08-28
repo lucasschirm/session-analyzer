@@ -116,7 +116,9 @@ export async function status(
         captureTranscripts: resolved.config.captureTranscripts,
         limits: resolved.config.limits,
       });
-      const candidateResults = await buildCandidates(discovery, resolved.config);
+      const candidateResults = await buildCandidates(discovery, resolved.config, {
+        projectRoot: args.cwd,
+      });
       for (const result of candidateResults) {
         const record = getArtifactRecord(state, {
           projectId: resolved.config.projectId,

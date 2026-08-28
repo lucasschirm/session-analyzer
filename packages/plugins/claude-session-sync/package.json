@@ -1,6 +1,6 @@
 {
   "name": "@lucasschirm/claude-session-sync",
-  "version": "0.2.11",
+  "version": "0.2.17",
   "private": false,
   "type": "module",
   "license": "ISC",
@@ -23,7 +23,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check src tests build.mjs",
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
-    "sync": "node ./bin/claude-sync"
+    "sync": "node ./bin/claude-sync",
+    "version": "node scripts/bump-plugin-version.js"
   },
   "devDependencies": {
     "@lucasschirm/sal-sync": "workspace:*",

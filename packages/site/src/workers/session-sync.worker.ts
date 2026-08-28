@@ -39,8 +39,8 @@ import type {
   SyncMessageToWorker,
 } from '../sync/sync-protocol';
 
-const SESSION_POOL_SIZE = 3;
-const FILE_POOL_SIZE = 4;
+const SESSION_POOL_SIZE = 6;
+const FILE_POOL_SIZE = 8;
 const FALLBACK_MAIN_TRANSCRIPT = 'transcript.jsonl';
 
 type PostFn = (message: SyncMessageFromWorker, transfer?: Transferable[]) => void;
@@ -63,6 +63,7 @@ interface SessionSyncDecision {
   sync: boolean;
   exists: boolean;
   filesToDownload?: FileToDownload[];
+  localFileEtas?: Record<string, string>;
 }
 
 interface SessionState {
@@ -263,7 +264,12 @@ export class SessionSyncWorker {
         }
         return;
       }
-      await this.downloadSessionFiles(sessionId, manifest, decision.filesToDownload);
+      await this.downloadSessionFiles(
+        sessionId,
+        manifest,
+        decision.filesToDownload,
+        decision.localFileEtas,
+      );
     } catch (error) {
       if (this.cancelled) return;
       this.counts.failed++;
@@ -299,6 +305,7 @@ export class SessionSyncWorker {
         sync: message.sync,
         exists: message.exists,
         filesToDownload: message.filesToDownload,
+        localFileEtas: message.localFileEtas,
       });
     }
   }
@@ -372,9 +379,15 @@ export class SessionSyncWorker {
     sessionId: string,
     manifest: SyncManifest,
     filesToDownload?: FileToDownload[],
+    localFileEtas?: Record<string, string>,
   ): Promise<void> {
     if (this.cancelled) return;
-    const files = await this.resolveRequestedFiles(manifest, filesToDownload, sessionId);
+    const files = await this.resolveRequestedFiles(
+      manifest,
+      filesToDownload,
+      sessionId,
+      localFileEtas,
+    );
     if (this.cancelled) return;
     if (files.length === 0) {
       this.emitSyncComplete(sessionId, []);
@@ -414,14 +427,18 @@ export class SessionSyncWorker {
     manifest: SyncManifest,
     filesToDownload: FileToDownload[] | undefined,
     sessionId: string,
+    localFileEtas?: Record<string, string>,
   ): Promise<FileToDownload[]> {
-    if (filesToDownload === undefined) return this.resolveInScopeFiles(manifest, sessionId);
+    if (filesToDownload === undefined) {
+      return this.resolveInScopeFiles(manifest, sessionId, localFileEtas);
+    }
     return filesToDownload;
   }
 
   private async resolveInScopeFiles(
     manifest: SyncManifest,
     sessionId: string,
+    localFileEtas?: Record<string, string>,
   ): Promise<FileToDownload[]> {
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
     const fileMap = new Map<string, FileToDownload>();
@@ -432,6 +449,16 @@ export class SessionSyncWorker {
       }
     }
     await this.reconcileSessionFiles(fileMap, sessionId, mainPath);
+    // ETag-based skip: remove files whose S3 listing ETag matches the locally
+    // stored ETag. This avoids redundant GET calls for unchanged files when
+    // the sync manager couldn't pre-compute filesToDownload (no manifest hashes).
+    if (localFileEtas) {
+      for (const [path, file] of fileMap) {
+        if (file.etag && localFileEtas[path] === file.etag) {
+          fileMap.delete(path);
+        }
+      }
+    }
     return [...fileMap.values()];
   }
 
@@ -455,6 +482,7 @@ export class SessionSyncWorker {
           parsed.relativePath,
           entry.size ?? 0,
           mainPath,
+          entry.etag,
         );
         if (!fileMap.has(file.file)) fileMap.set(file.file, file);
       }
@@ -464,11 +492,29 @@ export class SessionSyncWorker {
   }
 
   private isInScopeArtifact(artifact: ManifestArtifact, mainPath: string): boolean {
-    return (
+    // Session-scoped transcripts and subagent files are always in scope.
+    if (
       artifact.scope === 'session' &&
-      artifact.status === 'uploaded' &&
+      (artifact.status === 'uploaded' || artifact.status === 'skipped') &&
       this.isInScopeRelativePath(artifact.relativePath, mainPath)
-    );
+    ) {
+      return true;
+    }
+    // Workspace/global config artifacts (MCP, settings, skills, agents, rules)
+    // are needed by the transformer to populate component identities and
+    // exposures. Download artifacts that were uploaded to S3 OR were skipped
+    // (already in CAS from a prior session's sync). Skipped artifacts are still
+    // in S3 under global/cas/<sha256> and must be downloaded to the local blob
+    // store so the transformer can read them during ingestion. The ETag-based
+    // skip in resolveInScopeFiles avoids redundant downloads when the local
+    // blob store already has the same content.
+    if (
+      (artifact.scope === 'workspace' || artifact.scope === 'global') &&
+      (artifact.status === 'uploaded' || artifact.status === 'skipped')
+    ) {
+      return true;
+    }
+    return false;
   }
 
   private isInScopeRelativePath(relativePath: string, mainPath: string): boolean {
@@ -484,7 +530,10 @@ export class SessionSyncWorker {
 
   private toFileToDownload(artifact: ManifestArtifact, mainPath: string): FileToDownload {
     return {
-      file: `${artifact.scope}/${artifact.relativePath}`,
+      file:
+        artifact.scope === 'session'
+          ? artifact.relativePath
+          : `${artifact.scope}/${artifact.relativePath}`,
       scope: artifact.scope,
       relativePath: artifact.relativePath,
       hash: artifact.sha256,
@@ -497,12 +546,14 @@ export class SessionSyncWorker {
     relativePath: string,
     size: number,
     mainPath: string,
+    etag?: string,
   ): FileToDownload {
     return {
-      file: `session/${relativePath}`,
+      file: relativePath,
       scope: 'session',
       relativePath,
       hash: '',
+      etag,
       size,
       isMainTranscript: relativePath === mainPath,
     };
@@ -689,6 +740,7 @@ export class SessionSyncWorker {
         sessionId,
         file: file.file,
         hash: file.hash,
+        etag: file.etag,
         content: buffer,
       },
       [buffer],

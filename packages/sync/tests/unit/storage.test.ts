@@ -159,7 +159,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: 'transcript.jsonl',
       }),
-    ).toBe('p/s/session/transcript.jsonl');
+    ).toBe('p/s/transcript.jsonl');
   });
 
   it('builds workspace artifact keys as global/cas/<hash>', () => {
@@ -207,7 +207,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: 'file.json',
       }),
-    ).toBe('my%20project/sess%3A1/session/file.json');
+    ).toBe('my%20project/sess%3A1/file.json');
   });
 
   it('encodes special characters in path segments', () => {
@@ -218,7 +218,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: 'foo bar/baz:qux',
       }),
-    ).toBe('p/s/session/foo%20bar/baz%3Aqux');
+    ).toBe('p/s/foo%20bar/baz%3Aqux');
   });
 
   it('collapses and normalizes slashes and backslashes', () => {
@@ -229,7 +229,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: 'a\\b//c',
       }),
-    ).toBe('p/s/session/a/b/c');
+    ).toBe('p/s/a/b/c');
   });
 
   it('strips leading and trailing slashes', () => {
@@ -240,7 +240,7 @@ describe('buildObjectKey', () => {
         scope: 'session',
         relativePath: './.claude/settings.json/',
       }),
-    ).toBe('p/s/session/.claude/settings.json');
+    ).toBe('p/s/.claude/settings.json');
   });
 
   it('rejects absolute unix paths', () => {
@@ -419,7 +419,7 @@ describe('InMemoryStorageAdapter', () => {
     const adapter: StorageAdapter = new InMemoryStorageAdapter();
     const input = makeInput({ relativePath: 'file.txt' });
     const result = await adapter.putObject(input);
-    expect(result.key).toBe('proj-1/sess-1/session/file.txt');
+    expect(result.key).toBe('proj-1/sess-1/file.txt');
     expect(result.sha256).toBe(sha256Hex(input.body));
 
     const head = await adapter.headObject?.(input);
@@ -515,13 +515,13 @@ describe('S3StorageAdapter', () => {
     const input = makeInput();
     const result = await adapter.putObject(input);
 
-    expect(result.key).toBe('proj-1/sess-1/session/.claude/settings.json');
+    expect(result.key).toBe('proj-1/sess-1/.claude/settings.json');
     expect(result.sha256).toBe(sha256Hex(input.body));
 
     expect(sendSpy).toHaveBeenCalledTimes(1);
     const command = sendSpy.mock.calls[0][0] as PutObjectCommand;
     expect(command.input.Bucket).toBe('my-bucket');
-    expect(command.input.Key).toBe('proj-1/sess-1/session/.claude/settings.json');
+    expect(command.input.Key).toBe('proj-1/sess-1/.claude/settings.json');
     expect(command.input.Body).toBe(input.body);
     expect(command.input.Metadata).toEqual({
       sha256: sha256Hex(input.body),
@@ -711,8 +711,17 @@ describe('parseObjectKey', () => {
     expect(parseObjectKey('p/s')).toBeUndefined();
   });
 
-  it('returns undefined for keys with an unknown scope', () => {
-    expect(parseObjectKey('p/s/unknown/file.json')).toBeUndefined();
+  it('treats an unrecognized third segment as a session-scoped relativePath', () => {
+    // With the new key format, session-scoped artifacts omit the `session/`
+    // segment, so any third segment that is not a recognized scope (and not
+    // `manifest.json`) is treated as the start of a session-scoped
+    // relativePath rather than an unknown scope.
+    expect(parseObjectKey('p/s/unknown/file.json')).toEqual({
+      projectId: 'p',
+      sessionId: 's',
+      scope: 'session',
+      relativePath: 'unknown/file.json',
+    });
   });
 
   it('returns undefined for empty keys', () => {
@@ -825,7 +834,7 @@ describe('S3StorageAdapter getObject/headObject/listObjects', () => {
 
     const command = sendSpy.mock.calls[0][0] as GetObjectCommand;
     expect(command.input.Bucket).toBe('my-bucket');
-    expect(command.input.Key).toBe('proj-1/sess-1/session/file.json');
+    expect(command.input.Key).toBe('proj-1/sess-1/file.json');
   });
 
   it('getObject returns undefined for 404', async () => {
@@ -855,7 +864,7 @@ describe('S3StorageAdapter getObject/headObject/listObjects', () => {
 
     const command = sendSpy.mock.calls[0][0] as HeadObjectCommand;
     expect(command.input.Bucket).toBe('my-bucket');
-    expect(command.input.Key).toBe('proj-1/sess-1/session/file.json');
+    expect(command.input.Key).toBe('proj-1/sess-1/file.json');
   });
 
   it('headObject returns undefined for 404', async () => {
@@ -871,7 +880,7 @@ describe('S3StorageAdapter getObject/headObject/listObjects', () => {
       Contents: [
         { Key: 'proj-1/sess-a/manifest.json', Size: 100, LastModified: new Date('2026-01-01') },
         {
-          Key: 'proj-1/sess-a/session/transcript.jsonl',
+          Key: 'proj-1/sess-a/transcript.jsonl',
           Size: 200,
           LastModified: new Date('2026-01-02'),
         },
@@ -885,7 +894,7 @@ describe('S3StorageAdapter getObject/headObject/listObjects', () => {
     expect(result?.objects).toHaveLength(2);
     expect(result?.objects[0]?.key).toBe('proj-1/sess-a/manifest.json');
     expect(result?.objects[0]?.size).toBe(100);
-    expect(result?.objects[1]?.key).toBe('proj-1/sess-a/session/transcript.jsonl');
+    expect(result?.objects[1]?.key).toBe('proj-1/sess-a/transcript.jsonl');
 
     const command = sendSpy.mock.calls[0][0] as ListObjectsV2Command;
     expect(command.input.Bucket).toBe('my-bucket');
@@ -937,20 +946,20 @@ describe('S3StorageAdapter getObject/headObject/listObjects', () => {
 
   it('listObjects decodes percent-encoded keys', async () => {
     sendSpy.mockResolvedValueOnce({
-      Contents: [{ Key: 'my%20project/sess-a/session/file.json', Size: 100 }],
+      Contents: [{ Key: 'my%20project/sess-a/file.json', Size: 100 }],
       IsTruncated: false,
     } as never);
 
     const adapter = new S3StorageAdapter(baseConfig, { retries: 0 });
     const result = await adapter.listObjects?.({ projectId: 'my project' });
-    expect(result?.objects[0]?.key).toBe('my project/sess-a/session/file.json');
+    expect(result?.objects[0]?.key).toBe('my project/sess-a/file.json');
   });
 
   it('listObjects lists all objects when projectId is omitted', async () => {
     sendSpy.mockResolvedValueOnce({
       Contents: [
         { Key: 'proj-1/sess-a/manifest.json', Size: 100 },
-        { Key: 'proj-2/sess-b/session/transcript.jsonl', Size: 200 },
+        { Key: 'proj-2/sess-b/transcript.jsonl', Size: 200 },
       ],
       IsTruncated: false,
     } as never);

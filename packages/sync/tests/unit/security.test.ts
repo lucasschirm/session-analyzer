@@ -292,7 +292,7 @@ describe('object key path traversal prevention', () => {
       scope: 'session',
       relativePath: 'foo/..%2F..%2Fbar',
     });
-    expect(key).toBe('p/s/session/foo/..%252F..%252Fbar');
+    expect(key).toBe('p/s/foo/..%252F..%252Fbar');
     expect(key).not.toContain('/../');
   });
 

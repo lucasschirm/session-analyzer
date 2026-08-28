@@ -120,7 +120,7 @@ describe('sync-protocol', () => {
       type: 'SESSION_FILE_DOWNLOADED',
       projectId: 'proj',
       sessionId: 's1',
-      file: 'session/transcript.jsonl',
+      file: 'transcript.jsonl',
       hash: 'abc',
       content: buffer,
     };

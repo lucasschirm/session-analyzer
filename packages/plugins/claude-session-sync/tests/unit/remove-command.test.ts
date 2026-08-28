@@ -94,7 +94,7 @@ describe('runRemoveCommand', () => {
   it('performs a dry run without --yes and never calls deleteObjects', async () => {
     const objects: ListObjectEntry[] = [
       { key: 'proj-1/sess-a/manifest.json', size: 100 },
-      { key: 'proj-1/sess-a/session/transcript.jsonl', size: 200 },
+      { key: 'proj-1/sess-a/transcript.jsonl', size: 200 },
     ];
     const { adapter, deleteObjects } = makeAdapter({ objects });
     const stdout = captureStream();
@@ -173,7 +173,7 @@ describe('runRemoveCommand', () => {
       objects: [],
       deleteResult: {
         deletedKeys: ['proj-1/sess-a/manifest.json'],
-        errors: [{ key: 'proj-1/sess-a/session/transcript.jsonl', message: 'AccessDenied' }],
+        errors: [{ key: 'proj-1/sess-a/transcript.jsonl', message: 'AccessDenied' }],
       },
     });
     const stdout = captureStream();
@@ -187,7 +187,7 @@ describe('runRemoveCommand', () => {
     });
 
     expect(result).toBe(1);
-    expect(stdout.lines.join('')).toContain('[fail] proj-1/sess-a/session/transcript.jsonl');
+    expect(stdout.lines.join('')).toContain('[fail] proj-1/sess-a/transcript.jsonl');
     expect(stderr.lines.join('')).toContain('1 object(s) failed to delete');
   });
 

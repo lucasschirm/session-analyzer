@@ -253,7 +253,7 @@ describe('runDownloadCommand', () => {
     expect(io.stdoutStr()).toContain('Downloaded 3 file(s)');
 
     const manifestPath = path.join(tmpDir, 'proj-1', 'sess-a', 'manifest.json');
-    const sessionPath = path.join(tmpDir, 'proj-1', 'sess-a', 'session', 'transcript.jsonl');
+    const sessionPath = path.join(tmpDir, 'proj-1', 'sess-a', 'transcript.jsonl');
     const workspacePath = path.join(tmpDir, 'proj-1', 'sess-a', 'workspace', 'agents', 'agent.md');
 
     await expect(fsp.access(manifestPath)).resolves.toBeUndefined();
@@ -396,8 +396,8 @@ describe('runDownloadCommand', () => {
     });
 
     expect(result).toBe(0);
-    expect(io.stdoutStr()).toContain('proj-1/sess-a/session/a.jsonl');
-    expect(io.stdoutStr()).toContain('proj-1/sess-b/session/b.jsonl');
+    expect(io.stdoutStr()).toContain('proj-1/sess-a/a.jsonl');
+    expect(io.stdoutStr()).toContain('proj-1/sess-b/b.jsonl');
     expect(adapter.listObjects).toHaveBeenCalledWith({ projectId: 'proj-1' });
   });
 

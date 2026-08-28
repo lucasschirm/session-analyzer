@@ -10,21 +10,23 @@ import { HashRouter } from '../router';
 import { isUnlocked } from '../sync/credential-crypto';
 import { syncManager } from '../sync/sync-manager';
 import './home-page';
-import './project-view';
-import './session-dashboard';
-import './indicator-details';
-import './session-transcript-page';
+import './portfolio/portfolio-view';
+import './project-behavior/project-behavior-view';
+import './session-evidence/session-evidence-view';
+import './manual-import/manual-import-page';
+import './component-ecosystem/component-ecosystem-view';
+import './artifact-diff/artifact-diff-view';
 
 /**
  * Root application shell: header, hash-based routing outlet and database
  * lifecycle. Routes:
  *
  * - `#/`                                   -> Home (projects CRUD)
- * - `#/projects/:projectId`                -> Project View (upload + sessions)
- * - `#/sessions/:sessionId`                -> Session Dashboard (metrics)
- * - `#/sessions/:sessionId/indicator/:key` -> Indicator Details (drill-down)
- * - `#/sessions/:sessionId/transcript`     -> Session Transcript (subagent cards inline, full width)
- * - `#/sessions/:sessionId/transcript/:agentId` -> Session Transcript, split with that subagent's column open
+ * - `#/projects/:projectId/behavior`       -> Project Behavior (precomputed analytics view)
+ * - `#/sessions/:sessionId`                -> Session Evidence (precomputed analytics view)
+ * - `#/manual-import`                      -> Manual Import (transcript/partial upload)
+ * - `#/components`                         -> Component Ecosystem
+ * - `#/artifact-diff`                      -> Artifact Diff
  */
 @customElement('app-root')
 export class AppRoot extends LitElement {
@@ -115,8 +117,6 @@ export class AppRoot extends LitElement {
     main {
       padding: 24px;
       padding-bottom: 56px;
-      max-width: 1200px;
-      margin: 0 auto;
     }
 
     .app-error {
@@ -136,37 +136,37 @@ export class AppRoot extends LitElement {
         render: () => html`<home-page></home-page>`,
       },
       {
-        path: '/projects/:projectId',
+        path: '/portfolio*',
+        render: () => html`<portfolio-view></portfolio-view>`,
+      },
+      {
+        path: '/projects/:projectId/behavior',
         render: (params) =>
-          html`<project-view project-id=${params.projectId ?? ''}></project-view>`,
+          html`<project-behavior-view project-id=${params.projectId ?? ''}></project-behavior-view>`,
       },
       {
         path: '/sessions/:sessionId',
         render: (params) =>
-          html`<session-dashboard session-id=${params.sessionId ?? ''}></session-dashboard>`,
+          html`<session-evidence-view session-id=${params.sessionId ?? ''}></session-evidence-view>`,
       },
       {
-        path: '/sessions/:sessionId/indicator/:indicator',
-        render: (params) =>
-          html`<indicator-details
-            session-id=${params.sessionId ?? ''}
-            indicator=${params.indicator ?? ''}
-          ></indicator-details>`,
+        path: '/manual-import',
+        render: () => html`<manual-import-page></manual-import-page>`,
       },
       {
-        path: '/sessions/:sessionId/transcript',
-        render: (params) =>
-          html`<session-transcript-page
-            session-id=${params.sessionId ?? ''}
-          ></session-transcript-page>`,
+        path: '/components',
+        render: () => html`<component-ecosystem-view></component-ecosystem-view>`,
       },
       {
-        path: '/sessions/:sessionId/transcript/:agentId',
+        path: '/components/:componentId',
         render: (params) =>
-          html`<session-transcript-page
-            session-id=${params.sessionId ?? ''}
-            agent-id=${params.agentId ?? ''}
-          ></session-transcript-page>`,
+          html`<component-ecosystem-view
+            component-id=${params.componentId ?? ''}
+          ></component-ecosystem-view>`,
+      },
+      {
+        path: '/artifact-diff*',
+        render: () => html`<artifact-diff-view></artifact-diff-view>`,
       },
     ],
     {
@@ -256,7 +256,10 @@ export class AppRoot extends LitElement {
             Connect
           </button>
           <nav>
+            <a href="#/portfolio">Portfolio</a>
+            <a href="#/components">Components</a>
             <a href="#/">Home</a>
+            <a href="#/manual-import">Manual Import</a>
           </nav>
         </div>
       </header>

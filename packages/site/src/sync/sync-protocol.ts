@@ -19,11 +19,18 @@ export interface S3Credentials {
  * `scope`, `relativePath`, and `hash` via `buildObjectKey`.
  */
 export interface FileToDownload {
-  /** Logical path used in progress and `session_files` rows: `<scope>/<relativePath>`. */
+  /** Logical path used in progress and `session_files` rows: `<relativePath>` for session/manifest scopes, `<scope>/<relativePath>` otherwise. */
   file: string;
   scope: ArtifactScope;
   relativePath: string;
   hash: string;
+  /**
+   * S3 ETag from the ListObjectsV2 response, when available. This is an MD5
+   * (or compound hash for multipart uploads), NOT the SHA-256 content hash.
+   * Available for future ETag-based skip optimization; the site would store
+   * the last-seen ETag locally and skip downloads when it hasn't changed.
+   */
+  etag?: string;
   size: number;
   isMainTranscript: boolean;
 }
@@ -73,6 +80,9 @@ export interface SessionSyncMessage {
   sync: boolean;
   exists: boolean;
   filesToDownload?: FileToDownload[];
+  /** Local file records with ETags, used by the worker to skip unchanged files
+   * when falling back to listing-based discovery (no manifest hashes). */
+  localFileEtas?: Record<string, string>;
 }
 
 /** Main→Worker: abort the sync and release resources. */
@@ -154,6 +164,7 @@ export interface SessionFileDownloadedMessage {
   sessionId: string;
   file: string;
   hash: string;
+  etag?: string;
   content: ArrayBuffer;
 }
 

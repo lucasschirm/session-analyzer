@@ -9,19 +9,25 @@ import { fileURLToPath } from 'node:url';
 import type { PutObjectInput, PutObjectResult, StorageAdapter } from '@lucasschirm/sal-sync';
 import { buildObjectKey, sha256Hex } from '@lucasschirm/sal-sync';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { runHook, runSessionEnd, runSessionStart } from '../../src/index.js';
+import { encodeProjectFolder, runHook, runSessionEnd, runSessionStart } from '../../src/index.js';
 
 const packageRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 function runBin(
   binPath: string,
   args: string[] = [],
-  options: { input?: string; env?: Record<string, string>; timeout?: number } = {},
+  options: {
+    input?: string;
+    env?: Record<string, string>;
+    timeout?: number;
+    cwd?: string;
+  } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [binPath, ...args], {
       env: options.env,
       timeout: options.timeout ?? 15000,
+      cwd: options.cwd,
     });
 
     const stdoutChunks: Buffer[] = [];
@@ -130,6 +136,10 @@ class MockS3Server {
     return this.objects.get(key)?.body;
   }
 
+  deleteKey(key: string): boolean {
+    return this.objects.delete(key);
+  }
+
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', `http://127.0.0.1:${this.port}`);
     const pathParts = decodeURIComponent(url.pathname).split('/').filter(Boolean);
@@ -147,6 +157,23 @@ class MockS3Server {
       res.writeHead(200, { 'Content-Type': 'application/xml', ETag: `"${sha256}"` });
       res.end(
         `<?xml version="1.0" encoding="UTF-8"?><PutObjectOutput><ETag>${sha256}</ETag></PutObjectOutput>`,
+      );
+      return;
+    }
+
+    // ListObjectsV2: GET /bucket?list-type=2&prefix=...
+    if (req.method === 'GET' && url.searchParams.has('list-type')) {
+      const prefix = url.searchParams.get('prefix') ?? '';
+      const matchingKeys = [...this.objects.keys()].filter((k) => k.startsWith(prefix));
+      const contents = matchingKeys
+        .map((k) => {
+          const obj = this.objects.get(k)!;
+          return `<Contents><Key>${k}</Key><Size>${obj.body.length}</Size><ETag>"${obj.sha256}"</ETag></Contents>`;
+        })
+        .join('');
+      res.writeHead(200, { 'Content-Type': 'application/xml' });
+      res.end(
+        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><Name>test-bucket</Name><Prefix>${prefix}</Prefix><KeyCount>${matchingKeys.length}</KeyCount>${contents}</ListBucketResult>`,
       );
       return;
     }
@@ -525,7 +552,82 @@ describe('Claude Code plugin E2E', () => {
 
       const keys = server.listKeys();
       expect(keys.some((k) => k.startsWith('global/cas/'))).toBe(true);
-      expect(keys.some((k) => k.includes('session/transcript.jsonl'))).toBe(true);
+      expect(keys.some((k) => k.endsWith('/transcript.jsonl'))).toBe(true);
+    });
+
+    it('recovers a manifest-only session by re-uploading the missing transcript', async () => {
+      // Set up a Claude Code project folder under a temp HOME so the sync
+      // command can discover the local session transcript. Use realpath to
+      // handle macOS /private prefix resolution.
+      const { realpathSync } = await import('node:fs');
+      const realWorkspaceDir = realpathSync(workspaceDir);
+      const homeDir = path.join(tempRoot, 'home');
+      const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+      const encodedProject = encodeProjectFolder(realWorkspaceDir);
+      const sessionProjectDir = path.join(claudeProjectsDir, encodedProject);
+      await mkdir(sessionProjectDir, { recursive: true });
+      const sessionTranscriptPath = path.join(sessionProjectDir, 'sess-recovery.jsonl');
+      await writeFile(sessionTranscriptPath, '{"type":"message"}\n');
+
+      const env = {
+        ...process.env,
+        HOME: homeDir,
+        SAL_PROJECT_ID: 'proj-recovery',
+        SAL_STORAGE_TYPE: 's3',
+        SAL_STORAGE_BUCKET: 'test-bucket',
+        SAL_STORAGE_ENDPOINT: endpoint,
+        SAL_STORAGE_REGION: 'us-east-1',
+        SAL_STORAGE_ACCESS_KEY_ID: TEST_ACCESS_KEY,
+        SAL_STORAGE_SECRET_ACCESS_KEY: TEST_SECRET_KEY,
+        SAL_SYNC_TIMEOUT: '5000',
+        SAL_HOOK_UPLOAD_TIMEOUT: '5000',
+        SAL_SESSION_END_BUDGET_MS: '5000',
+        SAL_DATA_DIR: dataDir,
+      } as Record<string, string>;
+
+      // 1. Initial sync via the bundled claude-sync bin — creates manifest + transcript.
+      const syncResult1 = await runBin(path.join(e2eBinDir, 'claude-sync'), ['sync'], {
+        env,
+        cwd: realWorkspaceDir,
+        timeout: 15000,
+      });
+      if (syncResult1.exitCode !== 0) {
+        console.error('sync1 stderr:', syncResult1.stderr);
+        console.error('sync1 stdout:', syncResult1.stdout);
+      }
+      expect(syncResult1.exitCode).toBe(0);
+
+      const transcriptKey = 'proj-recovery/sess-recovery/transcript.jsonl';
+      expect(server.listKeys()).toContain(transcriptKey);
+
+      // 2. Simulate the production bug: delete the transcript, leave the manifest.
+      expect(server.deleteKey(transcriptKey)).toBe(true);
+      expect(server.listKeys()).not.toContain(transcriptKey);
+
+      // 3. Run the bundled claude-sync bin again — the completeness gate should
+      //    detect the missing transcript and re-sync.
+      const syncResult2 = await runBin(path.join(e2eBinDir, 'claude-sync'), ['sync'], {
+        env,
+        cwd: realWorkspaceDir,
+        timeout: 15000,
+      });
+      if (syncResult2.exitCode !== 0) {
+        console.error('sync2 stderr:', syncResult2.stderr);
+        console.error('sync2 stdout:', syncResult2.stdout);
+      }
+      expect(syncResult2.exitCode).toBe(0);
+
+      // The transcript must be restored.
+      expect(server.listKeys()).toContain(transcriptKey);
+
+      // 4. Run once more — the session is now complete and should be skipped.
+      const syncResult3 = await runBin(path.join(e2eBinDir, 'claude-sync'), ['sync'], {
+        env,
+        cwd: realWorkspaceDir,
+        timeout: 15000,
+      });
+      expect(syncResult3.exitCode).toBe(0);
+      expect(syncResult3.stdout).toContain('[skip] session sess-recovery');
     });
   });
 });
