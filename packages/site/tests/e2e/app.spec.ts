@@ -295,6 +295,37 @@ test.describe('Database export', () => {
   });
 });
 
+test.describe('Manual import unknown harness rejection', () => {
+  test('UX-013: unrecognized file produces a distinct unsupported-harness message', async ({
+    page,
+  }) => {
+    await page.goto('/#/manual-import');
+    await expect(page.getByRole('heading', { name: 'Manual Import' })).toBeVisible();
+
+    // Upload a fixture whose JSON shape matches no supported harness schema.
+    // This is intentionally an unknown shape, not a corrupt-but-recognizable one.
+    await page.locator('input[type="file"]').setInputFiles([fixture('unknown-harness.jsonl')]);
+
+    // Wait for detection to complete and the harness selector section to render.
+    await expect(page.getByRole('heading', { name: 'Harness' })).toBeVisible({ timeout: 15000 });
+
+    // The harness selector surfaces the unmatched detection state.
+    await expect(page.getByText('No harness detected')).toBeVisible();
+
+    // The state panel must expose the "Unsupported" failure class, not a generic error.
+    await expect(page.getByText('Unsupported')).toBeVisible();
+    await expect(
+      page.getByText('No supported harness detected for the uploaded files.'),
+    ).toBeVisible();
+
+    // Ensure the failure class is not conflated with the other failure classes
+    // covered by UX-007/TSK0012 (integrity, unavailable, generic import failure).
+    await expect(page.getByText('Import failed')).not.toBeVisible();
+    await expect(page.getByText('Integrity Error')).not.toBeVisible();
+    await expect(page.getByText('Unavailable')).not.toBeVisible();
+  });
+});
+
 test.describe('Project deletion', () => {
   test('deleting a project removes it from the home page', async ({ page }) => {
     page.on('dialog', (dialog) => dialog.accept());
