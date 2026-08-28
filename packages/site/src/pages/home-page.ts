@@ -1,6 +1,7 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
+import '../components/delete-confirmation-modal';
 import '../components/project-modal';
 import '../components/project-sync-indicator';
 import '../components/project-sync-status-modal';
@@ -185,6 +186,12 @@ export class HomePage extends LitElement {
 
   @state() private syncModalProjectId = '';
 
+  @state() private deleteDialogOpen = false;
+
+  @state() private deleteProject: Project | null = null;
+
+  private deleteTrigger?: HTMLElement;
+
   connectedCallback(): void {
     super.connectedCallback();
     this.syncSnapshot = syncManager.getSnapshot();
@@ -297,12 +304,26 @@ export class HomePage extends LitElement {
     this.syncModalProjectId = '';
   }
 
-  private async handleDeleteProject(event: Event, project: Project): Promise<void> {
+  private handleDeleteProject(event: Event, project: Project): void {
     event.stopPropagation();
-    const confirmed = window.confirm(
-      `Delete project "${project.name}"? All of its sessions will be removed as well.`,
-    );
-    if (!confirmed) return;
+    this.deleteTrigger = event.currentTarget as HTMLElement;
+    this.deleteProject = project;
+    this.deleteDialogOpen = true;
+  }
+
+  private handleDeleteCancel(): void {
+    this.deleteDialogOpen = false;
+    this.deleteProject = null;
+    this.deleteTrigger = undefined;
+  }
+
+  private async handleDeleteConfirm(): Promise<void> {
+    this.deleteDialogOpen = false;
+
+    const project = this.deleteProject;
+    this.deleteProject = null;
+    this.deleteTrigger = undefined;
+    if (!project) return;
 
     try {
       await dbClient.deleteProject(project.id);
@@ -411,6 +432,20 @@ export class HomePage extends LitElement {
           .projectId=${this.syncModalProjectId}
           @modal-close=${this.closeSyncModal}
         ></project-sync-status-modal>
+
+        <delete-confirmation-modal
+          .open=${this.deleteDialogOpen}
+          .message=${
+            this.deleteProject
+              ? `Delete project "${this.deleteProject.name}"? All of its sessions will be removed as well.`
+              : ''
+          }
+          .confirmLabel=${'Delete Project'}
+          .titleText=${'Delete project?'}
+          .trigger=${this.deleteTrigger}
+          @delete-confirmed=${this.handleDeleteConfirm}
+          @modal-close=${this.handleDeleteCancel}
+        ></delete-confirmation-modal>
       </div>
     `;
   }

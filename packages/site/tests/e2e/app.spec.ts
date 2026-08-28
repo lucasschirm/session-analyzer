@@ -376,14 +376,18 @@ test.describe('Manual import unknown harness rejection', () => {
 
 test.describe('Project deletion', () => {
   test('deleting a project removes it from the home page', async ({ page }) => {
-    page.on('dialog', (dialog) => dialog.accept());
-
     await createProject(page, 'Doomed Project');
 
     await page
       .locator('.project-card', { hasText: 'Doomed Project' })
       .getByRole('button', { name: 'Delete Project' })
       .click();
+
+    const dialog = page.getByRole('dialog', { name: 'Delete project?' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Doomed Project');
+
+    await dialog.getByRole('button', { name: 'Delete Project' }).click();
 
     await expect(page.locator('.project-card')).toHaveCount(0);
     await expect(page.getByText('No projects yet')).toBeVisible();
