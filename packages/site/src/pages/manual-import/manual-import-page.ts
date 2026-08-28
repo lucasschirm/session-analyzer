@@ -228,27 +228,31 @@ export class ManualImportPage extends LitElement {
           return;
         }
 
-        try {
-          const detection = await this.client.manual.detect(this.artifactPayloads);
-          this.detection = detection;
-          if (detection.kind === 'matched' && detection.harness) {
-            this.selectedHarness = detection.harness;
-            this.phase = 'ready';
-          } else if (detection.kind === 'ambiguous') {
-            this.selectedHarness = '';
-            this.phase = 'ready';
-          } else {
-            this.selectedHarness = '';
-            this.error = detection.reason ?? 'No harness matched these files.';
-            this.phase = 'unsupported';
-          }
-        } catch (err) {
-          this.error = `Detection failed: ${(err as Error).message}`;
-          this.phase = 'unavailable';
-        }
+        await this.applyDetection();
       } while (this.hasPendingFiles);
     } finally {
       this.isProcessingFiles = false;
+    }
+  }
+
+  private async applyDetection(): Promise<void> {
+    try {
+      const detection = await this.client.manual.detect(this.artifactPayloads);
+      this.detection = detection;
+      if (detection.kind === 'matched' && detection.harness) {
+        this.selectedHarness = detection.harness;
+        this.phase = 'ready';
+      } else if (detection.kind === 'ambiguous') {
+        this.selectedHarness = '';
+        this.phase = 'ready';
+      } else {
+        this.selectedHarness = '';
+        this.error = detection.reason ?? 'No harness matched these files.';
+        this.phase = 'unsupported';
+      }
+    } catch (err) {
+      this.error = `Detection failed: ${(err as Error).message}`;
+      this.phase = 'unavailable';
     }
   }
 
