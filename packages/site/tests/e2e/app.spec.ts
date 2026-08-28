@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
+import { expectRenderedGeometry } from './helpers/chart-content';
 import { verifyExportContents } from './helpers/export-verify';
 
 /**
@@ -400,5 +401,33 @@ test.describe('Routing', () => {
     // The Session Evidence view should render (either with an error message
     // or an empty state), not crash or show the fallback page.
     await expect(page.getByText(/Session Evidence/)).toBeVisible({ timeout: 10000 });
+  });
+});
+
+test.describe('Analytics chart geometry (UX-001)', () => {
+  test('UX-001: analytics chart renders visible geometry after fixture upload', async ({
+    page,
+  }) => {
+    // Reuse the existing manual-import flow; project name is also the native
+    // project id that the Project Behavior view resolves.
+    const projectName = 'UX-001 Chart Geometry';
+    await importSession(page, projectName, ['claude-session.jsonl']);
+
+    // Navigate to the Project Behavior page and wait for the filter controls.
+    await page.goto(`/#/projects/${projectName}/behavior`);
+    await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 15000 });
+
+    // Pick the distribution chart by its title. The test must prove real SVG
+    // marks are rendered, not just a title, legend, or empty-state badge.
+    // getByRole pierces the open shadow DOM and matches the chart's title.
+    const chart = page
+      .locator('analytics-chart')
+      .filter({ has: page.getByRole('heading', { name: 'Cost / time / outcome distributions' }) });
+    await expect(chart).toBeVisible({ timeout: 15000 });
+
+    // This assertion queries the chart's shadow DOM and checks for non-zero
+    // SVG/canvas geometry. It would fail if the chart silently rendered only
+    // its legend or empty-state markup.
+    await expectRenderedGeometry(chart, { timeout: 15000 });
   });
 });
