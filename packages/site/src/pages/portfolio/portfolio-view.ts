@@ -218,17 +218,23 @@ export class PortfolioView extends LitElement {
 
   @state() private projects: PanelState<ProjectListPage> = { data: null, state: 'idle' };
 
+  private pendingReload = false;
+
   private hashListener = () => this.handleHashChange();
+
+  private dataChangeListener = () => this.handleDataChange();
 
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('hashchange', this.hashListener);
+    analyticsClient.addEventListener('data-change', this.dataChangeListener);
     this.load();
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this.hashListener);
+    analyticsClient.removeEventListener('data-change', this.dataChangeListener);
   }
 
   private handleHashChange(): void {
@@ -237,9 +243,20 @@ export class PortfolioView extends LitElement {
     }
   }
 
+  private handleDataChange(): void {
+    if (!window.location.hash.startsWith('#/portfolio')) {
+      return;
+    }
+    this.load();
+  }
+
   private async load(): Promise<void> {
-    if (this.loading) return;
+    if (this.loading) {
+      this.pendingReload = true;
+      return;
+    }
     this.loading = true;
+    this.pendingReload = false;
     this.globalState = 'loading';
     this.globalError = null;
 
@@ -278,6 +295,10 @@ export class PortfolioView extends LitElement {
     }
 
     this.loading = false;
+    if (this.pendingReload) {
+      this.pendingReload = false;
+      await this.load();
+    }
   }
 
   private updateFilter(key: keyof PortfolioParams, value: string): void {
