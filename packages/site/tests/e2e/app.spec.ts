@@ -287,6 +287,13 @@ test.describe('Database export', () => {
 
     const downloadPath = await download.path();
     expect(downloadPath).toBeTruthy();
+
+    const fd = fs.openSync(downloadPath, 'r');
+    const header = Buffer.alloc(16);
+    fs.readSync(fd, header, 0, 16, 0);
+    fs.closeSync(fd);
+    expect(header.subarray(0, 15).toString('utf8')).toBe('SQLite format 3');
+
     const counts = await verifyExportContents(downloadPath);
     expect(counts.projects).toBe(1);
     expect(counts.sessions).toBe(0);

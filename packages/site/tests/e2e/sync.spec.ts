@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
+import { verifyExportContents } from './helpers/export-verify.js';
 import { assertHeartbeat, syncProgressFilesParser } from './helpers/heartbeat.js';
 import {
   buildSessionManifest,
@@ -962,6 +963,43 @@ test('UX-005: sync progress heartbeat advances while a file download is throttle
   expect(result.series).toEqual([...result.series].sort((a, b) => a - b));
 
   await waitForSyncIdle(page, 60000);
+});
+
+// =============================================================================
+// UX-006: Export content verification
+// =============================================================================
+
+test('UX-006: export after sync includes session rows', async ({ page }) => {
+  const bucket = new FixtureBucket();
+  bucket.addProject('ux-006-proj', 'UX-006 Project', 'Export content verification');
+  bucket.addSession('ux-006-proj', 'e2e-claude-session', {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+  await waitForSyncIdle(page);
+
+  // Go back to the home page and export the control database.
+  await page.goto('/');
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Export Database' }).click(),
+  ]);
+
+  expect(download.suggestedFilename()).toMatch(/session-analyzer-.*\.sqlite$/);
+
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const counts = await verifyExportContents(downloadPath);
+  expect(counts.projects).toBe(1);
+  expect(counts.sessions).toBeGreaterThan(0);
 });
 
 // =============================================================================
