@@ -105,6 +105,22 @@ async function importAndOpenSession(
 }
 
 /**
+ * Drop a single fixture file onto the upload zone.
+ */
+async function dropFile(page: Page, fileName: string): Promise<void> {
+  const content = fs.readFileSync(fixture(fileName), 'utf8');
+  const dataTransfer = await page.evaluateHandle(
+    ({ fileContent, name }: { fileContent: string; name: string }) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([fileContent], name, { type: 'application/json' }));
+      return dt;
+    },
+    { fileContent: content, name: fileName },
+  );
+  await page.locator('upload-zone div.upload-zone').dispatchEvent('drop', { dataTransfer });
+}
+
+/**
  * Drop fixture files onto the upload zone (simulates folder drag & drop).
  */
 async function dropFixtures(page: Page, fileNames: string[]): Promise<void> {
@@ -216,6 +232,32 @@ test.describe('Drag & drop upload', () => {
 
     // The file should appear in the file list.
     await expect(page.getByText('dropped-session.jsonl')).toBeVisible({ timeout: 10000 });
+  });
+
+  test('UX-012: rapid repeated drag-drop preserves every file', async ({ page }) => {
+    await page.goto('/#/manual-import');
+    await expect(page.getByRole('heading', { name: 'Manual Import' })).toBeVisible();
+
+    const fileNames = [
+      'claude-session.jsonl',
+      'claude-rich-session.jsonl',
+      'claude-session-with-subagent.jsonl',
+    ];
+
+    // Fire three drops in rapid succession with no artificial wait between them.
+    for (const fileName of fileNames) {
+      await dropFile(page, fileName);
+    }
+
+    // Wait for the upload handler to settle on a harness detection.
+    await expect(page.getByRole('heading', { name: 'Harness' })).toBeVisible({ timeout: 30000 });
+
+    // Every dropped file must appear in the manual import file list.
+    const fileList = page.locator('.file-list li');
+    await expect(fileList).toHaveCount(3, { timeout: 30000 });
+    for (const fileName of fileNames) {
+      await expect(page.locator('.file-list li', { hasText: fileName })).toHaveCount(1);
+    }
   });
 });
 

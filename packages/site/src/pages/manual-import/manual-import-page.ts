@@ -173,6 +173,10 @@ export class ManualImportPage extends LitElement {
 
   private pendingBundle: ManualIngestionBundleRequest | null = null;
 
+  private isProcessingFiles = false;
+
+  private hasPendingFiles = false;
+
   async firstUpdated(): Promise<void> {
     await this.loadProjects();
   }
@@ -188,38 +192,63 @@ export class ManualImportPage extends LitElement {
 
   private async handleFilesSelected(event: CustomEvent<ManualUploadSelection>): Promise<void> {
     const { files } = event.detail;
-    this.files = files;
-    this.phase = 'detecting';
-    this.detection = null;
-    this.selectedHarness = '';
+
+    // Accumulate repeated rapid drops instead of replacing the previous set.
+    // Deduplicate by relative path so the same file dropped twice does not
+    // appear twice in the list.
+    const existingPaths = new Set(this.files.map((uploaded) => uploaded.relativePath));
+    const newFiles = files.filter((uploaded) => !existingPaths.has(uploaded.relativePath));
+    this.files = [...this.files, ...newFiles];
     this.receipt = null;
     this.error = '';
-    this.artifactPayloads = await this.readArtifacts(files);
-    this.sessionId = this.deriveSessionId(files);
 
-    if (this.artifactPayloads.length === 0) {
-      this.phase = 'idle';
-      this.error = 'No supported files were uploaded.';
+    if (this.isProcessingFiles) {
+      this.hasPendingFiles = true;
       return;
     }
 
+    await this.processFiles();
+  }
+
+  private async processFiles(): Promise<void> {
+    this.isProcessingFiles = true;
+
     try {
-      const detection = await this.client.manual.detect(this.artifactPayloads);
-      this.detection = detection;
-      if (detection.kind === 'matched' && detection.harness) {
-        this.selectedHarness = detection.harness;
-        this.phase = 'ready';
-      } else if (detection.kind === 'ambiguous') {
+      do {
+        this.hasPendingFiles = false;
+        this.phase = 'detecting';
+        this.detection = null;
         this.selectedHarness = '';
-        this.phase = 'ready';
-      } else {
-        this.selectedHarness = '';
-        this.error = detection.reason ?? 'No harness matched these files.';
-        this.phase = 'unsupported';
-      }
-    } catch (err) {
-      this.error = `Detection failed: ${(err as Error).message}`;
-      this.phase = 'unavailable';
+        this.artifactPayloads = await this.readArtifacts(this.files);
+        this.sessionId = this.deriveSessionId(this.files);
+
+        if (this.artifactPayloads.length === 0) {
+          this.phase = 'idle';
+          this.error = 'No supported files were uploaded.';
+          return;
+        }
+
+        try {
+          const detection = await this.client.manual.detect(this.artifactPayloads);
+          this.detection = detection;
+          if (detection.kind === 'matched' && detection.harness) {
+            this.selectedHarness = detection.harness;
+            this.phase = 'ready';
+          } else if (detection.kind === 'ambiguous') {
+            this.selectedHarness = '';
+            this.phase = 'ready';
+          } else {
+            this.selectedHarness = '';
+            this.error = detection.reason ?? 'No harness matched these files.';
+            this.phase = 'unsupported';
+          }
+        } catch (err) {
+          this.error = `Detection failed: ${(err as Error).message}`;
+          this.phase = 'unavailable';
+        }
+      } while (this.hasPendingFiles);
+    } finally {
+      this.isProcessingFiles = false;
     }
   }
 
