@@ -274,10 +274,18 @@ export class ProjectBehaviorPage extends LitElement {
     this.globalState = 'loading';
     this.globalError = null;
 
-    // Resolve the URL project id (which may be a native/sync project id) to
-    // the internal analytics project id used by all analytics queries.
+    // Resolve the URL project id (which may be a native/sync project id or an
+    // encoded project name) to the internal analytics project id used by all
+    // analytics queries.
+    const decodedProjectId = (() => {
+      try {
+        return decodeURIComponent(this.projectId);
+      } catch {
+        return this.projectId;
+      }
+    })();
     try {
-      const resolved = await analyticsClient.resolveProjectId(this.projectId);
+      const resolved = await analyticsClient.resolveProjectId(decodedProjectId);
       this.resolvedProjectId = resolved;
       if (!resolved) {
         this.globalState = 'empty';
