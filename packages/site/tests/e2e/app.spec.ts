@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
+import { verifyExportContents } from './helpers/export-verify';
 
 /**
  * E2E tests covering the complete user journey through the analytics-based
@@ -284,14 +285,18 @@ test.describe('Database export', () => {
 
     expect(download.suggestedFilename()).toMatch(/session-analyzer-.*\.sqlite$/);
 
-    const stream = await download.createReadStream();
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) {
-      chunks.push(Buffer.from(chunk));
-      if (Buffer.concat(chunks).length > 16) break;
-    }
-    const header = Buffer.concat(chunks).subarray(0, 15).toString('utf8');
-    expect(header).toBe('SQLite format 3');
+    const downloadPath = await download.path();
+    expect(downloadPath).toBeTruthy();
+
+    const fd = fs.openSync(downloadPath, 'r');
+    const header = Buffer.alloc(16);
+    fs.readSync(fd, header, 0, 16, 0);
+    fs.closeSync(fd);
+    expect(header.subarray(0, 15).toString('utf8')).toBe('SQLite format 3');
+
+    const counts = await verifyExportContents(downloadPath);
+    expect(counts.projects).toBe(1);
+    expect(counts.sessions).toBe(0);
   });
 });
 
