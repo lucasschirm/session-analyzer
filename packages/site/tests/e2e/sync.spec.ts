@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import { verifyExportContents } from './helpers/export-verify.js';
+import { assertHeartbeat, syncProgressFilesParser } from './helpers/heartbeat.js';
 import {
   buildSessionManifest,
   FixtureBucket,
@@ -913,6 +914,55 @@ test('unresolvable artifact in one session does not stop the sync run', async ({
   await expect(page.locator('.project-card', { hasText: /2 sessions/ })).toBeVisible({
     timeout: 10000,
   });
+});
+
+// =============================================================================
+// Scenario 19 (UX-005): Sync progress advances (heartbeat) while a real file
+// download is throttled. The progress locator contract for SYNC-* tasks is:
+//
+//   Locator: page.locator('app-root').locator('sync-progress-bar').getByRole('status')
+//   Active-run format: "Projects S/P | Sessions S/P | Files D/F"
+//   Parser: syncProgressFilesParser extracts the files-downloaded count (D).
+//   Completed summary: "✓ ⬇D ✦P ✚S ↻U" — falls back to the first number (D).
+//
+// The heartbeat helper asserts (a) at least two distinct values, and (b) the
+// observed series is monotonically non-decreasing.
+// =============================================================================
+
+test('UX-005: sync progress heartbeat advances while a file download is throttled', async ({
+  page,
+}) => {
+  const bucket = new FixtureBucket();
+  bucket.addProject('hb-proj', 'Heartbeat Project', '');
+  bucket.addSession('hb-proj', 'e2e-heartbeat', {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+
+  // Throttle the transcript download through the real route handler so the
+  // progress bar stays at "Files 0/1" long enough to be sampled twice.
+  bucket.setDelay(transcriptFileKey('hb-proj', 'e2e-heartbeat'), 5000);
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+
+  const progress = progressBar(page);
+  const result = await assertHeartbeat(progress, {
+    parser: syncProgressFilesParser,
+    timeoutMs: 10000,
+    message: 'UX-005 sync progress',
+  });
+
+  // Explicit completion assertions in addition to the helper's invariants.
+  expect(result.distinct.length).toBeGreaterThanOrEqual(2);
+  expect(result.series).toEqual([...result.series].sort((a, b) => a - b));
+
+  await waitForSyncIdle(page, 60000);
 });
 
 // =============================================================================
