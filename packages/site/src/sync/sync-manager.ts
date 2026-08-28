@@ -68,6 +68,8 @@ export interface RunSummary {
   warnings: string[];
   startedAt: number;
   finishedAt?: number;
+  /** Total sessions that failed ingestion across all projects in the run. */
+  sessionsFailed?: number;
 }
 
 /** Input from a UI project-creation modal for a missing manifest. */
@@ -889,10 +891,14 @@ export class SyncManager extends EventTarget {
       );
       if (configArtifacts.length > 0) {
         const localFiles = await this.db.getSessionFiles(localSession.id);
-        const localPaths = new Set(localFiles.map((f) => f.path));
+        const localByPath = new Map(localFiles.map((f) => [f.path, f]));
         forceForConfigArtifacts = configArtifacts.some((a) => {
           const file = this.artifactToFile(a, mainPath);
-          return !localPaths.has(file.file);
+          const local = localByPath.get(file.file);
+          // Re-download if the file is missing, has a stale hash, or previously
+          // failed (status !== 'processed'). A failed row used to keep
+          // forceForConfigArtifacts false because only path presence was checked.
+          return !local || local.sha256 !== file.hash || local.status !== 'processed';
         });
       }
     }
@@ -910,14 +916,17 @@ export class SyncManager extends EventTarget {
       return;
     }
 
-    // For sessions that previously failed, force a full re-download so the
-    // analytics blob store is re-populated. The control DB may mark files as
-    // 'processed' from a prior run, but the analytics artifact_blobs table can
-    // be empty if that run's retain calls were interrupted (page reload, HMR,
-    // worker crash). Skipping re-download leaves ingestion unable to resolve
-    // artifacts, so the session can never recover.
+    // For sessions that previously failed or are forced for config artifacts,
+    // force a full re-download so the analytics blob store is re-populated.
+    // The control DB may mark files as 'processed' from a prior run, but the
+    // analytics artifact_blobs table can be empty if that run's retain calls
+    // were interrupted (page reload, HMR, worker crash) or if the session was
+    // first synced on main where artifact_blobs didn't exist. Skipping
+    // re-download leaves ingestion unable to resolve artifacts (especially the
+    // root transcript), so the session can never recover.
     const wasFailed = existing?.sync_status === 'failed';
-    const filesToDownload = wasFailed
+    const forceFullRedownload = wasFailed || forceForConfigArtifacts;
+    const filesToDownload = forceFullRedownload
       ? undefined
       : await this.computeFilesToDownload(localSession.id, manifest, mainPath);
     if (filesToDownload !== undefined && filesToDownload.length === 0) {
@@ -1148,18 +1157,25 @@ export class SyncManager extends EventTarget {
     mainPath: string,
   ): Promise<void> {
     const inScope = this.filterInScopeArtifacts(manifest.artifacts, mainPath);
+    const existingFiles = await this.db.getSessionFiles(sessionId);
+    const existingByPath = new Map(existingFiles.map((f) => [f.path, f]));
     const now = Date.now();
     for (const artifact of inScope) {
       const file = this.artifactToFile(artifact, mainPath);
+      const existing = existingByPath.get(file.file);
+      // Preserve non-processed statuses (e.g. 'failed') so that
+      // computeFilesToDownload can still detect files needing re-download.
+      // Only upsert as 'processed' when the file is new or already processed.
+      const status = existing && existing.status !== 'processed' ? existing.status : 'processed';
       const record: SessionFileRecord = {
-        id: generateId(),
+        id: existing?.id ?? generateId(),
         project_id: projectId,
         session_id: sessionId,
         path: file.file,
         scope: artifact.scope,
         sha256: file.hash,
         size: file.size,
-        status: 'processed',
+        status,
         updated_at: now,
       };
       await this.db.upsertSessionFile(record);
@@ -1519,7 +1535,7 @@ export class SyncManager extends EventTarget {
   private checkRunComplete(run: SyncRun): void {
     if (run.activeWorkers.size > 0 || run.projectQueue.length > 0) return;
     const anyErrored = Array.from(run.projects.values()).some(
-      (project) => project.status === 'failed',
+      (project) => project.status === 'failed' || project.sessionsFailed > 0,
     );
     this.endRun(run, anyErrored ? 'failed' : 'done');
   }
@@ -1724,12 +1740,17 @@ export class SyncManager extends EventTarget {
   }
 
   private summarizeRun(run: SyncRun): RunSummary {
+    const sessionsFailed = Array.from(run.projects.values()).reduce(
+      (sum, p) => sum + p.sessionsFailed,
+      0,
+    );
     return {
       connectionId: run.connectionId,
       state: run.state,
       warnings: [...run.warnings],
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
+      sessionsFailed,
     };
   }
 
@@ -1762,11 +1783,20 @@ export class SyncManager extends EventTarget {
 export const syncManager = new SyncManager({
   onWarning: (warning) => toastManager.warning('Sync warning', { message: warning }),
   onRunSummary: (summary) => {
-    if (summary.state === 'failed' && summary.warnings.length > 0) {
-      toastManager.error('Sync failed', {
-        message: summary.warnings[summary.warnings.length - 1],
-        hint: 'Click the progress bar in the header for full details.',
-      });
+    if (summary.state === 'failed') {
+      const hasWarnings = summary.warnings.length > 0;
+      const hasSessionFailures = (summary.sessionsFailed ?? 0) > 0;
+      if (hasWarnings) {
+        toastManager.error('Sync failed', {
+          message: summary.warnings[summary.warnings.length - 1],
+          hint: 'Click the progress bar in the header for full details.',
+        });
+      } else if (hasSessionFailures) {
+        toastManager.error('Sync completed with failures', {
+          message: `${summary.sessionsFailed} session${summary.sessionsFailed === 1 ? '' : 's'} failed to ingest.`,
+          hint: 'Click the progress bar in the header for full details.',
+        });
+      }
     }
   },
   onFileDownloaded: async (_sessionId, file, _projectId) => {

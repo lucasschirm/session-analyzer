@@ -11,21 +11,10 @@ import type {
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import { formatFullNumber } from '../../lib/format';
-import { filterByScope, metricLabel } from '../portfolio/portfolio-chart-helpers';
+import { filterByScope, isTokenMetric, metricLabel } from '../portfolio/portfolio-chart-helpers';
 import type { SessionsScope } from '../portfolio/portfolio-params';
 import type { ProjectBehaviorParams } from './project-behavior-params';
 import { evidenceLinkHref } from './project-behavior-params';
-
-const TOKEN_METRIC_PREFIXES = [
-  'claude:tokens:cache_creation:',
-  'claude:tokens:cache_read:',
-  'claude:tokens:total:',
-  'claude:tokens:output:',
-];
-
-function isTokenMetric(metricId: string): boolean {
-  return TOKEN_METRIC_PREFIXES.some((prefix) => metricId.startsWith(prefix));
-}
 
 export function formatMetricValue(metric: MetricValueDto | undefined): string {
   if (!metric) return '—';

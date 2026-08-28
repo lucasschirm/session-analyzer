@@ -428,6 +428,45 @@ async function handleResolveProjectId(
   }
 }
 
+async function handleDeleteProject(
+  state: AnalyticsWorkerState,
+  request: Extract<AnalyticsRequest, { type: 'deleteProject' }>,
+): Promise<AnalyticsResponse> {
+  try {
+    // Resolve the analytics-internal project id (the control DB id may differ).
+    const candidate = request.projectId;
+    const { rows: direct } = await state.executor.exec(
+      'SELECT id, portfolio_id FROM projects WHERE id = ? LIMIT 1',
+      [candidate],
+    );
+    let projectId: string;
+    let portfolioId: string;
+    if (direct.length > 0) {
+      projectId = candidate;
+      portfolioId = String(direct[0].portfolio_id);
+    } else {
+      const { rows } = await state.executor.exec(
+        `SELECT sp.project_id, p.portfolio_id
+         FROM source_projects sp
+         JOIN projects p ON p.id = sp.project_id
+         WHERE sp.native_project_id = ?
+         LIMIT 1`,
+        [candidate],
+      );
+      if (rows.length === 0) {
+        // Project not in analytics DB — nothing to delete.
+        return { id: 0, ok: true };
+      }
+      projectId = String(rows[0].project_id);
+      portfolioId = String(rows[0].portfolio_id);
+    }
+    await state.reprocessing.deleteProject(projectId, portfolioId);
+    return { id: 0, ok: true };
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
 export async function handleAnalyticsRequest(
   request: AnalyticsRequest,
 ): Promise<AnalyticsResponse> {
@@ -457,6 +496,8 @@ export async function handleAnalyticsRequest(
         return await handleIngestSyncManifest(state, request);
       case 'resolveProjectId':
         return await handleResolveProjectId(state, request);
+      case 'deleteProject':
+        return await handleDeleteProject(state, request);
       case 'close':
         await state.executor.close();
         statePromise = null;

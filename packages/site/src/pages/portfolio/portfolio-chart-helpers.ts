@@ -26,9 +26,11 @@ const TOKEN_METRIC_PREFIXES = [
   'claude:tokens:cache_read:',
   'claude:tokens:total:',
   'claude:tokens:output:',
+  'claude:tokens:input:',
 ];
 
-function isTokenMetric(metricId: string): boolean {
+/** Whether a metric ID belongs to the token usage chart. */
+export function isTokenMetric(metricId: string): boolean {
   return TOKEN_METRIC_PREFIXES.some((prefix) => metricId.startsWith(prefix));
 }
 
@@ -48,18 +50,6 @@ export function metricLabel(metricId: string, fallback?: string): string {
 }
 
 /**
- * Converts a TimeSeriesPoint value for the wall_ms metric from milliseconds
- * to minutes, so that old DB data (stored in ms) displays consistently with
- * the new minutes-based metric definition.
- */
-function normalizeWallMsPoint(p: TimeSeriesPoint): TimeSeriesPoint {
-  if (p.metricId.startsWith('claude:duration:wall_ms:') && p.value !== null) {
-    return { ...p, value: p.value / 60_000 };
-  }
-  return p;
-}
-
-/**
  * Filters and transforms TimeSeriesPoint[] by sessions scope.
  * - `main` → root_only metrics only
  * - `all` → inclusive metrics only
@@ -70,10 +60,10 @@ export function filterByScope(
   scope: SessionsScope,
 ): TimeSeriesPoint[] {
   if (scope === 'main') {
-    return points.filter((p) => p.metricId.endsWith(':root_only')).map(normalizeWallMsPoint);
+    return points.filter((p) => p.metricId.endsWith(':root_only'));
   }
   if (scope === 'all') {
-    return points.filter((p) => p.metricId.endsWith(':inclusive')).map(normalizeWallMsPoint);
+    return points.filter((p) => p.metricId.endsWith(':inclusive'));
   }
   // sub_agents: compute inclusive - root_only for each metric base + time
   const inclusive = new Map<string, TimeSeriesPoint>();
@@ -94,11 +84,7 @@ export function filterByScope(
     const subAgentMetricId = `${base}:sub_agents`;
     const incValue = incPoint.value ?? 0;
     const rootValue = rootPoint?.value ?? 0;
-    let delta = incValue - rootValue;
-    // Convert wall_ms delta from ms to minutes
-    if (base.startsWith('claude:duration:wall_ms')) {
-      delta = delta / 60_000;
-    }
+    const delta = incValue - rootValue;
     result.push({
       time: incPoint.time,
       value: delta,

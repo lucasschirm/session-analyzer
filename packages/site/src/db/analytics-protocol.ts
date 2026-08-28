@@ -133,6 +133,11 @@ export interface ResolveProjectIdRequest extends BaseRequest {
   readonly projectId: string;
 }
 
+export interface DeleteProjectRequest extends BaseRequest {
+  readonly type: 'deleteProject';
+  readonly projectId: string;
+}
+
 export type AnalyticsRequest =
   | InitRequest
   | GetBackendRequest
@@ -143,6 +148,7 @@ export type AnalyticsRequest =
   | ResolveManualConflictRequest
   | IngestSyncManifestRequest
   | ResolveProjectIdRequest
+  | DeleteProjectRequest
   | CloseRequest;
 
 export type AnalyticsRequestPayload =
@@ -155,6 +161,7 @@ export type AnalyticsRequestPayload =
   | Omit<ResolveManualConflictRequest, 'id'>
   | Omit<IngestSyncManifestRequest, 'id'>
   | Omit<ResolveProjectIdRequest, 'id'>
+  | Omit<DeleteProjectRequest, 'id'>
   | Omit<CloseRequest, 'id'>;
 
 interface BaseResponse {

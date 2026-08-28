@@ -907,10 +907,13 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         cliVersions: null,
         isSidechain: false,
         agentId: null,
-        currentGenerationId: null,
       };
 
       if (existing) {
+        // currentGenerationId is intentionally omitted from the update so the
+        // existing value survives until commitGeneration flips it below; passing
+        // null here would clobber it before applySessionRollupContributions can
+        // read the previous generation ID.
         await SessionStore.update(
           tx,
           canonical.projectId,
@@ -924,6 +927,7 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
           ingestionSourceId: canonical.ingestionSourceId,
           harness: summary.harness,
           nativeSessionId,
+          currentGenerationId: null,
           ...baseInput,
         };
         await SessionStore.insert(tx, insertInput as InsertSessionInput);

@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   componentUtilizationToChartSeries,
   filterByScope,
+  isTokenMetric,
   metricLabel,
   modelHarnessCohortsToChartSeries,
   overviewToMetricCards,
@@ -45,6 +46,21 @@ function makeMetric(overrides: Partial<MetricValueDto> = {}): MetricValueDto {
     ...overrides,
   } as MetricValueDto;
 }
+
+describe('isTokenMetric', () => {
+  it('returns true for all token metric prefixes including input', () => {
+    expect(isTokenMetric('claude:tokens:cache_creation:root_only')).toBe(true);
+    expect(isTokenMetric('claude:tokens:cache_read:root_only')).toBe(true);
+    expect(isTokenMetric('claude:tokens:total:root_only')).toBe(true);
+    expect(isTokenMetric('claude:tokens:output:root_only')).toBe(true);
+    expect(isTokenMetric('claude:tokens:input:root_only')).toBe(true);
+  });
+
+  it('returns false for non-token metrics', () => {
+    expect(isTokenMetric('claude:duration:wall_ms:root_only')).toBe(false);
+    expect(isTokenMetric('claude:turns:count:root_only')).toBe(false);
+  });
+});
 
 describe('stripScopeSuffix', () => {
   it('strips (root-only) suffix', () => {
@@ -115,28 +131,28 @@ describe('filterByScope', () => {
     expect(result[0].value).toBe(100);
   });
 
-  it('converts wall_ms delta to minutes for sub_agents', () => {
+  it('passes wall_ms values through unchanged for sub_agents (transformer already emits minutes)', () => {
     const result = filterByScope(
       [
-        makePoint({ time: 't1', value: 120_000, metricId: 'claude:duration:wall_ms:root_only' }),
-        makePoint({ time: 't1', value: 180_000, metricId: 'claude:duration:wall_ms:inclusive' }),
+        makePoint({ time: 't1', value: 2, metricId: 'claude:duration:wall_ms:root_only' }),
+        makePoint({ time: 't1', value: 3, metricId: 'claude:duration:wall_ms:inclusive' }),
       ],
       'sub_agents',
     );
-    expect(result[0].value).toBe(1); // (180000 - 120000) / 60000 = 1 minute
+    expect(result[0].value).toBe(1); // 3 - 2 = 1 minute (no division)
   });
 
-  it('normalizes wall_ms values to minutes for main scope', () => {
+  it('passes wall_ms values through unchanged for main scope', () => {
     const result = filterByScope(
-      [makePoint({ time: 't1', value: 120_000, metricId: 'claude:duration:wall_ms:root_only' })],
+      [makePoint({ time: 't1', value: 2, metricId: 'claude:duration:wall_ms:root_only' })],
       'main',
     );
-    expect(result[0].value).toBe(2); // 120000 / 60000 = 2 minutes
+    expect(result[0].value).toBe(2); // already in minutes
   });
 
-  it('normalizes wall_ms values to minutes for all scope', () => {
+  it('passes wall_ms values through unchanged for all scope', () => {
     const result = filterByScope(
-      [makePoint({ time: 't1', value: 60_000, metricId: 'claude:duration:wall_ms:inclusive' })],
+      [makePoint({ time: 't1', value: 1, metricId: 'claude:duration:wall_ms:inclusive' })],
       'all',
     );
     expect(result[0].value).toBe(1);

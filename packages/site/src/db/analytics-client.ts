@@ -299,6 +299,21 @@ export class AnalyticsClient implements AnalyticsDataSource {
     return (response.result as string | null) ?? null;
   }
 
+  /**
+   * Delete a project and all its derived data (sessions, rollups, distributions)
+   * from the analytics DB. Safe to call even if the project was never ingested
+   * into the analytics DB.
+   */
+  async deleteProject(projectId: string): Promise<void> {
+    const response = await this.call({
+      type: 'deleteProject',
+      projectId,
+    });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+  }
+
   async close(): Promise<void> {
     const response = await this.call({ type: 'close' });
     if (!response.ok) {

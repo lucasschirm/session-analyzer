@@ -294,11 +294,12 @@ function metricDefinition(
     readonly allocationMethod?: string;
     readonly missingDataBehavior?: 'unknown' | 'not_applicable';
     readonly denominator?: string;
+    readonly version?: number;
   } = {},
 ): MetricDefinition {
   return {
     metricId,
-    version: 1,
+    version: options.version ?? 1,
     label,
     description,
     family,
@@ -406,6 +407,9 @@ export function getClaudeCodeMetricDefinitions(): readonly MetricDefinition[] {
         [],
         scope,
         'sum',
+        // Version 2: unit changed from ms to minutes, valueType from integer to real.
+        // Old v1 values (stored in ms) are a distinct comparability entity.
+        { version: 2 },
       ),
     );
     defs.push(

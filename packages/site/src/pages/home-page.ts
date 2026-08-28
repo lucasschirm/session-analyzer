@@ -4,6 +4,7 @@ import { repeat } from 'lit/directives/repeat.js';
 import '../components/project-modal';
 import '../components/project-sync-indicator';
 import '../components/project-sync-status-modal';
+import { analyticsClient } from '../db/analytics-client';
 import { dbClient } from '../db/db-client';
 import { navigateTo } from '../router';
 import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
@@ -305,6 +306,14 @@ export class HomePage extends LitElement {
 
     try {
       await dbClient.deleteProject(project.id);
+      // Also erase from the analytics DB so Portfolio/Project Behavior views
+      // don't keep showing the deleted project's sessions and totals.
+      try {
+        await analyticsClient.deleteProject(project.id);
+      } catch {
+        // Analytics DB may not be initialized or the project may not exist
+        // there — non-fatal, the control DB deletion already succeeded.
+      }
       await this.loadProjects();
     } catch (error) {
       this.error = `Failed to delete project: ${(error as Error).message}`;
