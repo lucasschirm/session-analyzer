@@ -66,21 +66,32 @@ async function importSession(
 }
 
 /**
- * Navigate to the current page with a different sessions scope filter
- * by updating the URL hash directly. This avoids shadow DOM interaction
- * issues with <select> elements inside Lit components.
+ * Set a value on a filter control inside the active page's shadow DOM filter bar.
+ *
+ * This dispatches a `change` event on the real DOM control, so it exercises the
+ * same code path as a user interacting with the filter UI and triggers the hash
+ * update via `navigateTo`.
  */
-async function selectSessionsFilter(
-  page: Page,
-  value: 'main' | 'all' | 'sub_agents',
-): Promise<void> {
-  const url = page.url();
-  const hash = url.split('#')[1] ?? '';
-  const [path, query = ''] = hash.split('?');
-  const params = new URLSearchParams(query);
-  params.set('sessions', value);
-  await page.goto(`#${path}?${params.toString()}`);
-  await page.waitForTimeout(2000);
+async function setFilterControl(page: Page, labelText: string, value: string): Promise<void> {
+  const control = page
+    .locator('.filter-bar label', { hasText: new RegExp(`^\\s*${labelText}`) })
+    .locator('select, input');
+  await control.evaluate((el, val: string) => {
+    const input = el as HTMLInputElement | HTMLSelectElement;
+    input.value = val;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+}
+
+/**
+ * Read the current value of a filter control inside the active page's shadow
+ * DOM filter bar.
+ */
+async function getFilterControlValue(page: Page, labelText: string): Promise<string> {
+  const control = page
+    .locator('.filter-bar label', { hasText: new RegExp(`^\\s*${labelText}`) })
+    .locator('select, input');
+  return control.evaluate((el) => (el as HTMLInputElement | HTMLSelectElement).value);
 }
 
 test.describe('Sessions scope filter', () => {
@@ -88,45 +99,83 @@ test.describe('Sessions scope filter', () => {
     await page.goto('/');
   });
 
-  test('portfolio: scope filter UI is present and updates the URL', async ({ page }) => {
-    // Import a session so the portfolio page has data.
+  test('portfolio: scope filter UI updates the URL', async ({ page }) => {
     await importSession(page, 'Sessions Filter Portfolio', ['claude-session-with-subagent.jsonl']);
 
-    // Navigate to the portfolio page.
     await page.goto('/#/portfolio');
-    await page.waitForTimeout(3000);
+    await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 10000 });
 
-    // The scope filter <select> should be present in the filter bar.
-    const filterBar = page.locator('.filter-bar');
-    await expect(filterBar).toBeVisible({ timeout: 10000 });
-
-    // Switch to "Sub Agents" — URL should update.
-    await selectSessionsFilter(page, 'sub_agents');
+    // Use the filter UI to switch the sessions scope.
+    await setFilterControl(page, 'Sessions', 'sub_agents');
     await expect(page).toHaveURL(/sessions=sub_agents/);
 
-    // Switch to "All" — URL should update.
-    await selectSessionsFilter(page, 'all');
+    await setFilterControl(page, 'Sessions', 'all');
     await expect(page).toHaveURL(/sessions=all/);
   });
 
-  test('project behavior: scope filter UI is present and updates the URL', async ({ page }) => {
-    await importSession(page, 'Sessions Filter Project', ['claude-session-with-subagent.jsonl']);
+  test('project behavior: scope filter UI updates the URL', async ({ page }) => {
+    const projectName = 'Sessions Filter Project';
+    await importSession(page, projectName, ['claude-session-with-subagent.jsonl']);
 
-    // Navigate to the project behavior page. The URL uses the project name
-    // (lowercased, spaces → hyphens) as the project slug.
-    await page.goto('/#/projects/sessions-filter-project/behavior');
-    await page.waitForTimeout(3000);
+    // Navigate directly to the project behavior page using the project name
+    // (which is also the native project id). Playwright encodes spaces for us.
+    await page.goto(`/#/projects/${projectName}/behavior`);
+    await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 10000 });
 
-    // The scope filter <select> should be present in the filter bar.
-    const filterBar = page.locator('.filter-bar');
-    await expect(filterBar).toBeVisible({ timeout: 10000 });
-
-    // Switch to "Sub Agents".
-    await selectSessionsFilter(page, 'sub_agents');
+    // Use the filter UI to switch the sessions scope.
+    await setFilterControl(page, 'Sessions', 'sub_agents');
     await expect(page).toHaveURL(/sessions=sub_agents/);
 
-    // Switch to "All".
-    await selectSessionsFilter(page, 'all');
+    await setFilterControl(page, 'Sessions', 'all');
     await expect(page).toHaveURL(/sessions=all/);
+  });
+
+  /**
+   * UX-010: Filter persistence across reload.
+   *
+   * Product contract: filters are encoded in the URL hash on every change and
+   * re-parsed from the hash on load / hashchange. This is deliberate; the only
+   * way to reset filters is the explicit "Reset" button. The invariants in
+   * `portfolio/AGENTS.md` and `project-behavior/AGENTS.md` explicitly state
+   * that URL filter context "survives refresh and back navigation".
+   */
+  test('UX-010: portfolio filter state persists across a page reload', async ({ page }) => {
+    await importSession(page, 'Filter Persistence Portfolio', [
+      'claude-session-with-subagent.jsonl',
+    ]);
+
+    await page.goto('/#/portfolio');
+    await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 10000 });
+
+    // Use the filter UI (not URL manipulation) to switch sessions scope to "All".
+    await setFilterControl(page, 'Sessions', 'all');
+    await expect(page).toHaveURL(/sessions=all/);
+    const persistedUrl = page.url();
+
+    // Reload the page and confirm the URL and the filter control both retain the value.
+    await page.reload();
+    await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 10000 });
+    await expect(page).toHaveURL(persistedUrl);
+    await expect.poll(async () => getFilterControlValue(page, 'Sessions')).toBe('all');
+  });
+
+  test('UX-010: project behavior filter state persists across a page reload', async ({ page }) => {
+    const projectName = 'Filter Persistence Project';
+    await importSession(page, projectName, ['claude-session-with-subagent.jsonl']);
+
+    // Navigate directly to the project behavior page using the project name.
+    await page.goto(`/#/projects/${projectName}/behavior`);
+    await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 10000 });
+
+    // Use the filter UI to switch sessions scope to "Sub Agents".
+    await setFilterControl(page, 'Sessions', 'sub_agents');
+    await expect(page).toHaveURL(/sessions=sub_agents/);
+    const persistedUrl = page.url();
+
+    // Reload the page and confirm the URL and the filter control both retain the value.
+    await page.reload();
+    await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 10000 });
+    await expect(page).toHaveURL(persistedUrl);
+    await expect.poll(async () => getFilterControlValue(page, 'Sessions')).toBe('sub_agents');
   });
 });

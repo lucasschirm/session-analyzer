@@ -140,7 +140,7 @@ export class AppRoot extends LitElement {
         render: () => html`<portfolio-view></portfolio-view>`,
       },
       {
-        path: '/projects/:projectId/behavior',
+        path: '/projects/:projectId/behavior*',
         render: (params) =>
           html`<project-behavior-view project-id=${params.projectId ?? ''}></project-behavior-view>`,
       },
