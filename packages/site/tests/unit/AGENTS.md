@@ -11,6 +11,7 @@ Vitest unit tests for the site package. Covers database/executor adapters, UI co
 - **connect-modal.test.ts** — S3 connection modal interaction tests.
 - **credential-crypto.test.ts** — Passkey/vault encryption helpers.
 - **format.test.ts** — Compact number and token formatting helpers.
+- **helpers/** — Unit tests for shared E2E helpers. See `helpers/AGENTS.md`.
 - **manual-import.test.ts** — Manual import flow and analytics ingestion.
 - **markdown.test.ts** — `marked` + DOMPurify rendering helpers.
 - **passkey-modal.test.ts** — Passkey create/unlock modal.

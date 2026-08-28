@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
+import { verifyExportContents } from './helpers/export-verify';
 
 /**
  * E2E tests covering the complete user journey through the analytics-based
@@ -284,14 +285,42 @@ test.describe('Database export', () => {
 
     expect(download.suggestedFilename()).toMatch(/session-analyzer-.*\.sqlite$/);
 
-    const stream = await download.createReadStream();
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) {
-      chunks.push(Buffer.from(chunk));
-      if (Buffer.concat(chunks).length > 16) break;
-    }
-    const header = Buffer.concat(chunks).subarray(0, 15).toString('utf8');
-    expect(header).toBe('SQLite format 3');
+    const downloadPath = await download.path();
+    expect(downloadPath).toBeTruthy();
+    const counts = await verifyExportContents(downloadPath);
+    expect(counts.projects).toBe(1);
+    expect(counts.sessions).toBe(0);
+  });
+});
+
+test.describe('Manual import unknown harness rejection', () => {
+  test('UX-013: unrecognized file produces a distinct unsupported-harness message', async ({
+    page,
+  }) => {
+    await page.goto('/#/manual-import');
+    await expect(page.getByRole('heading', { name: 'Manual Import' })).toBeVisible();
+
+    // Upload a fixture whose JSON shape matches no supported harness schema.
+    // This is intentionally an unknown shape, not a corrupt-but-recognizable one.
+    await page.locator('input[type="file"]').setInputFiles([fixture('unknown-harness.jsonl')]);
+
+    // Wait for detection to complete and the harness selector section to render.
+    await expect(page.getByRole('heading', { name: 'Harness' })).toBeVisible({ timeout: 15000 });
+
+    // The harness selector surfaces the unmatched detection state.
+    await expect(page.getByText('No harness detected')).toBeVisible();
+
+    // The state panel must expose the "Unsupported" failure class, not a generic error.
+    await expect(page.getByText('Unsupported')).toBeVisible();
+    await expect(
+      page.getByText('No supported harness detected for the uploaded files.'),
+    ).toBeVisible();
+
+    // Ensure the failure class is not conflated with the other failure classes
+    // covered by UX-007/TSK0012 (integrity, unavailable, generic import failure).
+    await expect(page.getByText('Import failed')).not.toBeVisible();
+    await expect(page.getByText('Integrity Error')).not.toBeVisible();
+    await expect(page.getByText('Unavailable')).not.toBeVisible();
   });
 });
 
