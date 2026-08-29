@@ -30,6 +30,12 @@ importers:
         specifier: workspace:*
         version: link:../transformer
     devDependencies:
+      '@lucasschirm/claude-session-sync':
+        specifier: workspace:*
+        version: link:../plugins/claude-session-sync
+      '@lucasschirm/sal-sync':
+        specifier: workspace:*
+        version: link:../sync
       '@sqlite.org/sqlite-wasm':
         specifier: 3.53.0-build1
         version: 3.53.0-build1
