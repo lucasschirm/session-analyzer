@@ -1048,3 +1048,49 @@ test('UX-004: sync completion makes the synced session queryable in the dashboar
   await openProjectByName(page, 'UX-004 Project');
   await expectChartContains(page, 'Token usage trends', 'Total tokens');
 });
+
+function createErrorBucket(sessionId: string): FixtureBucket {
+  const bucket = new FixtureBucket();
+  bucket.addProject('err-proj', 'Error Project', '');
+  bucket.addSession('err-proj', sessionId, {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+  bucket.setHttpError(transcriptFileKey('err-proj', sessionId), 500);
+  return bucket;
+}
+
+async function assertSyncErrorAffordance(page: Page, sessionId: string): Promise<void> {
+  const bar = progressBar(page);
+  await waitForSyncCompleted(page, 30000);
+  await expect(bar).toContainText('⚠');
+  await expect(bar).toHaveAttribute('class', /completed-failed/);
+  await expect(bar.locator('.spinner')).not.toBeVisible();
+  await expect(page.locator('.toast.error')).toBeVisible();
+  await expect(page.locator('.toast.error')).toContainText(
+    /Sync completed with failures|Sync failed/,
+  );
+
+  const modal = await openSyncStatusModal(page);
+  const sessionItem = modalSessionItem(modal, sessionId);
+  await expect(sessionItem).toBeVisible({ timeout: 5000 });
+  await expect(sessionItem.locator('.state-failed')).toBeVisible();
+}
+
+// =============================================================================
+// UX-008: Mocked S3 5xx mid-sync surfaces a distinct, terminal error affordance
+// =============================================================================
+
+test('UX-008: mocked S3 5xx mid-sync surfaces a distinct error affordance', async ({ page }) => {
+  const bucket = createErrorBucket('e2e-err');
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+  await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
+  await assertSyncErrorAffordance(page, 'e2e-err');
+});

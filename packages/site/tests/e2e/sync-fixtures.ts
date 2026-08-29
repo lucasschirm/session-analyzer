@@ -38,6 +38,11 @@ export interface S3RequestLog {
   timestamp: number;
 }
 
+export interface FixtureHttpError {
+  status: number;
+  body: Buffer;
+}
+
 interface S3ListObjectEntry {
   key: string;
   size: number;
@@ -160,6 +165,12 @@ function encodeXml(text: string): string {
     .replaceAll("'", '&apos;');
 }
 
+function buildS3ErrorXml(code: string, message: string): Buffer {
+  return Buffer.from(
+    `<Error><Code>${encodeXml(code)}</Code><Message>${encodeXml(message)}</Message></Error>`,
+  );
+}
+
 function buildListXml(
   prefixes: string[],
   objects: S3ListObjectEntry[],
@@ -200,6 +211,7 @@ export class FixtureBucket {
 
   private readonly objectStore: Map<string, Buffer> = new Map();
   private readonly delays: Map<string, number> = new Map();
+  private readonly httpErrors: Map<string, FixtureHttpError> = new Map();
 
   addProject(projectId: string, name: string, description = ''): void {
     const projectManifest = buildProjectManifest(projectId, name, description);
@@ -306,6 +318,12 @@ export class FixtureBucket {
 
   setDelay(objectKey: string, ms: number): void {
     this.delays.set(objectKey, ms);
+  }
+
+  setHttpError(objectKey: string, status: number, body?: Buffer | string): void {
+    const xml = buildS3ErrorXml('InternalError', 'We encountered an internal error.');
+    const content = body ? (Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8')) : xml;
+    this.httpErrors.set(objectKey, { status, body: content });
   }
 
   setManifestContent(projectId: string, sessionId: string, content: Buffer): void {
@@ -451,6 +469,17 @@ export class FixtureBucket {
         setTimeout(resolve, delay);
       });
       if (page.isClosed()) return;
+    }
+    const httpError = this.httpErrors.get(objectKey);
+    if (httpError) {
+      this.logRequest('GET', objectKey, httpError.status);
+      await this.tryFulfill(route, {
+        status: httpError.status,
+        contentType: 'application/xml',
+        headers: corsHeaders,
+        body: httpError.body,
+      });
+      return;
     }
     const body = this.objectStore.get(objectKey);
     if (!body) {
