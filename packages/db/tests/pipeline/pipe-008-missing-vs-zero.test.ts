@@ -138,26 +138,56 @@ async function findProjectId(executor: WasmSqliteExecutor, sessionId: string): P
   return String(rows[0]?.project_id ?? '');
 }
 
-async function setupContext(): Promise<TestContext> {
-  const executor = await WasmSqliteExecutor.create();
-  await executor.exec(FRESH_SCHEMA_SQL);
-  const hasher = createSha256ContentHasher();
-  const orchestrator = new DefaultIngestionOrchestrator({
+function createOrchestrator(
+  executor: WasmSqliteExecutor,
+  hasher: ReturnType<typeof createSha256ContentHasher>,
+): DefaultIngestionOrchestrator {
+  return new DefaultIngestionOrchestrator({
     executor,
     hasher,
     registry: createDefaultRegistry(),
     resolver: { resolve: async (ref) => ({ ...ref, content: new Uint8Array(0) }) },
     analysisReleaseId: ANALYSIS_RELEASE,
   });
-  const dataSource = createAnalyticsDataSource(executor);
+}
 
+async function ingestAllFixtures(
+  orchestrator: DefaultIngestionOrchestrator,
+  hasher: ReturnType<typeof createSha256ContentHasher>,
+): Promise<IngestionReceipt[]> {
   const receipts: IngestionReceipt[] = [];
   for (const fixture of FIXTURES) {
     const receipt = await ingestSession(orchestrator, hasher, fixture);
     expect(receipt.status).toBe('committed');
     receipts.push(receipt);
   }
+  return receipts;
+}
 
+async function extractKnownCosts(
+  executor: WasmSqliteExecutor,
+  costDefId: string,
+  receipts: readonly IngestionReceipt[],
+): Promise<readonly [number, number]> {
+  const knownValues: number[] = [];
+  for (let i = 1; i < receipts.length; i++) {
+    const cost = await getCostValue(executor, costDefId, receipts[i].sessionId);
+    if (cost?.numericValue === null || cost?.numericValue === undefined) {
+      throw new Error(`Expected known cost for ${receipts[i].sessionId}`);
+    }
+    knownValues.push(cost.numericValue);
+  }
+  return [knownValues[0], knownValues[1]];
+}
+
+async function setupContext(): Promise<TestContext> {
+  const executor = await WasmSqliteExecutor.create();
+  await executor.exec(FRESH_SCHEMA_SQL);
+  const hasher = createSha256ContentHasher();
+  const orchestrator = createOrchestrator(executor, hasher);
+  const dataSource = createAnalyticsDataSource(executor);
+
+  const receipts = await ingestAllFixtures(orchestrator, hasher);
   const projectId = await findProjectId(executor, receipts[1].sessionId);
   const definition = await MetricDefinitionStore.getByMetricIdAndVersion(
     executor,
@@ -166,15 +196,7 @@ async function setupContext(): Promise<TestContext> {
   );
   if (!definition) throw new Error(`Metric definition not found: ${COST_METRIC_ID}`);
 
-  const knownValues: number[] = [];
-  for (let i = 1; i < receipts.length; i++) {
-    const values = await MetricValueStore.listBySession(executor, receipts[i].sessionId);
-    const cost = values.find((v) => v.metricDefinitionId === definition.id);
-    if (cost?.numericValue === null || cost?.numericValue === undefined) {
-      throw new Error(`Expected known cost for ${receipts[i].sessionId}`);
-    }
-    knownValues.push(cost.numericValue);
-  }
+  const knownCosts = await extractKnownCosts(executor, definition.id, receipts);
 
   return {
     executor,
@@ -183,25 +205,17 @@ async function setupContext(): Promise<TestContext> {
     costDefId: definition.id,
     missingSessionId: receipts[0].sessionId,
     knownSessionIds: [receipts[1].sessionId, receipts[2].sessionId],
-    knownCosts: [knownValues[0], knownValues[1]],
+    knownCosts,
   };
 }
 
-async function getMissingCostValue(
-  executor: WasmSqliteExecutor,
-  costDefId: string,
-  sessionId: string,
-) {
+async function getCostValue(executor: WasmSqliteExecutor, costDefId: string, sessionId: string) {
   const values = await MetricValueStore.listBySession(executor, sessionId);
   return values.find((v) => v.metricDefinitionId === costDefId);
 }
 
 async function assertMissingSessionValue(context: TestContext): Promise<void> {
-  const value = await getMissingCostValue(
-    context.executor,
-    context.costDefId,
-    context.missingSessionId,
-  );
+  const value = await getCostValue(context.executor, context.costDefId, context.missingSessionId);
   expect(value).toBeDefined();
   expect(value?.numericValue).toBeNull();
   expect(value?.isUnavailable).toBe(true);
@@ -210,7 +224,7 @@ async function assertMissingSessionValue(context: TestContext): Promise<void> {
 
 async function assertKnownSessionValues(context: TestContext): Promise<void> {
   for (const sessionId of context.knownSessionIds) {
-    const value = await getMissingCostValue(context.executor, context.costDefId, sessionId);
+    const value = await getCostValue(context.executor, context.costDefId, sessionId);
     expect(value).toBeDefined();
     expect(value?.numericValue).not.toBeNull();
     expect(value?.numericValue).toBeGreaterThan(0);
