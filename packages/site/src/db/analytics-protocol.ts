@@ -182,3 +182,13 @@ export interface AnalyticsErrorResponse extends BaseResponse {
 }
 
 export type AnalyticsResponse = AnalyticsSuccessResponse | AnalyticsErrorResponse;
+
+/**
+ * Broadcast sent by the analytics worker when a write operation changes the
+ * underlying data. It carries no request id so it is not mistaken for a
+ * correlated query response. UI consumers can listen for this on the client.
+ */
+export interface AnalyticsDataChangedBroadcast {
+  readonly type: 'dataChanged';
+  readonly ok: true;
+}

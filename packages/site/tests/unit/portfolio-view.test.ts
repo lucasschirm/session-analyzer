@@ -20,9 +20,15 @@ const portfolioMock = vi.hoisted(() => ({
   getProjectList: vi.fn(),
 }));
 
+const mockAnalyticsClient = vi.hoisted(() => {
+  const client = new EventTarget() as { portfolio: typeof portfolioMock } & EventTarget;
+  client.portfolio = portfolioMock;
+  return client;
+});
+
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
-  analyticsClient: { portfolio: portfolioMock },
+  analyticsClient: mockAnalyticsClient,
 }));
 
 async function flush(element: LitElement): Promise<void> {
@@ -197,6 +203,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  document.querySelectorAll('portfolio-view').forEach((el) => {
+    el.remove();
+  });
   document.body.innerHTML = '';
   vi.resetAllMocks();
 });
@@ -291,5 +300,38 @@ describe('portfolio-view', () => {
         { field: 'harness', operator: 'eq', value: 'claude' },
       ]),
     );
+  });
+
+  it('re-queries when the analytics client reports a data change', async () => {
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+
+    const callsBefore = portfolioMock.getOverview.mock.calls.length;
+
+    mockAnalyticsClient.dispatchEvent(new CustomEvent('data-change'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await flush(view);
+
+    const callsAfter = portfolioMock.getOverview.mock.calls.length;
+    expect(callsAfter - callsBefore).toBe(1);
+
+    view.remove();
+  });
+
+  it('does not re-query for data changes outside the portfolio route', async () => {
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+
+    const callsBefore = portfolioMock.getOverview.mock.calls.length;
+
+    window.location.hash = '#/manual-import';
+    mockAnalyticsClient.dispatchEvent(new CustomEvent('data-change'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await flush(view);
+
+    const callsAfter = portfolioMock.getOverview.mock.calls.length;
+    expect(callsAfter).toBe(callsBefore);
+
+    view.remove();
   });
 });

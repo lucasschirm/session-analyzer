@@ -1,0 +1,2 @@
+{"type": "user", "sessionId": "e2e-xss-session", "uuid": "u1", "timestamp": "2026-08-11T10:00:00.000Z", "message": {"role": "user", "content": "Show me sanitized output"}}
+{"type": "assistant", "sessionId": "e2e-xss-session", "uuid": "a1", "timestamp": "2026-08-11T10:00:05.000Z", "message": {"role": "assistant", "model": "claude-sonnet-5", "usage": {"input_tokens": 20, "output_tokens": 15}, "content": [{"type": "text", "text": "Before the attack <img src=x onerror=alert(1)> and after the attack <script>alert(2)</script> still safe."}]}}
