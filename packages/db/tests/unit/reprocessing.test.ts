@@ -544,4 +544,20 @@ describe('DefaultReprocessingEngine', () => {
 
     expect(report.rollupsReconciled).toBe(true);
   });
+
+  it('transitions source manifests to remote_reacquirable when a local blob is purged', async () => {
+    const sessionId = await ingestSession('session-purge', Date.UTC(2026, 0, 10, 10, 0, 0));
+    const { manifest } = await makeManifest('session-purge', Date.UTC(2026, 0, 10, 10, 0, 0));
+    const artifact = manifest.artifacts[0];
+    if (!artifact) throw new Error('Expected at least one artifact');
+
+    await engine.purgeLocalBlob(artifact.sha256);
+
+    const { rows } = await executor.exec(
+      'SELECT reprocessing_status FROM source_manifests WHERE session_id = ?',
+      [sessionId],
+    );
+    expect(rows.length).toBe(1);
+    expect(String(rows[0]?.reprocessing_status)).toBe('remote_reacquirable');
+  });
 });

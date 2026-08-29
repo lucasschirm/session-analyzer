@@ -282,11 +282,12 @@ describe('PIPE-009 cross-package pipeline', () => {
       expect(receipt.issueIds).toHaveLength(0);
 
       const { rows: sourceRows } = await executor.exec(
-        'SELECT harness, main_transcript_relative_path, manifest_hash, native_project_id, native_session_id, raw_metadata FROM source_manifests WHERE native_session_id = ?',
+        'SELECT id, harness, main_transcript_relative_path, manifest_hash, native_project_id, native_session_id, raw_metadata FROM source_manifests WHERE native_session_id = ?',
         [manifest.sessionId],
       );
       expect(sourceRows.length).toBe(1);
       const sourceRow = sourceRows[0] as {
+        id: string;
         harness: string;
         main_transcript_relative_path: string;
         manifest_hash: string;
@@ -315,6 +316,48 @@ describe('PIPE-009 cross-package pipeline', () => {
       expect(sessionRow.harness).toBe('claude-code');
       expect(sessionRow.native_session_id).toBe(manifest.sessionId);
       expect(sessionRow.current_generation_id).toBe(receipt.generationId);
+
+      // The manifest_artifacts table must now be populated by real ingestion:
+      // one row per manifest artifact, correctly linked to source_manifests.
+      const { rows: manifestArtifactRows } = await executor.exec(
+        'SELECT source_manifest_id, scope, relative_path, sha256, size, status FROM manifest_artifacts WHERE source_manifest_id = ?',
+        [sourceRow.id],
+      );
+      expect(manifestArtifactRows.length).toBe(manifest.artifacts.length);
+      for (const artifact of manifest.artifacts) {
+        const row = manifestArtifactRows.find(
+          (r) =>
+            (r as { relative_path: string }).relative_path === artifact.relativePath &&
+            (r as { sha256: string }).sha256 === artifact.sha256,
+        ) as
+          | {
+              source_manifest_id: string;
+              scope: string;
+              relative_path: string;
+              sha256: string;
+              size: number;
+              status: string;
+            }
+          | undefined;
+        expect(row).toBeTruthy();
+        if (row) {
+          expect(row.source_manifest_id).toBe(sourceRow.id);
+          expect(row.scope).toBe(artifact.scope ?? 'session');
+          expect(row.sha256).toBe(artifact.sha256);
+          expect(row.size).toBe(artifact.size);
+          expect(row.status).toBe(artifact.status);
+        }
+      }
+
+      // The artifact_references table should also have a 'contains' reference
+      // for each manifest artifact, seeded by the ingestion pass.
+      const { rows: referenceRows } = await executor.exec(
+        `SELECT COUNT(*) AS c FROM artifact_references r
+         JOIN manifest_artifacts a ON a.id = r.manifest_artifact_id
+         WHERE a.source_manifest_id = ? AND r.relationship = 'contains'`,
+        [sourceRow.id],
+      );
+      expect((referenceRows[0] as { c: number }).c).toBe(manifest.artifacts.length);
 
       // The stored manifest is the authoritative record for artifact identity:
       // each artifact carries scope, relative path, and sha256 under the manifest
