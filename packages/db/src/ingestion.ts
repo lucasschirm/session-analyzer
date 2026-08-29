@@ -437,9 +437,19 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       issues.push(mapIssue(warning, 'recoverable'));
     }
 
-    // Anti-double-counting: a metric may appear once per root/inclusive scope.
+    const values = result.metricValues as TransformMetricValue[];
+    this.checkDuplicateMetricValues(values, issues);
+    this.checkUnknownMetricDimensions(values, issues);
+
+    return issues;
+  }
+
+  private checkDuplicateMetricValues(
+    values: TransformMetricValue[],
+    issues: IngestionIssue[],
+  ): void {
     const seen = new Set<string>();
-    for (const value of result.metricValues as TransformMetricValue[]) {
+    for (const value of values) {
       const key = `${value.metricId}|${value.rootScope}|${JSON.stringify(value.dimensions)}`;
       if (seen.has(key)) {
         issues.push({
@@ -452,8 +462,26 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       }
       seen.add(key);
     }
+  }
 
-    return issues;
+  private checkUnknownMetricDimensions(
+    values: TransformMetricValue[],
+    issues: IngestionIssue[],
+  ): void {
+    for (const value of values) {
+      const registered = new Set(value.definition.dimensions);
+      for (const key of Object.keys(value.dimensions)) {
+        if (!registered.has(key)) {
+          issues.push({
+            code: 'unknown_metric_dimension',
+            severity: 'fatal',
+            message: `Metric ${value.metricId} includes unregistered dimension key "${key}".`,
+            entityType: 'metric',
+            entityId: value.metricId,
+          });
+        }
+      }
+    }
   }
 
   async commitAtomic(commit: AtomicGenerationCommit): Promise<IngestionReceipt> {
