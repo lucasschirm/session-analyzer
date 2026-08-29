@@ -148,6 +148,19 @@ export async function expectRenderedGeometry(
 }
 
 /**
+ * Reads the rendered geometry for the chart referenced by `locator`.
+ *
+ * Returns `null` when the chart has no rendered SVG/canvas surface (e.g. it is
+ * still loading, empty, or in an error state). This is the non-throwing
+ * counterpart to {@link expectRenderedGeometry}, used when a test needs to
+ * compare pre/post geometry across a live data refresh.
+ */
+export async function getRenderedGeometry(locator: Locator): Promise<ChartGeometry | null> {
+  const content = await queryChartContent(locator.first());
+  return content.hasGeometry ? (content.geometry ?? null) : null;
+}
+
+/**
  * Asserts that the `analytics-chart` referenced by `locator` does **not** carry
  * an error boundary. This is the negative guard for the `no-silent-empty-states`
  * rule: a legitimate empty/zero-data badge does **not** satisfy this assertion,
