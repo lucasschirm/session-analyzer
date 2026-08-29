@@ -472,13 +472,7 @@ export class FixtureBucket {
     }
     const httpError = this.httpErrors.get(objectKey);
     if (httpError) {
-      this.logRequest('GET', objectKey, httpError.status);
-      await this.tryFulfill(route, {
-        status: httpError.status,
-        contentType: 'application/xml',
-        headers: corsHeaders,
-        body: httpError.body,
-      });
+      await this.fulfillHttpError(route, objectKey, httpError, corsHeaders);
       return;
     }
     const body = this.objectStore.get(objectKey);
@@ -498,6 +492,21 @@ export class FixtureBucket {
       contentType: 'application/octet-stream',
       headers: { ...corsHeaders, ETag: `"${sha256Hex(body)}"` },
       body,
+    });
+  }
+
+  private async fulfillHttpError(
+    route: Route,
+    objectKey: string,
+    error: FixtureHttpError,
+    corsHeaders: Record<string, string>,
+  ): Promise<void> {
+    this.logRequest('GET', objectKey, error.status);
+    await this.tryFulfill(route, {
+      status: error.status,
+      contentType: 'application/xml',
+      headers: corsHeaders,
+      body: error.body,
     });
   }
 
