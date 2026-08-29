@@ -15,9 +15,17 @@ import type {
  * - `mid-commit`: after the root session row is written but before the commit.
  * - `mid-rollup`: after the first rollup contribution is written.
  * - `post-ingest`: after the session is committed but before rollup materialisation.
+ * - `reprocess`: after the replacement generation is committed during reprocessing,
+ *   before the rollup materialisation for the new generation is applied.
  * - `query`: on the first query executed outside a transaction.
  */
-export type InjectionStage = 'pre-commit' | 'mid-commit' | 'mid-rollup' | 'post-ingest' | 'query';
+export type InjectionStage =
+  | 'pre-commit'
+  | 'mid-commit'
+  | 'mid-rollup'
+  | 'post-ingest'
+  | 'reprocess'
+  | 'query';
 
 export interface FailureInjectionCallLogEntry {
   readonly callIndex: number;
@@ -237,7 +245,10 @@ export class FailureInjectionExecutor implements SqliteExecutor {
       return true;
     }
 
-    if (this.injectionStage === 'post-ingest' && this.committed) {
+    if (
+      (this.injectionStage === 'post-ingest' || this.injectionStage === 'reprocess') &&
+      this.committed
+    ) {
       return true;
     }
 
@@ -371,7 +382,8 @@ export class FailureInjectionExecutor implements SqliteExecutor {
       this.injectionStage === 'pre-commit' ||
       this.injectionStage === 'mid-commit' ||
       this.injectionStage === 'mid-rollup' ||
-      this.injectionStage === 'post-ingest'
+      this.injectionStage === 'post-ingest' ||
+      this.injectionStage === 'reprocess'
     );
   }
 
