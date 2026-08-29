@@ -30,7 +30,11 @@ import {
   StatisticalPolicyStore,
   TenantStore,
 } from '@lucasschirm/sal-db-core';
-import type { ManifestSchemaVersion, SyncManifest } from '@lucasschirm/sal-sync-core';
+import type {
+  ManifestArtifact,
+  ManifestSchemaVersion,
+  SyncManifest,
+} from '@lucasschirm/sal-sync-core';
 import { MANIFEST_SCHEMA_VERSION, sha256Hex } from '@lucasschirm/sal-sync-core';
 import type {
   Artifact,
@@ -44,6 +48,7 @@ import type {
   TransformResult,
   UnknownArtifactBundle,
 } from '@lucasschirm/sal-transformer';
+import type { ArtifactCanonicalizationInput, ArtifactDiffRecordContext } from './artifact-diff.js';
 import { ArtifactDiffRepository } from './artifact-diff.js';
 import { ComponentLifecycleEngine } from './component-lifecycle.js';
 import { rebuildAffectedDistributions } from './distributions.js';
@@ -1016,6 +1021,62 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     return { id: sourceManifestId, created: true };
   }
 
+  private buildManifestArtifactInput(
+    sourceManifestId: string,
+    manifest: SyncManifest,
+    artifact: ManifestArtifact,
+  ): InsertManifestArtifactInput {
+    return {
+      sourceManifestId,
+      manifestProjectId: manifest.projectId,
+      manifestSessionId: manifest.sessionId,
+      harness: manifest.harness,
+      harnessVersion: manifest.harnessVersion,
+      manifestSchemaVersion: manifest.schemaVersion,
+      scope: artifact.scope ?? 'session',
+      relativePath: artifact.relativePath,
+      sha256: artifact.sha256,
+      size: artifact.size,
+      status: artifact.status,
+      role: artifact.role ?? null,
+      mediaType: artifact.mediaType ?? null,
+      encoding: artifact.encoding ?? null,
+      collectionOutcome: artifact.collectionOutcome ?? null,
+      collectionReason: artifact.collectionReason ?? null,
+      remoteSourceReference: null,
+    };
+  }
+
+  private buildArtifactDiffRecordContext(
+    sourceManifestId: string,
+    manifestArtifactId: string,
+    sessionId: string,
+    artifact: ManifestArtifact,
+  ): ArtifactDiffRecordContext {
+    return {
+      sourceManifestId,
+      manifestArtifactId,
+      observingSessionId: sessionId,
+      blobSha256: artifact.sha256,
+      retentionClass: 'retained',
+    };
+  }
+
+  private buildCanonicalizationInput(
+    manifest: SyncManifest,
+    artifact: ManifestArtifact,
+    resolved: ResolvedArtifact | undefined,
+  ): ArtifactCanonicalizationInput {
+    return {
+      harness: manifest.harness,
+      kind: artifact.role ?? 'unknown',
+      content: resolved?.content ?? null,
+      relativePath: artifact.relativePath,
+      classifierVersion: manifest.harnessVersion,
+      canonicalizerVersion: manifest.harnessVersion,
+    };
+  }
+
   private async upsertManifestArtifacts(
     tx: SqliteTransaction,
     portfolioId: string,
@@ -1024,29 +1085,52 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
   ): Promise<ReadonlyMap<string, string>> {
     const ids = new Map<string, string>();
     for (const artifact of manifest.artifacts) {
-      const input: InsertManifestArtifactInput = {
-        sourceManifestId,
-        manifestProjectId: manifest.projectId,
-        manifestSessionId: manifest.sessionId,
-        harness: manifest.harness,
-        harnessVersion: manifest.harnessVersion,
-        manifestSchemaVersion: manifest.schemaVersion,
-        scope: artifact.scope ?? 'session',
-        relativePath: artifact.relativePath,
-        sha256: artifact.sha256,
-        size: artifact.size,
-        status: artifact.status,
-        role: artifact.role ?? null,
-        mediaType: artifact.mediaType ?? null,
-        encoding: artifact.encoding ?? null,
-        collectionOutcome: artifact.collectionOutcome ?? null,
-        collectionReason: artifact.collectionReason ?? null,
-        remoteSourceReference: null,
-      };
+      const input = this.buildManifestArtifactInput(sourceManifestId, manifest, artifact);
       const id = await ManifestArtifactStore.insert(tx, portfolioId, input);
       ids.set(`${artifact.scope}:${artifact.relativePath}:${artifact.sha256}`, id);
     }
     return ids;
+  }
+
+  private buildResolvedArtifactIndex(
+    resolvedArtifacts: readonly ResolvedArtifact[],
+  ): Map<string, ResolvedArtifact> {
+    const index = new Map<string, ResolvedArtifact>();
+    for (const resolved of resolvedArtifacts) {
+      index.set(`${resolved.relativePath}:${resolved.sha256}`, resolved);
+    }
+    return index;
+  }
+
+  private async recordSingleArtifactReference(
+    tx: SqliteTransaction,
+    portfolioId: string,
+    sourceManifestId: string,
+    sessionId: string,
+    manifest: SyncManifest,
+    artifact: ManifestArtifact,
+    manifestArtifactIds: ReadonlyMap<string, string>,
+    resolvedByPathAndHash: ReadonlyMap<string, ResolvedArtifact>,
+    diffRepository: ArtifactDiffRepository,
+  ): Promise<void> {
+    const scope = artifact.scope ?? 'session';
+    const manifestArtifactId = manifestArtifactIds.get(
+      `${scope}:${artifact.relativePath}:${artifact.sha256}`,
+    );
+    if (!manifestArtifactId) return;
+
+    const resolved = resolvedByPathAndHash.get(`${artifact.relativePath}:${artifact.sha256}`);
+    await diffRepository.record(
+      tx,
+      portfolioId,
+      this.buildArtifactDiffRecordContext(
+        sourceManifestId,
+        manifestArtifactId,
+        sessionId,
+        artifact,
+      ),
+      this.buildCanonicalizationInput(manifest, artifact, resolved),
+    );
   }
 
   private async recordArtifactReferences(
@@ -1058,38 +1142,19 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     manifestArtifactIds: ReadonlyMap<string, string>,
     resolvedArtifacts: readonly ResolvedArtifact[],
   ): Promise<void> {
-    const resolvedByPathAndHash = new Map<string, ResolvedArtifact>();
-    for (const resolved of resolvedArtifacts) {
-      resolvedByPathAndHash.set(`${resolved.relativePath}:${resolved.sha256}`, resolved);
-    }
-
+    const resolvedByPathAndHash = this.buildResolvedArtifactIndex(resolvedArtifacts);
     const diffRepository = new ArtifactDiffRepository(this.context.hasher);
     for (const artifact of manifest.artifacts) {
-      const scope = artifact.scope ?? 'session';
-      const manifestArtifactId = manifestArtifactIds.get(
-        `${scope}:${artifact.relativePath}:${artifact.sha256}`,
-      );
-      if (!manifestArtifactId) continue;
-
-      const resolved = resolvedByPathAndHash.get(`${artifact.relativePath}:${artifact.sha256}`);
-      await diffRepository.record(
+      await this.recordSingleArtifactReference(
         tx,
         portfolioId,
-        {
-          sourceManifestId,
-          manifestArtifactId,
-          observingSessionId: sessionId,
-          blobSha256: artifact.sha256,
-          retentionClass: 'retained',
-        },
-        {
-          harness: manifest.harness,
-          kind: artifact.role ?? 'unknown',
-          content: resolved?.content ?? null,
-          relativePath: artifact.relativePath,
-          classifierVersion: manifest.harnessVersion,
-          canonicalizerVersion: manifest.harnessVersion,
-        },
+        sourceManifestId,
+        sessionId,
+        manifest,
+        artifact,
+        manifestArtifactIds,
+        resolvedByPathAndHash,
+        diffRepository,
       );
     }
   }
