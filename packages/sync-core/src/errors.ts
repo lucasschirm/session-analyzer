@@ -12,6 +12,7 @@ export type SyncErrorCode =
   | 'SYNC_JSON_PARSE_FAILED'
   | 'SYNC_STATE_CORRUPT'
   | 'SYNC_WATCHER_ERROR'
+  | 'SYNC_WATCHER_DEAD'
   | 'SYNC_INTERNAL_ERROR'
   | 'MANIFEST_UNSUPPORTED_SCHEMA';
 
@@ -88,6 +89,11 @@ export const SYNC_ERROR_CATALOG: Record<SyncErrorCode, SyncErrorMeta> = {
     code: 'SYNC_WATCHER_ERROR',
     category: 'retryable',
     description: 'The transcript watcher encountered a transient error.',
+  },
+  SYNC_WATCHER_DEAD: {
+    code: 'SYNC_WATCHER_DEAD',
+    category: 'non-retryable',
+    description: 'The transcript watcher process is not running while files are still pending.',
   },
   SYNC_INTERNAL_ERROR: {
     code: 'SYNC_INTERNAL_ERROR',
