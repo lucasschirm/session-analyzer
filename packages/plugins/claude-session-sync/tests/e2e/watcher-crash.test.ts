@@ -190,6 +190,7 @@ describe('watcher mid-session crash visibility (SYNC-001)', () => {
   async function crashAndGetReport(): Promise<{
     exit: number | string | null;
     report: StatusReport;
+    statusExitCode: number;
   }> {
     const env = buildEnv(server.endpoint, dataDir);
     const spawner = makeWatcherSpawner(watcherBin, env, workspace);
@@ -218,18 +219,20 @@ describe('watcher mid-session crash visibility (SYNC-001)', () => {
       argv: ['--session-id', 'sess-crash', '--cwd', workspace, '--transcript-path', transcriptPath],
     });
     if (!result.status) throw new Error('status did not return a report');
-    return { exit, report: result.status };
+    return { exit, report: result.status, statusExitCode: result.exitCode };
   }
 
   it('reports the watcher crash as a failed/stuck state, not silent pending_files', async () => {
-    const { exit, report } = await crashAndGetReport();
+    const { exit, report, statusExitCode } = await crashAndGetReport();
     expect(exit).not.toBe(0);
     expect(report.watcherAlive).toBe(false);
     expect(report.pendingFiles).toBeGreaterThan(0);
     // The user-visible signal must be consistent with a dead watcher.
-    // Currently status exits 0 with empty lastErrors — the silent gap.
     expect(report.lastErrors.length, 'watcher crashed but status reports no error').toBeGreaterThan(
       0,
     );
+    // status's own exit code must be consistent with the user-visible report,
+    // not just the watcher's own SIGKILL-induced (trivially non-zero) exit.
+    expect(statusExitCode, 'status exited 0 despite a dead watcher with pending files').toBe(1);
   }, 20000);
 });

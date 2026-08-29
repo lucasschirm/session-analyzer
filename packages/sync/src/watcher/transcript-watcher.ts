@@ -534,6 +534,11 @@ export class TranscriptWatcher {
       if (current === undefined) {
         if (this.isFirstPoll) {
           // File already existed when the watcher started; avoid re-uploading.
+          // KNOWN FOLLOW-UP (found during TSK0047/SYNC-001): a write that lands
+          // between spawn and this first poll is treated as pre-existing and
+          // silently skipped. A proper fix needs to seed offsets from the
+          // session-start bulk-upload result or diff against the state
+          // record's lastUploadedHash rather than trusting stat.size alone.
           this.offsets[relative] = { offset: stat.size, lastProcessedSize: stat.size };
         } else {
           // New file detected after start; process from the beginning.

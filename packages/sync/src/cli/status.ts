@@ -47,7 +47,7 @@ function appendWatcherCrashError(report: StatusReport, sessionId?: string): void
   if (!sessionId || report.watcherAlive || report.pendingFiles === 0) {
     return;
   }
-  const code: SyncErrorCode = 'SYNC_WATCHER_ERROR';
+  const code: SyncErrorCode = 'SYNC_WATCHER_DEAD';
   if (!report.lastErrors.includes(code)) {
     report.lastErrors.push(code);
   }

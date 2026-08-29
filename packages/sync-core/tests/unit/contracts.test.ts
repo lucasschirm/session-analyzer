@@ -208,6 +208,7 @@ describe('stable error codes', () => {
     'SYNC_JSON_PARSE_FAILED',
     'SYNC_STATE_CORRUPT',
     'SYNC_WATCHER_ERROR',
+    'SYNC_WATCHER_DEAD',
     'SYNC_INTERNAL_ERROR',
     'MANIFEST_UNSUPPORTED_SCHEMA',
   ];
