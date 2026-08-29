@@ -23,6 +23,7 @@ const gates = [
   'gate-12-index-usage',
   'gate-13-dto-purity',
   'gate-14-documentation-index',
+  'gate-15-schema-drift-guard',
 ];
 
 ensureDist();
