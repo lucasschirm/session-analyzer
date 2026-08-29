@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { AnalyticsClient } from '../../src/db/analytics-client';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ANALYTICS_QUERY_TIMEOUT_MS, AnalyticsClient } from '../../src/db/analytics-client';
 import type {
   AnalyticsBackendReport,
   AnalyticsRequest,
@@ -281,5 +281,59 @@ describe('AnalyticsClient', () => {
     const promise = client2.portfolio.getOverview({});
     worker2.respond({ id: 2, ok: true, result: { token: { generationToken: 'g1' } } });
     await expect(promise).resolves.toEqual({ token: { generationToken: 'g1' } });
+  });
+
+  it('rejects a query when the worker never responds within the timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      void client.ensureReady();
+      worker.respond({ id: worker.posted[0].id, ok: true, backend: backendReport() });
+
+      const promise = client.portfolio.getOverview({});
+      const request = worker.posted[worker.posted.length - 1];
+      expect(request.type).toBe('query');
+
+      vi.advanceTimersByTime(ANALYTICS_QUERY_TIMEOUT_MS / 2);
+      await expect(Promise.race([promise, Promise.resolve('still-pending')])).resolves.toBe(
+        'still-pending',
+      );
+
+      vi.advanceTimersByTime(ANALYTICS_QUERY_TIMEOUT_MS - ANALYTICS_QUERY_TIMEOUT_MS / 2);
+      await expect(promise).rejects.toThrow(
+        `analytics query timed out after ${ANALYTICS_QUERY_TIMEOUT_MS}ms`,
+      );
+
+      // A late response must not be able to resolve or reject the timed-out promise again.
+      expect(() =>
+        worker.respond({
+          id: request.id,
+          ok: true,
+          result: { token: { generationToken: 'late' } },
+        }),
+      ).not.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resolves a query that responds before the timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      void client.ensureReady();
+      worker.respond({ id: worker.posted[0].id, ok: true, backend: backendReport() });
+
+      const promise = client.portfolio.getOverview({});
+      const request = worker.posted[worker.posted.length - 1];
+      worker.respond({
+        id: request.id,
+        ok: true,
+        result: { token: { generationToken: 'g1' } },
+      });
+
+      vi.advanceTimersByTime(ANALYTICS_QUERY_TIMEOUT_MS / 2);
+      await expect(promise).resolves.toEqual({ token: { generationToken: 'g1' } });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
