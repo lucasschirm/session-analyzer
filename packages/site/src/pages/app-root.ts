@@ -28,6 +28,15 @@ import './artifact-diff/artifact-diff-view';
  * - `#/components`                         -> Component Ecosystem
  * - `#/artifact-diff`                      -> Artifact Diff
  */
+function decodeRouteParam(value: string | undefined): string {
+  if (!value) return '';
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 @customElement('app-root')
 export class AppRoot extends LitElement {
   static styles = css`
@@ -142,12 +151,12 @@ export class AppRoot extends LitElement {
       {
         path: '/projects/:projectId/behavior',
         render: (params) =>
-          html`<project-behavior-view project-id=${params.projectId ?? ''}></project-behavior-view>`,
+          html`<project-behavior-view project-id=${decodeRouteParam(params.projectId)}></project-behavior-view>`,
       },
       {
         path: '/sessions/:sessionId',
         render: (params) =>
-          html`<session-evidence-view session-id=${params.sessionId ?? ''}></session-evidence-view>`,
+          html`<session-evidence-view session-id=${decodeRouteParam(params.sessionId)}></session-evidence-view>`,
       },
       {
         path: '/manual-import',
@@ -161,7 +170,7 @@ export class AppRoot extends LitElement {
         path: '/components/:componentId',
         render: (params) =>
           html`<component-ecosystem-view
-            component-id=${params.componentId ?? ''}
+            component-id=${decodeRouteParam(params.componentId)}
           ></component-ecosystem-view>`,
       },
       {
