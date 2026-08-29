@@ -127,7 +127,7 @@ export class SessionEvidenceTranscript extends LitElement {
   @property({ type: String }) state: 'ok' | 'tombstone' | 'empty' | 'loading' = 'loading';
 
   private roleFor(row: EvidenceRow): string {
-    const match = row.summary.match(/\(([^)]+)\)$/);
+    const match = row.summary.match(/^Message \d+ \(([^)]+)\)/);
     return match?.[1]?.toLowerCase() ?? 'unknown';
   }
 

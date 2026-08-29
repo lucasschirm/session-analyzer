@@ -307,8 +307,16 @@ export class SessionEvidenceView extends LitElement {
 
   private handleHashChange(): void {
     const match = window.location.hash.match(/^#\/sessions\/([^/?]+)/);
-    if (match && match[1] === this.sessionId) {
-      this.load();
+    if (match) {
+      try {
+        if (decodeURIComponent(match[1]) === this.sessionId) {
+          this.load();
+        }
+      } catch {
+        if (match[1] === this.sessionId) {
+          this.load();
+        }
+      }
     }
   }
 
