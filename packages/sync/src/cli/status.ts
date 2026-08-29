@@ -20,6 +20,7 @@ import {
   resolveConfig,
   type StatusArtifact,
   type StatusReport,
+  type SyncErrorCode,
 } from './common.js';
 
 function mapStateStatus(stateStatus: ArtifactStateStatus): ArtifactStatus {
@@ -40,6 +41,16 @@ async function getLockPid(dataDir: string, sessionId: string): Promise<number | 
     // no lock or unreadable
   }
   return undefined;
+}
+
+function appendWatcherCrashError(report: StatusReport, sessionId?: string): void {
+  if (!sessionId || report.watcherAlive || report.pendingFiles === 0) {
+    return;
+  }
+  const code: SyncErrorCode = 'SYNC_WATCHER_ERROR';
+  if (!report.lastErrors.includes(code)) {
+    report.lastErrors.push(code);
+  }
 }
 
 /**
@@ -157,10 +168,13 @@ export async function status(
           report.artifacts.push(artifact);
         }
       }
+
+      appendWatcherCrashError(report, sessionId);
     } catch {
       // Best effort: status still reports durable state.
     }
   }
 
-  return { exitCode: 0, status: report };
+  const exitCode = report.lastErrors.length > 0 ? 1 : 0;
+  return { exitCode, status: report };
 }
