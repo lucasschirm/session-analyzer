@@ -6,6 +6,7 @@ import { MANIFEST_SCHEMA_VERSION } from '@lucasschirm/sal-sync-core';
 import { createDefaultRegistry } from '@lucasschirm/sal-transformer';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
+import { createArtifactVersionView } from '../../src/analytics-session.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +39,7 @@ function createManifestFixture(content: string, sha256: string, relativePath: st
     artifacts: [
       {
         relativePath,
+        scope: 'session' as const,
         mediaType: 'application/jsonl',
         sha256,
         size: content.length,
@@ -128,6 +130,36 @@ describe('DefaultIngestionOrchestrator', () => {
       [receipt.generationId],
     );
     expect(generations[0]?.status).toBe('committed');
+
+    const { rows: manifestArtifactRows } = await executor.exec(
+      'SELECT id, source_manifest_id, scope, relative_path, sha256, size, status FROM manifest_artifacts WHERE manifest_session_id = ?',
+      [bundle.manifest.sessionId],
+    );
+    expect(manifestArtifactRows).toHaveLength(1);
+    expect(manifestArtifactRows[0]?.sha256).toBe(sha256);
+    expect(manifestArtifactRows[0]?.relative_path).toBe(bundle.manifest.artifacts[0]?.relativePath);
+
+    const { rows: referenceRows } = await executor.exec(
+      `SELECT artifact_references.id, artifact_references.relationship FROM artifact_references
+       JOIN manifest_artifacts a ON a.id = artifact_references.manifest_artifact_id
+       WHERE a.manifest_session_id = ?`,
+      [bundle.manifest.sessionId],
+    );
+    expect(referenceRows).toHaveLength(1);
+    expect(referenceRows[0]?.relationship).toBe('contains');
+
+    const view = createArtifactVersionView(executor);
+    const metadata = await view.getMetadata(String(manifestArtifactRows[0]?.id));
+    expect(metadata.artifactId).toBe(String(manifestArtifactRows[0]?.id));
+    expect(metadata.sha256).toBe(sha256);
+    expect(metadata.size).toBe(content.length);
+    expect(metadata.sessionIds).toContain(receipt.sessionId);
+
+    const diff = await view.getDiff(
+      String(manifestArtifactRows[0]?.id),
+      String(manifestArtifactRows[0]?.id),
+    );
+    expect(diff.contentAvailable).toBe(true);
   });
 
   it('ingests a manual artifact bundle end-to-end', async () => {

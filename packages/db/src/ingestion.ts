@@ -1,4 +1,5 @@
 import type {
+  InsertManifestArtifactInput,
   InsertSessionInput,
   SqliteExecutor,
   SqliteTransaction,
@@ -16,6 +17,7 @@ import {
   EnvironmentStore,
   getCurrentGenerationId,
   IngestionSourceStore,
+  ManifestArtifactStore,
   MetricDefinitionStore,
   MetricValueStore,
   NormalizedEventStore,
@@ -42,6 +44,7 @@ import type {
   TransformResult,
   UnknownArtifactBundle,
 } from '@lucasschirm/sal-transformer';
+import { ArtifactDiffRepository } from './artifact-diff.js';
 import { ComponentLifecycleEngine } from './component-lifecycle.js';
 import { rebuildAffectedDistributions } from './distributions.js';
 import type { ManualIngestionBundle, VerifiedManifestBundle } from './manifest.js';
@@ -50,6 +53,7 @@ import type {
   ArtifactContent,
   ArtifactResolver,
   ContentHasher,
+  ResolvedArtifact,
 } from './ports.js';
 import { applySessionRollupContributions } from './rollup-reconciliation.js';
 
@@ -90,6 +94,8 @@ export interface AtomicGenerationCommit {
   readonly manifest?: SyncManifest;
   /** Source identity used to build canonical identity rows. */
   readonly source?: SourceIdentity;
+  /** Resolved artifact contents used to record artifact references and blobs. */
+  readonly resolvedArtifacts?: readonly ResolvedArtifact[];
 }
 
 export interface IngestionContext {
@@ -316,6 +322,7 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       result,
       manifest,
       source: sourceIdentity,
+      resolvedArtifacts,
     });
   }
 
@@ -491,15 +498,36 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         // 4. Upsert sessions, including child sessions from summaries.
         await this.upsertSessions(tx, canonical, result, commit.generationId);
 
-        // 5. Persist the source manifest and its coverage metadata.
+        // 5. Persist the source manifest, its artifacts, and coverage metadata.
+        let sourceManifestId: string | undefined;
         if (commit.manifest) {
-          await this.upsertSourceManifest(
+          const sourceManifest = await this.upsertSourceManifest(
             tx,
             canonical,
             commit.manifest,
             result,
             commit.generationId,
           );
+          sourceManifestId = sourceManifest.id;
+          if (sourceManifest.created) {
+            const manifestArtifactIds = await this.upsertManifestArtifacts(
+              tx,
+              canonical.portfolioId,
+              sourceManifestId,
+              commit.manifest,
+            );
+            if (commit.resolvedArtifacts && commit.resolvedArtifacts.length > 0) {
+              await this.recordArtifactReferences(
+                tx,
+                canonical.portfolioId,
+                sourceManifestId,
+                commit.sessionId,
+                commit.manifest,
+                manifestArtifactIds,
+                commit.resolvedArtifacts,
+              );
+            }
+          }
         }
 
         // 6. Persist metric definitions, values, evidence, and rollups.
@@ -941,7 +969,7 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     manifest: SyncManifest,
     result: TransformResult,
     _generationId: string,
-  ): Promise<void> {
+  ): Promise<{ id: string; created: boolean }> {
     const sourceManifestId = deterministicSourceManifestId(
       canonical.ingestionSourceId,
       canonical.nativeSessionId,
@@ -949,7 +977,7 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     );
     const existing = await SourceManifestStore.getById(tx, canonical.portfolioId, sourceManifestId);
     if (existing) {
-      return;
+      return { id: existing.id, created: false };
     }
     const sourceFingerprint = result.bundleHash ?? (await this.hashArtifacts(manifest.artifacts));
     await SourceManifestStore.insert(tx, canonical.portfolioId, {
@@ -985,6 +1013,85 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       manifestHash: sourceFingerprint,
       reprocessingStatus: 'local',
     });
+    return { id: sourceManifestId, created: true };
+  }
+
+  private async upsertManifestArtifacts(
+    tx: SqliteTransaction,
+    portfolioId: string,
+    sourceManifestId: string,
+    manifest: SyncManifest,
+  ): Promise<ReadonlyMap<string, string>> {
+    const ids = new Map<string, string>();
+    for (const artifact of manifest.artifacts) {
+      const input: InsertManifestArtifactInput = {
+        sourceManifestId,
+        manifestProjectId: manifest.projectId,
+        manifestSessionId: manifest.sessionId,
+        harness: manifest.harness,
+        harnessVersion: manifest.harnessVersion,
+        manifestSchemaVersion: manifest.schemaVersion,
+        scope: artifact.scope ?? 'session',
+        relativePath: artifact.relativePath,
+        sha256: artifact.sha256,
+        size: artifact.size,
+        status: artifact.status,
+        role: artifact.role ?? null,
+        mediaType: artifact.mediaType ?? null,
+        encoding: artifact.encoding ?? null,
+        collectionOutcome: artifact.collectionOutcome ?? null,
+        collectionReason: artifact.collectionReason ?? null,
+        remoteSourceReference: null,
+      };
+      const id = await ManifestArtifactStore.insert(tx, portfolioId, input);
+      ids.set(`${artifact.scope}:${artifact.relativePath}:${artifact.sha256}`, id);
+    }
+    return ids;
+  }
+
+  private async recordArtifactReferences(
+    tx: SqliteTransaction,
+    portfolioId: string,
+    sourceManifestId: string,
+    sessionId: string,
+    manifest: SyncManifest,
+    manifestArtifactIds: ReadonlyMap<string, string>,
+    resolvedArtifacts: readonly ResolvedArtifact[],
+  ): Promise<void> {
+    const resolvedByPathAndHash = new Map<string, ResolvedArtifact>();
+    for (const resolved of resolvedArtifacts) {
+      resolvedByPathAndHash.set(`${resolved.relativePath}:${resolved.sha256}`, resolved);
+    }
+
+    const diffRepository = new ArtifactDiffRepository(this.context.hasher);
+    for (const artifact of manifest.artifacts) {
+      const scope = artifact.scope ?? 'session';
+      const manifestArtifactId = manifestArtifactIds.get(
+        `${scope}:${artifact.relativePath}:${artifact.sha256}`,
+      );
+      if (!manifestArtifactId) continue;
+
+      const resolved = resolvedByPathAndHash.get(`${artifact.relativePath}:${artifact.sha256}`);
+      await diffRepository.record(
+        tx,
+        portfolioId,
+        {
+          sourceManifestId,
+          manifestArtifactId,
+          observingSessionId: sessionId,
+          blobSha256: artifact.sha256,
+          retentionClass: 'retained',
+        },
+        {
+          harness: manifest.harness,
+          kind: artifact.role ?? 'unknown',
+          content: resolved?.content ?? null,
+          relativePath: artifact.relativePath,
+          classifierVersion: manifest.harnessVersion,
+          canonicalizerVersion: manifest.harnessVersion,
+        },
+      );
+    }
   }
 
   private async upsertMetricDefinitions(
