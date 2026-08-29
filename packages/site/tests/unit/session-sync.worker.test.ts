@@ -19,6 +19,7 @@ import type {
   SessionBatchFoundMessage,
   SessionFileDownloadedMessage,
   SessionSyncCompleteMessage,
+  SessionSyncProgressMessage,
   SyncMessageFromWorker,
   SyncMessageToWorker,
 } from '../../src/sync/sync-protocol';
@@ -347,6 +348,51 @@ function findOne(posted: Array<{ message: SyncMessageFromWorker }>, type: string
   const found = findMessages(posted, type);
   if (found.length !== 1) throw new Error(`Expected one ${type}, got ${found.length}`);
   return found[0].message;
+}
+
+interface ProgressSample {
+  filesFound: number;
+  filesDownloaded: number;
+  filesFailed: number;
+  bytesReceived: number;
+  timestamp?: string;
+}
+
+function toProgressSample(message: SyncMessageFromWorker): ProgressSample | undefined {
+  if (message.type !== 'SESSION_SYNC_PROGRESS') return undefined;
+  const msg = message as SessionSyncProgressMessage;
+  const withTimestamp = msg as unknown as { timestamp?: string };
+  return {
+    filesFound: msg.files_found,
+    filesDownloaded: msg.files_downloaded,
+    filesFailed: msg.files_failed,
+    bytesReceived: msg.bytes_received,
+    timestamp: withTimestamp.timestamp,
+  };
+}
+
+function extractProgressSeries(
+  posted: Array<{ message: SyncMessageFromWorker }>,
+): ProgressSample[] {
+  return findMessages(posted, 'SESSION_SYNC_PROGRESS')
+    .map((p) => toProgressSample(p.message))
+    .filter((s): s is ProgressSample => s !== undefined);
+}
+
+function assertMonotonicProgress(series: ProgressSample[]): void {
+  for (let i = 1; i < series.length; i++) {
+    const prev = series[i - 1];
+    const curr = series[i];
+    expect(curr.filesFound).toBeGreaterThanOrEqual(prev.filesFound);
+    expect(curr.filesDownloaded).toBeGreaterThanOrEqual(prev.filesDownloaded);
+    expect(curr.filesFailed).toBeGreaterThanOrEqual(prev.filesFailed);
+    expect(curr.bytesReceived).toBeGreaterThanOrEqual(prev.bytesReceived);
+    if (prev.timestamp !== undefined && curr.timestamp !== undefined) {
+      expect(new Date(curr.timestamp).getTime()).toBeGreaterThan(
+        new Date(prev.timestamp).getTime(),
+      );
+    }
+  }
 }
 
 describe('SessionSyncWorker', () => {
@@ -967,5 +1013,44 @@ describe('SessionSyncWorker', () => {
     const orphan = complete.files.find((f) => f.file === 'subagents/agent-orphan.jsonl');
     expect(orphan).not.toBeUndefined();
     expect(orphan?.status).toBe('downloaded');
+  });
+
+  /**
+   * ## Notes — SYNC-004 progress event contract
+   *
+   * The session sync worker is the source of the values the UI heartbeat
+   * ultimately observes. `SESSION_SYNC_PROGRESS` messages carry monotonic
+   * counts and bytes, but no per-event timestamp. The sync manager throttles
+   * and aggregates them into `SyncManagerSnapshot`, and `sync-progress-bar`
+   * renders "Projects P/T | Sessions S/T | Files D/F". TSK0010's
+   * `assertHeartbeat` polls that DOM text; it does not consume a structured
+   * event with a timestamp field.
+   *
+   * This test asserts the worker-level values are non-decreasing and, if a
+   * `timestamp` field is ever added, that it is strictly increasing.
+   */
+  it('emits monotonic progress events for a multi-file session (SYNC-004)', async () => {
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+      { scope: 'session', relativePath: 'subagents/agent-1.jsonl', content: 'sub one\n' },
+      { scope: 'session', relativePath: 'subagents/agent-2.jsonl', content: 'sub two\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    await worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    worker.handleMessage(
+      syncMessage(
+        'sess-1',
+        downloads.map(({ content: _content, ...rest }) => rest),
+      ),
+    );
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    const series = extractProgressSeries(posted);
+    expect(series.length).toBeGreaterThanOrEqual(2);
+    assertMonotonicProgress(series);
   });
 });
