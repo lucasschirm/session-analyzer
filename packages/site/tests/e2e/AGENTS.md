@@ -11,6 +11,7 @@ Playwright end-to-end tests and fixtures for the site package.
 - **sync.spec.ts** — CAS sync pipeline, offline handling, retry, passkey, and large transcript flows.
 - **sync-fixtures.ts** — Mock S3 CAS payload and `FixtureBucket` builders for sync tests.
 - **ux-007-import-failure.spec.ts** — UX-007: corrupt-fixture manual import failures surface a specific failure class (Unsupported/Unavailable/Integrity Error), not a generic "Import failed" string.
+- **ux-009-query-hang.spec.ts** — UX-009: a blocked analytics query reaches a bounded timeout error affordance instead of an indefinite loading spinner.
 - **fixtures/** — Session transcript and sidecar fixtures used by manual import and sync specs.
 
 ## Subdirectories
