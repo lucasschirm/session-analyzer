@@ -1052,12 +1052,17 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     manifestArtifactId: string,
     sessionId: string,
     artifact: ManifestArtifact,
+    resolved: ResolvedArtifact | undefined,
   ): ArtifactDiffRecordContext {
     return {
       sourceManifestId,
       manifestArtifactId,
       observingSessionId: sessionId,
-      blobSha256: artifact.sha256,
+      // Only reference a blob hash we actually resolved and can store. The
+      // manifest's declared sha256 for an unresolved artifact is unverified
+      // and has no corresponding artifact_blobs row, which would violate the
+      // blob_sha256 -> artifact_blobs foreign key on insert.
+      blobSha256: resolved ? artifact.sha256 : null,
       retentionClass: 'retained',
     };
   }
@@ -1128,6 +1133,7 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         manifestArtifactId,
         sessionId,
         artifact,
+        resolved,
       ),
       this.buildCanonicalizationInput(manifest, artifact, resolved),
     );
