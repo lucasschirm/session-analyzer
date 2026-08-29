@@ -21,6 +21,7 @@ import type {
 } from '@lucasschirm/sal-db';
 import type {
   AnalyticsBackendReport,
+  AnalyticsDataChangedBroadcast,
   AnalyticsRequest,
   AnalyticsRequestPayload,
   AnalyticsResponse,
@@ -53,7 +54,7 @@ export interface ManualImportClient {
   ): Promise<IngestionReceipt>;
 }
 
-export class AnalyticsClient implements AnalyticsDataSource {
+export class AnalyticsClient extends EventTarget implements AnalyticsDataSource {
   readonly portfolio: PortfolioView;
   readonly project: ProjectBehaviorView;
   readonly session: SessionEvidenceView;
@@ -76,6 +77,7 @@ export class AnalyticsClient implements AnalyticsDataSource {
   fallbackReasonForInit?: 'locked' | 'unsupported';
 
   constructor(createWorker: CreateWorkerFactory = defaultWorkerFactory) {
+    super();
     this.createWorker = createWorker;
 
     this.portfolio = this.createViewClient<PortfolioView>('portfolio');
@@ -91,7 +93,9 @@ export class AnalyticsClient implements AnalyticsDataSource {
   private ensureWorker(): Worker {
     if (!this.worker) {
       const worker = this.createWorker();
-      worker.onmessage = (event: MessageEvent<AnalyticsResponse>) => {
+      worker.onmessage = (
+        event: MessageEvent<AnalyticsResponse | AnalyticsDataChangedBroadcast>,
+      ) => {
         this.handleResponse(event.data);
       };
       worker.onerror = (event) => {
@@ -143,14 +147,19 @@ export class AnalyticsClient implements AnalyticsDataSource {
     this.pending.clear();
   }
 
-  private handleResponse(response: AnalyticsResponse): void {
-    const handler = this.pending.get(response.id);
+  private handleResponse(response: AnalyticsResponse | AnalyticsDataChangedBroadcast): void {
+    if ('type' in response && response.type === 'dataChanged') {
+      this.dispatchEvent(new CustomEvent('data-change'));
+      return;
+    }
+    const typed = response as AnalyticsResponse;
+    const handler = this.pending.get(typed.id);
     if (!handler) return;
-    this.pending.delete(response.id);
-    if (response.ok) {
-      handler.resolve(response);
+    this.pending.delete(typed.id);
+    if (typed.ok) {
+      handler.resolve(typed);
     } else {
-      handler.reject(new Error(response.error));
+      handler.reject(new Error(typed.error));
     }
   }
 

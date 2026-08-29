@@ -1,4 +1,6 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
+import { verifyExportContents } from './helpers/export-verify.js';
+import { assertHeartbeat, syncProgressFilesParser } from './helpers/heartbeat.js';
 import {
   buildSessionManifest,
   FixtureBucket,
@@ -912,4 +914,137 @@ test('unresolvable artifact in one session does not stop the sync run', async ({
   await expect(page.locator('.project-card', { hasText: /2 sessions/ })).toBeVisible({
     timeout: 10000,
   });
+});
+
+// =============================================================================
+// Scenario 19 (UX-005): Sync progress advances (heartbeat) while a real file
+// download is throttled. The progress locator contract for SYNC-* tasks is:
+//
+//   Locator: page.locator('app-root').locator('sync-progress-bar').getByRole('status')
+//   Active-run format: "Projects S/P | Sessions S/P | Files D/F"
+//   Parser: syncProgressFilesParser extracts the files-downloaded count (D).
+//   Completed summary: "✓ ⬇D ✦P ✚S ↻U" — falls back to the first number (D).
+//
+// The heartbeat helper asserts (a) at least two distinct values, and (b) the
+// observed series is monotonically non-decreasing.
+// =============================================================================
+
+test('UX-005: sync progress heartbeat advances while a file download is throttled', async ({
+  page,
+}) => {
+  const bucket = new FixtureBucket();
+  bucket.addProject('hb-proj', 'Heartbeat Project', '');
+  bucket.addSession('hb-proj', 'e2e-heartbeat', {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+
+  // Throttle the transcript download through the real route handler so the
+  // progress bar stays at "Files 0/1" long enough to be sampled twice.
+  bucket.setDelay(transcriptFileKey('hb-proj', 'e2e-heartbeat'), 5000);
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+
+  const progress = progressBar(page);
+  const result = await assertHeartbeat(progress, {
+    parser: syncProgressFilesParser,
+    timeoutMs: 10000,
+    message: 'UX-005 sync progress',
+  });
+
+  // Explicit completion assertions in addition to the helper's invariants.
+  expect(result.distinct.length).toBeGreaterThanOrEqual(2);
+  expect(result.series).toEqual([...result.series].sort((a, b) => a - b));
+
+  await waitForSyncIdle(page, 60000);
+});
+
+// =============================================================================
+// UX-006: Export content verification
+// =============================================================================
+
+test('UX-006: export after sync includes session rows', async ({ page }) => {
+  const bucket = new FixtureBucket();
+  bucket.addProject('ux-006-proj', 'UX-006 Project', 'Export content verification');
+  bucket.addSession('ux-006-proj', 'e2e-claude-session', {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+  await waitForSyncIdle(page);
+
+  // Go back to the home page and export the control database.
+  await page.goto('/');
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Export Database' }).click(),
+  ]);
+
+  expect(download.suggestedFilename()).toMatch(/session-analyzer-.*\.sqlite$/);
+
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const counts = await verifyExportContents(downloadPath);
+  expect(counts.projects).toBe(1);
+  expect(counts.sessions).toBeGreaterThan(0);
+});
+
+// =============================================================================
+// UX-004: Sync completion triggers the ingestion seam.
+//
+// Regression guard for TSK0005: the SyncManager singleton wires
+// onFileDownloaded/onSyncComplete to real analytics retention + ingestion/rollup
+// (commit b32d019, 2026-08-25). Pre-fix, both defaults were no-ops, so a synced
+// session would be created in the control DB but never contribute analytics.
+// This test exercises the production wiring end-to-end: it would fail on the
+// aggregate metric assertion if either seam reverted to no-op.
+// =============================================================================
+
+test('UX-004: sync completion makes the synced session queryable in the dashboard', async ({
+  page,
+}) => {
+  const bucket = new FixtureBucket();
+  bucket.addProject('ux004-proj', 'UX-004 Project', 'Sync ingestion seam test');
+  bucket.addSession('ux004-proj', 'e2e-claude-session', {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+  await waitForSyncIdle(page);
+
+  // The synced session must appear in the project's session list on the home
+  // page (control DB). This proves the sync manager discovered the session and
+  // the sync worker reached the completed state for this project.
+  await page.goto('/');
+  const projectCard = page.locator('.project-card', { hasText: 'UX-004 Project' });
+  await expect(projectCard).toBeVisible({ timeout: 10000 });
+  await expect(projectCard).toContainText('1 session', { timeout: 10000 });
+
+  // The same session must also contribute to an aggregate metric on the
+  // Project Behavior page (analytics DB). This proves onFileDownloaded retained
+  // the transcript in the analytics blob store and onSyncComplete triggered
+  // ingestion and rollup. If either seam were the pre-TSK0005 no-op, the chart
+  // would render empty and this assertion would fail.
+  await openProjectByName(page, 'UX-004 Project');
+  await expectChartContains(page, 'Token usage trends', 'Total tokens');
 });
