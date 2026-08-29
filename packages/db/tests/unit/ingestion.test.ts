@@ -162,6 +162,91 @@ describe('DefaultIngestionOrchestrator', () => {
     expect(diff.contentAvailable).toBe(true);
   });
 
+  it('ingests a manifest with an unresolved artifact without violating the blob_sha256 foreign key', async () => {
+    // Regression test for TSK0042: a manifest can declare an artifact that was
+    // never actually resolved (its bytes never fetched, present in
+    // manifest.artifacts but absent from resolvedArtifacts). Recording an
+    // artifact_references row for it must never reference the manifest's
+    // unverified sha256 as blob_sha256, since no artifact_blobs row for that
+    // hash was ever stored (FK: blob_sha256 -> artifact_blobs.sha256).
+    const content = readFixture('t2-happy-path.jsonl');
+    const hasher = createSha256ContentHasher();
+    const sha256 = await hasher.hash(content);
+    const relativePath = 'session/transcript.jsonl';
+    const projectId = 'project-fixture';
+    const sessionId = 'sess-unresolved-artifact';
+    const unresolvedSha256 = 'a'.repeat(64);
+
+    const manifest = {
+      schemaVersion: MANIFEST_SCHEMA_VERSION,
+      projectId,
+      sessionId,
+      harness: 'claude-code',
+      harnessVersion: '0.1.0',
+      syncVersion: '0.1.0',
+      pluginVersion: '0.1.0',
+      transcriptsCaptured: true,
+      mainTranscriptRelativePath: relativePath,
+      artifacts: [
+        {
+          relativePath,
+          scope: 'session' as const,
+          mediaType: 'application/jsonl',
+          sha256,
+          size: content.length,
+          status: 'uploaded' as const,
+        },
+        {
+          relativePath: 'session/unresolvable.bin',
+          scope: 'session' as const,
+          mediaType: 'application/octet-stream',
+          sha256: unresolvedSha256,
+          size: 0,
+          status: 'uploaded' as const,
+        },
+      ],
+      syncRuns: [],
+    };
+
+    const executor = await createExecutor();
+    const orchestrator = await setupIngestion(executor);
+
+    const receipt = await orchestrator.ingestManifest({
+      manifest,
+      source: { sourceId: 'default', environmentId: 'dev', projectId, sessionId },
+      // Only the first artifact was actually resolved; the second is absent,
+      // simulating a real unresolvable-artifact scenario.
+      resolvedArtifacts: [
+        { relativePath, mediaType: 'application/jsonl', sha256, size: content.length, content },
+      ],
+      integrityVerified: false,
+    });
+
+    expect(receipt.status).toBe('committed');
+
+    const { rows: manifestArtifactRows } = await executor.exec(
+      'SELECT id, sha256 FROM manifest_artifacts WHERE manifest_session_id = ? ORDER BY relative_path',
+      [sessionId],
+    );
+    expect(manifestArtifactRows).toHaveLength(2);
+
+    const { rows: referenceRows } = await executor.exec(
+      `SELECT artifact_references.blob_sha256 FROM artifact_references
+       JOIN manifest_artifacts a ON a.id = artifact_references.manifest_artifact_id
+       WHERE a.manifest_session_id = ? ORDER BY a.relative_path`,
+      [sessionId],
+    );
+    expect(referenceRows).toHaveLength(2);
+    expect(referenceRows[0]?.blob_sha256).toBe(sha256);
+    expect(referenceRows[1]?.blob_sha256).toBeNull();
+
+    const { rows: blobRows } = await executor.exec(
+      'SELECT sha256 FROM artifact_blobs WHERE sha256 = ?',
+      [unresolvedSha256],
+    );
+    expect(blobRows).toHaveLength(0);
+  });
+
   it('ingests a manual artifact bundle end-to-end', async () => {
     const content = readFixture('t2-happy-path.jsonl');
     const hasher = createSha256ContentHasher();
