@@ -38,6 +38,8 @@
     "@lucasschirm/sal-transformer": "workspace:*"
   },
   "devDependencies": {
+    "@lucasschirm/claude-session-sync": "workspace:*",
+    "@lucasschirm/sal-sync": "workspace:*",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "^4.1.10",
