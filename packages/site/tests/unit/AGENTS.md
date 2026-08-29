@@ -22,6 +22,7 @@ Vitest unit tests for the site package. Covers database/executor adapters, UI co
 - **session-evidence-view.test.ts** — Session Evidence route rendering and data-source integration.
 - **session-sync.worker.test.ts** — Web Worker sync engine.
 - **setup.ts** — Shared test setup.
+- **sync-cas-mock-parity.test.ts** — SYNC-005 parity between the browser `FixtureBucket` and the plugin-side `StorageAdapter` mock.
 - **sync-protocol.test.ts** — Sync worker message protocol.
 - **toast-container.test.ts** — Toast notification stack.
 - **wasm-adapter.conformance.test.ts** — db-core conformance suite execution against `WasmSqliteExecutor`.
