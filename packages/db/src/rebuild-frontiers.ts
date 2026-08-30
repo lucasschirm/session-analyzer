@@ -158,6 +158,19 @@ function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(',');
 }
 
+const LIFECYCLE_TABLES = [
+  'session_component_exposures',
+  'component_availability_events',
+  'component_context_events',
+  'comparison_cohort_members',
+] as const;
+
+const LIFECYCLE_EVENTS_DELETE_SQL = `DELETE FROM component_lifecycle_events
+  WHERE snapshot_id IN (
+    SELECT cs.id FROM configuration_snapshots cs
+    WHERE cs.session_id = ? AND COALESCE(cs.generation_id, '') = ?
+  )`;
+
 export interface RebuildFrontierEngineOptions {
   readonly executor: SqliteExecutor;
   readonly budget?: RebuildFrontierBudget;
@@ -431,12 +444,15 @@ export class RebuildFrontierEngine {
       },
       rebuildLifecycle: async (tx, _spid, from, to) => {
         const { rows: sessionRows } = await tx.exec(
-          'SELECT id FROM sessions WHERE project_id IN (?, ?)',
+          'SELECT id, current_generation_id FROM sessions WHERE project_id IN (?, ?)',
           [from, to],
         );
-        const sessionIds = sessionRows.map((r) => asString(r.id));
-        if (sessionIds.length > 0) {
-          await this.clearLifecycleForSessions(tx, sessionIds);
+        const sessions = sessionRows.map((r) => ({
+          id: asString(r.id),
+          generationId: asString(r.current_generation_id),
+        }));
+        if (sessions.length > 0) {
+          await this.clearLifecycleForSessions(tx, sessions);
         }
       },
       rebuildExposure: async () => undefined,
@@ -769,10 +785,10 @@ export class RebuildFrontierEngine {
     affected: readonly AffectedSession[],
     analysisReleaseId: string,
   ): Promise<void> {
-    const sessionIds = affected.map((s) => s.id);
-    if (sessionIds.length === 0) return;
+    const sessions = affected.map((s) => ({ id: s.id, generationId: s.currentGenerationId }));
+    if (sessions.length === 0) return;
 
-    await this.clearLifecycleForSessions(tx, sessionIds);
+    await this.clearLifecycleForSessions(tx, sessions);
 
     const sessionsById = new Map(affected.map((s) => [s.id, s]));
     for (const session of affected) {
@@ -791,32 +807,28 @@ export class RebuildFrontierEngine {
 
   private async clearLifecycleForSessions(
     tx: SqliteTransaction,
-    sessionIds: readonly string[],
+    sessions: readonly { id: string; generationId: string }[],
   ): Promise<void> {
-    if (sessionIds.length === 0) return;
-    const ph = placeholders(sessionIds.length);
-    await tx.exec(
-      `DELETE FROM session_component_exposures WHERE session_id IN (${ph})`,
-      sessionIds,
-    );
-    await tx.exec(
-      `DELETE FROM component_lifecycle_events WHERE snapshot_id IN (
-        SELECT id FROM configuration_snapshots WHERE session_id IN (${ph})
-      )`,
-      sessionIds,
-    );
-    await tx.exec(
-      `DELETE FROM component_availability_events WHERE session_id IN (${ph})`,
-      sessionIds,
-    );
-    await tx.exec(`DELETE FROM component_context_events WHERE session_id IN (${ph})`, sessionIds);
-    await tx.exec(`DELETE FROM comparison_cohort_members WHERE session_id IN (${ph})`, sessionIds);
-    await tx.exec(
-      `DELETE FROM insight_evidence WHERE generation_id IN (
-        SELECT id FROM transformation_generations WHERE session_id IN (${ph})
-      )`,
-      sessionIds,
-    );
+    if (sessions.length === 0) return;
+    for (const { id, generationId } of sessions) {
+      await this.deleteLifecycleRowsForGeneration(tx, id, generationId);
+    }
+  }
+
+  private async deleteLifecycleRowsForGeneration(
+    tx: SqliteTransaction,
+    sessionId: string,
+    generationId: string,
+  ): Promise<void> {
+    for (const table of LIFECYCLE_TABLES) {
+      await tx.exec(
+        `DELETE FROM ${table} WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+        [sessionId, generationId],
+      );
+    }
+    await tx.exec(LIFECYCLE_EVENTS_DELETE_SQL, [sessionId, generationId]);
+    if (generationId)
+      await tx.exec(`DELETE FROM insight_evidence WHERE generation_id = ?`, [generationId]);
   }
 
   private async rebuildSessionLifecycleExposuresCohorts(
@@ -847,20 +859,25 @@ export class RebuildFrontierEngine {
     if (sessionSnapshots.length === 0) return;
 
     const environmentId = this.coalesceEnv(session.environmentId);
-    const previousVersions = new Map<string, string>();
+    const previousVersions = new Map<string, Map<string, string>>();
+    const generationSnapshotIndices = new Map<string, number>();
 
-    for (let i = 0; i < sessionSnapshots.length; i++) {
-      const snapshot = sessionSnapshots[i];
+    for (const snapshot of sessionSnapshots) {
       if (!snapshot) continue;
+      const generationKey = snapshot.generationId ?? '';
+      const versionMap = previousVersions.get(generationKey) ?? new Map<string, string>();
+      const snapshotIndex = generationSnapshotIndices.get(generationKey) ?? 0;
+      generationSnapshotIndices.set(generationKey, snapshotIndex + 1);
+
       const components = await this.loadSnapshotComponents(tx, snapshot.id);
       const present = new Set<string>();
 
       for (const component of components) {
         present.add(component.componentId);
-        const previousVersion = previousVersions.get(component.componentId);
+        const previousVersion = versionMap.get(component.componentId);
         let eventType: 'baseline' | 'added' | 'updated';
         if (previousVersion === undefined) {
-          eventType = i === 0 ? 'baseline' : 'added';
+          eventType = snapshotIndex === 0 ? 'baseline' : 'added';
         } else if (previousVersion !== component.componentVersionId) {
           eventType = 'updated';
         } else {
@@ -878,7 +895,7 @@ export class RebuildFrontierEngine {
           source: 'rebuild-frontier',
           createdAt: snapshot.captureTime,
         });
-        previousVersions.set(component.componentId, component.componentVersionId);
+        versionMap.set(component.componentId, component.componentVersionId);
 
         await ComponentAvailabilityEventStore.insert(tx, {
           componentId: component.componentId,
@@ -920,7 +937,7 @@ export class RebuildFrontierEngine {
         });
       }
 
-      for (const [componentId, previousVersion] of previousVersions) {
+      for (const [componentId, previousVersion] of versionMap) {
         if (!present.has(componentId)) {
           await ComponentLifecycleEventStore.insert(tx, {
             componentId,
@@ -957,9 +974,11 @@ export class RebuildFrontierEngine {
             createdAt: snapshot.captureTime,
           });
           await this.closeOpenExposure(tx, session.id, componentId, snapshot);
-          previousVersions.delete(componentId);
+          versionMap.delete(componentId);
         }
       }
+
+      previousVersions.set(generationKey, versionMap);
     }
   }
 

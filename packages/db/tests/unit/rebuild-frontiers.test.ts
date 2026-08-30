@@ -1,4 +1,10 @@
-import { FRESH_SCHEMA_SQL } from '@lucasschirm/sal-db-core';
+import {
+  ComponentIdentityStore,
+  ComponentVersionStore,
+  ConfigurationSnapshotStore,
+  FRESH_SCHEMA_SQL,
+  SnapshotComponentStore,
+} from '@lucasschirm/sal-db-core';
 import type { ManifestArtifact, SyncManifest } from '@lucasschirm/sal-sync-core';
 import { sha256Hex } from '@lucasschirm/sal-sync-core';
 import {
@@ -546,5 +552,374 @@ describe('RebuildFrontierEngine', () => {
       [fromProjectId],
     );
     expect(fromRollups.length).toBe(0);
+  });
+
+  it('preserves lifecycle evidence across generation rebuilds', async () => {
+    const tA = Date.UTC(2026, 0, 10, 10, 0, 0);
+    const sessionId = await ingestSession('session-gen-preserve', tA);
+
+    const { rows: sessionRows } = await executor.exec(
+      `SELECT s.project_id, s.environment_id, p.portfolio_id, s.current_generation_id
+       FROM sessions s
+       JOIN projects p ON p.id = s.project_id
+       WHERE s.id = ?`,
+      [sessionId],
+    );
+    const projectId = String(sessionRows[0].project_id);
+    const environmentId = String(sessionRows[0].environment_id);
+    const portfolioId = String(sessionRows[0].portfolio_id);
+    const genA = String(sessionRows[0].current_generation_id);
+
+    const componentId = 'comp-preserve';
+    await ComponentIdentityStore.insert(executor, {
+      id: componentId,
+      portfolioId,
+      kind: 'tool',
+      canonicalSourceIdentity: 'comp://preserve',
+    });
+    await ComponentVersionStore.insert(executor, {
+      id: 'cv-preserve-a',
+      componentId,
+      contentHash: 'hash-a',
+    });
+    await ComponentVersionStore.insert(executor, {
+      id: 'cv-preserve-b',
+      componentId,
+      contentHash: 'hash-b',
+    });
+
+    const snapAId = 'cs-preserve-a';
+    await ConfigurationSnapshotStore.insert(executor, {
+      id: snapAId,
+      sessionId,
+      generationId: genA,
+      ordering: 0,
+      captureTime: tA,
+      ingestionTime: tA,
+      harness: 'test-harness',
+      temporalRole: 'pre_session',
+      environmentId,
+      projectId,
+    });
+    await SnapshotComponentStore.insert(executor, {
+      id: 'sc-preserve-a',
+      snapshotId: snapAId,
+      componentVersionId: 'cv-preserve-a',
+      sourceScope: 'runtime',
+    });
+
+    await executor.exec('UPDATE sessions SET occurrence_time = ? WHERE id = ?', [tA, sessionId]);
+    const frontierA: RebuildFrontier = {
+      environmentId,
+      projectId,
+      workspaceId: null,
+      harness: 'test-harness',
+      scopeChain: null,
+      startTime: tA,
+      endTime: tA + 1,
+      trigger: 'reclassification',
+      triggerSessionId: sessionId,
+      affectedProjectIds: [projectId],
+    };
+    const reportA = await engine.rebuildFrontier(frontierA, ANALYSIS_RELEASE_ID);
+    expect(reportA.sessionsProcessed).toBe(1);
+    expect(reportA.failures).toHaveLength(0);
+
+    const tB = tA + 3600_000;
+    const genB = 'gen-preserve-b';
+    await executor.exec(
+      `INSERT INTO transformation_generations
+         (id, session_id, analysis_release_id, parser_version, transformer_version,
+          ontology_version, metric_version, schema_version, status, source_availability, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        genB,
+        sessionId,
+        ANALYSIS_RELEASE_ID,
+        'parser-0',
+        'transformer-0',
+        'ontology-0',
+        'metric-0',
+        'schema-0',
+        'committed',
+        'local',
+        Date.now(),
+      ],
+    );
+
+    const snapBId = 'cs-preserve-b';
+    await ConfigurationSnapshotStore.insert(executor, {
+      id: snapBId,
+      sessionId,
+      generationId: genB,
+      ordering: 1,
+      captureTime: tB,
+      ingestionTime: tB,
+      harness: 'test-harness',
+      temporalRole: 'pre_session',
+      environmentId,
+      projectId,
+    });
+    await SnapshotComponentStore.insert(executor, {
+      id: 'sc-preserve-b',
+      snapshotId: snapBId,
+      componentVersionId: 'cv-preserve-b',
+      sourceScope: 'runtime',
+    });
+
+    await executor.exec(
+      'UPDATE sessions SET current_generation_id = ?, occurrence_time = ? WHERE id = ?',
+      [genB, tB, sessionId],
+    );
+    const frontierB: RebuildFrontier = {
+      environmentId,
+      projectId,
+      workspaceId: null,
+      harness: 'test-harness',
+      scopeChain: null,
+      startTime: tB,
+      endTime: tB + 1,
+      trigger: 'reclassification',
+      triggerSessionId: sessionId,
+      affectedProjectIds: [projectId],
+    };
+    const reportB = await engine.rebuildFrontier(frontierB, ANALYSIS_RELEASE_ID);
+    expect(reportB.sessionsProcessed).toBe(1);
+    expect(reportB.failures).toHaveLength(0);
+
+    const { rows: aExposures } = await executor.exec(
+      `SELECT * FROM session_component_exposures
+       WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+      [sessionId, genA],
+    );
+    expect(aExposures.length).toBe(1);
+
+    const { rows: aLifecycle } = await executor.exec(
+      'SELECT * FROM component_lifecycle_events WHERE snapshot_id = ?',
+      [snapAId],
+    );
+    expect(aLifecycle.length).toBe(1);
+
+    const { rows: aAvailability } = await executor.exec(
+      `SELECT * FROM component_availability_events
+       WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+      [sessionId, genA],
+    );
+    expect(aAvailability.length).toBeGreaterThan(0);
+
+    const { rows: aContext } = await executor.exec(
+      `SELECT * FROM component_context_events
+       WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+      [sessionId, genA],
+    );
+    expect(aContext.length).toBeGreaterThan(0);
+
+    const { rows: aCohort } = await executor.exec(
+      `SELECT * FROM comparison_cohort_members
+       WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+      [sessionId, genA],
+    );
+    expect(aCohort.length).toBeGreaterThan(0);
+
+    const { rows: aInsight } = await executor.exec(
+      'SELECT * FROM insight_evidence WHERE generation_id = ?',
+      [genA],
+    );
+    expect(aInsight.length).toBeGreaterThan(0);
+
+    const { rows: bExposures } = await executor.exec(
+      `SELECT * FROM session_component_exposures
+       WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+      [sessionId, genB],
+    );
+    expect(bExposures.length).toBe(1);
+  });
+
+  it('compares component versions only within the same generation', async () => {
+    const sessionId = await ingestSession('session-gen-compare', Date.UTC(2026, 0, 11, 10, 0, 0));
+
+    const { rows: sessionRows } = await executor.exec(
+      `SELECT s.project_id, s.environment_id, p.portfolio_id
+       FROM sessions s
+       JOIN projects p ON p.id = s.project_id
+       WHERE s.id = ?`,
+      [sessionId],
+    );
+    const projectId = String(sessionRows[0].project_id);
+    const environmentId = String(sessionRows[0].environment_id);
+    const portfolioId = String(sessionRows[0].portfolio_id);
+
+    const componentId = 'comp-compare';
+    await ComponentIdentityStore.insert(executor, {
+      id: componentId,
+      portfolioId,
+      kind: 'tool',
+      canonicalSourceIdentity: 'comp://compare',
+    });
+    const v1 = 'cv-compare-1';
+    const v2 = 'cv-compare-2';
+    await ComponentVersionStore.insert(executor, { id: v1, componentId, contentHash: '1' });
+    await ComponentVersionStore.insert(executor, { id: v2, componentId, contentHash: '2' });
+
+    const genA = 'gen-compare-a';
+    const genB = 'gen-compare-b';
+    await executor.exec(
+      `INSERT INTO transformation_generations
+         (id, session_id, analysis_release_id, parser_version, transformer_version,
+          ontology_version, metric_version, schema_version, status, source_availability, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        genA,
+        sessionId,
+        ANALYSIS_RELEASE_ID,
+        'parser-0',
+        'transformer-0',
+        'ontology-0',
+        'metric-0',
+        'schema-0',
+        'committed',
+        'local',
+        1,
+        genB,
+        sessionId,
+        ANALYSIS_RELEASE_ID,
+        'parser-0',
+        'transformer-0',
+        'ontology-0',
+        'metric-0',
+        'schema-0',
+        'committed',
+        'local',
+        2,
+      ],
+    );
+
+    const makeSnapshot = async (
+      id: string,
+      generationId: string,
+      ordering: number,
+      captureTime: number,
+      versionId: string,
+    ): Promise<void> => {
+      await ConfigurationSnapshotStore.insert(executor, {
+        id,
+        sessionId,
+        generationId,
+        ordering,
+        captureTime,
+        ingestionTime: captureTime,
+        harness: 'test-harness',
+        temporalRole: 'pre_session',
+        environmentId,
+        projectId,
+      });
+      await SnapshotComponentStore.insert(executor, {
+        id: `sc-${id}`,
+        snapshotId: id,
+        componentVersionId: versionId,
+        sourceScope: 'runtime',
+      });
+    };
+
+    const snapA0 = 'cs-compare-a0';
+    const snapB0 = 'cs-compare-b0';
+    const snapA1 = 'cs-compare-a1';
+    const snapB1 = 'cs-compare-b1';
+    await makeSnapshot(snapA0, genA, 0, 1000, v1);
+    await makeSnapshot(snapB0, genB, 1, 1001, v1);
+    await makeSnapshot(snapA1, genA, 2, 1002, v2);
+    await makeSnapshot(snapB1, genB, 3, 1003, v2);
+
+    const snapshots = [
+      {
+        id: snapA0,
+        sessionId,
+        generationId: genA,
+        ordering: 0,
+        captureTime: 1000,
+        temporalRole: 'pre_session',
+        createdAt: 1000,
+      },
+      {
+        id: snapB0,
+        sessionId,
+        generationId: genB,
+        ordering: 1,
+        captureTime: 1001,
+        temporalRole: 'pre_session',
+        createdAt: 1001,
+      },
+      {
+        id: snapA1,
+        sessionId,
+        generationId: genA,
+        ordering: 2,
+        captureTime: 1002,
+        temporalRole: 'pre_session',
+        createdAt: 1002,
+      },
+      {
+        id: snapB1,
+        sessionId,
+        generationId: genB,
+        ordering: 3,
+        captureTime: 1003,
+        temporalRole: 'pre_session',
+        createdAt: 1003,
+      },
+    ];
+
+    const session = {
+      id: sessionId,
+      environmentId,
+      projectId,
+      portfolioId,
+      currentGenerationId: genB,
+      harness: 'test-harness',
+      occurrenceTime: null,
+      finality: 'final',
+    };
+    await executor.transaction(async (tx) => {
+      await (
+        engine as unknown as {
+          rebuildSessionLifecycleExposuresCohorts: (
+            tx: unknown,
+            session: unknown,
+            snapshots: unknown,
+            sessionsById: unknown,
+          ) => Promise<void>;
+        }
+      ).rebuildSessionLifecycleExposuresCohorts(tx, session, snapshots, new Map());
+    });
+
+    const lifecycleBySnap: Record<
+      string,
+      { event_type: string; before_version_id: string | null; after_version_id: string | null }[]
+    > = {};
+    for (const id of [snapA0, snapB0, snapA1, snapB1]) {
+      const { rows } = await executor.exec(
+        'SELECT event_type, before_version_id, after_version_id FROM component_lifecycle_events WHERE snapshot_id = ?',
+        [id],
+      );
+      lifecycleBySnap[id] = rows as {
+        event_type: string;
+        before_version_id: string | null;
+        after_version_id: string | null;
+      }[];
+    }
+
+    expect(lifecycleBySnap[snapA0][0].event_type).toBe('baseline');
+    expect(lifecycleBySnap[snapA0][0].after_version_id).toBe(v1);
+
+    expect(lifecycleBySnap[snapB0][0].event_type).toBe('baseline');
+    expect(lifecycleBySnap[snapB0][0].after_version_id).toBe(v1);
+
+    expect(lifecycleBySnap[snapA1][0].event_type).toBe('updated');
+    expect(lifecycleBySnap[snapA1][0].before_version_id).toBe(v1);
+    expect(lifecycleBySnap[snapA1][0].after_version_id).toBe(v2);
+
+    expect(lifecycleBySnap[snapB1][0].event_type).toBe('updated');
+    expect(lifecycleBySnap[snapB1][0].before_version_id).toBe(v1);
+    expect(lifecycleBySnap[snapB1][0].after_version_id).toBe(v2);
   });
 });
