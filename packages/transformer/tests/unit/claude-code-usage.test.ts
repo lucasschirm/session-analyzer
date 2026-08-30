@@ -79,29 +79,36 @@ function mainWithSubagent(): ClaudeCodeSession {
 }
 
 function knownModelSession(): ClaudeCodeSession {
+  return knownModelSessionWithId('synth-1');
+}
+
+function knownModelSessionWithId(
+  sessionId: string,
+  model = 'claude-3-5-sonnet-20241022',
+): ClaudeCodeSession {
   const jsonl = [
-    JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId: 'synth-1' }),
+    JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId }),
     JSON.stringify({
       parentUuid: null,
       type: 'user',
-      uuid: 'u-synth-1',
+      uuid: `u-${sessionId}`,
       timestamp: '2026-08-01T10:00:00.000Z',
       timestampMs: 1_722_506_400_000,
-      sessionId: 'synth-1',
+      sessionId,
       lineNumber: 2,
       message: { role: 'user', content: 'Hello' },
     }),
     JSON.stringify({
-      parentUuid: 'u-synth-1',
+      parentUuid: `u-${sessionId}`,
       type: 'assistant',
-      uuid: 'a-synth-1',
+      uuid: `a-${sessionId}`,
       timestamp: '2026-08-01T10:00:01.000Z',
       timestampMs: 1_722_506_401_000,
-      sessionId: 'synth-1',
+      sessionId,
       lineNumber: 3,
-      requestId: 'req-synth-1',
+      requestId: `req-${sessionId}`,
       message: {
-        model: 'claude-3-5-sonnet-20241022',
+        model,
         role: 'assistant',
         content: [{ type: 'text', text: 'Hi' }],
         usage: {
@@ -184,6 +191,26 @@ describe('claude-code-usage normalizers', () => {
       const pricePayload = prices[0].payload as PricingVersionPayload;
       expect(pricePayload.model).toBe('claude-3-5-sonnet-20241022');
       expect(pricePayload.inputTokenPrice).toBeGreaterThan(0);
+    });
+
+    it('scopes pricing_version ids by session and links them to model_usage', () => {
+      const sessionA = knownModelSessionWithId('synth-2a');
+      const sessionB = knownModelSessionWithId('synth-2b');
+
+      const usageA = normalizeModelUsage(sessionA, bundle([]), defaultContext, artifactId);
+      const pricingA = normalizePricingVersions(sessionA, bundle([]), defaultContext, artifactId);
+      const usageB = normalizeModelUsage(sessionB, bundle([]), defaultContext, artifactId);
+      const pricingB = normalizePricingVersions(sessionB, bundle([]), defaultContext, artifactId);
+
+      expect(pricingA.length).toBe(1);
+      expect(pricingB.length).toBe(1);
+      expect(pricingA[0].recordId).not.toBe(pricingB[0].recordId);
+
+      const usagePayloadA = usageA[0].payload as ModelUsagePayload;
+      const usagePayloadB = usageB[0].payload as ModelUsagePayload;
+      expect(usagePayloadA.pricingVersionId).toBe(pricingA[0].recordId);
+      expect(usagePayloadB.pricingVersionId).toBe(pricingB[0].recordId);
+      expect(usagePayloadA.pricingVersionId).not.toBe(usagePayloadB.pricingVersionId);
     });
 
     it('emits inexact capabilities and no pricing for unknown models', () => {
