@@ -1020,14 +1020,14 @@ describe('SessionSyncWorker', () => {
    *
    * The session sync worker is the source of the values the UI heartbeat
    * ultimately observes. `SESSION_SYNC_PROGRESS` messages carry monotonic
-   * counts and bytes, but no per-event timestamp. The sync manager throttles
-   * and aggregates them into `SyncManagerSnapshot`, and `sync-progress-bar`
-   * renders "Projects P/T | Sessions S/T | Files D/F". TSK0010's
-   * `assertHeartbeat` polls that DOM text; it does not consume a structured
-   * event with a timestamp field.
+   * counts and bytes, plus (since TSK0048) a per-event `timestamp`. The sync
+   * manager throttles and aggregates them into `SyncManagerSnapshot`, and
+   * `sync-progress-bar` renders "Projects P/T | Sessions S/T | Files D/F".
+   * TSK0010's `assertHeartbeat` polls that DOM text; it does not consume a
+   * structured event with a timestamp field.
    *
-   * This test asserts the worker-level values are non-decreasing and, if a
-   * `timestamp` field is ever added, that it is strictly increasing.
+   * This test asserts the worker-level values are non-decreasing and that
+   * `timestamp` is strictly increasing.
    */
   it('emits monotonic progress events for a multi-file session (SYNC-004)', async () => {
     const { worker, posted } = createWorker(client);

@@ -112,6 +112,8 @@ export class SessionSyncWorker {
   private readonly listControllers = new Set<AbortController>();
   private readonly fileControllers = new Map<string, AbortController>();
   private readonly fileProgress = new Map<string, number>();
+  // Monotonic within this worker instance only — not globally ordered across
+  // the parallel SessionSyncWorker instances SyncManager spawns per project.
   private lastProgressTimestampMs = 0;
   private readonly sessionStates = new Map<string, SessionState>();
 
