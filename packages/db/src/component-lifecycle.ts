@@ -329,6 +329,19 @@ export class ComponentLifecycleEngine {
     return cohortId;
   }
 
+  private async findOpenExposureRows(
+    tx: SqliteTransaction,
+    sessionId: string,
+    generationId: string | null | undefined,
+  ) {
+    const { rows } = await tx.exec(
+      `SELECT id, component_id FROM session_component_exposures
+       WHERE session_id = ? AND end_time IS NULL AND COALESCE(generation_id, '') = ?`,
+      [sessionId, generationId ?? ''],
+    );
+    return rows;
+  }
+
   async reconcileExposures(
     tx: SqliteTransaction,
     snapshotId: string,
@@ -341,14 +354,7 @@ export class ComponentLifecycleEngine {
     if (versionMap.length === 0) return;
 
     const presentComponentIds = new Set(versionMap.map((v) => v.component_id));
-    const referenceTime = input.captureTime;
-    const endSequence = input.ordering;
-
-    const { rows } = await tx.exec(
-      `SELECT id, component_id FROM session_component_exposures
-       WHERE session_id = ? AND end_time IS NULL AND COALESCE(generation_id, '') = ?`,
-      [sessionId, input.generationId ?? ''],
-    );
+    const rows = await this.findOpenExposureRows(tx, sessionId, input.generationId);
 
     for (const row of rows) {
       const componentId = asOptionalString(row.component_id) ?? '';
@@ -357,8 +363,8 @@ export class ComponentLifecycleEngine {
       if (presentComponentIds.has(componentId)) continue;
 
       await SessionComponentExposureStore.update(tx, sessionId, exposureId, {
-        endTime: referenceTime,
-        endSequence,
+        endTime: input.captureTime,
+        endSequence: input.ordering,
       });
     }
   }
