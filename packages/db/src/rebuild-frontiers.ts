@@ -338,6 +338,7 @@ export class RebuildFrontierEngine {
     const cost = await this.estimateCost(tx, frontier);
     const affected = await this.findAffectedSessions(tx, frontier);
     const snapshots = await this.findAffectedSnapshots(tx, frontier);
+    const currentGenSnapshots = this.snapshotsForCurrentGeneration(snapshots, affected);
 
     const report: MutableRebuildFrontierReport = {
       trigger: frontier.trigger as ReprocessingTrigger,
@@ -381,7 +382,7 @@ export class RebuildFrontierEngine {
       await this.rebuildLifecycleExposuresCohortsAndInsights(
         tx,
         frontier,
-        snapshots,
+        currentGenSnapshots,
         affected,
         analysisReleaseId,
       );
@@ -683,6 +684,17 @@ export class RebuildFrontierEngine {
     }));
   }
 
+  private snapshotsForCurrentGeneration(
+    snapshots: readonly SnapshotInScope[],
+    affected: readonly AffectedSession[],
+  ): readonly SnapshotInScope[] {
+    const currentGenBySession = new Map(affected.map((s) => [s.id, s.currentGenerationId]));
+    return snapshots.filter((s) => {
+      const currentGenerationId = currentGenBySession.get(s.sessionId ?? '');
+      return currentGenerationId !== undefined && currentGenerationId === (s.generationId ?? '');
+    });
+  }
+
   private frontierToScope(frontier: RebuildFrontier): FrontierScope {
     return {
       environmentId: frontier.environmentId,
@@ -842,9 +854,9 @@ export class RebuildFrontierEngine {
       const { rows } = await tx.exec(
         `SELECT id, session_id, generation_id, ordering, capture_time, temporal_role, created_at
          FROM configuration_snapshots
-         WHERE session_id = ?
+         WHERE session_id = ? AND COALESCE(generation_id, '') = ?
          ORDER BY ordering, capture_time, created_at, id`,
-        [session.id],
+        [session.id, session.currentGenerationId],
       );
       sessionSnapshots = rows.map((r) => ({
         id: asString(r.id),

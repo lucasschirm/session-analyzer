@@ -247,6 +247,136 @@ async function makeManifest(
   return { manifest, resolved: [resolved] };
 }
 
+interface SessionInfo {
+  projectId: string;
+  environmentId: string;
+  portfolioId: string;
+  currentGenerationId: string;
+}
+
+async function querySessionInfo(
+  executor: WasmSqliteExecutor,
+  sessionId: string,
+): Promise<SessionInfo> {
+  const { rows } = await executor.exec(
+    `SELECT s.project_id, s.environment_id, p.portfolio_id, s.current_generation_id
+     FROM sessions s
+     JOIN projects p ON p.id = s.project_id
+     WHERE s.id = ?`,
+    [sessionId],
+  );
+  return {
+    projectId: String(rows[0].project_id),
+    environmentId: String(rows[0].environment_id),
+    portfolioId: String(rows[0].portfolio_id),
+    currentGenerationId: String(rows[0].current_generation_id),
+  };
+}
+
+async function insertComponentVersions(
+  executor: WasmSqliteExecutor,
+  portfolioId: string,
+  componentId: string,
+  versionA: string,
+  versionB: string,
+): Promise<void> {
+  await ComponentIdentityStore.insert(executor, {
+    id: componentId,
+    portfolioId,
+    kind: 'tool',
+    canonicalSourceIdentity: `comp://${componentId}`,
+  });
+  await ComponentVersionStore.insert(executor, {
+    id: versionA,
+    componentId,
+    contentHash: 'hash-a',
+  });
+  await ComponentVersionStore.insert(executor, {
+    id: versionB,
+    componentId,
+    contentHash: 'hash-b',
+  });
+}
+
+async function insertCommittedGeneration(
+  executor: WasmSqliteExecutor,
+  id: string,
+  sessionId: string,
+  release: string,
+): Promise<void> {
+  await executor.exec(
+    `INSERT INTO transformation_generations
+       (id, session_id, analysis_release_id, parser_version, transformer_version,
+        ontology_version, metric_version, schema_version, status, source_availability, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      sessionId,
+      release,
+      'parser-0',
+      'transformer-0',
+      'ontology-0',
+      'metric-0',
+      'schema-0',
+      'committed',
+      'local',
+      Date.now(),
+    ],
+  );
+}
+
+async function insertConfigurationSnapshot(
+  executor: WasmSqliteExecutor,
+  id: string,
+  sessionId: string,
+  generationId: string,
+  ordering: number,
+  captureTime: number,
+  environmentId: string,
+  projectId: string,
+  versionId: string,
+): Promise<void> {
+  await ConfigurationSnapshotStore.insert(executor, {
+    id,
+    sessionId,
+    generationId,
+    ordering,
+    captureTime,
+    ingestionTime: captureTime,
+    harness: 'test-harness',
+    temporalRole: 'pre_session',
+    environmentId,
+    projectId,
+  });
+  await SnapshotComponentStore.insert(executor, {
+    id: `sc-${id}`,
+    snapshotId: id,
+    componentVersionId: versionId,
+    sourceScope: 'runtime',
+  });
+}
+
+async function lifecycleRowCounts(
+  executor: WasmSqliteExecutor,
+  generationId: string,
+): Promise<Record<string, number>> {
+  const tables: [string, string, string][] = [
+    ['exposures', 'session_component_exposures', 'generation_id'],
+    ['lifecycle', 'component_lifecycle_events', 'generation_id'],
+    ['availability', 'component_availability_events', 'generation_id'],
+    ['context', 'component_context_events', 'generation_id'],
+    ['insight', 'insight_evidence', 'generation_id'],
+  ];
+  const counts: Record<string, number> = {};
+  for (const [key, table, column] of tables) {
+    const { rows } = await executor.exec(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`, [
+      generationId,
+    ]);
+    counts[key] = Number(rows[0].n);
+  }
+  return counts;
+}
+
 describe('RebuildFrontierEngine', () => {
   let executor: WasmSqliteExecutor;
   let registry: TransformerRegistry;
@@ -733,6 +863,81 @@ describe('RebuildFrontierEngine', () => {
       [sessionId, genB],
     );
     expect(bExposures.length).toBe(1);
+  });
+
+  it('rebuilds the current generation only with a wide computeFrontier window', async () => {
+    const tA = Date.UTC(2026, 0, 13, 10, 0, 0);
+    const tB = tA + 3600_000;
+    const sessionId = await ingestSession('session-wide-frontier', tA);
+    const info = await querySessionInfo(executor, sessionId);
+    const componentId = 'comp-wide';
+    const versionA = 'cv-wide-a';
+    const versionB = 'cv-wide-b';
+    await insertComponentVersions(executor, info.portfolioId, componentId, versionA, versionB);
+
+    const snapA = 'cs-wide-a';
+    await insertConfigurationSnapshot(
+      executor,
+      snapA,
+      sessionId,
+      info.currentGenerationId,
+      0,
+      tA,
+      info.environmentId,
+      info.projectId,
+      versionA,
+    );
+
+    await executor.exec('UPDATE sessions SET occurrence_time = ? WHERE id = ?', [tA, sessionId]);
+    const frontierA = requireFrontier(await engine.computeFrontier(sessionId, 'reclassification'));
+    await engine.rebuildFrontier(frontierA, ANALYSIS_RELEASE_ID);
+    const genA = info.currentGenerationId;
+    const before = await lifecycleRowCounts(executor, genA);
+
+    const genB = 'gen-wide-b';
+    await insertCommittedGeneration(executor, genB, sessionId, ANALYSIS_RELEASE_ID);
+    const snapB = 'cs-wide-b';
+    await insertConfigurationSnapshot(
+      executor,
+      snapB,
+      sessionId,
+      genB,
+      1,
+      tB,
+      info.environmentId,
+      info.projectId,
+      versionB,
+    );
+    await executor.exec('UPDATE sessions SET current_generation_id = ? WHERE id = ?', [
+      genB,
+      sessionId,
+    ]);
+
+    const frontier = requireFrontier(await engine.computeFrontier(sessionId, 'reclassification'));
+    expect(frontier.startTime).toBe(tA);
+    expect(frontier.endTime).toBeGreaterThanOrEqual(tB);
+
+    const report = await engine.rebuildFrontier(frontier, ANALYSIS_RELEASE_ID);
+    expect(report.sessionsProcessed).toBe(1);
+    expect(report.failures).toHaveLength(0);
+
+    const after = await lifecycleRowCounts(executor, genA);
+    expect(after).toEqual(before);
+
+    const { rows: bExposures } = await executor.exec(
+      `SELECT * FROM session_component_exposures
+       WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+      [sessionId, genB],
+    );
+    expect(bExposures.length).toBe(1);
+
+    const { rows: bLifecycle } = await executor.exec(
+      'SELECT event_type, after_version_id FROM component_lifecycle_events WHERE snapshot_id = ?',
+      [snapB],
+    );
+    expect(bLifecycle.length).toBe(1);
+    expect(String(bLifecycle[0].event_type)).toBe('baseline');
+    expect(String(bLifecycle[0].after_version_id)).toBe(versionB);
   });
 
   it('compares component versions only within the same generation', async () => {
