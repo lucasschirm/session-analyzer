@@ -845,7 +845,12 @@ export class ConfigurationSnapshotEngine {
       const componentId = await this.resolveComponentId(tx, canonicalId);
       if (!componentId) continue;
 
-      const open = await this.findOpenExposure(tx, input.sessionId, componentId);
+      const open = await this.findOpenExposure(
+        tx,
+        input.sessionId,
+        componentId,
+        input.generationId ?? '',
+      );
       if (open && input.sessionId) {
         await SessionComponentExposureStore.update(tx, input.sessionId, open, {
           endTime: input.captureTime,
@@ -887,12 +892,14 @@ export class ConfigurationSnapshotEngine {
     tx: SqliteTransaction,
     sessionId: string,
     componentId: string,
+    generationId: string,
   ): Promise<string | undefined> {
     const { rows } = await tx.exec(
       `SELECT id FROM session_component_exposures
        WHERE session_id = ? AND component_id = ? AND end_time IS NULL
+         AND COALESCE(generation_id, '') = ?
        ORDER BY start_time DESC LIMIT 1`,
-      [sessionId, componentId],
+      [sessionId, componentId, generationId],
     );
     if (rows.length === 0) return undefined;
     return String(rows[0].id);

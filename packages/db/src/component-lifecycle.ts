@@ -200,7 +200,12 @@ export class ComponentLifecycleEngine {
     tx: SqliteTransaction,
     input: ExposureIntervalInput,
   ): Promise<string> {
-    const open = await this.findOpenExposure(tx, input.sessionId, input.componentId);
+    const open = await this.findOpenExposure(
+      tx,
+      input.sessionId,
+      input.componentId,
+      input.generationId ?? '',
+    );
     if (open) {
       await SessionComponentExposureStore.update(tx, input.sessionId, open, {
         endTime: input.startTime,
@@ -324,6 +329,19 @@ export class ComponentLifecycleEngine {
     return cohortId;
   }
 
+  private async findOpenExposureRows(
+    tx: SqliteTransaction,
+    sessionId: string,
+    generationId: string | null | undefined,
+  ) {
+    const { rows } = await tx.exec(
+      `SELECT id, component_id FROM session_component_exposures
+       WHERE session_id = ? AND end_time IS NULL AND COALESCE(generation_id, '') = ?`,
+      [sessionId, generationId ?? ''],
+    );
+    return rows;
+  }
+
   async reconcileExposures(
     tx: SqliteTransaction,
     snapshotId: string,
@@ -336,14 +354,7 @@ export class ComponentLifecycleEngine {
     if (versionMap.length === 0) return;
 
     const presentComponentIds = new Set(versionMap.map((v) => v.component_id));
-    const referenceTime = input.captureTime;
-    const endSequence = input.ordering;
-
-    const { rows } = await tx.exec(
-      `SELECT id, component_id FROM session_component_exposures
-       WHERE session_id = ? AND end_time IS NULL`,
-      [sessionId],
-    );
+    const rows = await this.findOpenExposureRows(tx, sessionId, input.generationId);
 
     for (const row of rows) {
       const componentId = asOptionalString(row.component_id) ?? '';
@@ -352,8 +363,8 @@ export class ComponentLifecycleEngine {
       if (presentComponentIds.has(componentId)) continue;
 
       await SessionComponentExposureStore.update(tx, sessionId, exposureId, {
-        endTime: referenceTime,
-        endSequence,
+        endTime: input.captureTime,
+        endSequence: input.ordering,
       });
     }
   }
@@ -441,12 +452,14 @@ export class ComponentLifecycleEngine {
     tx: SqliteTransaction,
     sessionId: string,
     componentId: string,
+    generationId: string,
   ): Promise<string | undefined> {
     const { rows } = await tx.exec(
       `SELECT id FROM session_component_exposures
        WHERE session_id = ? AND component_id = ? AND end_time IS NULL
+         AND COALESCE(generation_id, '') = ?
        ORDER BY start_time DESC LIMIT 1`,
-      [sessionId, componentId],
+      [sessionId, componentId, generationId],
     );
     if (rows.length === 0) return undefined;
     return asOptionalString(rows[0].id) ?? undefined;
