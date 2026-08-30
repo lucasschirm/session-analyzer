@@ -72,6 +72,7 @@ describe('sync-protocol', () => {
       files_downloaded: 0,
       files_failed: 0,
       bytes_received: 0,
+      timestamp: new Date().toISOString(),
     };
     const complete: SyncMessageFromWorker = {
       type: 'SESSION_SYNC_COMPLETE',
