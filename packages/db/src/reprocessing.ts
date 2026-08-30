@@ -214,6 +214,19 @@ function extractNumericValue(value: MetricValue): number | null {
   return null;
 }
 
+const LIFECYCLE_TABLES = [
+  'session_component_exposures',
+  'component_availability_events',
+  'component_context_events',
+  'comparison_cohort_members',
+] as const;
+
+const LIFECYCLE_EVENTS_DELETE_SQL = `DELETE FROM component_lifecycle_events
+  WHERE snapshot_id IN (
+    SELECT cs.id FROM configuration_snapshots cs
+    WHERE cs.session_id = ? AND COALESCE(cs.generation_id, '') = ?
+  )`;
+
 interface AffectedSession {
   readonly id: string;
   readonly currentGenerationId: string;
@@ -1193,37 +1206,27 @@ export class DefaultReprocessingEngine implements ReprocessingEngine {
     _analysisReleaseId: string,
   ): Promise<void> {
     if (affected.length === 0) return;
-    const ids = affected.map((s) => s.id);
-    const placeholders = ids.map(() => '?').join(',');
-    await tx.exec(
-      `DELETE FROM session_component_exposures WHERE session_id IN (${placeholders})`,
-      ids,
-    );
-    await tx.exec(
-      `DELETE FROM component_lifecycle_events WHERE snapshot_id IN (
-      SELECT id FROM configuration_snapshots WHERE session_id IN (${placeholders})
-    )`,
-      ids,
-    );
-    await tx.exec(
-      `DELETE FROM component_availability_events WHERE session_id IN (${placeholders})`,
-      ids,
-    );
-    await tx.exec(
-      `DELETE FROM component_context_events WHERE session_id IN (${placeholders})`,
-      ids,
-    );
-    await tx.exec(
-      `DELETE FROM insight_evidence
-       WHERE generation_id IN (SELECT id FROM transformation_generations WHERE session_id IN (${placeholders}))`,
-      ids,
-    );
-    await tx.exec(
-      `DELETE FROM comparison_cohort_members WHERE session_id IN (${placeholders})`,
-      ids,
-    );
+    for (const { id, currentGenerationId } of affected) {
+      await this.deleteLifecycleRowsForGeneration(tx, id, currentGenerationId);
+    }
     // UNVERIFIED: full lifecycle, exposure, and cohort rederivation from configuration snapshots
     // is deferred to TSK0024; stale rows are removed so the next unchanged state is not poisoned.
+  }
+
+  private async deleteLifecycleRowsForGeneration(
+    tx: SqliteTransaction,
+    sessionId: string,
+    generationId: string,
+  ): Promise<void> {
+    for (const table of LIFECYCLE_TABLES) {
+      await tx.exec(
+        `DELETE FROM ${table} WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+        [sessionId, generationId],
+      );
+    }
+    await tx.exec(LIFECYCLE_EVENTS_DELETE_SQL, [sessionId, generationId]);
+    if (generationId)
+      await tx.exec(`DELETE FROM insight_evidence WHERE generation_id = ?`, [generationId]);
   }
 
   private async rebuildContributions(
