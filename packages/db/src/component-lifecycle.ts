@@ -200,7 +200,12 @@ export class ComponentLifecycleEngine {
     tx: SqliteTransaction,
     input: ExposureIntervalInput,
   ): Promise<string> {
-    const open = await this.findOpenExposure(tx, input.sessionId, input.componentId);
+    const open = await this.findOpenExposure(
+      tx,
+      input.sessionId,
+      input.componentId,
+      input.generationId ?? '',
+    );
     if (open) {
       await SessionComponentExposureStore.update(tx, input.sessionId, open, {
         endTime: input.startTime,
@@ -341,8 +346,8 @@ export class ComponentLifecycleEngine {
 
     const { rows } = await tx.exec(
       `SELECT id, component_id FROM session_component_exposures
-       WHERE session_id = ? AND end_time IS NULL`,
-      [sessionId],
+       WHERE session_id = ? AND end_time IS NULL AND COALESCE(generation_id, '') = ?`,
+      [sessionId, input.generationId ?? ''],
     );
 
     for (const row of rows) {
@@ -441,12 +446,14 @@ export class ComponentLifecycleEngine {
     tx: SqliteTransaction,
     sessionId: string,
     componentId: string,
+    generationId: string,
   ): Promise<string | undefined> {
     const { rows } = await tx.exec(
       `SELECT id FROM session_component_exposures
        WHERE session_id = ? AND component_id = ? AND end_time IS NULL
+         AND COALESCE(generation_id, '') = ?
        ORDER BY start_time DESC LIMIT 1`,
-      [sessionId, componentId],
+      [sessionId, componentId, generationId],
     );
     if (rows.length === 0) return undefined;
     return asOptionalString(rows[0].id) ?? undefined;

@@ -990,8 +990,9 @@ export class RebuildFrontierEngine {
     const { rows } = await tx.exec(
       `SELECT id FROM session_component_exposures
        WHERE session_id = ? AND component_id = ? AND end_time IS NULL
+         AND COALESCE(generation_id, '') = ?
        ORDER BY start_time DESC LIMIT 1`,
-      [sessionId, componentId],
+      [sessionId, componentId, snapshot.generationId ?? ''],
     );
     if (rows.length > 0) {
       await SessionComponentExposureStore.update(tx, sessionId, asString(rows[0].id), {

@@ -500,6 +500,19 @@ CREATE INDEX IF NOT EXISTS idx_session_component_exposures_component
   ON session_component_exposures (component_id);
 `;
 
+export const ALTER_SESSION_COMPONENT_EXPOSURES_UNIQUE_GENERATION = `
+DROP INDEX IF EXISTS idx_session_component_exposures_unique;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_session_component_exposures_unique
+  ON session_component_exposures (
+    session_id,
+    component_id,
+    start_sequence,
+    status,
+    COALESCE(generation_id, '')
+  );
+`;
+
 /**
  * Combined DDL for all component ecosystem tables and indexes. This can be
  * executed after the identity/sessions/control schema to set up the tables for
@@ -518,6 +531,7 @@ ${CREATE_COMPONENT_LIFECYCLE_EVENTS_TABLE}
 ${CREATE_COMPONENT_AVAILABILITY_EVENTS_TABLE}
 ${CREATE_COMPONENT_CONTEXT_EVENTS_TABLE}
 ${CREATE_SESSION_COMPONENT_EXPOSURES_TABLE}
+${ALTER_SESSION_COMPONENT_EXPOSURES_UNIQUE_GENERATION}
 `.trim();
 
 /**
@@ -597,6 +611,12 @@ export const COMPONENT_ECOSYSTEM_MIGRATIONS_FRAGMENT: readonly Migration[] = [
     name: 'create-session-component-exposures',
     sql: CREATE_SESSION_COMPONENT_EXPOSURES_TABLE,
     checksum: checksumOf(CREATE_SESSION_COMPONENT_EXPOSURES_TABLE),
+  },
+  {
+    id: 80,
+    name: 'alter-session-component-exposures-unique-generation',
+    sql: ALTER_SESSION_COMPONENT_EXPOSURES_UNIQUE_GENERATION,
+    checksum: checksumOf(ALTER_SESSION_COMPONENT_EXPOSURES_UNIQUE_GENERATION),
   },
 ];
 
@@ -2356,6 +2376,7 @@ export class SessionComponentExposureStore {
         input.componentId,
         input.status,
         String(input.startSequence),
+        String(input.generationId ?? ''),
       )}`;
     await queryable.exec(
       `INSERT INTO session_component_exposures (
