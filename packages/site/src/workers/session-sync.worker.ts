@@ -112,6 +112,7 @@ export class SessionSyncWorker {
   private readonly listControllers = new Set<AbortController>();
   private readonly fileControllers = new Map<string, AbortController>();
   private readonly fileProgress = new Map<string, number>();
+  private lastProgressTimestampMs = 0;
   private readonly sessionStates = new Map<string, SessionState>();
 
   constructor(post: PostFn, client?: S3Client) {
@@ -685,6 +686,8 @@ export class SessionSyncWorker {
   }
 
   private emitProgress(sessionId: string, state: SessionState): void {
+    const ms = Math.max(Date.now(), this.lastProgressTimestampMs + 1);
+    this.lastProgressTimestampMs = ms;
     this.emit<SessionSyncProgressMessage['type']>('SESSION_SYNC_PROGRESS', {
       connectionId: this.connectionId,
       projectId: this.projectId,
@@ -693,6 +696,7 @@ export class SessionSyncWorker {
       files_downloaded: state.downloadedCount,
       files_failed: state.failedCount,
       bytes_received: state.bytesReceived,
+      timestamp: new Date(ms).toISOString(),
     });
   }
 

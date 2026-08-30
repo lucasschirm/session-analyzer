@@ -1053,11 +1053,9 @@ describe('SessionSyncWorker', () => {
     expect(series.length).toBeGreaterThanOrEqual(2);
     assertMonotonicProgress(series);
 
-    // Pin the currently-documented contract gap (TSK0048): no per-event
-    // timestamp exists today. This fails loudly if a timestamp field is
-    // added without also engaging assertMonotonicProgress's strict-increase
-    // branch above, instead of that branch silently staying dead code.
+    // TSK0048 closed this gap: SESSION_SYNC_PROGRESS now carries a per-event
+    // timestamp, verified strictly increasing by assertMonotonicProgress above.
     const hasTimestamps = series.some((s) => s.timestamp !== undefined);
-    expect(hasTimestamps).toBe(false);
+    expect(hasTimestamps).toBe(true);
   });
 });

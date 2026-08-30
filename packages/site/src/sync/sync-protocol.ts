@@ -150,6 +150,7 @@ export interface SessionSyncProgressMessage {
   files_downloaded: number;
   files_failed: number;
   bytes_received: number;
+  timestamp: string;
 }
 
 /**
