@@ -701,6 +701,7 @@ export function normalizeModelUsage(
           cacheCreationTokens * registered.cacheCreationTokenPrice +
           cacheReadTokens * registered.cacheReadTokenPrice;
         pricingVersionId = stableId('pricing_version', {
+          session: identity.resolvedRootSessionId,
           provider: registered.provider,
           model,
           version: registered.effectiveDate,
@@ -842,6 +843,7 @@ export function normalizePricingVersions(
     const registered = resolveModel(model);
     if (!registered) continue;
     const recordId = stableId('pricing_version', {
+      session: rootIdentity.sessionId,
       provider: registered.provider,
       model,
       version: registered.effectiveDate,
