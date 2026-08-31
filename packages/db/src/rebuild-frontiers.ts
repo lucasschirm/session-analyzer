@@ -21,6 +21,7 @@ import {
   rebuildProjectDistributions,
   recordInsightEvidence,
 } from './distributions.js';
+import { deleteLifecycleRowsForGeneration } from './lifecycle-cleanup.js';
 import type { RebuildFrontier, ReprocessingFailure } from './reprocessing.js';
 import {
   applySessionRollupContributions,
@@ -157,19 +158,6 @@ function toOptionalNumber(value: SqliteValue): number | null {
 function placeholders(n: number): string {
   return Array.from({ length: n }, () => '?').join(',');
 }
-
-const LIFECYCLE_TABLES = [
-  'session_component_exposures',
-  'component_availability_events',
-  'component_context_events',
-  'comparison_cohort_members',
-] as const;
-
-const LIFECYCLE_EVENTS_DELETE_SQL = `DELETE FROM component_lifecycle_events
-  WHERE snapshot_id IN (
-    SELECT cs.id FROM configuration_snapshots cs
-    WHERE cs.session_id = ? AND COALESCE(cs.generation_id, '') = ?
-  )`;
 
 export interface RebuildFrontierEngineOptions {
   readonly executor: SqliteExecutor;
@@ -823,24 +811,8 @@ export class RebuildFrontierEngine {
   ): Promise<void> {
     if (sessions.length === 0) return;
     for (const { id, generationId } of sessions) {
-      await this.deleteLifecycleRowsForGeneration(tx, id, generationId);
+      await deleteLifecycleRowsForGeneration(tx, id, generationId);
     }
-  }
-
-  private async deleteLifecycleRowsForGeneration(
-    tx: SqliteTransaction,
-    sessionId: string,
-    generationId: string,
-  ): Promise<void> {
-    for (const table of LIFECYCLE_TABLES) {
-      await tx.exec(
-        `DELETE FROM ${table} WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
-        [sessionId, generationId],
-      );
-    }
-    await tx.exec(LIFECYCLE_EVENTS_DELETE_SQL, [sessionId, generationId]);
-    if (generationId)
-      await tx.exec(`DELETE FROM insight_evidence WHERE generation_id = ?`, [generationId]);
   }
 
   private async rebuildSessionLifecycleExposuresCohorts(
