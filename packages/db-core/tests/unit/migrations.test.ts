@@ -134,4 +134,10 @@ describe('MigrationRunner', () => {
     const missing = await runner.getAppliedMigration(999);
     expect(missing).toBeUndefined();
   });
+
+  it('exports MIGRATIONS in strict ascending id order', () => {
+    for (let i = 1; i < MIGRATIONS.length; i++) {
+      expect(MIGRATIONS[i].id).toBeGreaterThan(MIGRATIONS[i - 1].id);
+    }
+  });
 });
