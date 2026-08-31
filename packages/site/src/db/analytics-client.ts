@@ -21,6 +21,7 @@ import type {
 } from '@lucasschirm/sal-db';
 import type {
   AnalyticsBackendReport,
+  AnalyticsDataChangedBroadcast,
   AnalyticsRequest,
   AnalyticsRequestPayload,
   AnalyticsResponse,
@@ -41,6 +42,18 @@ function postRequest(worker: Worker, request: AnalyticsRequest): void {
   worker.postMessage(request);
 }
 
+/**
+ * 30s matches the default sync operation timeout budget and is long enough for
+ * heavy analytics queries while still surfacing a hung worker promptly.
+ */
+export const ANALYTICS_QUERY_TIMEOUT_MS = 30_000;
+
+interface PendingHandler {
+  resolve: (value: AnalyticsResponse) => void;
+  reject: (reason: Error) => void;
+  timer?: number;
+}
+
 export interface ManualImportClient {
   /** Detect which harness (if any) matches the supplied artifacts. */
   detect(artifacts: ManualArtifactPayload[]): Promise<ManualIngestionDetection>;
@@ -53,7 +66,7 @@ export interface ManualImportClient {
   ): Promise<IngestionReceipt>;
 }
 
-export class AnalyticsClient implements AnalyticsDataSource {
+export class AnalyticsClient extends EventTarget implements AnalyticsDataSource {
   readonly portfolio: PortfolioView;
   readonly project: ProjectBehaviorView;
   readonly session: SessionEvidenceView;
@@ -65,10 +78,7 @@ export class AnalyticsClient implements AnalyticsDataSource {
 
   private worker: Worker | null = null;
   private readonly createWorker: CreateWorkerFactory;
-  private readonly pending = new Map<
-    number,
-    { resolve: (value: AnalyticsResponse) => void; reject: (reason: Error) => void }
-  >();
+  private readonly pending = new Map<number, PendingHandler>();
   private nextId = 1;
   private initPromise: Promise<AnalyticsBackendReport> | null = null;
   private fallbackReason?: 'locked' | 'unsupported';
@@ -76,6 +86,7 @@ export class AnalyticsClient implements AnalyticsDataSource {
   fallbackReasonForInit?: 'locked' | 'unsupported';
 
   constructor(createWorker: CreateWorkerFactory = defaultWorkerFactory) {
+    super();
     this.createWorker = createWorker;
 
     this.portfolio = this.createViewClient<PortfolioView>('portfolio');
@@ -91,7 +102,9 @@ export class AnalyticsClient implements AnalyticsDataSource {
   private ensureWorker(): Worker {
     if (!this.worker) {
       const worker = this.createWorker();
-      worker.onmessage = (event: MessageEvent<AnalyticsResponse>) => {
+      worker.onmessage = (
+        event: MessageEvent<AnalyticsResponse | AnalyticsDataChangedBroadcast>,
+      ) => {
         this.handleResponse(event.data);
       };
       worker.onerror = (event) => {
@@ -137,39 +150,53 @@ export class AnalyticsClient implements AnalyticsDataSource {
 
   private rejectAll(message: string): void {
     const error = new Error(message);
-    for (const { reject } of this.pending.values()) {
-      reject(error);
+    for (const handler of this.pending.values()) {
+      window.clearTimeout(handler.timer);
+      handler.reject(error);
     }
     this.pending.clear();
   }
 
-  private handleResponse(response: AnalyticsResponse): void {
-    const handler = this.pending.get(response.id);
+  private handleResponse(response: AnalyticsResponse | AnalyticsDataChangedBroadcast): void {
+    if ('type' in response && response.type === 'dataChanged') {
+      this.dispatchEvent(new CustomEvent('data-change'));
+      return;
+    }
+    const typed = response as AnalyticsResponse;
+    const handler = this.pending.get(typed.id);
     if (!handler) return;
-    this.pending.delete(response.id);
-    if (response.ok) {
-      handler.resolve(response);
+    this.pending.delete(typed.id);
+    window.clearTimeout(handler.timer);
+    if (typed.ok) {
+      handler.resolve(typed);
     } else {
-      handler.reject(new Error(response.error));
+      handler.reject(new Error(typed.error));
     }
   }
 
-  private send(request: AnalyticsRequestPayload): Promise<AnalyticsResponse> {
+  private send(request: AnalyticsRequestPayload, timeoutMs?: number): Promise<AnalyticsResponse> {
     const worker = this.ensureWorker();
     const id = this.nextId++;
     const withId = { ...request, id } as AnalyticsRequest;
     const promise = new Promise<AnalyticsResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const handler: PendingHandler = { resolve, reject };
+      this.pending.set(id, handler);
+      if (timeoutMs) {
+        handler.timer = window.setTimeout(() => {
+          this.pending.delete(id);
+          reject(new Error(`analytics query timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }
     });
     postRequest(worker, withId);
     return promise;
   }
 
-  private call(request: AnalyticsRequestPayload): Promise<AnalyticsResponse> {
+  private call(request: AnalyticsRequestPayload, timeoutMs?: number): Promise<AnalyticsResponse> {
     if (!this.initPromise) {
       this.ensureReady();
     }
-    return this.send(request);
+    return this.send(request, timeoutMs);
   }
 
   private async postAndReturn<T>(request: AnalyticsRequestPayload): Promise<T> {
@@ -181,12 +208,15 @@ export class AnalyticsClient implements AnalyticsDataSource {
   }
 
   private async query(view: string, method: string, args: unknown[]): Promise<unknown> {
-    const response = await this.call({
-      type: 'query',
-      view: view as keyof AnalyticsDataSource,
-      method,
-      args: args as unknown[],
-    });
+    const response = await this.call(
+      {
+        type: 'query',
+        view: view as keyof AnalyticsDataSource,
+        method,
+        args: args as unknown[],
+      },
+      ANALYTICS_QUERY_TIMEOUT_MS,
+    );
     if (!response.ok) {
       throw new Error(response.error);
     }

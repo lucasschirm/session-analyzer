@@ -11,6 +11,7 @@ Vitest unit tests for the site package. Covers database/executor adapters, UI co
 - **connect-modal.test.ts** — S3 connection modal interaction tests.
 - **credential-crypto.test.ts** — Passkey/vault encryption helpers.
 - **format.test.ts** — Compact number and token formatting helpers.
+- **helpers/** — Unit tests for shared E2E helpers. See `helpers/AGENTS.md`.
 - **manual-import.test.ts** — Manual import flow and analytics ingestion.
 - **markdown.test.ts** — `marked` + DOMPurify rendering helpers.
 - **passkey-modal.test.ts** — Passkey create/unlock modal.
@@ -21,6 +22,7 @@ Vitest unit tests for the site package. Covers database/executor adapters, UI co
 - **session-evidence-view.test.ts** — Session Evidence route rendering and data-source integration.
 - **session-sync.worker.test.ts** — Web Worker sync engine.
 - **setup.ts** — Shared test setup.
+- **sync-cas-mock-parity.test.ts** — SYNC-005 parity between the browser `FixtureBucket` and the plugin-side `StorageAdapter` mock.
 - **sync-protocol.test.ts** — Sync worker message protocol.
 - **toast-container.test.ts** — Toast notification stack.
 - **wasm-adapter.conformance.test.ts** — db-core conformance suite execution against `WasmSqliteExecutor`.

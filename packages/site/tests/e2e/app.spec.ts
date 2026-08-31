@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
+import { expectRenderedGeometry } from './helpers/chart-content';
+import { verifyExportContents } from './helpers/export-verify';
 
 /**
  * E2E tests covering the complete user journey through the analytics-based
@@ -102,6 +104,22 @@ async function importAndOpenSession(
   const url = page.url();
   const match = url.match(/#\/sessions\/(.+)$/);
   return match ? decodeURIComponent(match[1]) : '';
+}
+
+/**
+ * Drop a single fixture file onto the upload zone.
+ */
+async function dropFile(page: Page, fileName: string): Promise<void> {
+  const content = fs.readFileSync(fixture(fileName), 'utf8');
+  const dataTransfer = await page.evaluateHandle(
+    ({ fileContent, name }: { fileContent: string; name: string }) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([fileContent], name, { type: 'application/json' }));
+      return dt;
+    },
+    { fileContent: content, name: fileName },
+  );
+  await page.locator('upload-zone div.upload-zone').dispatchEvent('drop', { dataTransfer });
 }
 
 /**
@@ -217,6 +235,32 @@ test.describe('Drag & drop upload', () => {
     // The file should appear in the file list.
     await expect(page.getByText('dropped-session.jsonl')).toBeVisible({ timeout: 10000 });
   });
+
+  test('UX-012: rapid repeated drag-drop preserves every file', async ({ page }) => {
+    await page.goto('/#/manual-import');
+    await expect(page.getByRole('heading', { name: 'Manual Import' })).toBeVisible();
+
+    const fileNames = [
+      'claude-session.jsonl',
+      'claude-rich-session.jsonl',
+      'claude-session-with-subagent.jsonl',
+    ];
+
+    // Fire three drops in rapid succession with no artificial wait between them.
+    for (const fileName of fileNames) {
+      await dropFile(page, fileName);
+    }
+
+    // Wait for the upload handler to settle on a harness detection.
+    await expect(page.getByRole('heading', { name: 'Harness' })).toBeVisible({ timeout: 30000 });
+
+    // Every dropped file must appear in the manual import file list.
+    const fileList = page.locator('.file-list li');
+    await expect(fileList).toHaveCount(3, { timeout: 30000 });
+    for (const fileName of fileNames) {
+      await expect(page.locator('.file-list li', { hasText: fileName })).toHaveCount(1);
+    }
+  });
 });
 
 test.describe('Subagent folder ingestion', () => {
@@ -284,27 +328,66 @@ test.describe('Database export', () => {
 
     expect(download.suggestedFilename()).toMatch(/session-analyzer-.*\.sqlite$/);
 
-    const stream = await download.createReadStream();
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) {
-      chunks.push(Buffer.from(chunk));
-      if (Buffer.concat(chunks).length > 16) break;
-    }
-    const header = Buffer.concat(chunks).subarray(0, 15).toString('utf8');
-    expect(header).toBe('SQLite format 3');
+    const downloadPath = await download.path();
+    expect(downloadPath).toBeTruthy();
+
+    const fd = fs.openSync(downloadPath, 'r');
+    const header = Buffer.alloc(16);
+    fs.readSync(fd, header, 0, 16, 0);
+    fs.closeSync(fd);
+    expect(header.subarray(0, 15).toString('utf8')).toBe('SQLite format 3');
+
+    const counts = await verifyExportContents(downloadPath);
+    expect(counts.projects).toBe(1);
+    expect(counts.sessions).toBe(0);
+  });
+});
+
+test.describe('Manual import unknown harness rejection', () => {
+  test('UX-013: unrecognized file produces a distinct unsupported-harness message', async ({
+    page,
+  }) => {
+    await page.goto('/#/manual-import');
+    await expect(page.getByRole('heading', { name: 'Manual Import' })).toBeVisible();
+
+    // Upload a fixture whose JSON shape matches no supported harness schema.
+    // This is intentionally an unknown shape, not a corrupt-but-recognizable one.
+    await page.locator('input[type="file"]').setInputFiles([fixture('unknown-harness.jsonl')]);
+
+    // Wait for detection to complete and the harness selector section to render.
+    await expect(page.getByRole('heading', { name: 'Harness' })).toBeVisible({ timeout: 15000 });
+
+    // The harness selector surfaces the unmatched detection state.
+    await expect(page.getByText('No harness detected')).toBeVisible();
+
+    // The state panel must expose the "Unsupported" failure class, not a generic error.
+    await expect(page.getByText('Unsupported')).toBeVisible();
+    await expect(
+      page.getByText('No supported harness detected for the uploaded files.'),
+    ).toBeVisible();
+
+    // Ensure the failure class is not conflated with the other failure classes
+    // covered by UX-007/TSK0012 (integrity, unavailable, generic import failure).
+    await expect(page.getByText('Import failed')).not.toBeVisible();
+    await expect(page.getByText('Integrity Error')).not.toBeVisible();
+    await expect(page.getByText('Unavailable')).not.toBeVisible();
   });
 });
 
 test.describe('Project deletion', () => {
   test('deleting a project removes it from the home page', async ({ page }) => {
-    page.on('dialog', (dialog) => dialog.accept());
-
     await createProject(page, 'Doomed Project');
 
     await page
       .locator('.project-card', { hasText: 'Doomed Project' })
       .getByRole('button', { name: 'Delete Project' })
       .click();
+
+    const dialog = page.getByRole('dialog', { name: 'Delete project?' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Doomed Project');
+
+    await dialog.getByRole('button', { name: 'Delete Project' }).click();
 
     await expect(page.locator('.project-card')).toHaveCount(0);
     await expect(page.getByText('No projects yet')).toBeVisible();
@@ -322,5 +405,33 @@ test.describe('Routing', () => {
     // The Session Evidence view should render (either with an error message
     // or an empty state), not crash or show the fallback page.
     await expect(page.getByText(/Session Evidence/)).toBeVisible({ timeout: 10000 });
+  });
+});
+
+test.describe('Analytics chart geometry (UX-001)', () => {
+  test('UX-001: analytics chart renders visible geometry after fixture upload', async ({
+    page,
+  }) => {
+    // Reuse the existing manual-import flow; project name is also the native
+    // project id that the Project Behavior view resolves.
+    const projectName = 'UX-001 Chart Geometry';
+    await importSession(page, projectName, ['claude-session.jsonl']);
+
+    // Navigate to the Project Behavior page and wait for the filter controls.
+    await page.goto(`/#/projects/${projectName}/behavior`);
+    await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 15000 });
+
+    // Pick the distribution chart by its title. The test must prove real SVG
+    // marks are rendered, not just a title, legend, or empty-state badge.
+    // getByRole pierces the open shadow DOM and matches the chart's title.
+    const chart = page
+      .locator('analytics-chart')
+      .filter({ has: page.getByRole('heading', { name: 'Cost / time / outcome distributions' }) });
+    await expect(chart).toBeVisible({ timeout: 15000 });
+
+    // This assertion queries the chart's shadow DOM and checks for non-zero
+    // SVG/canvas geometry. It would fail if the chart silently rendered only
+    // its legend or empty-state markup.
+    await expectRenderedGeometry(chart, { timeout: 15000 });
   });
 });

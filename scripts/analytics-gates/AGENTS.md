@@ -22,7 +22,8 @@ CI maintenance gate scripts for the analytics data platform. Each gate is a stan
 - `gate-12-index-usage.mjs` — Confirms required dashboard/evidence queries use expected indexes (`EXPLAIN QUERY PLAN`).
 - `gate-13-dto-purity.mjs` — Confirms `packages/db/src/dto.ts` does not import runtime or SQLite types.
 - `gate-14-documentation-index.mjs` — Confirms ADRs, packages, skills, rules, and the new scripts are referenced from index docs.
-- `run-all-gates.mjs` — Runs all 14 gates (plus the verify-script preflight) and reports a combined result.
+- `gate-15-schema-drift-guard.mjs` — Confirms an archived fixture ingests on the current schema and fails explicitly when a bumped migration renames a column the fixture still expects.
+- `run-all-gates.mjs` — Runs all 15 gates (plus the verify-script preflight) and reports a combined result.
 
 ## Key relationships
 

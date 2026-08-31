@@ -36,8 +36,9 @@ describe('MigrationRunner', () => {
     );
     expect(rows).toHaveLength(MIGRATIONS.length);
 
-    for (let i = 0; i < MIGRATIONS.length; i++) {
-      const migration = MIGRATIONS[i];
+    const sortedMigrations = [...MIGRATIONS].sort((a, b) => a.id - b.id);
+    for (let i = 0; i < sortedMigrations.length; i++) {
+      const migration = sortedMigrations[i];
       expect(Number(rows[i].id)).toBe(migration.id);
       expect(rows[i].name).toBe(migration.name);
       expect(rows[i].checksum).toBe(migration.checksum);
@@ -47,7 +48,7 @@ describe('MigrationRunner', () => {
       'SELECT schema_version FROM schema_metadata WHERE schema_name = ?',
       ['sal-analytics'],
     );
-    expect(Number(meta[0].schema_version)).toBe(MIGRATIONS[MIGRATIONS.length - 1].id);
+    expect(Number(meta[0].schema_version)).toBe(sortedMigrations[sortedMigrations.length - 1].id);
   });
 
   it('is idempotent on re-run after all migrations are applied', async () => {
@@ -132,5 +133,11 @@ describe('MigrationRunner', () => {
 
     const missing = await runner.getAppliedMigration(999);
     expect(missing).toBeUndefined();
+  });
+
+  it('exports MIGRATIONS in strict ascending id order', () => {
+    for (let i = 1; i < MIGRATIONS.length; i++) {
+      expect(MIGRATIONS[i].id).toBeGreaterThan(MIGRATIONS[i - 1].id);
+    }
   });
 });

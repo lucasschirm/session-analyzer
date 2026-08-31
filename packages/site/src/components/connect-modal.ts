@@ -3,6 +3,7 @@ import { css, html, LitElement, type PropertyValues, type TemplateResult } from 
 import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
+import './delete-confirmation-modal';
 import { dbClient } from '../db/db-client';
 import { generateId } from '../lib/id';
 import { hintForS3Error } from '../lib/s3-errors';
@@ -450,6 +451,12 @@ export class ConnectModal extends LitElement {
 
   @state() private formError = '';
 
+  @state() private deleteDialogOpen = false;
+
+  @state() private deleteItem: ListItem | undefined;
+
+  private deleteTrigger?: HTMLElement;
+
   private inMemoryConnections = new Map<string, InMemoryEntry>();
 
   connectedCallback(): void {
@@ -543,6 +550,9 @@ export class ConnectModal extends LitElement {
     this.loadError = '';
     this.passkeyOpen = false;
     this.pendingAction = '';
+    this.deleteDialogOpen = false;
+    this.deleteItem = undefined;
+    this.deleteTrigger = undefined;
   }
 
   private handleOverlayClick(event: MouseEvent): void {
@@ -550,6 +560,7 @@ export class ConnectModal extends LitElement {
   }
 
   private handleKeydown(event: KeyboardEvent): void {
+    if (this.deleteDialogOpen) return;
     if (event.key === 'Escape') this.close();
   }
 
@@ -945,21 +956,40 @@ export class ConnectModal extends LitElement {
     this.close();
   }
 
-  private async handleDelete(id: string): Promise<void> {
+  private handleDelete(event: Event, id: string): void {
     const item = this.items.find((i) => i.id === id);
     if (!item) return;
-    if (!globalThis.confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+    this.deleteTrigger = event.currentTarget as HTMLElement;
+    this.deleteItem = item;
+    this.deleteDialogOpen = true;
+  }
+
+  private handleDeleteCancel(): void {
+    this.deleteDialogOpen = false;
+    this.deleteItem = undefined;
+    this.deleteTrigger = undefined;
+  }
+
+  private async handleDeleteConfirm(): Promise<void> {
+    this.deleteDialogOpen = false;
+
+    const item = this.deleteItem;
+    this.deleteItem = undefined;
+    this.deleteTrigger = undefined;
+    if (!item) return;
+
     if (item.inMemory) {
-      this.inMemoryConnections.delete(id);
+      this.inMemoryConnections.delete(item.id);
     } else {
       try {
-        await dbClient.deleteConnection(id);
+        await dbClient.deleteConnection(item.id);
       } catch (error) {
         this.loadError = `Could not delete connection: ${(error as Error).message}`;
         return;
       }
     }
-    this.loadConnections().catch(() => undefined);
+
+    await this.loadConnections().catch(() => undefined);
   }
 
   private handleRowSync(id: string): void {
@@ -1025,6 +1055,16 @@ export class ConnectModal extends LitElement {
           @passkey-forgotten=${this.handlePasskeyForgotten}
           @modal-close=${this.handlePasskeyClose}
         ></passkey-modal>
+
+        <delete-confirmation-modal
+          .open=${this.deleteDialogOpen}
+          .message=${this.deleteItem ? `Delete "${this.deleteItem.name}"? This cannot be undone.` : ''}
+          .confirmLabel=${'Delete Connection'}
+          .titleText=${'Delete connection?'}
+          .trigger=${this.deleteTrigger}
+          @delete-confirmed=${this.handleDeleteConfirm}
+          @modal-close=${this.handleDeleteCancel}
+        ></delete-confirmation-modal>
       </div>
     `;
   }
@@ -1087,7 +1127,13 @@ export class ConnectModal extends LitElement {
           <button type="button" class="secondary" @click=${() => this.handleEditConnection(item.id)}>
             Edit
           </button>
-          <button type="button" class="danger" @click=${() => this.handleDelete(item.id)}>Delete</button>
+          <button
+            type="button"
+            class="danger"
+            @click=${(event: Event) => this.handleDelete(event, item.id)}
+          >
+            Delete
+          </button>
         </div>
       </div>
     `;

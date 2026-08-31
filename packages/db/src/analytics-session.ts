@@ -894,6 +894,24 @@ async function getEvidencePages(
   };
 }
 
+function isTextContentBlock(block: unknown): block is { type: 'text'; text: string } {
+  return (
+    typeof block === 'object' &&
+    block !== null &&
+    (block as { type?: unknown }).type === 'text' &&
+    typeof (block as { text?: unknown }).text === 'string'
+  );
+}
+
+function extractMessageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(isTextContentBlock)
+    .map((block) => block.text)
+    .join('\n\n');
+}
+
 async function getTranscriptPages(
   queryable: Queryable,
   sessionId: string,
@@ -927,24 +945,70 @@ async function getTranscriptPages(
   const page = limit + 1;
 
   const { rows } = await queryable.exec(
-    `SELECT id, ordering AS turn_number, COALESCE(timestamp, created_at) AS ts,
-            'Message ' || ordering || ' (' || COALESCE(role, 'unknown') || ')' AS summary
+    `SELECT id, ordering AS turn_number, COALESCE(timestamp, created_at) AS ts, retained_content,
+            'Message ' || ordering || ' (' || COALESCE(role, 'unknown') || ')' ||
+            COALESCE('\n\n' || retained_content, '') AS summary
      FROM messages
      WHERE session_id = ? AND ( ? IS NULL OR generation_id = ? )
      ORDER BY timestamp, created_at, id LIMIT ? OFFSET ?`,
     [sessionId, generationId, generationId, page, offset],
   );
 
-  const hasMore = rows.length > limit;
-  const pageRows = rows.slice(0, limit);
-  const items: EvidenceRow[] = pageRows.map((row: SqliteRow) => ({
-    evidenceId: asString(row.id),
-    entityType: 'message',
-    turnNumber: asNumber(row.turn_number) || undefined,
-    timestamp: formatTimestamp(row.ts),
-    summary: asString(row.summary),
-    evidenceLinks: [evidenceLink('message', asString(row.id), asString(row.summary))],
-  }));
+  if (rows.length > 0) {
+    const hasMore = rows.length > limit;
+    const pageRows = rows.slice(0, limit);
+    const items: EvidenceRow[] = pageRows.map((row: SqliteRow) => ({
+      evidenceId: asString(row.id),
+      entityType: 'message',
+      turnNumber: asNumber(row.turn_number) || undefined,
+      timestamp: formatTimestamp(row.ts),
+      summary: asString(row.summary),
+      evidenceLinks: [evidenceLink('message', asString(row.id), asString(row.summary))],
+    }));
+
+    return {
+      items,
+      nextCursor: hasMore ? String(offset + limit) : undefined,
+      previousCursor: offset > 0 ? String(Math.max(0, offset - limit)) : undefined,
+      generationToken: tokens.generationId,
+      analysisReleaseToken: tokens.analysisReleaseId,
+    };
+  }
+
+  // Fallback: the ingestion pipeline currently persists message evidence as
+  // raw normalized events. Surface those when the dedicated messages table has
+  // not been populated yet, so the transcript view is not empty.
+  const { rows: fallbackRows } = await queryable.exec(
+    `SELECT id, raw_details
+     FROM normalized_events
+     WHERE session_id = ? AND event_type = 'message' AND retain_raw = 1
+       AND ( ? IS NULL OR generation_id = ? )
+     ORDER BY COALESCE(json_extract(raw_details, '$.payload.timestamp'), ''), id
+     LIMIT ? OFFSET ?`,
+    [sessionId, generationId, generationId, page, offset],
+  );
+
+  const hasMore = fallbackRows.length > limit;
+  const pageRows = fallbackRows.slice(0, limit);
+  const items: EvidenceRow[] = pageRows.map((row: SqliteRow, index: number) => {
+    const record = parseJsonRecord(asString(row.raw_details));
+    const payload = record.payload as Record<string, unknown> | undefined;
+    const rawRole = typeof payload?.role === 'string' ? payload.role : 'unknown';
+    const role = rawRole === 'human' ? 'user' : rawRole;
+    const content = extractMessageText(payload?.content);
+    const ordering = index + offset + 1;
+    const timestamp = typeof payload?.timestamp === 'string' ? payload.timestamp : undefined;
+    const summary = `Message ${ordering} (${role})\n\n${content}`;
+    const evidenceId = asString(row.id);
+    return {
+      evidenceId,
+      entityType: 'message',
+      turnNumber: ordering,
+      timestamp,
+      summary,
+      evidenceLinks: [evidenceLink('message', evidenceId, summary)],
+    };
+  });
 
   return {
     items,

@@ -21,6 +21,7 @@ import {
 import type { SyncManifest } from '@lucasschirm/sal-sync-core';
 import type { TransformerRegistry } from '@lucasschirm/sal-transformer';
 import { DefaultIngestionOrchestrator } from './ingestion.js';
+import { deleteLifecycleRowsForGeneration } from './lifecycle-cleanup.js';
 import type {
   ArtifactBlobStore,
   ArtifactContent,
@@ -1193,35 +1194,9 @@ export class DefaultReprocessingEngine implements ReprocessingEngine {
     _analysisReleaseId: string,
   ): Promise<void> {
     if (affected.length === 0) return;
-    const ids = affected.map((s) => s.id);
-    const placeholders = ids.map(() => '?').join(',');
-    await tx.exec(
-      `DELETE FROM session_component_exposures WHERE session_id IN (${placeholders})`,
-      ids,
-    );
-    await tx.exec(
-      `DELETE FROM component_lifecycle_events WHERE snapshot_id IN (
-      SELECT id FROM configuration_snapshots WHERE session_id IN (${placeholders})
-    )`,
-      ids,
-    );
-    await tx.exec(
-      `DELETE FROM component_availability_events WHERE session_id IN (${placeholders})`,
-      ids,
-    );
-    await tx.exec(
-      `DELETE FROM component_context_events WHERE session_id IN (${placeholders})`,
-      ids,
-    );
-    await tx.exec(
-      `DELETE FROM insight_evidence
-       WHERE generation_id IN (SELECT id FROM transformation_generations WHERE session_id IN (${placeholders}))`,
-      ids,
-    );
-    await tx.exec(
-      `DELETE FROM comparison_cohort_members WHERE session_id IN (${placeholders})`,
-      ids,
-    );
+    for (const { id, currentGenerationId } of affected) {
+      await deleteLifecycleRowsForGeneration(tx, id, currentGenerationId);
+    }
     // UNVERIFIED: full lifecycle, exposure, and cohort rederivation from configuration snapshots
     // is deferred to TSK0024; stale rows are removed so the next unchanged state is not poisoned.
   }

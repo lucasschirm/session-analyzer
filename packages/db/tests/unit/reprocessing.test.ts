@@ -1,4 +1,10 @@
-import { FRESH_SCHEMA_SQL } from '@lucasschirm/sal-db-core';
+import {
+  ComponentIdentityStore,
+  ComponentVersionStore,
+  ConfigurationSnapshotStore,
+  FRESH_SCHEMA_SQL,
+  SnapshotComponentStore,
+} from '@lucasschirm/sal-db-core';
 import type { ManifestArtifact, SyncManifest } from '@lucasschirm/sal-sync-core';
 import { sha256Hex } from '@lucasschirm/sal-sync-core';
 import {
@@ -20,6 +26,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';
 import type { ArtifactResolver, ResolvedArtifact } from '../../src/ports.js';
+import { RebuildFrontierEngine } from '../../src/rebuild-frontiers.js';
 import { DefaultReprocessingEngine, type RebuildFrontier } from '../../src/reprocessing.js';
 
 function requireFrontier(frontier: RebuildFrontier | undefined): RebuildFrontier {
@@ -248,6 +255,7 @@ describe('DefaultReprocessingEngine', () => {
   let hasher: ReturnType<typeof createSha256ContentHasher>;
   let resolver: ArtifactResolver;
   let engine: DefaultReprocessingEngine;
+  let frontierEngine: RebuildFrontierEngine;
 
   beforeEach(async () => {
     executor = await WasmSqliteExecutor.create();
@@ -272,6 +280,7 @@ describe('DefaultReprocessingEngine', () => {
       registry,
       analysisReleaseId: ANALYSIS_RELEASE_ID,
     });
+    frontierEngine = new RebuildFrontierEngine({ executor });
   });
 
   async function ingestSession(
@@ -300,6 +309,48 @@ describe('DefaultReprocessingEngine', () => {
     });
     expect(receipt.status).toBe('committed');
     return receipt.sessionId;
+  }
+
+  async function lifecycleEvidenceCounts(
+    sessionId: string,
+    generationId: string,
+    snapshotId: string,
+  ): Promise<
+    Record<'exposures' | 'lifecycle' | 'availability' | 'context' | 'cohort' | 'insight', number>
+  > {
+    const count = async (sql: string, params: unknown[]) =>
+      Number((await executor.exec(sql, params)).rows[0].n);
+    const queries: Record<string, [string, unknown[]]> = {
+      exposures: [
+        `SELECT COUNT(*) AS n FROM session_component_exposures WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+        [sessionId, generationId],
+      ],
+      lifecycle: [
+        `SELECT COUNT(*) AS n FROM component_lifecycle_events WHERE snapshot_id = ?`,
+        [snapshotId],
+      ],
+      availability: [
+        `SELECT COUNT(*) AS n FROM component_availability_events WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+        [sessionId, generationId],
+      ],
+      context: [
+        `SELECT COUNT(*) AS n FROM component_context_events WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+        [sessionId, generationId],
+      ],
+      cohort: [
+        `SELECT COUNT(*) AS n FROM comparison_cohort_members WHERE session_id = ? AND COALESCE(generation_id, '') = ?`,
+        [sessionId, generationId],
+      ],
+      insight: [
+        `SELECT COUNT(*) AS n FROM insight_evidence WHERE generation_id = ?`,
+        [generationId],
+      ],
+    };
+    const result: Record<string, number> = {};
+    for (const [key, [sql, params]] of Object.entries(queries)) {
+      result[key] = await count(sql, params);
+    }
+    return result as ReturnType<typeof lifecycleEvidenceCounts>;
   }
 
   it('rebuilds frontier contributions and rollups for existing sessions', async () => {
@@ -543,5 +594,109 @@ describe('DefaultReprocessingEngine', () => {
     const report = await engine.rebuildFrontier(requireFrontier(frontier), ANALYSIS_RELEASE_ID);
 
     expect(report.rollupsReconciled).toBe(true);
+  });
+
+  it('transitions source manifests to remote_reacquirable when a local blob is purged', async () => {
+    const sessionId = await ingestSession('session-purge', Date.UTC(2026, 0, 10, 10, 0, 0));
+    const { manifest } = await makeManifest('session-purge', Date.UTC(2026, 0, 10, 10, 0, 0));
+    const artifact = manifest.artifacts[0];
+    if (!artifact) throw new Error('Expected at least one artifact');
+
+    await engine.purgeLocalBlob(artifact.sha256);
+
+    const { rows } = await executor.exec(
+      'SELECT reprocessing_status FROM source_manifests WHERE session_id = ?',
+      [sessionId],
+    );
+    expect(rows.length).toBe(1);
+    expect(String(rows[0]?.reprocessing_status)).toBe('remote_reacquirable');
+  });
+
+  it('preserves lifecycle evidence across reprocess generations', async () => {
+    const tA = Date.UTC(2026, 0, 11, 10, 0, 0);
+    const sessionId = await ingestSession('session-reprocess-gen', tA);
+
+    const { rows: sessionRows } = await executor.exec(
+      `SELECT s.project_id, s.environment_id, p.portfolio_id, s.current_generation_id
+       FROM sessions s
+       JOIN projects p ON p.id = s.project_id
+       WHERE s.id = ?`,
+      [sessionId],
+    );
+    const projectId = String(sessionRows[0].project_id);
+    const environmentId = String(sessionRows[0].environment_id);
+    const portfolioId = String(sessionRows[0].portfolio_id);
+    const genA = String(sessionRows[0].current_generation_id);
+
+    const componentId = 'comp-reprocess-preserve';
+    await ComponentIdentityStore.insert(executor, {
+      id: componentId,
+      portfolioId,
+      kind: 'tool',
+      canonicalSourceIdentity: 'comp://reprocess-preserve',
+    });
+    const versionA = 'cv-reprocess-preserve-a';
+    await ComponentVersionStore.insert(executor, {
+      id: versionA,
+      componentId,
+      contentHash: 'hash-reprocess-a',
+    });
+
+    const snapAId = 'cs-reprocess-preserve-a';
+    await ConfigurationSnapshotStore.insert(executor, {
+      id: snapAId,
+      sessionId,
+      generationId: genA,
+      ordering: 0,
+      captureTime: tA,
+      ingestionTime: tA,
+      harness: 'test-harness',
+      temporalRole: 'pre_session',
+      environmentId,
+      projectId,
+    });
+    await SnapshotComponentStore.insert(executor, {
+      id: 'sc-reprocess-preserve-a',
+      snapshotId: snapAId,
+      componentVersionId: versionA,
+      sourceScope: 'runtime',
+    });
+
+    await executor.exec('UPDATE sessions SET occurrence_time = ? WHERE id = ?', [tA, sessionId]);
+
+    const frontierA: RebuildFrontier = {
+      environmentId,
+      projectId,
+      workspaceId: null,
+      harness: 'test-harness',
+      scopeChain: null,
+      startTime: tA,
+      endTime: tA + 1,
+      trigger: 'reclassification',
+      triggerSessionId: sessionId,
+      affectedProjectIds: [projectId],
+    };
+    const reportA = await frontierEngine.rebuildFrontier(frontierA, ANALYSIS_RELEASE_ID);
+    expect(reportA.sessionsProcessed).toBe(1);
+    expect(reportA.failures).toHaveLength(0);
+
+    const before = await lifecycleEvidenceCounts(sessionId, genA, snapAId);
+    for (const value of Object.values(before)) {
+      expect(value).toBeGreaterThan(0);
+    }
+
+    const reportB = await engine.reprocessSession(sessionId, ANALYSIS_RELEASE_2);
+    expect(reportB.sessionsProcessed).toBe(1);
+    expect(reportB.failures).toHaveLength(0);
+
+    const { rows: afterSession } = await executor.exec(
+      'SELECT current_generation_id FROM sessions WHERE id = ?',
+      [sessionId],
+    );
+    const genB = String(afterSession[0].current_generation_id);
+    expect(genB).not.toBe(genA);
+
+    const after = await lifecycleEvidenceCounts(sessionId, genA, snapAId);
+    expect(after).toEqual(before);
   });
 });

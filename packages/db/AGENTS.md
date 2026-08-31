@@ -19,6 +19,7 @@ src/
 ├── distributions.ts      # Distribution materialization, cohorts, and deterministic insights
 ├── dto.ts                # AnalyticsToken, MetricValueDto, EvidenceLink, Coverage, and helpers
 ├── ingestion.ts          # IngestionOrchestrator, IngestionReceipt, IngestionContext, AtomicGenerationCommit
+├── lifecycle-cleanup.ts  # Shared lifecycle-row cleanup helper used by rebuild-frontiers and reprocessing
 ├── manifest.ts           # VerifiedManifestBundle, ManualIngestionBundle, ManifestInput re-export
 ├── manual-ingestion.ts   # Manual artifact ingestion and validation
 ├── metric-registry.ts    # Metric registry, comparability groups, and statistical/attribution policy helpers

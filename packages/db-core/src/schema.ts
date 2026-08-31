@@ -423,7 +423,7 @@ export const MIGRATIONS: readonly Migration[] = [
   ...SESSION_EVIDENCE_MIGRATIONS_FRAGMENT,
   ...METRICS_MIGRATIONS_FRAGMENT,
   ...ROLLUPS_MIGRATIONS_FRAGMENT,
-];
+].sort((a, b) => a.id - b.id);
 
 /**
  * Full current schema as a single DDL script. This is the target state used by

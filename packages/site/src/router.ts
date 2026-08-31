@@ -11,12 +11,16 @@ import type { BaseRouteConfig, RouteConfig } from '@lit-labs/router';
 import { Routes } from '@lit-labs/router';
 import type { ReactiveControllerHost } from 'lit';
 
-/** Reads the current hash as a leading-slash pathname, defaulting to `/`. */
+/** Reads the current hash as a leading-slash pathname, defaulting to `/`.
+ * Query string and hash fragments are stripped so they do not become part
+ * of a route parameter (e.g. the `:sessionId` in `#/sessions/:id?view=x`). */
 export function currentHashPath(): string {
   const hash = window.location.hash;
   if (!hash || hash === '#') return '/';
   const path = hash.startsWith('#') ? hash.slice(1) : hash;
-  return path.startsWith('/') ? path : `/${path}`;
+  const queryIndex = path.indexOf('?');
+  const clean = queryIndex >= 0 ? path.slice(0, queryIndex) : path;
+  return clean.startsWith('/') ? clean : `/${clean}`;
 }
 
 /** Programmatic navigation helper: `navigateTo('/projects/1')`. */

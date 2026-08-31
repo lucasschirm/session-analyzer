@@ -399,10 +399,6 @@ describe('connect-modal', () => {
   });
 
   it('deletes a saved connection after confirmation', async () => {
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => true),
-    );
     mockDbClient.getConnections.mockResolvedValue([savedConnection]);
     mockDbClient.getS3Credentials.mockResolvedValue(savedCredentials);
 
@@ -412,6 +408,16 @@ describe('connect-modal', () => {
 
     const root = shadow(modal);
     clickButtonByText(root, 'Delete');
+    await flush(modal);
+
+    const deleteModal = root.querySelector('delete-confirmation-modal') as HTMLElement & {
+      open: boolean;
+    };
+    expect(deleteModal).not.toBeNull();
+    expect(deleteModal.open).toBe(true);
+
+    const deleteRoot = deleteModal.shadowRoot as ShadowRoot;
+    clickButtonByText(deleteRoot, 'Delete Connection');
     await flush(modal);
 
     expect(mockDbClient.deleteConnection).toHaveBeenCalledWith('c1');

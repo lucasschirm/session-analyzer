@@ -28,6 +28,7 @@ import { parseSyncManifest } from '@lucasschirm/sal-sync-core';
 import { createDefaultRegistry, type TransformerRegistry } from '@lucasschirm/sal-transformer';
 import type {
   AnalyticsBackendReport,
+  AnalyticsDataChangedBroadcast,
   AnalyticsRequest,
   AnalyticsResponse,
   ManualArtifactPayload,
@@ -183,6 +184,12 @@ function withId(response: AnalyticsResponse, id: number): AnalyticsResponse {
   return { ...response, id };
 }
 
+function postDataChanged(): void {
+  if (typeof self !== 'undefined') {
+    self.postMessage({ type: 'dataChanged', ok: true } as AnalyticsDataChangedBroadcast);
+  }
+}
+
 function mapDetection(resolution: {
   kind: 'matched' | 'unmatched' | 'ambiguous';
   harness?: string;
@@ -234,6 +241,7 @@ async function handleIngestManualBundle(
   try {
     const bundle = toManualFlowInput(request.bundle);
     const receipt = await state.manualIngestion.ingestManual(bundle);
+    postDataChanged();
     return { id: 0, ok: true, result: receipt };
   } catch (error) {
     return toErrorResponse(error);
@@ -294,6 +302,7 @@ async function handleResolveManualConflict(
 
     const bundle = toManualFlowInput(request.bundle);
     const receipt = await state.manualIngestion.ingestManual(bundle);
+    postDataChanged();
     return { id: 0, ok: true, result: receipt };
   } catch (error) {
     return toErrorResponse(error);
@@ -350,6 +359,7 @@ async function handleIngestSyncManifest(
       integrityVerified: false,
     };
     const receipt = await state.ingestion.ingestManifest(bundle);
+    postDataChanged();
     return { id: 0, ok: true, result: receipt };
   } catch (error) {
     return toErrorResponse(error);
@@ -461,6 +471,7 @@ async function handleDeleteProject(
       portfolioId = String(rows[0].portfolio_id);
     }
     await state.reprocessing.deleteProject(projectId, portfolioId);
+    postDataChanged();
     return { id: 0, ok: true };
   } catch (error) {
     return toErrorResponse(error);

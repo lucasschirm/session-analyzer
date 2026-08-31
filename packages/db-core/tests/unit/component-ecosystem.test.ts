@@ -194,11 +194,11 @@ describe('component ecosystem schema and stores', () => {
   });
 
   it('exports a checksummed migration fragment starting at id 23', () => {
-    expect(COMPONENT_ECOSYSTEM_MIGRATIONS_FRAGMENT).toHaveLength(12);
-    for (let i = 0; i < COMPONENT_ECOSYSTEM_MIGRATIONS_FRAGMENT.length; i++) {
-      const migration = COMPONENT_ECOSYSTEM_MIGRATIONS_FRAGMENT[i];
-      expect(migration.id).toBe(23 + i);
-      expect(migration.name).toMatch(/^create-/);
+    expect(COMPONENT_ECOSYSTEM_MIGRATIONS_FRAGMENT).toHaveLength(13);
+    const ids = COMPONENT_ECOSYSTEM_MIGRATIONS_FRAGMENT.map((m) => m.id);
+    expect(ids).toEqual([23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 80]);
+    for (const migration of COMPONENT_ECOSYSTEM_MIGRATIONS_FRAGMENT) {
+      expect(migration.name).toMatch(/^(create|alter)-/);
       expect(migration.checksum).toMatch(/^[0-9a-f]{16}$/);
     }
   });

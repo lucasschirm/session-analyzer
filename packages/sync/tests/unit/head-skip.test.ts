@@ -3,7 +3,6 @@ import type {
   HeadObjectResult,
   PutObjectInput,
   PutObjectResult,
-  StorageObjectScope,
 } from '@lucasschirm/sal-sync-core';
 import { StorageError } from '@lucasschirm/sal-sync-core';
 import { describe, expect, it, vi } from 'vitest';

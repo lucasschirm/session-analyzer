@@ -21,6 +21,7 @@ import {
   rebuildProjectDistributions,
   recordInsightEvidence,
 } from './distributions.js';
+import { deleteLifecycleRowsForGeneration } from './lifecycle-cleanup.js';
 import type { RebuildFrontier, ReprocessingFailure } from './reprocessing.js';
 import {
   applySessionRollupContributions,
@@ -325,6 +326,7 @@ export class RebuildFrontierEngine {
     const cost = await this.estimateCost(tx, frontier);
     const affected = await this.findAffectedSessions(tx, frontier);
     const snapshots = await this.findAffectedSnapshots(tx, frontier);
+    const currentGenSnapshots = this.snapshotsForCurrentGeneration(snapshots, affected);
 
     const report: MutableRebuildFrontierReport = {
       trigger: frontier.trigger as ReprocessingTrigger,
@@ -368,7 +370,7 @@ export class RebuildFrontierEngine {
       await this.rebuildLifecycleExposuresCohortsAndInsights(
         tx,
         frontier,
-        snapshots,
+        currentGenSnapshots,
         affected,
         analysisReleaseId,
       );
@@ -431,12 +433,15 @@ export class RebuildFrontierEngine {
       },
       rebuildLifecycle: async (tx, _spid, from, to) => {
         const { rows: sessionRows } = await tx.exec(
-          'SELECT id FROM sessions WHERE project_id IN (?, ?)',
+          'SELECT id, current_generation_id FROM sessions WHERE project_id IN (?, ?)',
           [from, to],
         );
-        const sessionIds = sessionRows.map((r) => asString(r.id));
-        if (sessionIds.length > 0) {
-          await this.clearLifecycleForSessions(tx, sessionIds);
+        const sessions = sessionRows.map((r) => ({
+          id: asString(r.id),
+          generationId: asString(r.current_generation_id),
+        }));
+        if (sessions.length > 0) {
+          await this.clearLifecycleForSessions(tx, sessions);
         }
       },
       rebuildExposure: async () => undefined,
@@ -667,6 +672,17 @@ export class RebuildFrontierEngine {
     }));
   }
 
+  private snapshotsForCurrentGeneration(
+    snapshots: readonly SnapshotInScope[],
+    affected: readonly AffectedSession[],
+  ): readonly SnapshotInScope[] {
+    const currentGenBySession = new Map(affected.map((s) => [s.id, s.currentGenerationId]));
+    return snapshots.filter((s) => {
+      const currentGenerationId = currentGenBySession.get(s.sessionId ?? '');
+      return currentGenerationId !== undefined && currentGenerationId === (s.generationId ?? '');
+    });
+  }
+
   private frontierToScope(frontier: RebuildFrontier): FrontierScope {
     return {
       environmentId: frontier.environmentId,
@@ -769,10 +785,10 @@ export class RebuildFrontierEngine {
     affected: readonly AffectedSession[],
     analysisReleaseId: string,
   ): Promise<void> {
-    const sessionIds = affected.map((s) => s.id);
-    if (sessionIds.length === 0) return;
+    const sessions = affected.map((s) => ({ id: s.id, generationId: s.currentGenerationId }));
+    if (sessions.length === 0) return;
 
-    await this.clearLifecycleForSessions(tx, sessionIds);
+    await this.clearLifecycleForSessions(tx, sessions);
 
     const sessionsById = new Map(affected.map((s) => [s.id, s]));
     for (const session of affected) {
@@ -791,32 +807,12 @@ export class RebuildFrontierEngine {
 
   private async clearLifecycleForSessions(
     tx: SqliteTransaction,
-    sessionIds: readonly string[],
+    sessions: readonly { id: string; generationId: string }[],
   ): Promise<void> {
-    if (sessionIds.length === 0) return;
-    const ph = placeholders(sessionIds.length);
-    await tx.exec(
-      `DELETE FROM session_component_exposures WHERE session_id IN (${ph})`,
-      sessionIds,
-    );
-    await tx.exec(
-      `DELETE FROM component_lifecycle_events WHERE snapshot_id IN (
-        SELECT id FROM configuration_snapshots WHERE session_id IN (${ph})
-      )`,
-      sessionIds,
-    );
-    await tx.exec(
-      `DELETE FROM component_availability_events WHERE session_id IN (${ph})`,
-      sessionIds,
-    );
-    await tx.exec(`DELETE FROM component_context_events WHERE session_id IN (${ph})`, sessionIds);
-    await tx.exec(`DELETE FROM comparison_cohort_members WHERE session_id IN (${ph})`, sessionIds);
-    await tx.exec(
-      `DELETE FROM insight_evidence WHERE generation_id IN (
-        SELECT id FROM transformation_generations WHERE session_id IN (${ph})
-      )`,
-      sessionIds,
-    );
+    if (sessions.length === 0) return;
+    for (const { id, generationId } of sessions) {
+      await deleteLifecycleRowsForGeneration(tx, id, generationId);
+    }
   }
 
   private async rebuildSessionLifecycleExposuresCohorts(
@@ -830,9 +826,9 @@ export class RebuildFrontierEngine {
       const { rows } = await tx.exec(
         `SELECT id, session_id, generation_id, ordering, capture_time, temporal_role, created_at
          FROM configuration_snapshots
-         WHERE session_id = ?
+         WHERE session_id = ? AND COALESCE(generation_id, '') = ?
          ORDER BY ordering, capture_time, created_at, id`,
-        [session.id],
+        [session.id, session.currentGenerationId],
       );
       sessionSnapshots = rows.map((r) => ({
         id: asString(r.id),
@@ -847,20 +843,25 @@ export class RebuildFrontierEngine {
     if (sessionSnapshots.length === 0) return;
 
     const environmentId = this.coalesceEnv(session.environmentId);
-    const previousVersions = new Map<string, string>();
+    const previousVersions = new Map<string, Map<string, string>>();
+    const generationSnapshotIndices = new Map<string, number>();
 
-    for (let i = 0; i < sessionSnapshots.length; i++) {
-      const snapshot = sessionSnapshots[i];
+    for (const snapshot of sessionSnapshots) {
       if (!snapshot) continue;
+      const generationKey = snapshot.generationId ?? '';
+      const versionMap = previousVersions.get(generationKey) ?? new Map<string, string>();
+      const snapshotIndex = generationSnapshotIndices.get(generationKey) ?? 0;
+      generationSnapshotIndices.set(generationKey, snapshotIndex + 1);
+
       const components = await this.loadSnapshotComponents(tx, snapshot.id);
       const present = new Set<string>();
 
       for (const component of components) {
         present.add(component.componentId);
-        const previousVersion = previousVersions.get(component.componentId);
+        const previousVersion = versionMap.get(component.componentId);
         let eventType: 'baseline' | 'added' | 'updated';
         if (previousVersion === undefined) {
-          eventType = i === 0 ? 'baseline' : 'added';
+          eventType = snapshotIndex === 0 ? 'baseline' : 'added';
         } else if (previousVersion !== component.componentVersionId) {
           eventType = 'updated';
         } else {
@@ -878,7 +879,7 @@ export class RebuildFrontierEngine {
           source: 'rebuild-frontier',
           createdAt: snapshot.captureTime,
         });
-        previousVersions.set(component.componentId, component.componentVersionId);
+        versionMap.set(component.componentId, component.componentVersionId);
 
         await ComponentAvailabilityEventStore.insert(tx, {
           componentId: component.componentId,
@@ -920,7 +921,7 @@ export class RebuildFrontierEngine {
         });
       }
 
-      for (const [componentId, previousVersion] of previousVersions) {
+      for (const [componentId, previousVersion] of versionMap) {
         if (!present.has(componentId)) {
           await ComponentLifecycleEventStore.insert(tx, {
             componentId,
@@ -957,9 +958,11 @@ export class RebuildFrontierEngine {
             createdAt: snapshot.captureTime,
           });
           await this.closeOpenExposure(tx, session.id, componentId, snapshot);
-          previousVersions.delete(componentId);
+          versionMap.delete(componentId);
         }
       }
+
+      previousVersions.set(generationKey, versionMap);
     }
   }
 
@@ -990,8 +993,9 @@ export class RebuildFrontierEngine {
     const { rows } = await tx.exec(
       `SELECT id FROM session_component_exposures
        WHERE session_id = ? AND component_id = ? AND end_time IS NULL
+         AND COALESCE(generation_id, '') = ?
        ORDER BY start_time DESC LIMIT 1`,
-      [sessionId, componentId],
+      [sessionId, componentId, snapshot.generationId ?? ''],
     );
     if (rows.length > 0) {
       await SessionComponentExposureStore.update(tx, sessionId, asString(rows[0].id), {

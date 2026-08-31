@@ -666,8 +666,6 @@ export async function getComponentUtilization(
     };
   }
 
-  const analysisReleaseId = query.analysisReleaseId ?? null;
-  const comparabilityGroupId = query.comparabilityGroupId ?? null;
   const generationId = query.generationId ?? null;
 
   // Aggregate component utilization from session_component_exposures, which
