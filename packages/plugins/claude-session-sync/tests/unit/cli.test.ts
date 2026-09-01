@@ -835,16 +835,17 @@ describe('runListCommand', () => {
     });
     expect(result).toBe(0);
     const output = stdout.join('');
-    // Direct file: manifest.json
+    // Direct files: manifest.json and transcript.jsonl (session-scoped keys
+    // omit the `session/` segment, so transcript.jsonl is a direct child)
     expect(output).toContain('manifest.json');
+    expect(output).toContain('transcript.jsonl');
     // Folders aggregated, not their contents
-    expect(output).toContain('session/');
+    expect(output).toContain('subagents/');
     expect(output).toContain('workspace/');
-    expect(output).not.toContain('session/transcript.jsonl');
-    expect(output).not.toContain('session/subagents/agent-x.jsonl');
+    expect(output).not.toContain('subagents/agent-x.jsonl');
     expect(output).not.toContain('workspace/package.json');
-    // Summary: 1 direct file, 2 folders, 4 total files
-    expect(output).toContain('1 file(s), 2 folder(s), 4 total file(s)');
+    // Summary: 2 direct files, 2 folders, 4 total files
+    expect(output).toContain('2 file(s), 2 folder(s), 4 total file(s)');
   });
 
   it('filters files by --path (non-recursive under the path)', async () => {
@@ -856,7 +857,7 @@ describe('runListCommand', () => {
       { key: 'proj-1/sess-a/workspace/package.json', size: 50 },
     ] as ListObjectEntry[];
     const stdout: string[] = [];
-    const result = await runListCommand(['proj-1', '--session', 'sess-a', '--path', 'session/'], {
+    const result = await runListCommand(['proj-1', '--session', 'sess-a', '--path', 'subagents/'], {
       env: validEnv,
       storageAdapter: makeAdapter(objects),
       stdout: {
@@ -868,13 +869,12 @@ describe('runListCommand', () => {
     });
     expect(result).toBe(0);
     const output = stdout.join('');
-    // Direct child file under session/
-    expect(output).toContain('transcript.jsonl');
-    // Subfolder under session/ aggregated
-    expect(output).toContain('subagents/');
-    expect(output).not.toContain('subagents/agent-x.jsonl');
+    // Direct children under subagents/
+    expect(output).toContain('agent-x.jsonl');
+    expect(output).toContain('agent-x.meta.json');
     // Outside the filter
     expect(output).not.toContain('manifest.json');
+    expect(output).not.toContain('transcript.jsonl');
     expect(output).not.toContain('workspace/');
   });
 

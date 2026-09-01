@@ -109,6 +109,42 @@ describe('CLI commands', () => {
       expect(storage.calls.some((call) => call.scope === 'workspace')).toBe(true);
     });
 
+    it('uploads a manifest on every hook fire', async () => {
+      const { dataDir, workspaceDir, claudeConfigDir, homeDir, transcriptPath } =
+        await createFixture();
+      vi.stubEnv('CLAUDE_CONFIG_DIR', claudeConfigDir);
+      vi.stubEnv('HOME', homeDir);
+
+      const storage = new InMemoryStorageAdapter();
+      await capture({
+        dataDir,
+        input: hookInput({ cwd: workspaceDir, transcript_path: transcriptPath }),
+        storageAdapter: storage,
+      });
+
+      expect(storage.calls.some((call) => call.relativePath === 'manifest.json')).toBe(true);
+    });
+
+    it('creates session data and uploads manifest even when session-start never ran', async () => {
+      const { dataDir, workspaceDir, claudeConfigDir, homeDir, transcriptPath } =
+        await createFixture();
+      vi.stubEnv('CLAUDE_CONFIG_DIR', claudeConfigDir);
+      vi.stubEnv('HOME', homeDir);
+
+      const storage = new InMemoryStorageAdapter();
+      // Simulate a failed session-start: no session data in the state store.
+      // The capture hook (e.g. Stop) must recover by creating the session
+      // and uploading a manifest.
+      const result = await capture({
+        dataDir,
+        input: hookInput({ cwd: workspaceDir, transcript_path: transcriptPath }),
+        storageAdapter: storage,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(storage.calls.some((call) => call.relativePath === 'manifest.json')).toBe(true);
+    });
+
     it('skips and exits 0 when hook input is malformed', async () => {
       const dataDir = await mkdtemp(path.join(tmpdir(), 'sal-sync-data-'));
       const result = await capture({
@@ -195,6 +231,25 @@ describe('CLI commands', () => {
       expect(spawnWatcher).toHaveBeenCalled();
       expect(spawnArgs).toContain('--session-id');
       expect(spawnArgs).toContain('sess-1');
+    });
+
+    it('uploads a manifest so the session is immediately discoverable', async () => {
+      const { dataDir, workspaceDir, claudeConfigDir, homeDir, transcriptPath } =
+        await createFixture();
+      vi.stubEnv('CLAUDE_CONFIG_DIR', claudeConfigDir);
+      vi.stubEnv('HOME', homeDir);
+
+      const storage = new InMemoryStorageAdapter();
+      const spawnWatcher = vi.fn(() => ({ unref: vi.fn(), pid: 1234 }));
+
+      await sessionStart({
+        dataDir,
+        input: hookInput({ cwd: workspaceDir, transcript_path: transcriptPath }),
+        storageAdapter: storage,
+        spawnWatcher,
+      });
+
+      expect(storage.calls.some((call) => call.relativePath === 'manifest.json')).toBe(true);
     });
 
     it('exits 0 with malformed input', async () => {
