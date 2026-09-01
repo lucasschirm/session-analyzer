@@ -1,7 +1,8 @@
 name: Version Patch
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: write
