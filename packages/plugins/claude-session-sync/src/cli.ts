@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { runDownloadCommand } from './cli/download-command.js';
 import { runListCommand } from './cli/list-command.js';
+import { formatAbortMessage, writeErrorLog } from './cli/logger.js';
 import { runMigrateCommand } from './cli/migrate-command.js';
 import { runRemoveCommand } from './cli/remove-command.js';
 import { runSyncCommand } from './cli/sync-command.js';
@@ -50,6 +51,9 @@ Environment:
   SAL_STORAGE_ACCESS_KEY_ID               AWS access key ID (required)
   SAL_STORAGE_SECRET_ACCESS_KEY           AWS secret access key (required)
   SAL_STORAGE_ENDPOINT                    Custom S3 endpoint (optional)
+  CLAUDE_SYNC_LOG_PATH_FOLDER             Folder for error log files written when a
+                                          command aborts (optional, defaults to
+                                          $SAL_DATA_DIR/logs, i.e. ~/.sal-sync/logs)
 
 Configuration is resolved in precedence order (highest first):
   1. process.env                          (real environment variables)
@@ -106,9 +110,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 if (isMainModule(import.meta.url)) {
   main().then(
     (code) => process.exit(code),
-    (err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`claude-sync: ${message}\n`);
+    async (err) => {
+      // An unhandled exception aborted the command. Write a timestamped error
+      // log file (with the full stack trace and any chained causes) so the
+      // user can diagnose the failure, then point them at it from stderr.
+      const command = process.argv.slice(2)[0];
+      const result = await writeErrorLog(process.env, command, err);
+      process.stderr.write(`${formatAbortMessage(err, result)}\n`);
       process.exit(1);
     },
   );

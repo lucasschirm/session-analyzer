@@ -47,6 +47,7 @@ behavior, the blocklist, and regression prevention notes.
 - **cli/env.ts** — `resolveCliEnv(cwd, processEnv)`: the single shared environment resolver. Reads `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json` (in that order), then overlays `processEnv` on top. Used by every entry point in the plugin. See `cli/AGENTS.md` for full documentation.
 - **cli/AGENTS.md** — Detailed documentation of the env resolution behavior, precedence ladder, security blocklist, and regression prevention notes.
 - **cli/config.ts** — `validateCliConfig` / `validateStorageConfig`: validate the merged environment and produce a `SyncConfig` or a human-readable error with `export` examples for missing variables.
+- **cli/logger.ts** — Error log writer for unhandled command aborts. Resolves the log folder from `CLAUDE_SYNC_LOG_PATH_FOLDER` (default: the `logs/` subfolder of the sync data dir from the shared `getDataDir` helper, i.e. `~/.sal-sync/logs`), writes a timestamped `<command>-log-<timestamp>.log` with the full stack trace and chained causes, and produces the user-facing `claude-sync: aborted. Check log in <path>` message. Called from the top-level catch in `cli.ts`.
 - **cli/sync-command.ts** — `claude-sync sync` command: full capture + upload.
 - **cli/list-command.ts** — `claude-sync list` command: list projects/sessions/files in storage.
 - **cli/download-command.ts** — `claude-sync download` command: download sessions from storage.

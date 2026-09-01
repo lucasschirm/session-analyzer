@@ -76,6 +76,18 @@ function:
 - **config.ts** — `validateCliConfig` / `validateStorageConfig`: validate the
   merged environment and produce a `SyncConfig` or a human-readable error with
   `export` examples for missing variables.
+- **logger.ts** — Error log writer for unhandled command aborts. Resolves the
+  log folder from `CLAUDE_SYNC_LOG_PATH_FOLDER` (default: the `logs/`
+  subdirectory of the sync data dir resolved by the shared `getDataDir` helper
+  from `@lucasschirm/sal-sync`, i.e. `SAL_DATA_DIR/logs` defaulting to
+  `~/.sal-sync/logs`), writes a timestamped
+  `<command>-log-<YYYYMMDD-HHMMSS>.log` file with the full error name,
+  message, stack trace, and any chained `cause` chain, and produces the
+  user-facing abort message (`claude-sync: aborted. Check log in <path>`).
+  Used by the top-level catch handler in `cli.ts`. Not a sensitive variable —
+  `CLAUDE_SYNC_LOG_PATH_FOLDER` is read from `process.env` directly (not via
+  `resolveCliEnv`) so logging still works when settings-file resolution itself
+  is what aborted.
 - **sync-command.ts** — `claude-sync sync` command: full capture + upload.
 - **list-command.ts** — `claude-sync list` command: list projects/sessions/files.
 - **download-command.ts** — `claude-sync download` command: download sessions.

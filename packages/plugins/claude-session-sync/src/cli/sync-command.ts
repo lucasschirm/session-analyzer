@@ -1,5 +1,3 @@
-import os from 'node:os';
-import path from 'node:path';
 import process from 'node:process';
 
 import {
@@ -13,6 +11,7 @@ import {
   type DiscoveryResult,
   discover,
   discoverSession,
+  getDataDir,
   type HookInput,
   MAIN_TRANSCRIPT_STORAGE_NAME,
   parseObjectKey,
@@ -316,7 +315,7 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
     return 1;
   }
 
-  const dataDir = env.SAL_DATA_DIR ?? path.join(os.homedir(), '.sal-sync');
+  const dataDir = getDataDir(env);
 
   if (force) {
     const stateStore = new StateStore(dataDir);
