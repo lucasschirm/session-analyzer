@@ -10,5 +10,18 @@
         }
       ]
     }
+  ],
+  "PreToolUse": [
+    {
+      "matcher": "exec",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node \"$DEVIN_PROJECT_DIR\"/.devin/hooks/block-precommit-bypass.mjs",
+          "timeout": 5,
+          "statusMessage": "Checking for pre-commit bypass"
+        }
+      ]
+    }
   ]
 }
