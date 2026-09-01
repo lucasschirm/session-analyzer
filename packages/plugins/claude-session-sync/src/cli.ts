@@ -32,9 +32,10 @@ Commands:
                                           shared global/cas/ content-addressed files)
   remove <project-id> --session=<id> --yes
                                           Remove all objects for a single session
-  migrate                                Dry run: list old-format keys with "session/"
+  migrate                                Dry run: list old-format keys and missing manifests
   migrate --project=<project-id>         Dry run for a specific project
-  migrate --yes                          Copy old-format keys to new format
+  migrate --yes                          Copy old keys to new format + generate missing manifests
+  migrate --yes --manifests              Only generate missing manifests (skip key migration)
   migrate --yes --delete-old             Copy and warn about old keys to delete manually
 
 Options:

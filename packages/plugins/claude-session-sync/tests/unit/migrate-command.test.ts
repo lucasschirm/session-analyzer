@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+
 import type {
   GetObjectInput,
   GetObjectResult,
@@ -81,22 +83,62 @@ function makeAdapter(objects: ListObjectEntry[]): {
 describe('parseMigrateArgs', () => {
   it('parses bare args as a dry run', () => {
     const result = parseMigrateArgs([]);
-    expect(result).toEqual({ projectId: undefined, confirmed: false, deleteOld: false });
+    expect(result).toEqual({
+      projectId: undefined,
+      confirmed: false,
+      deleteOld: false,
+      manifests: false,
+    });
   });
 
   it('parses --project', () => {
     const result = parseMigrateArgs(['--project=my-project']);
-    expect(result).toEqual({ projectId: 'my-project', confirmed: false, deleteOld: false });
+    expect(result).toEqual({
+      projectId: 'my-project',
+      confirmed: false,
+      deleteOld: false,
+      manifests: false,
+    });
   });
 
   it('parses --yes', () => {
     const result = parseMigrateArgs(['--yes']);
-    expect(result).toEqual({ projectId: undefined, confirmed: true, deleteOld: false });
+    expect(result).toEqual({
+      projectId: undefined,
+      confirmed: true,
+      deleteOld: false,
+      manifests: false,
+    });
   });
 
   it('parses --yes --delete-old', () => {
     const result = parseMigrateArgs(['--yes', '--delete-old']);
-    expect(result).toEqual({ projectId: undefined, confirmed: true, deleteOld: true });
+    expect(result).toEqual({
+      projectId: undefined,
+      confirmed: true,
+      deleteOld: true,
+      manifests: false,
+    });
+  });
+
+  it('parses --manifests', () => {
+    const result = parseMigrateArgs(['--manifests']);
+    expect(result).toEqual({
+      projectId: undefined,
+      confirmed: false,
+      deleteOld: false,
+      manifests: true,
+    });
+  });
+
+  it('parses --yes --manifests', () => {
+    const result = parseMigrateArgs(['--yes', '--manifests']);
+    expect(result).toEqual({
+      projectId: undefined,
+      confirmed: true,
+      deleteOld: false,
+      manifests: true,
+    });
   });
 
   it('errors on unknown options', () => {
@@ -138,7 +180,30 @@ describe('runMigrateCommand', () => {
     expect(output).toContain('-> proj-1/sess-a/subagents/agent-1.jsonl');
   });
 
-  it('reports nothing to migrate when no old-format keys exist', async () => {
+  it('dry run lists sessions missing manifests', async () => {
+    const objects: ListObjectEntry[] = [
+      { key: 'proj-1/sess-a/transcript.jsonl', size: 100 },
+      { key: 'proj-1/sess-b/transcript.jsonl', size: 200 },
+      { key: 'proj-1/sess-b/manifest.json', size: 10 },
+    ];
+    const { adapter } = makeAdapter(objects);
+    const { lines, stream } = captureStream();
+    const stderr = captureStream().stream;
+
+    const result = await runMigrateCommand([], {
+      env: validEnv,
+      storageAdapter: adapter,
+      stdout: stream,
+      stderr,
+    });
+
+    expect(result).toBe(0);
+    const output = lines.join('');
+    expect(output).toContain('1 session(s) missing manifests');
+    expect(output).toContain('proj-1: 1 session(s)');
+  });
+
+  it('reports nothing to migrate when no old-format keys and no missing manifests', async () => {
     const objects: ListObjectEntry[] = [
       { key: 'proj-1/sess-a/transcript.jsonl', size: 100 },
       { key: 'proj-1/sess-a/manifest.json', size: 10 },
@@ -155,13 +220,14 @@ describe('runMigrateCommand', () => {
     });
 
     expect(result).toBe(0);
-    expect(lines.join('')).toContain('No old-format keys found');
+    expect(lines.join('')).toContain('Nothing to migrate');
   });
 
   it('copies old-format keys to new format with --yes', async () => {
     const objects: ListObjectEntry[] = [
       { key: 'proj-1/sess-a/session/transcript.jsonl', size: 100 },
       { key: 'proj-1/sess-a/session/subagents/agent-1.jsonl', size: 50 },
+      { key: 'proj-1/sess-a/manifest.json', size: 10 },
     ];
     const { adapter, puts, gets } = makeAdapter(objects);
     const { lines, stream } = captureStream();
@@ -176,7 +242,7 @@ describe('runMigrateCommand', () => {
 
     expect(result).toBe(0);
     const output = lines.join('');
-    expect(output).toContain('2 copied');
+    expect(output).toContain('2 keys copied');
 
     // Verify GET requests used the old key format (with session/ in relativePath)
     expect(gets).toHaveLength(2);
@@ -191,9 +257,63 @@ describe('runMigrateCommand', () => {
     expect(puts[1]?.scope).toBe('session');
   });
 
+  it('generates missing manifests with --yes', async () => {
+    const objects: ListObjectEntry[] = [
+      { key: 'proj-1/sess-a/transcript.jsonl', size: 100 },
+      { key: 'proj-1/sess-a/subagents/agent-1.jsonl', size: 50 },
+    ];
+    const { adapter, puts } = makeAdapter(objects);
+    const { lines, stream } = captureStream();
+    const stderr = captureStream().stream;
+
+    const result = await runMigrateCommand(['--yes'], {
+      env: validEnv,
+      storageAdapter: adapter,
+      stdout: stream,
+      stderr,
+    });
+
+    expect(result).toBe(0);
+    const output = lines.join('');
+    expect(output).toContain('1 manifests generated');
+
+    // Verify a manifest PUT was made with scope 'manifest'
+    const manifestPuts = puts.filter((p) => p.scope === 'manifest');
+    expect(manifestPuts).toHaveLength(1);
+    expect(manifestPuts[0]?.relativePath).toBe('manifest.json');
+    expect(manifestPuts[0]?.contentType).toBe('application/json');
+  });
+
+  it('generates manifests only with --yes --manifests (no key migration)', async () => {
+    const objects: ListObjectEntry[] = [
+      { key: 'proj-1/sess-a/session/transcript.jsonl', size: 100 },
+    ];
+    const { adapter, puts } = makeAdapter(objects);
+    const { lines, stream } = captureStream();
+    const stderr = captureStream().stream;
+
+    const result = await runMigrateCommand(['--yes', '--manifests'], {
+      env: validEnv,
+      storageAdapter: adapter,
+      stdout: stream,
+      stderr,
+    });
+
+    expect(result).toBe(0);
+    const output = lines.join('');
+    expect(output).toContain('1 manifests generated');
+    // No session-scope PUTs (key migration skipped)
+    const sessionPuts = puts.filter((p) => p.scope === 'session');
+    expect(sessionPuts).toHaveLength(0);
+    // Manifest PUT was made
+    const manifestPuts = puts.filter((p) => p.scope === 'manifest');
+    expect(manifestPuts).toHaveLength(1);
+  });
+
   it('skips keys that already exist in the new format', async () => {
     const objects: ListObjectEntry[] = [
       { key: 'proj-1/sess-a/session/transcript.jsonl', size: 100 },
+      { key: 'proj-1/sess-a/manifest.json', size: 10 },
     ];
     const { adapter, puts } = makeAdapter(objects);
 
@@ -213,8 +333,10 @@ describe('runMigrateCommand', () => {
     });
 
     expect(result).toBe(0);
-    expect(lines.join('')).toContain('1 skipped');
-    expect(puts).toHaveLength(0);
+    expect(lines.join('')).toContain('1 keys skipped');
+    // No session-scope PUTs (key already exists)
+    const sessionPuts = puts.filter((p) => p.scope === 'session');
+    expect(sessionPuts).toHaveLength(0);
   });
 
   it('groups old-format keys by project in dry run', async () => {
@@ -243,7 +365,6 @@ describe('runMigrateCommand', () => {
 
   it('errors without storage config', async () => {
     const { lines, stream } = captureStream();
-    const stderr = captureStream().stream;
     const stderrLines = captureStream();
 
     const result = await runMigrateCommand([], {

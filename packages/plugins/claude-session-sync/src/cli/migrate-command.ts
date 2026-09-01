@@ -1,9 +1,17 @@
+import { Buffer } from 'node:buffer';
 import process from 'node:process';
 
 import {
+  buildObjectKey,
   buildStorageAdapterFromStorage,
+  DEFAULT_PLUGIN_VERSION,
+  MANIFEST_SCHEMA_VERSION,
+  type ManifestArtifact,
   parseObjectKey,
   type StorageAdapter,
+  SYNC_VERSION,
+  sha256Hex,
+  UNKNOWN_HARNESS_VERSION,
 } from '@lucasschirm/sal-sync';
 
 import { validateStorageConfig } from './config.js';
@@ -21,23 +29,27 @@ export interface MigrateArgs {
   projectId?: string;
   confirmed: boolean;
   deleteOld: boolean;
+  manifests: boolean;
 }
 
 export type MigrateArgsResult = MigrateArgs | { error: string };
 
 /**
- * Parse `migrate [--project=<project-id>] [--yes] [--delete-old]` arguments.
+ * Parse `migrate [options]` arguments.
  *
  * Accepted forms:
- *   migrate                                  Dry run: list old-format keys
+ *   migrate                                  Dry run: list old-format keys and missing manifests
  *   migrate --project=<project-id>           Dry run for a specific project
- *   migrate --yes                            Copy old keys to new format
- *   migrate --yes --delete-old               Copy and delete old keys
+ *   migrate --yes                            Copy old keys to new format + generate missing manifests
+ *   migrate --yes --delete-old              Copy and warn about old keys to delete manually
+ *   migrate --manifests                     Dry run: only list sessions missing manifests
+ *   migrate --yes --manifests               Only generate missing manifests (no key migration)
  */
 export function parseMigrateArgs(argv: string[]): MigrateArgsResult {
   let projectId: string | undefined;
   let confirmed = false;
   let deleteOld = false;
+  let manifests = false;
 
   for (const arg of argv) {
     if (!arg) continue;
@@ -50,6 +62,10 @@ export function parseMigrateArgs(argv: string[]): MigrateArgsResult {
       deleteOld = true;
       continue;
     }
+    if (arg === '--manifests') {
+      manifests = true;
+      continue;
+    }
     if (arg.startsWith('--project=')) {
       projectId = arg.slice('--project='.length);
       continue;
@@ -60,7 +76,7 @@ export function parseMigrateArgs(argv: string[]): MigrateArgsResult {
     return { error: `Error: unexpected argument ${arg}.` };
   }
 
-  return { projectId, confirmed, deleteOld };
+  return { projectId, confirmed, deleteOld, manifests };
 }
 
 async function buildAdapter(
@@ -86,107 +102,153 @@ interface OldFormatKey {
   size: number;
 }
 
+interface SessionScan {
+  projectId: string;
+  sessionId: string;
+  hasManifest: boolean;
+  objects: {
+    key: string;
+    size: number;
+    scope: 'session' | 'manifest' | 'other';
+    relativePath: string;
+  }[];
+}
+
 /**
- * List all objects and find keys with the old `session/` segment.
- *
- * Old format: `<projectId>/<sessionId>/session/<relativePath>`
- * New format: `<projectId>/<sessionId>/<relativePath>`
+ * List all objects and build a per-session view, detecting:
+ * - old-format keys (with `session/` segment)
+ * - sessions missing manifests
  */
-async function findOldFormatKeys(
+async function scanBucket(
   adapter: StorageAdapter,
   projectIdFilter?: string,
-): Promise<OldFormatKey[]> {
-  if (!adapter.listObjects) return [];
+): Promise<{ oldKeys: OldFormatKey[]; sessions: Map<string, SessionScan> }> {
+  if (!adapter.listObjects) return { oldKeys: [], sessions: new Map() };
 
-  // List all objects (or scoped to a project if filter is provided)
   const result = await adapter.listObjects({
     projectId: projectIdFilter ?? '',
     sessionId: '',
   });
 
   const oldKeys: OldFormatKey[] = [];
+  const sessions = new Map<string, SessionScan>();
 
   for (const obj of result.objects) {
-    // Old-format keys contain the literal `/session/` segment after the sessionId.
-    // We detect this by checking if the key matches the pattern
-    // `<projectId>/<sessionId>/session/<relativePath>`.
-    if (!obj.key.includes('/session/')) continue;
-
     const parsed = parseObjectKey(obj.key);
-    if (!parsed || parsed.scope !== 'session') continue;
-    if (!parsed.projectId || !parsed.sessionId) continue;
+    if (!parsed || !parsed.projectId || !parsed.sessionId) continue;
 
-    // Reconstruct the new key without the session/ segment
-    const newKey = `${parsed.projectId}/${parsed.sessionId}/${parsed.relativePath}`;
-    if (newKey === obj.key) continue; // Already new format (shouldn't happen)
+    const sessionKey = `${parsed.projectId}/${parsed.sessionId}`;
+    if (!sessions.has(sessionKey)) {
+      sessions.set(sessionKey, {
+        projectId: parsed.projectId,
+        sessionId: parsed.sessionId,
+        hasManifest: false,
+        objects: [],
+      });
+    }
+    const session = sessions.get(sessionKey)!;
 
-    oldKeys.push({
-      oldKey: obj.key,
-      newKey,
-      projectId: parsed.projectId,
-      sessionId: parsed.sessionId,
-      relativePath: parsed.relativePath,
+    const isManifest = parsed.scope === 'manifest';
+    if (isManifest) session.hasManifest = true;
+
+    session.objects.push({
+      key: obj.key,
       size: obj.size ?? 0,
+      scope: isManifest ? 'manifest' : parsed.scope === 'session' ? 'session' : 'other',
+      relativePath: parsed.relativePath,
     });
+
+    // Detect old-format keys: session scope with `/session/` in the key
+    if (parsed.scope === 'session' && obj.key.includes('/session/')) {
+      const newKey = `${parsed.projectId}/${parsed.sessionId}/${parsed.relativePath}`;
+      if (newKey !== obj.key) {
+        oldKeys.push({
+          oldKey: obj.key,
+          newKey,
+          projectId: parsed.projectId,
+          sessionId: parsed.sessionId,
+          relativePath: parsed.relativePath,
+          size: obj.size ?? 0,
+        });
+      }
+    }
   }
 
-  return oldKeys;
+  return { oldKeys, sessions };
+}
+
+function sessionsMissingManifests(sessions: Map<string, SessionScan>): SessionScan[] {
+  return [...sessions.values()].filter(
+    (s) => !s.hasManifest && s.objects.some((o) => o.scope === 'session'),
+  );
 }
 
 async function dryRunPreview(
   adapter: StorageAdapter,
   args: MigrateArgs,
   oldKeys: OldFormatKey[],
+  missingManifests: SessionScan[],
   stdout: NodeJS.WritableStream,
 ): Promise<number> {
-  if (oldKeys.length === 0) {
-    stdout.write('No old-format keys found. Nothing to migrate.\n');
+  const hasWork = oldKeys.length > 0 || missingManifests.length > 0;
+
+  if (!hasWork) {
+    stdout.write('No old-format keys or missing manifests found. Nothing to migrate.\n');
     return 0;
   }
 
-  const projects = new Set(oldKeys.map((k) => k.projectId));
-  stdout.write(`Found ${oldKeys.length} old-format key(s) across ${projects.size} project(s):\n`);
-  for (const proj of projects) {
-    const count = oldKeys.filter((k) => k.projectId === proj).length;
-    stdout.write(`  ${proj}: ${count} key(s)\n`);
+  if (oldKeys.length > 0) {
+    const projects = new Set(oldKeys.map((k) => k.projectId));
+    stdout.write(`Found ${oldKeys.length} old-format key(s) across ${projects.size} project(s):\n`);
+    for (const proj of projects) {
+      const count = oldKeys.filter((k) => k.projectId === proj).length;
+      stdout.write(`  ${proj}: ${count} key(s)\n`);
+    }
+
+    stdout.write('\nSample keys (up to 20):\n');
+    for (const k of oldKeys.slice(0, 20)) {
+      stdout.write(`  ${k.oldKey}\n`);
+      stdout.write(`    -> ${k.newKey}\n`);
+    }
+    if (oldKeys.length > 20) {
+      stdout.write(`  ... and ${oldKeys.length - 20} more\n`);
+    }
+    stdout.write('\n');
   }
 
-  stdout.write('\nSample keys (up to 20):\n');
-  for (const k of oldKeys.slice(0, 20)) {
-    stdout.write(`  ${k.oldKey}\n`);
-    stdout.write(`    -> ${k.newKey}\n`);
-  }
-  if (oldKeys.length > 20) {
-    stdout.write(`  ... and ${oldKeys.length - 20} more\n`);
+  if (missingManifests.length > 0) {
+    const projects = new Set(missingManifests.map((s) => s.projectId));
+    stdout.write(
+      `Found ${missingManifests.length} session(s) missing manifests across ${projects.size} project(s):\n`,
+    );
+    for (const proj of projects) {
+      const count = missingManifests.filter((s) => s.projectId === proj).length;
+      stdout.write(`  ${proj}: ${count} session(s)\n`);
+    }
+    stdout.write('\n');
   }
 
-  stdout.write(
-    '\nPass --yes to copy these objects to the new key format (without "session/" segment).\n',
-  );
-  stdout.write('Pass --yes --delete-old to also delete the old keys after copying.\n');
+  stdout.write('Pass --yes to copy old keys and generate missing manifests.\n');
+  stdout.write('Pass --yes --manifests to only generate manifests (skip key migration).\n');
+  stdout.write('Pass --yes --delete-old to also warn about old keys to delete manually.\n');
   return 0;
 }
 
-async function performMigration(
+async function copyOldKeys(
   adapter: StorageAdapter,
-  args: MigrateArgs,
   oldKeys: OldFormatKey[],
   stdout: NodeJS.WritableStream,
-  stderr: NodeJS.WritableStream,
-): Promise<number> {
+): Promise<{ copied: number; skipped: number; failed: number }> {
   if (!adapter.getObject || !adapter.putObject) {
-    stderr.write('Error: the configured storage adapter does not support getObject/putObject.\n');
-    return 1;
+    return { copied: 0, skipped: 0, failed: oldKeys.length };
   }
 
   let copied = 0;
   let skipped = 0;
   let failed = 0;
-  const deleted = 0;
 
   for (const keyInfo of oldKeys) {
     try {
-      // Check if the new key already exists
       if (adapter.headObject) {
         const head = await adapter.headObject({
           projectId: keyInfo.projectId,
@@ -217,7 +279,6 @@ async function performMigration(
         continue;
       }
 
-      // Upload to the new key (without session/ segment)
       await adapter.putObject({
         projectId: keyInfo.projectId,
         sessionId: keyInfo.sessionId,
@@ -228,18 +289,6 @@ async function performMigration(
       });
       copied++;
       stdout.write(`[ok]   ${keyInfo.oldKey} -> ${keyInfo.newKey}\n`);
-
-      // Optionally delete the old key. The deleteObjects API deletes by
-      // project/session scope, not individual keys. We can't safely delete
-      // individual old keys through the adapter interface without also
-      // deleting the new keys (which share the same project/session prefix).
-      // So --delete-old is not supported through the adapter interface.
-      if (args.deleteOld) {
-        stdout.write(
-          `[warn] --delete-old is not supported through the storage adapter interface.\n`,
-        );
-        stdout.write(`       Old keys must be deleted manually after verifying the migration.\n`);
-      }
     } catch (err) {
       failed++;
       const message = err instanceof Error ? err.message : String(err);
@@ -247,11 +296,176 @@ async function performMigration(
     }
   }
 
+  return { copied, skipped, failed };
+}
+
+function buildManifestForSession(session: SessionScan, artifacts: ManifestArtifact[]): unknown {
+  const mainTranscript = artifacts.find(
+    (a) => a.scope === 'session' && a.relativePath === 'transcript.jsonl',
+  );
+  return {
+    schemaVersion: MANIFEST_SCHEMA_VERSION,
+    projectId: session.projectId,
+    sessionId: session.sessionId,
+    harness: 'claude-code',
+    harnessVersion: UNKNOWN_HARNESS_VERSION,
+    syncVersion: SYNC_VERSION,
+    pluginVersion: DEFAULT_PLUGIN_VERSION,
+    transcriptsCaptured: true,
+    mainTranscriptRelativePath: mainTranscript?.relativePath,
+    artifacts,
+    syncRuns: [],
+  };
+}
+
+async function generateManifests(
+  adapter: StorageAdapter,
+  sessions: SessionScan[],
+  stdout: NodeJS.WritableStream,
+): Promise<{ generated: number; skipped: number; failed: number }> {
+  let generated = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const session of sessions) {
+    try {
+      // Download each session-scoped object to compute its sha256
+      const artifacts: ManifestArtifact[] = [];
+
+      for (const obj of session.objects) {
+        if (obj.scope !== 'session') continue;
+
+        // Use the new-format key for download (the key migration should have
+        // already run if --manifests wasn't passed alone). If the new-format
+        // key doesn't exist, fall back to the old-format key.
+        let body: Uint8Array | undefined;
+        if (adapter.getObject) {
+          const newObj = await adapter.getObject({
+            projectId: session.projectId,
+            sessionId: session.sessionId,
+            scope: 'session',
+            relativePath: obj.relativePath,
+          });
+          if (newObj) {
+            body = newObj.body;
+          } else {
+            // Try old format (with session/ prefix in relativePath)
+            const oldObj = await adapter.getObject({
+              projectId: session.projectId,
+              sessionId: session.sessionId,
+              scope: 'session',
+              relativePath: `session/${obj.relativePath}`,
+            });
+            body = oldObj?.body;
+          }
+        }
+
+        if (!body) {
+          skipped++;
+          stdout.write(
+            `[skip] ${session.projectId}/${session.sessionId}/${obj.relativePath} — could not download\n`,
+          );
+          continue;
+        }
+
+        const hash = sha256Hex(body);
+        artifacts.push({
+          projectId: session.projectId,
+          sessionId: session.sessionId,
+          scope: 'session',
+          relativePath: obj.relativePath,
+          sha256: hash,
+          size: body.byteLength,
+          status: 'uploaded',
+        });
+      }
+
+      if (artifacts.length === 0) {
+        skipped++;
+        stdout.write(`[skip] ${session.projectId}/${session.sessionId} — no session artifacts\n`);
+        continue;
+      }
+
+      const manifest = buildManifestForSession(session, artifacts);
+      const manifestJson = JSON.stringify(manifest);
+      const manifestBytes = Buffer.from(manifestJson, 'utf8');
+      const manifestHash = sha256Hex(manifestJson);
+
+      await adapter.putObject({
+        projectId: session.projectId,
+        sessionId: session.sessionId,
+        scope: 'manifest',
+        relativePath: 'manifest.json',
+        body: manifestBytes,
+        contentType: 'application/json',
+        contentSha256: manifestHash,
+      });
+      generated++;
+      const manifestKey = buildObjectKey({
+        projectId: session.projectId,
+        sessionId: session.sessionId,
+        scope: 'manifest',
+        relativePath: 'manifest.json',
+      });
+      stdout.write(`[ok]   manifest -> ${manifestKey}\n`);
+    } catch (err) {
+      failed++;
+      const message = err instanceof Error ? err.message : String(err);
+      stdout.write(`[fail] manifest for ${session.projectId}/${session.sessionId} — ${message}\n`);
+    }
+  }
+
+  return { generated, skipped, failed };
+}
+
+async function performMigration(
+  adapter: StorageAdapter,
+  args: MigrateArgs,
+  oldKeys: OldFormatKey[],
+  missingManifests: SessionScan[],
+  stdout: NodeJS.WritableStream,
+  stderr: NodeJS.WritableStream,
+): Promise<number> {
+  if (!adapter.getObject || !adapter.putObject) {
+    stderr.write('Error: the configured storage adapter does not support getObject/putObject.\n');
+    return 1;
+  }
+
+  let copied = 0;
+  let skippedKeys = 0;
+  let failedKeys = 0;
+  let generated = 0;
+  let skippedManifests = 0;
+  let failedManifests = 0;
+
+  // Step 1: Copy old-format keys to new format (unless --manifests only)
+  if (!args.manifests && oldKeys.length > 0) {
+    stdout.write(`\n=== Copying ${oldKeys.length} old-format key(s) ===\n`);
+    const result = await copyOldKeys(adapter, oldKeys, stdout);
+    copied = result.copied;
+    skippedKeys = result.skipped;
+    failedKeys = result.failed;
+  }
+
+  // Step 2: Generate missing manifests
+  if (missingManifests.length > 0) {
+    stdout.write(`\n=== Generating ${missingManifests.length} missing manifest(s) ===\n`);
+    const result = await generateManifests(adapter, missingManifests, stdout);
+    generated = result.generated;
+    skippedManifests = result.skipped;
+    failedManifests = result.failed;
+  }
+
   stdout.write('\n');
   const parts: string[] = [];
-  parts.push(`${copied} copied`);
-  if (skipped > 0) parts.push(`${skipped} skipped`);
-  if (failed > 0) parts.push(`${failed} failed`);
+  if (!args.manifests) {
+    parts.push(`${copied} keys copied`);
+    if (skippedKeys > 0) parts.push(`${skippedKeys} keys skipped`);
+    if (failedKeys > 0) parts.push(`${failedKeys} keys failed`);
+  }
+  parts.push(`${generated} manifests generated`);
+  if (skippedManifests > 0) parts.push(`${skippedManifests} manifests skipped`);
+  if (failedManifests > 0) parts.push(`${failedManifests} manifests failed`);
   stdout.write(`Migration complete: ${parts.join(', ')}.\n`);
 
   if (args.deleteOld) {
@@ -259,18 +473,20 @@ async function performMigration(
     stdout.write('delete old keys manually if no longer needed.\n');
   }
 
-  return failed > 0 ? 1 : 0;
+  return failedKeys > 0 || failedManifests > 0 ? 1 : 0;
 }
 
 /**
  * Migrate old-format S3 keys (with `session/` segment) to the new format
- * (without `session/` segment).
+ * (without `session/` segment), and generate missing manifests for sessions
+ * that were uploaded by hooks before manifest upload was added.
  *
- * Old format: `<projectId>/<sessionId>/session/transcript.jsonl`
- * New format: `<projectId>/<sessionId>/transcript.jsonl`
+ * Old key format: `<projectId>/<sessionId>/session/transcript.jsonl`
+ * New key format: `<projectId>/<sessionId>/transcript.jsonl`
  *
  * Without `--yes`, performs a dry run: lists what would be migrated.
- * With `--yes`, copies each old object to the new key.
+ * With `--yes`, copies old objects and generates missing manifests.
+ * With `--yes --manifests`, only generates manifests (skip key migration).
  */
 export async function runMigrateCommand(
   argv: string[],
@@ -297,11 +513,12 @@ export async function runMigrateCommand(
     return 1;
   }
 
-  stdout.write('Scanning for old-format keys (with "session/" segment)...\n\n');
-  const oldKeys = await findOldFormatKeys(adapter, args.projectId);
+  stdout.write('Scanning bucket for old-format keys and missing manifests...\n\n');
+  const { oldKeys, sessions } = await scanBucket(adapter, args.projectId);
+  const missingManifests = sessionsMissingManifests(sessions);
 
   if (!args.confirmed) {
-    return dryRunPreview(adapter, args, oldKeys, stdout);
+    return dryRunPreview(adapter, args, oldKeys, missingManifests, stdout);
   }
-  return performMigration(adapter, args, oldKeys, stdout, stderr);
+  return performMigration(adapter, args, oldKeys, missingManifests, stdout, stderr);
 }
