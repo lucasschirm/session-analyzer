@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { runDownloadCommand } from './cli/download-command.js';
 import { runListCommand } from './cli/list-command.js';
+import { runMigrateCommand } from './cli/migrate-command.js';
 import { runRemoveCommand } from './cli/remove-command.js';
 import { runSyncCommand } from './cli/sync-command.js';
 import { isMainModule } from './is-main-module.js';
@@ -31,6 +32,10 @@ Commands:
                                           shared global/cas/ content-addressed files)
   remove <project-id> --session=<id> --yes
                                           Remove all objects for a single session
+  migrate                                Dry run: list old-format keys with "session/"
+  migrate --project=<project-id>         Dry run for a specific project
+  migrate --yes                          Copy old-format keys to new format
+  migrate --yes --delete-old             Copy and warn about old keys to delete manually
 
 Options:
   -v, --version                           Print version and exit
@@ -81,6 +86,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return runDownloadCommand(rest);
     case 'remove':
       return runRemoveCommand(rest);
+    case 'migrate':
+      return runMigrateCommand(rest);
     default:
       process.stderr.write(`Unknown command: ${command}\n\n`);
       process.stderr.write(HELP_TEXT);
