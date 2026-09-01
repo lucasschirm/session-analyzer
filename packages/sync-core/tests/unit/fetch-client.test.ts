@@ -13,7 +13,7 @@ const BASE_CONFIG: S3ClientConfig = {
   secretAccessKey: 'secret',
   region: 'us-east-1',
   bucket: 'my-bucket',
-  controlPlaneTimeoutMs: 100,
+  controlPlaneTimeoutMs: 5000,
   retryBackoffMs: 10,
 };
 
@@ -231,7 +231,7 @@ describe('S3FetchClient', () => {
 
   it('aborts control-plane calls after the configured timeout', async () => {
     const mock = vi.fn(createMockFetch([hangingResponse]));
-    const client = setupClient(BASE_CONFIG, mock);
+    const client = setupClient({ ...BASE_CONFIG, controlPlaneTimeoutMs: 100 }, mock);
     await expect(client.headBucket()).rejects.toSatisfy((error: S3Error) => {
       return error instanceof S3Error && error.code === 'NetworkTimeout';
     });
