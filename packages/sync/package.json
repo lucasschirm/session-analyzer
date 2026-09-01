@@ -28,7 +28,8 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check src tests",
-    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test"
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
+    "version:patch": "exit 0"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

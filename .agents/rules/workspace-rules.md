@@ -22,5 +22,12 @@
  - Biome configuration should be shared across all packages.
  - Each package can have its own Biome configuration, but it should extend the workspace configuration.
 
+# Versioning
+
+- Every package in the workspace must define a `version:patch` script in its package.json.
+- The `version:patch` script must be a no-op (`"version:patch": "exit 0"`) unless the package is explicitly designated as the active version-bumping package.
+- When a package is designated for version bumps, its `version:patch` script must run `npm version patch` (with `--no-git-tag-version` in CI to avoid creating tags).
+- New packages must add the `version:patch` script before their first merge to `develop`.
+
 # Before completing any task
  - Aways run "pnpm verify" from the workspace root directory and fix any test or linting errors.

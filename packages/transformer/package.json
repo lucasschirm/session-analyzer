@@ -30,7 +30,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check src tests",
     "preverify": "pnpm run build",
-    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test"
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
+    "version:patch": "exit 0"
   },
   "dependencies": {
     "@lucasschirm/sal-claude-session-parser": "workspace:*"
