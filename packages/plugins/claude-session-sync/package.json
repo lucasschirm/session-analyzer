@@ -1,6 +1,6 @@
 {
   "name": "@lucasschirm/claude-session-sync",
-  "version": "0.2.18",
+  "version": "0.2.19",
   "private": false,
   "type": "module",
   "license": "ISC",
@@ -24,6 +24,7 @@
     "lint": "biome check src tests build.mjs",
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
     "sync": "node ./bin/claude-sync",
+    "preversion": "pnpm run build",
     "version": "node scripts/bump-plugin-version.js",
     "version:patch": "npm version patch --no-git-tag-version"
   },
