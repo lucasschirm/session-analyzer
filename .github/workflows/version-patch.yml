@@ -38,6 +38,6 @@ jobs:
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             git add -A
-            git commit -m "chore: bump @lucasschirm/claude-session-sync patch version [skip ci]"
+            git commit --no-verify -m "chore: bump @lucasschirm/claude-session-sync patch version [skip ci]"
             git push
           fi
