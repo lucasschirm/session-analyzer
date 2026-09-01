@@ -1,6 +1,7 @@
 import { ManifestGenerator } from '../manifest/index.js';
 import { FileLock, StateStore } from '../state/index.js';
 import {
+  buildManifestArtifactsFromResults,
   buildSessionData,
   buildStorageAdapter,
   buildTelemetryRecord,
@@ -11,7 +12,9 @@ import {
   getDataDir,
   getSessionSyncLockPath,
   readHookInput,
+  recordAndUploadManifest,
   resolveConfig,
+  resolveStorageError,
   runFullSync,
   type SyncErrorCode,
   sanitizeHookInput,
@@ -133,6 +136,28 @@ export async function sessionStart(options: CliOptions = {}): Promise<CommandRes
       const generator = new ManifestGenerator(dataDir, { storageAdapter });
       const run = { ...fullResult.result, trigger: 'session-start' as const };
       await generator.recordRun(input.session_id, run);
+
+      // Upload the session manifest so the session is immediately
+      // discoverable by the dashboard, even if session-end never runs.
+      const manifestArtifacts = buildManifestArtifactsFromResults(
+        fullResult.candidateResults,
+        fullResult.result,
+      );
+      try {
+        await recordAndUploadManifest({
+          dataDir,
+          session,
+          run,
+          manifestArtifacts,
+          storageAdapter,
+          captureTranscripts: config.captureTranscripts,
+        });
+      } catch (err) {
+        const code = resolveStorageError(err);
+        if (!run.errors.includes(code)) {
+          run.errors.push(code);
+        }
+      }
 
       const telemetry = buildTelemetryRecord({
         run,

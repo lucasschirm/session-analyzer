@@ -57,6 +57,13 @@ function sessionRelativeKey(key: string): string | undefined {
   if (parsed.scope === 'manifest') {
     return 'manifest.json';
   }
+  // Session-scoped keys omit the `session/` segment in the actual S3 key
+  // (buildObjectKey skips the scope segment for 'session' and 'manifest').
+  // The display must match the on-disk layout so `list` doesn't show a
+  // phantom `session/` prefix that doesn't exist in storage.
+  if (parsed.scope === 'session') {
+    return parsed.relativePath;
+  }
   return `${parsed.scope}/${parsed.relativePath}`;
 }
 

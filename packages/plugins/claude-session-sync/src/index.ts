@@ -3,6 +3,7 @@ export { validateCliConfig, validateStorageConfig } from './cli/config.js';
 export { parseDownloadArgs, runDownloadCommand } from './cli/download-command.js';
 export { resolveCliEnv } from './cli/env.js';
 export { parseListArgs, runListCommand } from './cli/list-command.js';
+export { parseMigrateArgs, runMigrateCommand } from './cli/migrate-command.js';
 export {
   decodeProjectFolder,
   encodeProjectFolder,
