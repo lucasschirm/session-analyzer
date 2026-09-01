@@ -20,8 +20,15 @@ silently skipped. Missing or malformed files are silently ignored. A variable
 set in a higher-precedence source always overrides the same key from a lower
 one; non-overlapping keys accumulate across all sources.
 
+**Security blocklist:** `SAL_STORAGE_ENDPOINT`, `SAL_STORAGE_ACCESS_KEY_ID`,
+and `SAL_STORAGE_SECRET_ACCESS_KEY` are **never** read from the committed
+settings files (`settings.json` or `~/.claude/settings.json`). They are only
+honored from `process.env` or `.claude/settings.local.json` (gitignored). This
+prevents a malicious PR from redirecting uploads to an attacker-controlled
+endpoint. See `cli/AGENTS.md` for full details.
+
 **Every entry point** — the `claude-sync` CLI commands (sync, list, download,
-remove) and the Claude Code hooks (session-start, session-end, hook,
+remove, migrate) and the Claude Code hooks (session-start, session-end, hook,
 transcript-watcher) — calls `resolveCliEnv(cwd, process.env)` in its `main()`
 function before passing the resolved env to the sync engine. The `cwd` is
 taken from the Claude Code hook input when available, falling back to
@@ -30,11 +37,15 @@ taken from the Claude Code hook input when available, falling back to
 Never bypass `resolveCliEnv` by passing raw `process.env` to the sync engine —
 this would skip the settings files and miss user-configured `SAL_*` variables.
 
+See **`cli/AGENTS.md`** for the detailed documentation of the env resolution
+behavior, the blocklist, and regression prevention notes.
+
 ## Files
 
 - **claude.ts** — Claude Code hook input parsing (`parseClaudeHookInput`), harness session mapping (`toHarnessSession`), and sync trigger mapping (`claudeEventToSyncTrigger`). Defines `ClaudeHookInput` with `session_id`, `transcript_path`, `cwd`, `hook_event_name`, etc.
-- **cli.ts** — Standalone `claude-sync` CLI entry point: dispatches to `sync`, `list`, `download`, `remove` subcommands.
-- **cli/env.ts** — `resolveCliEnv(cwd, processEnv)`: the single shared environment resolver. Reads `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json` (in that order), then overlays `processEnv` on top. Used by every entry point in the plugin.
+- **cli.ts** — Standalone `claude-sync` CLI entry point: dispatches to `sync`, `list`, `download`, `remove`, `migrate` subcommands.
+- **cli/env.ts** — `resolveCliEnv(cwd, processEnv)`: the single shared environment resolver. Reads `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json` (in that order), then overlays `processEnv` on top. Used by every entry point in the plugin. See `cli/AGENTS.md` for full documentation.
+- **cli/AGENTS.md** — Detailed documentation of the env resolution behavior, precedence ladder, security blocklist, and regression prevention notes.
 - **cli/config.ts** — `validateCliConfig` / `validateStorageConfig`: validate the merged environment and produce a `SyncConfig` or a human-readable error with `export` examples for missing variables.
 - **cli/sync-command.ts** — `claude-sync sync` command: full capture + upload.
 - **cli/list-command.ts** — `claude-sync list` command: list projects/sessions/files in storage.

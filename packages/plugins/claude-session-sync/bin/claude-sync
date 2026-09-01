@@ -218,8 +218,15 @@ Environment:
   SAL_STORAGE_SECRET_ACCESS_KEY           AWS secret access key (required)
   SAL_STORAGE_ENDPOINT                    Custom S3 endpoint (optional)
 
-Configuration is read from process.env, falling back to .claude/settings.local.json
-"env" and then .claude/settings.json "env".
+Configuration is resolved in precedence order (highest first):
+  1. process.env                          (real environment variables)
+  2. .claude/settings.local.json "env"    (project-local, gitignored)
+  3. .claude/settings.json "env"          (project, committed)
+  4. ~/.claude/settings.json "env"        (user-global, committed)
+
+Security: SAL_STORAGE_ENDPOINT, SAL_STORAGE_ACCESS_KEY_ID, and
+SAL_STORAGE_SECRET_ACCESS_KEY are only read from process.env or
+.claude/settings.local.json \u2014 never from committed settings files.
 `;function eRe(){try{let t=Z0e(new URL("../package.json",import.meta.url));return JSON.parse(Q0e(t,"utf8")).version??"unknown"}catch{return"unknown"}}async function tRe(t=xi.argv.slice(2)){let[e,...r]=t;if(e===void 0||e==="-h"||e==="--help")return xi.stdout.write(C7),0;if(e==="-v"||e==="--version")return xi.stdout.write(`${eRe()}
 `),0;switch(e){case"sync":return _7({force:r.includes("--force")||r.includes("-f")});case"list":return h7(r);case"download":return m7(r);case"remove":return S7(r);case"migrate":return g7(r);default:return xi.stderr.write(`Unknown command: ${e}
 

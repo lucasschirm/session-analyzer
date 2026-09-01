@@ -51,8 +51,15 @@ Environment:
   SAL_STORAGE_SECRET_ACCESS_KEY           AWS secret access key (required)
   SAL_STORAGE_ENDPOINT                    Custom S3 endpoint (optional)
 
-Configuration is read from process.env, falling back to .claude/settings.local.json
-"env" and then .claude/settings.json "env".
+Configuration is resolved in precedence order (highest first):
+  1. process.env                          (real environment variables)
+  2. .claude/settings.local.json "env"    (project-local, gitignored)
+  3. .claude/settings.json "env"          (project, committed)
+  4. ~/.claude/settings.json "env"        (user-global, committed)
+
+Security: SAL_STORAGE_ENDPOINT, SAL_STORAGE_ACCESS_KEY_ID, and
+SAL_STORAGE_SECRET_ACCESS_KEY are only read from process.env or
+.claude/settings.local.json — never from committed settings files.
 `;
 
 function readPackageVersion(): string {
