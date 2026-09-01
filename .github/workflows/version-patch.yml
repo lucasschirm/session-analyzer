@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   version-patch:
@@ -30,6 +31,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -53,3 +55,6 @@ jobs:
             git commit --no-verify -m "chore: bump @lucasschirm/claude-session-sync patch version [skip ci]"
             git push
           fi
+
+      - name: Publish packages
+        run: pnpm run version:publish

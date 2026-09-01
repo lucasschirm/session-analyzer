@@ -16,7 +16,8 @@
     "typecheck": "tsc",
     "lint": "biome check src tests",
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
-    "version:patch": "exit 0"
+    "version:patch": "exit 0",
+    "version:publish": "exit 0"
   },
   "keywords": [
     "lit",

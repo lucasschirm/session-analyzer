@@ -20,7 +20,8 @@
     "verify": "pnpm -r build && pnpm -r --parallel run verify",
     "analytics-gates": "node scripts/analytics-gates/run-all-gates.mjs",
     "version:patch": "pnpm -r version:patch",
-    "prepare": "husky"
+    "prepare": "husky",
+    "version:publish": "pnpm -r version:publish"
   },
   "author": "",
   "license": "ISC",

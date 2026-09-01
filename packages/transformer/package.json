@@ -31,7 +31,8 @@
     "lint": "biome check src tests",
     "preverify": "pnpm run build",
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
-    "version:patch": "exit 0"
+    "version:patch": "exit 0",
+    "version:publish": "exit 0"
   },
   "dependencies": {
     "@lucasschirm/sal-claude-session-parser": "workspace:*"

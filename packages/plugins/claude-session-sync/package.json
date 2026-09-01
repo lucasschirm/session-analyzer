@@ -26,7 +26,8 @@
     "sync": "node ./bin/claude-sync",
     "preversion": "pnpm run build",
     "version": "node scripts/bump-plugin-version.js",
-    "version:patch": "npm version patch --no-git-tag-version"
+    "version:patch": "npm version patch --no-git-tag-version",
+    "version:publish": "pnpm publish --access public --provenance --no-git-checks"
   },
   "devDependencies": {
     "@lucasschirm/sal-sync": "workspace:*",
