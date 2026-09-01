@@ -24,7 +24,8 @@
     "lint": "biome check src tests build.mjs",
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
     "sync": "node ./bin/claude-sync",
-    "version": "node scripts/bump-plugin-version.js"
+    "version": "node scripts/bump-plugin-version.js",
+    "version:patch": "npm version patch --no-git-tag-version"
   },
   "devDependencies": {
     "@lucasschirm/sal-sync": "workspace:*",
