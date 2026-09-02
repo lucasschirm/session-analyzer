@@ -23,7 +23,7 @@ those are guaranteed by package-level `verify` scripts, not this catalog.
 |---|---|---|---|
 | A — Browser UX | `UX-###` | Playwright, full browser | `packages/site/tests/e2e/*.spec.ts` |
 | B — Analytics Pipeline | `PIPE-###` | Vitest, in-memory SQLite, no browser | `packages/db/tests/pipeline/*.test.ts` |
-| C — Sync Lifecycle | `SYNC-###` | Vitest/Playwright, watcher/manifest/CAS seams | `packages/plugins/claude-session-sync/tests/e2e/`, `packages/sync/tests/e2e/`, `packages/site/tests/unit/` |
+| C — Sync Lifecycle | `SYNC-###` | Vitest/Playwright, watcher/manifest/CAS seams | `packages/plugins/claude-session-sync/tests/e2e/`, `packages/plugins/devin-session-sync/tests/pipeline/`, `packages/sync/tests/e2e/`, `packages/site/tests/unit/` |
 
 IDs are assigned sequentially within a tier and never reused, even if a
 test is deleted (see §10). Cite the ID in the test name/`describe` block
@@ -161,6 +161,9 @@ created (issue #160); none are proposed-but-unimplemented.
 | SYNC-003 | Retry drives to a known terminal state | `packages/sync/tests/e2e/retry-terminal-state.test.ts` | terminal-state assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
 | SYNC-004 | Monotonic progress events for a multi-file session | `packages/site/tests/unit/session-sync.worker.test.ts` | monotonic progress-event assertion | 3 | 4 | 3 | 36 | P1 | GREEN |
 | SYNC-005 | Browser CAS `FixtureBucket` ↔ plugin `StorageAdapter` mock parity | `packages/site/tests/unit/sync-cas-mock-parity.test.ts` | mock-transport parity assertion | 2 | 3 | 4 | 24 | P2 | GREEN |
+| SYNC-006 | Devin hook-triggered sync (SessionStart→Stop→SessionEnd) produces a manifest with the full expected artifact set (transcript, workspace/global config, schema descriptor) | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest artifact-set / classification-key assertion | 4 | 5 | 4 | 80 | P0 | GREEN |
+| SYNC-007 | Devin Cloud-session mitigation: sync completes via `Stop` alone + bulk `devin-sync sync`, with `SessionStart`/`SessionEnd` simulated as never firing (verified Part A3 caveat) | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest/transcript presence assertion without a SessionStart/SessionEnd call | 5 | 5 | 5 | 125 | P0 | GREEN |
+| SYNC-008 | `devin-sync sync`/`list`/`download`/`remove`/`migrate` CLI verb smoke pipeline round-trips one session | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | end-to-end CLI verb chain assertion | 3 | 4 | 3 | 36 | P1 | GREEN |
 
 ## 7. Infrastructure prerequisites
 
@@ -219,6 +222,12 @@ every ID in §6 corresponds to a pre-existing, currently-passing test;
 none were newly written by this change. New candidate surfaces (e.g. from
 the devin-sync feature, #138) register here first as `PROPOSED` with a
 score, then move through §8.
+
+SYNC-006/007/008 (DS-F3, issue #158) were registered and implemented in
+the same PR — the Devin plugin's sync→manifest→artifact-set journey and
+the Devin-Cloud `Stop`-hook-only mitigation are new user-observable
+surfaces introduced by that PR, so `GREEN` reflects the pipeline test
+landing alongside the feature rather than a backfill.
 
 ## 10. Maintenance model
 

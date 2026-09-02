@@ -105,12 +105,18 @@ importers:
 
   packages/plugins/devin-session-sync:
     devDependencies:
+      '@lucasschirm/sal-sync':
+        specifier: workspace:*
+        version: link:../../sync
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0
       '@vitest/coverage-v8':
         specifier: ^4.1.10
         version: 4.1.10(vitest@4.1.10)
+      esbuild:
+        specifier: ^0.25.12
+        version: 0.25.12
       typescript:
         specifier: ^7.0.2
         version: 7.0.2

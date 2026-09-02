@@ -1,0 +1,8 @@
+{
+  "name": "devin-session-sync",
+  "version": "0.1.0",
+  "description": "Sync Devin CLI session data to S3-compatible storage.",
+  "author": {
+    "name": "lucasschirm"
+  }
+}
