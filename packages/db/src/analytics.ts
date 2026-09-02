@@ -94,12 +94,21 @@ export interface PortfolioOverview {
  * equal-length prior window to compare against). Consumers render "—" in
  * that case rather than fabricating a 0% delta
  * (`.agents/rules/missing-is-never-zero.md`).
+ *
+ * `deltaPercent`/`deltaDirection` (issue #171) are the already-computed
+ * percentage change and its sign, so a Lit consumer only formats the
+ * number into a string and never derives the ratio itself
+ * (`.agents/rules/no-canonical-metrics-in-lit.md`). Both are omitted when
+ * `previous` is omitted, and `deltaPercent` is `null` when `previous` is
+ * `0` (a percentage change is undefined, not "0%" or a fabricated ratio).
  */
 export interface PeriodDelta {
   readonly current: number;
   readonly currentN: number;
   readonly previous?: number;
   readonly previousN?: number;
+  readonly deltaPercent?: number | null;
+  readonly deltaDirection?: 'up' | 'down' | 'flat';
 }
 
 /**
@@ -331,6 +340,11 @@ export interface AggregateStat {
   readonly previousValue?: number | null;
   readonly previousEligibleN?: number;
   readonly previousKnownN?: number;
+  /** Already-computed percentage change vs. `previousValue` and its sign
+   * (issue #171) — see {@link PeriodDelta} for the omission/`null` rules;
+   * the same reasoning applies here. */
+  readonly deltaPercent?: number | null;
+  readonly deltaDirection?: 'up' | 'down' | 'flat';
 }
 
 /**

@@ -229,6 +229,45 @@ describe('getStatStrip tokensPerSession previous-window delta (issue #171)', () 
     expect(result.tokensPerSession.value).toBe(150);
     expect(result.tokensPerSession.previousValue).toBe(150);
     expect(result.tokensPerSession.previousKnownN).toBe(1);
+    // Equal current/previous — a real, computed 0% delta, not an omission.
+    expect(result.tokensPerSession.deltaPercent).toBe(0);
+    expect(result.tokensPerSession.deltaDirection).toBe('flat');
+  });
+});
+
+describe('getStatStrip sessions deltaPercent/deltaDirection (issue #171)', () => {
+  it('omits deltaPercent/deltaDirection when no previous window exists (All preset)', async () => {
+    const executor = await createExecutor('Alpha');
+    await insertSession(executor, 's1', 'claude-code', 1000);
+    const result = await getStatStrip(executor, PROJECT_ID, {});
+    expect(result.sessions.deltaPercent).toBeUndefined();
+    expect(result.sessions.deltaDirection).toBeUndefined();
+  });
+
+  it('computes an increase as a positive deltaPercent with an "up" direction', async () => {
+    const executor = await createExecutor('Alpha');
+    await insertSession(executor, 's-prev', 'claude-code', 500);
+    await insertSession(executor, 's-cur-1', 'claude-code', 1500);
+    await insertSession(executor, 's-cur-2', 'claude-code', 1600);
+    const result = await getStatStrip(executor, PROJECT_ID, {
+      timeRange: { start: new Date(1000).toISOString(), end: new Date(2000).toISOString() },
+    });
+    expect(result.sessions.current).toBe(2);
+    expect(result.sessions.previous).toBe(1);
+    expect(result.sessions.deltaPercent).toBe(100);
+    expect(result.sessions.deltaDirection).toBe('up');
+  });
+
+  it('leaves deltaPercent null when the previous window had 0 sessions (undefined ratio)', async () => {
+    const executor = await createExecutor('Alpha');
+    await insertSession(executor, 's-cur', 'claude-code', 1500);
+    const result = await getStatStrip(executor, PROJECT_ID, {
+      timeRange: { start: new Date(1000).toISOString(), end: new Date(2000).toISOString() },
+    });
+    expect(result.sessions.current).toBe(1);
+    expect(result.sessions.previous).toBe(0);
+    expect(result.sessions.deltaPercent).toBeNull();
+    expect(result.sessions.deltaDirection).toBe('up');
   });
 });
 

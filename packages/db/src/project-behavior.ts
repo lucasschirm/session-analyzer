@@ -207,12 +207,6 @@ async function loadMetricDefinitions(
   return map;
 }
 
-function distributionValue(distribution: ProjectDistribution, aggregation: string): number | null {
-  const lower = aggregation.toLowerCase();
-  if (lower === 'sum' || lower === 'count') return distribution.sum;
-  return distribution.mean;
-}
-
 function measurementClassForAggregate(
   baseClass: MeasurementClass,
   aggregation: string,
@@ -995,6 +989,23 @@ function statStripWindow(query: AnalyticsQuery): { start: number; end: number } 
   };
 }
 
+/**
+ * Percentage change and its sign for a current/previous pair (issue #171).
+ * `deltaPercent` is `null` when `previous` is `0` (a ratio is undefined,
+ * not "0%"), never a fabricated value (`.agents/rules/missing-is-never-zero.md`).
+ * The sole formula for this comparison — Lit consumers only format it
+ * (`.agents/rules/no-canonical-metrics-in-lit.md`).
+ */
+function periodDeltaFields(
+  current: number,
+  previous: number,
+): Pick<PeriodDelta, 'deltaPercent' | 'deltaDirection'> {
+  const diff = current - previous;
+  const deltaPercent = previous !== 0 ? (diff / previous) * 100 : null;
+  const deltaDirection = diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat';
+  return { deltaPercent, deltaDirection };
+}
+
 async function sessionsDeltaStat(
   queryable: Queryable,
   projectId: string,
@@ -1015,7 +1026,13 @@ async function sessionsDeltaStat(
     Date.parse(previousWindow.start),
     Date.parse(previousWindow.end),
   );
-  return { current, currentN: current, previous, previousN: previous };
+  return {
+    current,
+    currentN: current,
+    previous,
+    previousN: previous,
+    ...periodDeltaFields(current, previous),
+  };
 }
 
 async function durationPercentileStats(
@@ -1075,6 +1092,21 @@ function averageOfKnown(values: readonly (number | null)[]): {
  * is then omitted, and the Lit layer renders "—" per the datasource
  * contract rather than fabricating a comparison.
  */
+async function tokensPerSessionPrevious(
+  queryable: Queryable,
+  projectId: string,
+  previousWindow: { start: string; end: string },
+): Promise<{ value: number | null; knownN: number; rowCount: number }> {
+  const previousRows = await ProjectBehaviorStore.getSessionTokensInWindow(
+    queryable,
+    projectId,
+    Date.parse(previousWindow.start),
+    Date.parse(previousWindow.end),
+  );
+  const previous = averageOfKnown(previousRows.map((r) => r.tokensSum));
+  return { value: previous.value, knownN: previous.knownN, rowCount: previousRows.length };
+}
+
 async function tokensPerSessionStat(
   queryable: Queryable,
   projectId: string,
@@ -1090,23 +1122,19 @@ async function tokensPerSessionStat(
     end,
   );
   const { value, knownN } = averageOfKnown(rows.map((r) => r.tokensSum));
-
   const previousWindow = resolvePreviousWindow(query.timeRange);
   if (!previousWindow) return { value, eligibleN, knownN };
-  const previousRows = await ProjectBehaviorStore.getSessionTokensInWindow(
-    queryable,
-    projectId,
-    Date.parse(previousWindow.start),
-    Date.parse(previousWindow.end),
-  );
-  const previous = averageOfKnown(previousRows.map((r) => r.tokensSum));
+  const previous = await tokensPerSessionPrevious(queryable, projectId, previousWindow);
+  const deltaFields =
+    value !== null && previous.value !== null ? periodDeltaFields(value, previous.value) : {};
   return {
     value,
     eligibleN,
     knownN,
     previousValue: previous.value,
-    previousEligibleN: previousRows.length,
+    previousEligibleN: previous.rowCount,
     previousKnownN: previous.knownN,
+    ...deltaFields,
   };
 }
 

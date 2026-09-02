@@ -156,20 +156,53 @@ describe('costTile missing-cost copy (issue #171)', () => {
 });
 
 describe('statStripToView delta chips (issue #171)', () => {
+  // deltaPercent/deltaDirection are read-contract fields, already computed by
+  // packages/db (`.agents/rules/no-canonical-metrics-in-lit.md`) — these
+  // fixtures supply them exactly as `getStatStrip` would, and the helper
+  // under test only formats them.
   it('renders "—" for every delta under the All time-range preset', () => {
     const strip = statStripFixture({
-      sessions: { current: 10, currentN: 10, previous: 5, previousN: 5 },
+      sessions: {
+        current: 10,
+        currentN: 10,
+        previous: 5,
+        previousN: 5,
+        deltaPercent: 100,
+        deltaDirection: 'up',
+      },
     });
     const view = statStripToView(strip, 'all');
     expect(view.sessions.delta).toEqual({ direction: 'flat', text: '—' });
   });
 
-  it('computes a real delta outside the All preset when a previous window exists', () => {
+  it('formats a precomputed delta outside the All preset when a previous window exists', () => {
     const strip = statStripFixture({
-      sessions: { current: 12, currentN: 12, previous: 10, previousN: 10 },
+      sessions: {
+        current: 12,
+        currentN: 12,
+        previous: 10,
+        previousN: 10,
+        deltaPercent: 20,
+        deltaDirection: 'up',
+      },
     });
     const view = statStripToView(strip, '7d');
     expect(view.sessions.delta).toEqual({ direction: 'up', text: '+20%' });
+  });
+
+  it('renders "—" text (not a fabricated 0%) when deltaPercent is null (previous was 0)', () => {
+    const strip = statStripFixture({
+      sessions: {
+        current: 3,
+        currentN: 3,
+        previous: 0,
+        previousN: 0,
+        deltaPercent: null,
+        deltaDirection: 'up',
+      },
+    });
+    const view = statStripToView(strip, '7d');
+    expect(view.sessions.delta).toEqual({ direction: 'up', text: '—' });
   });
 });
 

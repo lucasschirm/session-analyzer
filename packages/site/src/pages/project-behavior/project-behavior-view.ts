@@ -65,6 +65,21 @@ interface PanelState<T> {
   error?: string;
 }
 
+/** Keyed shape of {@link ProjectBehaviorView.fetchPanels}' settled results —
+ * named fields instead of array positions, so `applyCorePanels`/
+ * `applyRemainingPanels` can't be silently desynced from a reorder of the
+ * underlying request list. */
+interface PanelResults {
+  header: PromiseSettledResult<ProjectHeader>;
+  statStrip: PromiseSettledResult<ProjectStatStrip>;
+  histogram: PromiseSettledResult<SessionDurationHistogram>;
+  outcomes: PromiseSettledResult<SessionOutcomeDistribution>;
+  toolErrorRate: PromiseSettledResult<WeeklyToolErrorRateSeries>;
+  topTools: PromiseSettledResult<TopToolsList>;
+  modelCohorts: PromiseSettledResult<ProjectModelHarnessCohorts>;
+  domains: PromiseSettledResult<DimensionDomains>;
+}
+
 function panelStateFromResult<T>(
   result: PromiseSettledResult<T>,
   isEmpty: (data: T) => boolean,
@@ -357,17 +372,30 @@ export class ProjectBehaviorPage extends PageLitElement {
     }
   }
 
-  private fetchPanels(resolved: string, query: ReturnType<typeof projectBehaviorParamsToQuery>) {
-    return Promise.allSettled([
-      analyticsClient.project.getHeader(resolved),
-      analyticsClient.project.getStatStrip(resolved, query),
-      analyticsClient.project.getDurationHistogram(resolved, query),
-      analyticsClient.project.getOutcomeMix(resolved, query),
-      analyticsClient.project.getWeeklyToolErrorRate(resolved, query),
-      analyticsClient.project.getTopTools(resolved, query),
-      analyticsClient.project.getModelHarnessCohorts(resolved, query),
-      analyticsClient.metadata.getDimensionDomains(),
-    ]);
+  private panelRequests(resolved: string, query: ReturnType<typeof projectBehaviorParamsToQuery>) {
+    return {
+      header: analyticsClient.project.getHeader(resolved),
+      statStrip: analyticsClient.project.getStatStrip(resolved, query),
+      histogram: analyticsClient.project.getDurationHistogram(resolved, query),
+      outcomes: analyticsClient.project.getOutcomeMix(resolved, query),
+      toolErrorRate: analyticsClient.project.getWeeklyToolErrorRate(resolved, query),
+      topTools: analyticsClient.project.getTopTools(resolved, query),
+      modelCohorts: analyticsClient.project.getModelHarnessCohorts(resolved, query),
+      domains: analyticsClient.metadata.getDimensionDomains(),
+    };
+  }
+
+  /** Settles every panel request keyed by name — never by array position —
+   * so a reorder of {@link panelRequests}' fields can't silently misassign
+   * a result to the wrong panel. */
+  private async fetchPanels(
+    resolved: string,
+    query: ReturnType<typeof projectBehaviorParamsToQuery>,
+  ): Promise<PanelResults> {
+    const requests = this.panelRequests(resolved, query);
+    const keys = Object.keys(requests) as (keyof typeof requests)[];
+    const settled = await Promise.allSettled(keys.map((key) => requests[key]));
+    return Object.fromEntries(keys.map((key, i) => [key, settled[i]])) as unknown as PanelResults;
   }
 
   private async load(): Promise<void> {
@@ -384,42 +412,23 @@ export class ProjectBehaviorPage extends PageLitElement {
     this.applyResults(await this.fetchPanels(resolved, query));
   }
 
-  private applyCorePanels(results: PromiseSettledResult<unknown>[]): void {
-    const [header, statStrip, histogram] = results;
-    this.header = panelStateFromResult(header as PromiseSettledResult<ProjectHeader>, () => false);
-    this.statStrip = panelStateFromResult(
-      statStrip as PromiseSettledResult<ProjectStatStrip>,
-      () => false,
-    );
-    this.histogram = panelStateFromResult(
-      histogram as PromiseSettledResult<SessionDurationHistogram>,
-      (d) => d.eligibleN === 0,
-    );
+  private applyCorePanels(results: PanelResults): void {
+    this.header = panelStateFromResult(results.header, () => false);
+    this.statStrip = panelStateFromResult(results.statStrip, () => false);
+    this.histogram = panelStateFromResult(results.histogram, (d) => d.eligibleN === 0);
   }
 
-  private applyRemainingPanels(results: PromiseSettledResult<unknown>[]): void {
-    const [, , , outcomes, toolErrorRate, topTools, modelCohorts, domains] = results;
-    this.outcomes = panelStateFromResult(
-      outcomes as PromiseSettledResult<SessionOutcomeDistribution>,
-      (d) => d.buckets.every((b) => b.count === 0),
+  private applyRemainingPanels(results: PanelResults): void {
+    this.outcomes = panelStateFromResult(results.outcomes, (d) =>
+      d.buckets.every((b) => b.count === 0),
     );
-    this.toolErrorRate = panelStateFromResult(
-      toolErrorRate as PromiseSettledResult<WeeklyToolErrorRateSeries>,
-      (d) => d.series.length === 0,
-    );
-    this.topTools = panelStateFromResult(
-      topTools as PromiseSettledResult<TopToolsList>,
-      (d) => d.rows.length === 0,
-    );
-    this.modelCohorts = panelStateFromResult(
-      modelCohorts as PromiseSettledResult<ProjectModelHarnessCohorts>,
-      (d) => d.rows.length === 0,
-    );
-    this.domains =
-      domains.status === 'fulfilled' ? (domains.value as DimensionDomains) : this.domains;
+    this.toolErrorRate = panelStateFromResult(results.toolErrorRate, (d) => d.series.length === 0);
+    this.topTools = panelStateFromResult(results.topTools, (d) => d.rows.length === 0);
+    this.modelCohorts = panelStateFromResult(results.modelCohorts, (d) => d.rows.length === 0);
+    this.domains = results.domains.status === 'fulfilled' ? results.domains.value : this.domains;
   }
 
-  private applyResults(results: PromiseSettledResult<unknown>[]): void {
+  private applyResults(results: PanelResults): void {
     this.applyCorePanels(results);
     this.applyRemainingPanels(results);
     this.summarizeGlobalState();

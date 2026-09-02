@@ -58,19 +58,29 @@ function coverageLabel(knownN: number, eligibleN: number): string {
   return `n=${knownN}${knownN < eligibleN ? ` of ${eligibleN}` : ''}`;
 }
 
-function deltaFromValues(
-  current: number,
-  previous: number | undefined,
-  rangeSelection: RangeSelection,
-): StatDelta | undefined {
+/** A period-comparison shape shared by {@link PeriodDelta} and
+ * {@link AggregateStat}'s "previous window" fields — see either type's
+ * doc comment for the omission/`null` rules `deltaPercent` follows. */
+interface DeltaSource {
+  previous?: number | null;
+  deltaPercent?: number | null;
+  deltaDirection?: 'up' | 'down' | 'flat';
+}
+
+/** Formats an already-computed `deltaPercent`/`deltaDirection` pair (see
+ * `PeriodDelta`/`AggregateStat` in `@lucasschirm/sal-db`) into display text.
+ * No percentage-change arithmetic happens here — only rounding and sign
+ * formatting of a value the read contract already computed
+ * (`.agents/rules/no-canonical-metrics-in-lit.md`). */
+function formatDelta(source: DeltaSource, rangeSelection: RangeSelection): StatDelta | undefined {
   if (rangeSelection === 'all') return { direction: 'flat', text: '—' };
-  if (previous === undefined) return undefined;
-  const diff = current - previous;
-  const pctText =
-    previous !== 0
-      ? `${diff >= 0 ? '+' : ''}${Math.round((diff / previous) * 100)}%`
-      : `${diff >= 0 ? '+' : ''}${diff}`;
-  return { direction: diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat', text: pctText };
+  if (source.previous === undefined || source.previous === null) return undefined;
+  const { deltaPercent, deltaDirection = 'flat' } = source;
+  if (deltaPercent === null || deltaPercent === undefined) {
+    return { direction: deltaDirection, text: '—' };
+  }
+  const rounded = Math.round(deltaPercent);
+  return { direction: deltaDirection, text: `${rounded >= 0 ? '+' : ''}${rounded}%` };
 }
 
 export interface AggregateTileView {
@@ -151,7 +161,7 @@ export function statStripToView(
   return {
     sessions: {
       value: String(sessions.current),
-      delta: deltaFromValues(sessions.current, sessions.previous, rangeSelection),
+      delta: formatDelta(sessions, rangeSelection),
       sampleLabel: coverageLabel(sessions.currentN, sessions.currentN),
     },
     duration: durationTile(strip),
@@ -160,9 +170,12 @@ export function statStripToView(
       value: tokensPerSession.value !== null ? formatCompactNumber(tokensPerSession.value) : '—',
       delta:
         tokensPerSession.value !== null
-          ? deltaFromValues(
-              tokensPerSession.value,
-              tokensPerSession.previousValue ?? undefined,
+          ? formatDelta(
+              {
+                previous: tokensPerSession.previousValue,
+                deltaPercent: tokensPerSession.deltaPercent,
+                deltaDirection: tokensPerSession.deltaDirection,
+              },
               rangeSelection,
             )
           : undefined,
