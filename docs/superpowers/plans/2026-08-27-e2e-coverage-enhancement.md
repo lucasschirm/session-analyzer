@@ -151,6 +151,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | PIPE-010 | Schema drift guard | `pipe-010-schema-drift-guard.test.ts` | archived-fixture ingest assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
 | PIPE-011 | Large-session boundedness | `pipe-011-large-session-bounded.test.ts` | resource-bound assertion | 2 | 3 | 4 | 24 | P2 | GREEN |
 | PIPE-012 | `pricing_version` evidence record id is session-scoped | `pipe-012-pricing-version-collision.test.ts` | record-id collision assertion | 2 | 3 | 3 | 18 | P2 | GREEN |
+|| PIPE-013 | Devin manifest ingestion, portfolio visibility, and sample-size token contract | `pipe-013-devin-ingest.test.ts` | `devin:tokens:total:inclusive` headline metric, failure injection, missing-vs-zero | 3 | 4 | 4 | 48 | P1 | GREEN |
 
 ### 6.3 Tier C — Sync Lifecycle (`SYNC-###`)
 
