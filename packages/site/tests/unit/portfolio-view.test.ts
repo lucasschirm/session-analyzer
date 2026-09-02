@@ -137,6 +137,7 @@ function componentsFixture(
     items: [
       {
         componentId: 'read_file',
+        name: 'tool/read_file',
         kind: 'tool',
         projectCount: 2,
         sessionCount: 10,

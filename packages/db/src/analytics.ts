@@ -94,6 +94,7 @@ export interface PortfolioTrendSeries {
 
 export interface ComponentUtilizationRow {
   readonly componentId: string;
+  readonly name: string;
   readonly kind: string;
   readonly projectCount: number;
   readonly sessionCount: number;

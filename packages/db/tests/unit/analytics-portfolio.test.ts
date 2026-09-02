@@ -7,10 +7,11 @@ import {
   ManifestCoverageStore,
   MetricDefinitionStore,
   MetricValueStore,
+  ModelRequestStore,
   PortfolioDailyRollupStore,
-  PortfolioDimensionRollupStore,
   PortfolioDistributionStore,
   PortfolioStore,
+  ProjectDailyRollupStore,
   ProjectStore,
   SessionComponentExposureStore,
   SessionStore,
@@ -29,7 +30,6 @@ import {
   getPortfolioTrends,
   getProjectList,
 } from '../../src/analytics-portfolio.js';
-import { rebuildProjectDistributions } from '../../src/distributions.js';
 import { createProjectBehaviorView } from '../../src/project-behavior.js';
 
 const TENANT_ID = 'tenant-ap';
@@ -522,42 +522,21 @@ describe('analytics-portfolio', () => {
       unit: 'cents',
     });
 
-    await createSession(executor, 'se-cohort', PROJECT1_ID, 'sess-cohort', BASE_TIME);
+    await createSession(executor, 'se-cohort', PROJECT1_ID, 'sess-cohort', BASE_TIME, {
+      harness: 'claude-code',
+    });
     await createGeneration(executor, 'se-cohort', 'gen-cohort');
 
-    await PortfolioDimensionRollupStore.insert(executor, {
-      portfolioId: PORTFOLIO_ID,
-      analysisReleaseId: ANALYSIS_RELEASE_ID,
-      comparabilityGroupId: COMPARABILITY_GROUP_ID,
-      metricDefinitionId: defId,
-      dimensionName: 'harness',
-      dimensionValue: 'claude-code',
-      isOther: false,
-      isUnknown: false,
-      valueCount: 2,
-      valueSum: 100,
-      valueMin: 50,
-      valueMax: 50,
-      valueMean: 50,
-      topNRank: 1,
+    // Insert a model_requests row so the cohort query can join sessions to
+    // models. The combined (model, harness) cohort is derived from this join,
+    // not from per-dimension rollups.
+    await ModelRequestStore.insert(executor, {
+      sessionId: 'se-cohort',
       generationId: 'gen-cohort',
-    });
-    await PortfolioDimensionRollupStore.insert(executor, {
-      portfolioId: PORTFOLIO_ID,
-      analysisReleaseId: ANALYSIS_RELEASE_ID,
-      comparabilityGroupId: COMPARABILITY_GROUP_ID,
-      metricDefinitionId: defId,
-      dimensionName: 'model',
-      dimensionValue: 'claude-sonnet',
-      isOther: false,
-      isUnknown: false,
-      valueCount: 1,
-      valueSum: 50,
-      valueMin: 50,
-      valueMax: 50,
-      valueMean: 50,
-      topNRank: 1,
-      generationId: 'gen-cohort',
+      requestOrder: 0,
+      model: 'claude-sonnet',
+      provider: 'anthropic',
+      status: 'success',
     });
 
     const page = await getModelHarnessCohorts(executor, {
@@ -567,17 +546,16 @@ describe('analytics-portfolio', () => {
       generationId: 'gen-cohort',
     });
 
-    expect(page.items.length).toBe(2);
-    const harnessCohort = page.items.find((c) => c.harness === 'claude-code');
-    const modelCohort = page.items.find((c) => c.model === 'claude-sonnet');
-    expect(harnessCohort).toBeDefined();
-    expect(harnessCohort?.model).toBe('unknown');
-    expect(harnessCohort?.sessionCount).toBe(2);
-    expect(modelCohort).toBeDefined();
-    expect(modelCohort?.harness).toBe('unknown');
-    expect(modelCohort?.sessionCount).toBe(1);
-    expect(harnessCohort?.metricValues[0]?.comparabilityGroupId).toBe(COMPARABILITY_GROUP_ID);
-    expect(harnessCohort?.token.comparabilityGroupId).toBe(COMPARABILITY_GROUP_ID);
+    // The combined query produces a single (claude-sonnet, claude-code) cohort
+    // with session count 1, instead of the old per-dimension grouping that
+    // produced duplicated "unknown / claude-code" and "claude-sonnet / unknown"
+    // rows.
+    expect(page.items.length).toBe(1);
+    const cohort = page.items[0];
+    expect(cohort?.model).toBe('claude-sonnet');
+    expect(cohort?.harness).toBe('claude-code');
+    expect(cohort?.sessionCount).toBe(1);
+    expect(cohort?.token.comparabilityGroupId).toBe(COMPARABILITY_GROUP_ID);
   });
 
   it('returns project list with source, harness, completeness, finality, reprocessing and issue state', async () => {
@@ -699,24 +677,33 @@ describe('analytics-portfolio', () => {
     expect(sessionDetail).toMatch(/USING INDEX/);
   });
 
-  it('project behavior summary uses precomputed distributions', async () => {
+  it('project behavior summary uses daily rollups for headline metrics', async () => {
     const statPolicyId = await createStatisticalPolicy(executor);
     const defId = await createMetricDefinition(executor, {
       metricId: 'm-duration',
       statisticalPolicyId: statPolicyId,
-      aggregation: 'distribution',
+      aggregation: 'sum',
       valueType: 'real',
       unit: 'ms',
     });
 
     await createSession(executor, 'se-pb-1', PROJECT1_ID, 'sess-pb-1', BASE_TIME);
     await createGeneration(executor, 'se-pb-1', 'gen-pb-1');
-    await createSession(executor, 'se-pb-2', PROJECT1_ID, 'sess-pb-2', BASE_TIME + 1000);
-    await createGeneration(executor, 'se-pb-2', 'gen-pb-2');
-    await createRealMetricValue(executor, defId, 'gen-pb-1', 'se-pb-1', 100);
-    await createRealMetricValue(executor, defId, 'gen-pb-2', 'se-pb-2', 120);
 
-    await rebuildProjectDistributions(executor, PROJECT1_ID, ANALYSIS_RELEASE_ID, 'gen-pb-1');
+    // Insert a project daily rollup row — the new source for headline metrics.
+    await ProjectDailyRollupStore.insert(executor, {
+      projectId: PROJECT1_ID,
+      analysisReleaseId: ANALYSIS_RELEASE_ID,
+      comparabilityGroupId: COMPARABILITY_GROUP_ID,
+      metricDefinitionId: defId,
+      dayBucket: '2026-08-24',
+      valueCount: 1,
+      valueSum: 100,
+      valueMin: 100,
+      valueMax: 100,
+      valueMean: 100,
+      generationId: 'gen-pb-1',
+    });
 
     const view = createProjectBehaviorView(executor);
     const summary = await view.getSummary(PROJECT1_ID, {

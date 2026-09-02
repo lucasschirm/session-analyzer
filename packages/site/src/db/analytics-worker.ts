@@ -20,7 +20,10 @@ import {
   type ManualIngestionDetection,
   type ManualIngestionFlowInput,
   ManualIngestionOrchestrator,
+  needsRebuild,
+  type RebuildProgress,
   type ResolvedArtifact,
+  rebuildAnalyticsDerivedData,
   type VerifiedManifestBundle,
 } from '@lucasschirm/sal-db';
 import { ANALYTICS_SCHEMA_NAME, MIGRATIONS, MigrationRunner } from '@lucasschirm/sal-db-core';
@@ -29,6 +32,9 @@ import { createDefaultRegistry, type TransformerRegistry } from '@lucasschirm/sa
 import type {
   AnalyticsBackendReport,
   AnalyticsDataChangedBroadcast,
+  AnalyticsReprocessCompletedBroadcast,
+  AnalyticsReprocessProgressBroadcast,
+  AnalyticsReprocessStartedBroadcast,
   AnalyticsRequest,
   AnalyticsResponse,
   ManualArtifactPayload,
@@ -131,6 +137,22 @@ export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState
   const runner = new MigrationRunner(executor, MIGRATIONS, ANALYTICS_SCHEMA_NAME);
   await runner.migrate();
 
+  // After migrations, check whether the stored analytics processing version
+  // is older than the current version. If so, rebuild all derived data
+  // (rollup contributions, daily/dimension rollups) so charts reflect the
+  // latest processing logic. Broadcasts progress so the UI can surface
+  // "Updating analytics data…".
+  if (await needsRebuild(executor)) {
+    postReprocessStarted('Analytics data format updated');
+    try {
+      await rebuildAnalyticsDerivedData(executor, postReprocessProgress);
+      postReprocessCompleted();
+      postDataChanged();
+    } catch (err) {
+      postReprocessCompleted(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   const hasher = createBrowserContentHasher();
   const blobStore = createBrowserArtifactBlobStore(executor);
   const syncCache = createSyncArtifactCache();
@@ -187,6 +209,38 @@ function withId(response: AnalyticsResponse, id: number): AnalyticsResponse {
 function postDataChanged(): void {
   if (typeof self !== 'undefined') {
     self.postMessage({ type: 'dataChanged', ok: true } as AnalyticsDataChangedBroadcast);
+  }
+}
+
+function postReprocessStarted(reason: string): void {
+  if (typeof self !== 'undefined') {
+    self.postMessage({
+      type: 'reprocessStarted',
+      ok: true,
+      reason,
+    } as AnalyticsReprocessStartedBroadcast);
+  }
+}
+
+function postReprocessProgress(progress: RebuildProgress): void {
+  if (typeof self !== 'undefined') {
+    self.postMessage({
+      type: 'reprocessProgress',
+      ok: true,
+      step: progress.step,
+      completed: progress.completed,
+      total: progress.total,
+    } as AnalyticsReprocessProgressBroadcast);
+  }
+}
+
+function postReprocessCompleted(error?: string): void {
+  if (typeof self !== 'undefined') {
+    self.postMessage({
+      type: 'reprocessCompleted',
+      ok: !error,
+      error,
+    } as AnalyticsReprocessCompletedBroadcast);
   }
 }
 

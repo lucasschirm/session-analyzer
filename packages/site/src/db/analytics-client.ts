@@ -22,6 +22,10 @@ import type {
 import type {
   AnalyticsBackendReport,
   AnalyticsDataChangedBroadcast,
+  AnalyticsReprocessBroadcast,
+  AnalyticsReprocessCompletedBroadcast,
+  AnalyticsReprocessProgressBroadcast,
+  AnalyticsReprocessStartedBroadcast,
   AnalyticsRequest,
   AnalyticsRequestPayload,
   AnalyticsResponse,
@@ -103,7 +107,9 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
     if (!this.worker) {
       const worker = this.createWorker();
       worker.onmessage = (
-        event: MessageEvent<AnalyticsResponse | AnalyticsDataChangedBroadcast>,
+        event: MessageEvent<
+          AnalyticsResponse | AnalyticsDataChangedBroadcast | AnalyticsReprocessBroadcast
+        >,
       ) => {
         this.handleResponse(event.data);
       };
@@ -157,10 +163,37 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
     this.pending.clear();
   }
 
-  private handleResponse(response: AnalyticsResponse | AnalyticsDataChangedBroadcast): void {
-    if ('type' in response && response.type === 'dataChanged') {
-      this.dispatchEvent(new CustomEvent('data-change'));
-      return;
+  private handleResponse(
+    response: AnalyticsResponse | AnalyticsDataChangedBroadcast | AnalyticsReprocessBroadcast,
+  ): void {
+    if ('type' in response) {
+      if (response.type === 'dataChanged') {
+        this.dispatchEvent(new CustomEvent('data-change'));
+        return;
+      }
+      if (response.type === 'reprocessStarted') {
+        const msg = response as AnalyticsReprocessStartedBroadcast;
+        this.dispatchEvent(
+          new CustomEvent('reprocess-started', { detail: { reason: msg.reason } }),
+        );
+        return;
+      }
+      if (response.type === 'reprocessProgress') {
+        const msg = response as AnalyticsReprocessProgressBroadcast;
+        this.dispatchEvent(
+          new CustomEvent('reprocess-progress', {
+            detail: { step: msg.step, completed: msg.completed, total: msg.total },
+          }),
+        );
+        return;
+      }
+      if (response.type === 'reprocessCompleted') {
+        const msg = response as AnalyticsReprocessCompletedBroadcast;
+        this.dispatchEvent(
+          new CustomEvent('reprocess-completed', { detail: { ok: msg.ok, error: msg.error } }),
+        );
+        return;
+      }
     }
     const typed = response as AnalyticsResponse;
     const handler = this.pending.get(typed.id);

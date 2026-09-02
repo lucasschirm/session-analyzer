@@ -40,6 +40,34 @@ type Queryable = SqliteExecutor | SqliteTransaction;
 
 const DEFAULT_LIMIT = 50;
 
+/**
+ * Maps a stored component kind to its display-friendly form.
+ * `configuration.ts` canonicalises `mcp` → `mcp_server` and `settings` →
+ * `setting` for storage; we reverse that for display so the chart shows
+ * `mcp/github` and `settings/...` as users expect.
+ */
+function displayKind(kind: string): string {
+  if (kind === 'mcp_server') return 'mcp';
+  if (kind === 'setting') return 'settings';
+  return kind;
+}
+
+/**
+ * Composes a human-friendly component name from the stored identity fields.
+ * Prefers `kind/nativeId` (e.g. `skill/multi-issue-agent`, `agent/developer`,
+ * `mcp/github`), falling back to `kind/displayName`, then `componentId`.
+ */
+function componentDisplayName(
+  kind: string,
+  nativeId: string,
+  displayName: string,
+  componentId: string,
+): string {
+  const label = nativeId || displayName || componentId;
+  if (!kind || kind === 'unknown') return label;
+  return `${displayKind(kind)}/${label}`;
+}
+
 function asString(value: SqliteValue): string {
   return value === null || value === undefined ? '' : String(value);
 }
@@ -681,6 +709,8 @@ export async function getComponentUtilization(
     `SELECT
        sce.component_id,
        ci.kind,
+       ci.native_id,
+       ci.display_name,
        COUNT(DISTINCT sce.session_id) AS session_count,
        COUNT(DISTINCT s.project_id) AS project_count
      FROM session_component_exposures sce
@@ -689,7 +719,7 @@ export async function getComponentUtilization(
      LEFT JOIN component_identities ci ON ci.id = sce.component_id
      WHERE p.portfolio_id = ?
        AND (? IS NULL OR sce.generation_id = ?)
-     GROUP BY sce.component_id, ci.kind
+     GROUP BY sce.component_id, ci.kind, ci.native_id, ci.display_name
      ORDER BY sce.component_id`,
     [portfolioId, generationId, generationId],
   );
@@ -698,10 +728,13 @@ export async function getComponentUtilization(
   for (const row of rollupRows) {
     const componentId = asString(row.component_id);
     const kind = asString(row.kind ?? 'unknown');
+    const nativeId = asOptionalString(row.native_id) ?? '';
+    const displayName = asOptionalString(row.display_name) ?? '';
     const projectCount = asNumber(row.project_count);
     const totalInvocations = 0;
     const totalSuccess = 0;
     const sessionCount = asNumber(row.session_count);
+    const name = componentDisplayName(kind, nativeId, displayName, componentId);
 
     const reliability = totalInvocations > 0 ? totalSuccess / totalInvocations : null;
     const token = makeBaseToken(
@@ -713,11 +746,12 @@ export async function getComponentUtilization(
       0,
       'derived',
       'load-rate-0.1.0',
-      [evidenceLink('component', componentId, `Component ${componentId} utilization`)],
+      [evidenceLink('component', componentId, `Component ${name} utilization`)],
     );
 
     items.push({
       componentId,
+      name,
       kind,
       projectCount,
       sessionCount,
@@ -733,16 +767,6 @@ export async function getComponentUtilization(
   });
 }
 
-interface DimensionCohortGroup {
-  readonly dimensionName: string;
-  readonly dimensionValue: string;
-  readonly comparabilityGroupId: string;
-  readonly analysisReleaseId: string;
-  readonly generationId: string;
-  readonly valueCount: number;
-  readonly metrics: MetricValueDto[];
-}
-
 export async function getModelHarnessCohorts(
   queryable: Queryable,
   query: AnalyticsQuery,
@@ -756,76 +780,44 @@ export async function getModelHarnessCohorts(
     };
   }
 
-  const allRollups = await PortfolioDimensionRollupStore.listByPortfolio(queryable, portfolioId);
-  const filtered = allRollups.filter(
-    (r) =>
-      isDimensionRollupInQuery(r, query) &&
-      (r.dimensionName === 'harness' || r.dimensionName === 'model'),
-  );
-  const definitions = await loadMetricDefinitions(
-    queryable,
-    filtered.map((r) => r.metricDefinitionId),
+  const generationId = query.generationId ?? null;
+
+  // Build true (model, harness) cohort pairs by joining sessions with
+  // model_requests. This avoids the previous per-dimension grouping that
+  // produced duplicated "unknown / claude-code" and "Unknown / unknown" rows.
+  // Sessions with no model_requests get model = NULL → 'unknown'.
+  const { rows: cohortRows } = await queryable.exec(
+    `SELECT
+       COALESCE(mr.model, 'unknown') AS model,
+       COALESCE(s.harness, 'unknown') AS harness,
+       COUNT(DISTINCT s.id) AS session_count
+     FROM sessions s
+     JOIN projects p ON p.id = s.project_id
+     LEFT JOIN model_requests mr
+       ON mr.session_id = s.id
+       AND mr.generation_id = s.current_generation_id
+     WHERE p.portfolio_id = ?
+       AND (? IS NULL OR s.current_generation_id = ?)
+     GROUP BY COALESCE(mr.model, 'unknown'), COALESCE(s.harness, 'unknown')
+     ORDER BY session_count DESC, model, harness`,
+    [portfolioId, generationId, generationId],
   );
 
-  const groups = new Map<string, DimensionCohortGroup>();
-  for (const rollup of filtered) {
-    const definition = definitions.get(rollup.metricDefinitionId);
-    if (!definition) continue;
-    const lower = definition.aggregation.toLowerCase();
-    const value = lower === 'sum' || lower === 'count' ? rollup.valueSum : rollup.valueMean;
-    const key = `${rollup.dimensionName}:${rollup.dimensionValue}:${rollup.comparabilityGroupId}:${rollup.analysisReleaseId}:${rollup.generationId}`;
-    const existing = groups.get(key);
-    const metricToken: AnalyticsToken = {
-      ...makeBaseToken(
-        rollup.analysisReleaseId,
-        rollup.generationId,
-        rollup.comparabilityGroupId,
-        rollup.valueCount,
-        rollup.valueCount,
-        0,
-        'derived',
-        String(definition.version),
-        [evidenceLink('portfolio_dimension_rollup', rollup.id, definition.label)],
-      ),
-      comparabilityGroupId: rollup.comparabilityGroupId,
-    };
-    const metric = makeMetricValue(
-      definition.metricId,
-      value,
-      definition.unit,
-      definition.label,
-      metricToken,
-    );
-    if (existing) {
-      const updated: DimensionCohortGroup = {
-        ...existing,
-        valueCount: Math.max(existing.valueCount, rollup.valueCount),
-        metrics: [...existing.metrics, metric],
-      };
-      groups.set(key, updated);
-    } else {
-      groups.set(key, {
-        dimensionName: rollup.dimensionName,
-        dimensionValue: rollup.dimensionValue,
-        comparabilityGroupId: rollup.comparabilityGroupId,
-        analysisReleaseId: rollup.analysisReleaseId,
-        generationId: rollup.generationId,
-        valueCount: rollup.valueCount,
-        metrics: [metric],
-      });
-    }
-  }
+  const analysisReleaseId = query.analysisReleaseId ?? 'unknown';
+  const resolvedGenerationId = query.generationId ?? 'unknown';
+  const comparabilityGroupId = query.comparabilityGroupId ?? 'model-harness-cohort';
 
   const items: ModelHarnessCohort[] = [];
-  for (const group of groups.values()) {
-    const model = group.dimensionName === 'model' ? group.dimensionValue : 'unknown';
-    const harness = group.dimensionName === 'harness' ? group.dimensionValue : 'unknown';
+  for (const row of cohortRows) {
+    const model = asString(row.model) || 'unknown';
+    const harness = asString(row.harness) || 'unknown';
+    const sessionCount = asNumber(row.session_count);
     const token = makeBaseToken(
-      group.analysisReleaseId,
-      group.generationId,
-      group.comparabilityGroupId,
-      group.valueCount,
-      group.valueCount,
+      analysisReleaseId,
+      resolvedGenerationId,
+      comparabilityGroupId,
+      sessionCount,
+      sessionCount,
       0,
       'derived',
       'model-harness-cohort-0.1.0',
@@ -834,8 +826,8 @@ export async function getModelHarnessCohorts(
     items.push({
       model,
       harness,
-      sessionCount: group.valueCount,
-      metricValues: group.metrics,
+      sessionCount,
+      metricValues: [],
       token,
     });
   }

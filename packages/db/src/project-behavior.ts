@@ -288,63 +288,111 @@ export async function getProjectBehaviorSummary(
   projectId: string,
   query: AnalyticsQuery,
 ): Promise<ProjectBehaviorSummary> {
-  const allDistributions = await ProjectDistributionStore.listByProject(queryable, projectId);
-  const distributions = allDistributions.filter((d) => isDistributionInQuery(d, query));
+  // Headline metrics are sourced from project_daily_rollups, which are
+  // populated at ingestion. The previous implementation read
+  // project_distributions, which only materialise for metrics with
+  // aggregation='distribution' — none exist — so the overview always showed
+  // "No metrics available." Daily rollups aggregate per metric definition
+  // across day buckets; we sum them to produce project-level totals.
+  const allRollups = await ProjectDailyRollupStore.listByProject(queryable, projectId);
+  const range = resolveTimeRange(query, 0, Number.MAX_SAFE_INTEGER);
+  const rollups = allRollups.filter((r) => isRollupInQuery(r, query, range));
   const sessions = await SessionStore.listByProject(queryable, projectId);
 
-  const definitionIds = distributions.map((d) => d.metricDefinitionId);
+  const definitionIds = rollups.map((r) => r.metricDefinitionId);
   const definitions = await loadMetricDefinitions(queryable, definitionIds);
+
+  // Aggregate rollups per metric definition: sum valueSum for sum/count
+  // aggregations, or take the mean of bucket means for mean aggregations.
+  const perMetric = new Map<
+    string,
+    {
+      definition: StoredMetricDefinition;
+      sum: number;
+      count: number;
+      knownBuckets: number;
+    }
+  >();
+  for (const rollup of rollups) {
+    const definition = definitions.get(rollup.metricDefinitionId);
+    if (!definition) continue;
+    const lower = definition.aggregation.toLowerCase();
+    const contribution = lower === 'sum' || lower === 'count' ? rollup.valueSum : rollup.valueMean;
+    if (contribution === null) continue;
+    const existing = perMetric.get(rollup.metricDefinitionId);
+    if (existing) {
+      existing.sum += contribution;
+      existing.count += 1;
+      if (rollup.valueCount > 0) existing.knownBuckets += 1;
+    } else {
+      perMetric.set(rollup.metricDefinitionId, {
+        definition,
+        sum: contribution,
+        count: 1,
+        knownBuckets: rollup.valueCount > 0 ? 1 : 0,
+      });
+    }
+  }
 
   const headlineMetrics: MetricValueDto[] = [];
   let totalEligibleN = 0;
   let totalKnownN = 0;
-  let totalUnknownCount = 0;
 
-  for (const distribution of distributions) {
-    const definition = definitions.get(distribution.metricDefinitionId);
-    if (!definition) continue;
-    const value = distributionValue(distribution, definition.aggregation);
+  for (const { definition, sum, count, knownBuckets } of perMetric.values()) {
+    const lower = definition.aggregation.toLowerCase();
+    const value = lower === 'sum' || lower === 'count' ? sum : count > 0 ? sum / count : null;
     const measurementClass = measurementClassForAggregate(
       definition.measurementClass,
       definition.aggregation,
     );
+    const analysisReleaseId =
+      rollups.find((r) => r.metricDefinitionId === definition.id)?.analysisReleaseId ??
+      query.analysisReleaseId ??
+      'unknown';
+    const generationId =
+      rollups.find((r) => r.metricDefinitionId === definition.id)?.generationId ??
+      query.generationId ??
+      'unknown';
+    const comparabilityGroupId =
+      rollups.find((r) => r.metricDefinitionId === definition.id)?.comparabilityGroupId ??
+      query.comparabilityGroupId ??
+      'unknown';
     const token = makeToken(
-      distribution.analysisReleaseId,
-      distribution.generationId,
-      distribution.comparabilityGroupId,
-      distribution.eligibleN,
-      distribution.knownN,
-      distribution.unknownCount,
+      analysisReleaseId,
+      generationId,
+      comparabilityGroupId,
+      count,
+      knownBuckets,
+      count - knownBuckets,
       measurementClass,
       String(definition.version),
-      [evidenceLink('project_distribution', distribution.id, definition.label)],
+      [evidenceLink('project_daily_rollup', definition.id, definition.label)],
     );
-    const metric = {
+    headlineMetrics.push({
       ...makeMetricValueDto(definition.metricId, value, token),
       unit: definition.unit,
       label: definition.label,
-    };
-    headlineMetrics.push(metric);
-    totalEligibleN += distribution.eligibleN;
-    totalKnownN += distribution.knownN;
-    totalUnknownCount += distribution.unknownCount;
+    });
+    totalEligibleN += count;
+    totalKnownN += knownBuckets;
   }
 
-  const analysisReleaseId =
-    query.analysisReleaseId ?? distributions[0]?.analysisReleaseId ?? 'unknown';
-  const generationId = distributions[0]?.generationId ?? query.generationId ?? 'unknown';
+  const analysisReleaseId = query.analysisReleaseId ?? rollups[0]?.analysisReleaseId ?? 'unknown';
+  const generationId = rollups[0]?.generationId ?? query.generationId ?? 'unknown';
   const comparabilityGroupId =
-    query.comparabilityGroupId ?? distributions[0]?.comparabilityGroupId ?? 'unknown';
+    query.comparabilityGroupId ?? rollups[0]?.comparabilityGroupId ?? 'unknown';
 
   const token = makeToken(
     analysisReleaseId,
     generationId,
     comparabilityGroupId,
     sessions.length || totalEligibleN,
-    sessions.length ? Math.min(totalKnownN, sessions.length) : totalKnownN,
-    sessions.length
-      ? Math.max(0, sessions.length - Math.min(totalKnownN, sessions.length))
-      : totalUnknownCount,
+    Math.min(totalKnownN, sessions.length || totalEligibleN),
+    Math.max(
+      0,
+      (sessions.length || totalEligibleN) -
+        Math.min(totalKnownN, sessions.length || totalEligibleN),
+    ),
     'derived',
     'summary-0.1.0',
     [evidenceLink('project', projectId, 'Project behavior summary')],

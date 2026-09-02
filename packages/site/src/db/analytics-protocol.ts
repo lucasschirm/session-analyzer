@@ -192,3 +192,41 @@ export interface AnalyticsDataChangedBroadcast {
   readonly type: 'dataChanged';
   readonly ok: true;
 }
+
+/**
+ * Broadcast sent by the analytics worker when an automatic reprocessing pass
+ * starts. Emitted on boot when the stored analytics processing version is
+ * older than the current version and a rebuild is required.
+ */
+export interface AnalyticsReprocessStartedBroadcast {
+  readonly type: 'reprocessStarted';
+  readonly ok: true;
+  readonly reason: string;
+}
+
+/**
+ * Broadcast sent by the analytics worker during reprocessing to report
+ * per-step progress. `completed` and `total` are counts for the current step.
+ */
+export interface AnalyticsReprocessProgressBroadcast {
+  readonly type: 'reprocessProgress';
+  readonly ok: true;
+  readonly step: string;
+  readonly completed: number;
+  readonly total: number;
+}
+
+/**
+ * Broadcast sent by the analytics worker when an automatic reprocessing pass
+ * finishes (successfully or not). `error` is present when the rebuild failed.
+ */
+export interface AnalyticsReprocessCompletedBroadcast {
+  readonly type: 'reprocessCompleted';
+  readonly ok: boolean;
+  readonly error?: string;
+}
+
+export type AnalyticsReprocessBroadcast =
+  | AnalyticsReprocessStartedBroadcast
+  | AnalyticsReprocessProgressBroadcast
+  | AnalyticsReprocessCompletedBroadcast;

@@ -201,12 +201,22 @@ function dimensionValueFor(
   metric: AugmentedMetricValue,
   session: SessionContext,
   dimensionName: string,
+  sessionModels?: readonly string[],
 ): string | null {
   if (metric.defDimensions.length > 0 && metric.defDimensions[0] === dimensionName) {
     return metric.dimensionsKey ?? null;
   }
   if (dimensionName === 'component' && metric.entityType === 'component') {
     return metric.entityId ?? null;
+  }
+  if (dimensionName === 'model') {
+    // The model dimension is resolved from model_requests, not the session
+    // row. A session may use multiple models; the caller handles fan-out via
+    // sessionModels. When sessionModels is provided, return the first model
+    // (the caller iterates over all); when empty, return null so the
+    // contribution lands in the Unknown bucket.
+    if (sessionModels && sessionModels.length > 0) return sessionModels[0]!;
+    return null;
   }
   return sessionDimensionValue(session, dimensionName);
 }
@@ -238,6 +248,23 @@ async function readSessionContext(
     mode: asOptionalString(row.mode),
     taskCohort: asOptionalString(row.task_cohort),
   };
+}
+
+const SESSION_MODELS_SELECT = `
+  SELECT DISTINCT mr.model
+  FROM model_requests mr
+  WHERE mr.session_id = ?
+    AND mr.generation_id = ?
+  ORDER BY mr.model
+`;
+
+async function readSessionModels(
+  queryable: Queryable,
+  sessionId: string,
+  generationId: string,
+): Promise<readonly string[]> {
+  const { rows } = await queryable.exec(SESSION_MODELS_SELECT, [sessionId, generationId]);
+  return rows.map((row) => asString(row.model)).filter((m) => m.length > 0);
 }
 
 const METRIC_VALUE_SELECT = `
@@ -372,6 +399,7 @@ function buildContributionGroups(
   metrics: readonly AugmentedMetricValue[],
   input: ApplyRollupContributionsInput,
   policy: RollupPolicy,
+  sessionModels: readonly string[] = [],
 ): { groups: Map<string, ContributionGroup>; keys: AffectedBucketKey[] } {
   const groups = new Map<string, ContributionGroup>();
   const keys: AffectedBucketKey[] = [];
@@ -428,7 +456,38 @@ function buildContributionGroups(
     );
 
     for (const dimension of supportedDimensions) {
-      const bucketValue = dimensionValueFor(metric, session, dimension);
+      // When the metric itself is inherently dimensioned by `model` (e.g. a
+      // per-model token metric with defDimensions=['model']), use the
+      // metric's own dimensionsKey as the bucket value — same as any other
+      // def-dimension. Only fan out from model_requests when the metric is
+      // NOT inherently model-dimensioned, so session-level metrics get a
+      // real model bucket instead of Unknown.
+      const isMetricModelDimensioned =
+        metric.defDimensions.length > 0 && metric.defDimensions[0] === dimension;
+      if (dimension === 'model' && !isMetricModelDimensioned) {
+        // Fan out the model dimension over each distinct model used by the
+        // session. When no models are recorded, emit a single Unknown bucket
+        // (bucketValue = null) so the contribution is still counted.
+        const models = sessionModels.length > 0 ? sessionModels : [null];
+        for (const model of models) {
+          addToGroup(
+            {
+              projectId,
+              portfolioId,
+              analysisReleaseId: input.analysisReleaseId,
+              comparabilityGroupId: metric.comparabilityGroupId,
+              metricDefinitionId: metric.metricDefinitionId,
+              contributionScope: scope,
+              bucketType: DIMENSION_BUCKET_TYPE,
+              bucketName: dimension,
+              bucketValue: model,
+            },
+            numeric,
+          );
+        }
+        continue;
+      }
+      const bucketValue = dimensionValueFor(metric, session, dimension, sessionModels);
       addToGroup(
         {
           projectId,
@@ -906,7 +965,14 @@ export async function applySessionRollupContributions(
     input.generationId,
   ]);
   const metrics = await listAdditiveMetricValues(tx, input.sessionId, input.generationId);
-  const { groups, keys: builtKeys } = buildContributionGroups(session, metrics, input, policy);
+  const sessionModels = await readSessionModels(tx, input.sessionId, input.generationId);
+  const { groups, keys: builtKeys } = buildContributionGroups(
+    session,
+    metrics,
+    input,
+    policy,
+    sessionModels,
+  );
   for (const group of groups.values()) {
     await RollupContributionStore.insert(tx, {
       id: contributionId(
