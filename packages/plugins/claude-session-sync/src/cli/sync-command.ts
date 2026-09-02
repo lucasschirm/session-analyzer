@@ -12,6 +12,7 @@ import {
   discover,
   discoverSession,
   getDataDir,
+  type HarnessProfile,
   type HookInput,
   MAIN_TRANSCRIPT_STORAGE_NAME,
   parseObjectKey,
@@ -24,6 +25,7 @@ import {
   type SyncErrorCode,
 } from '@lucasschirm/sal-sync';
 
+import { ClaudeHarnessProfile } from '../claude-profile.js';
 import { validateCliConfig } from './config.js';
 import { resolveCliEnv } from './env.js';
 import { listLocalSessions, resolveClaudeProjectDir } from './project.js';
@@ -35,6 +37,9 @@ export interface SyncCommandOptions {
   stdout?: NodeJS.WritableStream;
   stderr?: NodeJS.WritableStream;
   force?: boolean;
+  /** Defaults to `ClaudeHarnessProfile`. See `.agents/rules` DS-B5 (#143): this used
+   * to hardcode `harness: 'claude', harness_version: '0.1.0'` in the loop below. */
+  harnessProfile?: HarnessProfile;
 }
 
 interface SessionSyncOutcome {
@@ -105,6 +110,7 @@ async function runFullScopeSync(
   hookInput: HookInput,
   storageAdapter: NonNullable<SyncCommandOptions['storageAdapter']>,
   dataDir: string,
+  profile: HarnessProfile,
 ): Promise<SessionSyncOutcome> {
   const stateStore = new StateStore(dataDir);
   await stateStore.ensureDirectories();
@@ -113,14 +119,17 @@ async function runFullScopeSync(
   session.startedAt = session.startedAt ?? new Date().toISOString();
   await stateStore.setSession(hookInput.session_id, session);
 
-  const discovery = await discover({
-    projectId: config.projectId,
-    sessionId: hookInput.session_id,
-    workspaceRoot: hookInput.cwd,
-    transcriptPath: hookInput.transcript_path,
-    captureTranscripts: config.captureTranscripts,
-    limits: config.limits,
-  });
+  const discovery = await discover(
+    {
+      projectId: config.projectId,
+      sessionId: hookInput.session_id,
+      workspaceRoot: hookInput.cwd,
+      transcriptPath: hookInput.transcript_path,
+      captureTranscripts: config.captureTranscripts,
+      limits: config.limits,
+    },
+    profile,
+  );
 
   const candidateResults = await buildCandidates(discovery, config, {
     projectRoot: hookInput.cwd,
@@ -198,6 +207,7 @@ async function runSessionOnlySync(
   hookInput: HookInput,
   storageAdapter: NonNullable<SyncCommandOptions['storageAdapter']>,
   dataDir: string,
+  profile: HarnessProfile,
 ): Promise<SessionSyncOutcome> {
   const stateStore = new StateStore(dataDir);
   await stateStore.ensureDirectories();
@@ -210,14 +220,17 @@ async function runSessionOnlySync(
   // config artifacts. They will be marked 'skipped' by the upload layer since
   // they're already in CAS, but they appear in the manifest so the dashboard
   // can download them from CAS and feed them to the transformer.
-  const discovery = await discover({
-    projectId: config.projectId,
-    sessionId: hookInput.session_id,
-    workspaceRoot: hookInput.cwd,
-    transcriptPath: hookInput.transcript_path,
-    captureTranscripts: config.captureTranscripts,
-    limits: config.limits,
-  });
+  const discovery = await discover(
+    {
+      projectId: config.projectId,
+      sessionId: hookInput.session_id,
+      workspaceRoot: hookInput.cwd,
+      transcriptPath: hookInput.transcript_path,
+      captureTranscripts: config.captureTranscripts,
+      limits: config.limits,
+    },
+    profile,
+  );
 
   const candidateResults = await buildCandidates(discovery, config, {
     projectRoot: hookInput.cwd,
@@ -285,6 +298,7 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const force = options.force ?? false;
+  const profile = options.harnessProfile ?? ClaudeHarnessProfile;
 
   const env = options.env ?? (await resolveCliEnv(cwd));
   const validation = validateCliConfig(env, cwd);
@@ -353,18 +367,18 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
       session_id: session.sessionId,
       cwd,
       transcript_path: session.transcriptPath,
-      harness: 'claude',
-      harness_version: '0.1.0',
+      harness: profile.harness,
+      harness_version: profile.harnessVersion,
       trigger: 'manual',
     };
 
     let outcome: SessionSyncOutcome;
     try {
       if (!firstSessionUploaded) {
-        outcome = await runFullScopeSync(config, hookInput, storageAdapter, dataDir);
+        outcome = await runFullScopeSync(config, hookInput, storageAdapter, dataDir, profile);
         firstSessionUploaded = true;
       } else {
-        outcome = await runSessionOnlySync(config, hookInput, storageAdapter, dataDir);
+        outcome = await runSessionOnlySync(config, hookInput, storageAdapter, dataDir, profile);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

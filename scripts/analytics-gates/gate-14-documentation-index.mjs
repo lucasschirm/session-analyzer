@@ -92,6 +92,69 @@ try {
   errors.push('missing scripts/analytics-gates/AGENTS.md');
 }
 
+// The E2E coverage catalog exists, has a §6 catalog, every top-level
+// packages/site/tests/e2e/*.spec.ts file is represented in it, and every
+// catalog ID (UX-###/PIPE-###/SYNC-###) cited in specs resolves to a row.
+const catalogPath = join(repoRoot, 'docs/superpowers/plans/2026-08-27-e2e-coverage-enhancement.md');
+let catalogText = '';
+try {
+  catalogText = readFileSync(catalogPath, 'utf8');
+} catch {
+  errors.push(
+    'missing docs/superpowers/plans/2026-08-27-e2e-coverage-enhancement.md (required by .agents/rules/e2e-coverage-required.md §6)',
+  );
+}
+if (catalogText) {
+  if (!/(^|\n)#{1,3}\s*6[.\s]/.test(catalogText) && !catalogText.includes('§6')) {
+    errors.push('e2e coverage catalog is missing a §6 / "6." catalog section');
+  }
+
+  const e2eDir = join(repoRoot, 'packages/site/tests/e2e');
+  const specFiles = readdirSync(e2eDir).filter(
+    (f) => f.endsWith('.spec.ts') && statSync(join(e2eDir, f)).isFile(),
+  );
+  for (const spec of specFiles) {
+    if (!catalogText.includes(spec)) {
+      errors.push(`e2e coverage catalog does not reference spec file ${spec}`);
+    }
+  }
+
+  const idPattern = /\b(UX|PIPE|SYNC)-\d{3}\b/g;
+  const citedIds = new Set();
+  const scanDirs = [
+    'packages/site/tests/e2e',
+    'packages/db/tests/pipeline',
+    'packages/sync/tests/e2e',
+    'packages/plugins/claude-session-sync/tests/e2e',
+    'packages/site/tests/unit',
+  ];
+  const scanFile = (path) => {
+    const text = readFileSync(path, 'utf8');
+    for (const match of text.matchAll(idPattern)) citedIds.add(match[0]);
+  };
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.ts')) scanFile(full);
+    }
+  };
+  for (const dir of scanDirs) walk(join(repoRoot, dir));
+
+  for (const id of citedIds) {
+    const row = new RegExp(`\\|\\s*${id}\\s*\\|`);
+    if (!row.test(catalogText)) {
+      errors.push(`catalog ID ${id} is cited in a spec but has no row in the e2e coverage catalog`);
+    }
+  }
+}
+
 if (errors.length > 0) {
   fail(gate, errors.join('\n'));
 }

@@ -3,6 +3,7 @@ import * as fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { CLAUDE_SESSION_LAYOUT } from '../../src/discovery/session-layout.js';
 import type { StorageAdapter } from '../../src/storage/index.js';
 import {
   createWatcherMatcher,
@@ -90,7 +91,7 @@ describe('matcher', () => {
   });
 
   it('accepts the session transcript and per-session subagent files', () => {
-    const matcher = createWatcherMatcher(tempDir, 'sess-1');
+    const matcher = createWatcherMatcher(tempDir, 'sess-1', CLAUDE_SESSION_LAYOUT);
 
     expect(isPathWatched(matcher, path.join(tempDir, 'sess-1.jsonl'))).toBe(true);
     expect(isPathWatched(matcher, path.join(tempDir, 'sess-1', 'subagents', 'agent-1.jsonl'))).toBe(
@@ -102,7 +103,7 @@ describe('matcher', () => {
   });
 
   it('rejects files outside the session transcript directory', () => {
-    const matcher = createWatcherMatcher(tempDir, 'sess-1');
+    const matcher = createWatcherMatcher(tempDir, 'sess-1', CLAUDE_SESSION_LAYOUT);
     const outside = path.join(tempDir, '..', 'evil.jsonl');
 
     expect(isPathWatched(matcher, outside)).toBe(false);
@@ -117,7 +118,7 @@ describe('matcher', () => {
     const linkPath = path.join(tempDir, 'link.jsonl');
     fs.symlinkSync(outsideFile, linkPath);
 
-    const matcher = createWatcherMatcher(tempDir, 'sess-1');
+    const matcher = createWatcherMatcher(tempDir, 'sess-1', CLAUDE_SESSION_LAYOUT);
 
     expect(isPathWatched(matcher, linkPath)).toBe(false);
     expect(getWatchedRelativePath(matcher, linkPath)).toBeUndefined();
@@ -126,7 +127,7 @@ describe('matcher', () => {
   });
 
   it('rejects non-watched and sibling-session filenames', () => {
-    const matcher = createWatcherMatcher(tempDir, 'sess-1');
+    const matcher = createWatcherMatcher(tempDir, 'sess-1', CLAUDE_SESSION_LAYOUT);
 
     expect(isPathWatched(matcher, path.join(tempDir, 'config.json'))).toBe(false);
     expect(isPathWatched(matcher, path.join(tempDir, 'sess-2.jsonl'))).toBe(false);
@@ -213,6 +214,50 @@ describe('TranscriptWatcher', () => {
       offsets: Record<string, { offset: number; lastProcessedSize: number }>;
     };
     expect(offsets.offsets['sess-1.jsonl'].offset).toBeGreaterThan(0);
+  });
+
+  it('locates the main transcript using an injected sessionLayout, not the hardcoded Claude filename', async () => {
+    // A synthetic layout with a different on-disk filename convention
+    // (`run-<sessionId>.log` instead of `<sessionId>.jsonl`) and a different
+    // storage name (`main.log` instead of `transcript.jsonl`). If the watcher
+    // still hardcoded Claude's convention, it would never find this file.
+    const syntheticLayout = {
+      mainTranscriptStorageName: 'main.log',
+      mainTranscriptFilePattern: 'run-{sessionId}.log',
+      subagentTranscriptsPattern: 'children/*.log',
+      subagentMetaPattern: 'children/*.meta.json',
+    };
+    const syntheticTranscriptPath = path.join(transcriptDir, 'run-sess-1.log');
+    await fsp.writeFile(syntheticTranscriptPath, '');
+
+    const storage = new InMemoryStorageAdapter();
+    const watcher = new TranscriptWatcher({
+      dataDir,
+      sessionId: 'sess-1',
+      transcriptPath: syntheticTranscriptPath,
+      env: baseEnv(),
+      storageAdapter: storage,
+      debounceMs: 50,
+      pollIntervalMs: 20,
+      livenessIntervalMs: 10_000,
+      sessionLayout: syntheticLayout,
+    });
+
+    const startPromise = watcher.start();
+    await sleep(50);
+    await appendFile(syntheticTranscriptPath, 'line one\n');
+    await sleep(400);
+
+    await watcher.stop();
+    await startPromise.catch(() => {});
+
+    const mainLogCalls = storage.calls.filter(
+      (call) => call.scope === 'session' && call.relativePath === 'main.log',
+    );
+    expect(mainLogCalls.length).toBeGreaterThanOrEqual(1);
+    expect(mainLogCalls[0]?.content).toBe('line one\n');
+    // The Claude-shaped storage name must never appear for this profile.
+    expect(storage.calls.some((call) => call.relativePath === 'transcript.jsonl')).toBe(false);
   });
 
   it('strips the project-root prefix from appended transcript deltas when cwd is provided', async () => {
