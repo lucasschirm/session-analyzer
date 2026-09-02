@@ -623,6 +623,58 @@ export const PROJECT_MODEL_HARNESS_COHORT_METRIC_DEFINITION: InsertMetricDefinit
   provenanceRequirement: 'model_requests.model, sessions.harness, sessions.outcome',
 };
 
+export const PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_ID =
+  'portfolio:project_leaderboard_clean_rate';
+export const PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_VERSION = 1;
+
+/**
+ * Per-project clean-completion rate for the portfolio project-leaderboard
+ * (issue #169) — id `portfolio:project_leaderboard_clean_rate`, version 1.
+ * Implemented: `PortfolioView.getProjectLeaderboard` / `getProjectLeaderboard`
+ * in `analytics-portfolio.ts`, backed by
+ * `ProjectLeaderboardStore.getCleanCompletionByProjectInWindow` (db-core).
+ *
+ * This is the **same formula** as `portfolio:clean_completion_rate`
+ * (`cleanN / knownN`, reusing the `session:outcome` classification) cut to
+ * project grain instead of portfolio grain — it gets its own registry row
+ * rather than reusing the portfolio-grain id because this repo's convention
+ * is one registry entry per distinct `grain`, not per distinct formula: see
+ * `project:model_harness_cohort` (project-scoped cut of the portfolio-grain
+ * model×harness matrix), which follows the same pattern.
+ *
+ * - **Population**: sessions with `finality = 'final'` and a non-null
+ *   `start_time` inside the query window, grouped by `project_id`.
+ * - **Denominator**: `knownN` (the classified subset of `eligibleN`) per
+ *   project — an unclassified session is excluded from the rate, never
+ *   counted as "not clean".
+ * - **Missingness policy**: `value` is `null`, never `0`, when a project's
+ *   `knownN` is 0 in the window (`.agents/rules/missing-is-never-zero.md`).
+ */
+export const PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION: InsertMetricDefinitionInput =
+  {
+    metricId: PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_ID,
+    version: PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_VERSION,
+    label: 'Project leaderboard clean-completion rate',
+    description:
+      'Share of finalized sessions in the query window classified with a clean outcome, ' +
+      'among sessions with a known (classified) outcome, per project.',
+    family: 'session_outcome',
+    measurementClass: 'derived',
+    unit: 'ratio',
+    valueType: 'real',
+    grain: 'project',
+    dimensions: [],
+    populationRule:
+      "finality = 'final' AND start_time IS NOT NULL AND start_time IN [window.start, window.end)",
+    statusRule: 'committed',
+    aggregation: 'distribution',
+    statisticalPolicyId: 'claude-default',
+    comparabilityGroupInputs: [],
+    missingDataBehavior: 'unknown',
+    rootInclusion: 'root_only',
+    provenanceRequirement: 'sessions.outcome',
+  };
+
 function buildPlannedMetricDefinitionInput(
   recipe: PlannedMetricRecipe,
 ): InsertMetricDefinitionInput {

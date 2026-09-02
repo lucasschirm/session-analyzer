@@ -2,6 +2,10 @@ import type {
   PortfolioDailyRollup,
   PortfolioDimensionRollup,
   PortfolioDistribution,
+  ProjectCleanCompletionRow,
+  ProjectLastActiveRow,
+  ProjectSessionStartRow,
+  ProjectTokenTotalsRow,
   SqliteExecutor,
   SqliteTransaction,
   SqliteValue,
@@ -13,6 +17,7 @@ import {
   PortfolioDimensionRollupStore,
   PortfolioDistributionStore,
   PortfolioKpiStore,
+  ProjectLeaderboardStore,
   ProjectStore,
 } from '@lucasschirm/sal-db-core';
 import type {
@@ -31,6 +36,8 @@ import type {
   PortfolioTokenTotals,
   PortfolioTrendSeries,
   PortfolioView,
+  ProjectLeaderboard,
+  ProjectLeaderboardRow,
   ProjectListItem,
   ProjectListPage,
   SessionsByModelBar,
@@ -1140,6 +1147,7 @@ export function createPortfolioView(queryable: Queryable): PortfolioView {
     getSessionsByModel: (query) => getSessionsByModel(queryable, query),
     getModelHarnessMatrix: (query) => getModelHarnessMatrix(queryable, query),
     getInvocationsByDomain: (query) => getInvocationsByDomain(queryable, query),
+    getProjectLeaderboard: (query) => getProjectLeaderboard(queryable, query),
   };
 }
 
@@ -1462,4 +1470,178 @@ export async function getInvocationsByDomain(
     [evidenceLink('portfolio', portfolioId, 'Invocations by domain')],
   );
   return { token, rows, totalInvocations };
+}
+
+// Project leaderboard (issue #169)
+
+const PROJECT_LEADERBOARD_TREND_WINDOW_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Resolves the leaderboard's fixed 30-day trend window (issue #169). Ends
+ * at the query's `timeRange.end` when given, otherwise "now" — independent
+ * of `timeRange.start`, since the sparkline is always a trailing 30-day
+ * view, not a slice of the selected KPI window.
+ */
+function leaderboardTrendWindowMs(query: AnalyticsQuery): { start: number; end: number } {
+  const parsedEnd = query.timeRange ? Date.parse(query.timeRange.end) : Number.NaN;
+  const end = Number.isNaN(parsedEnd) ? Date.now() : parsedEnd;
+  return { start: end - PROJECT_LEADERBOARD_TREND_WINDOW_DAYS * DAY_MS, end };
+}
+
+/** Every day bucket in the trend window, oldest first — see `ProjectTrendPoint`. */
+function trendDayBuckets(end: number): string[] {
+  const days: string[] = [];
+  for (let i = PROJECT_LEADERBOARD_TREND_WINDOW_DAYS - 1; i >= 0; i--) {
+    days.push(toDayBucket(end - i * DAY_MS));
+  }
+  return days;
+}
+
+function groupSessionStartsByProjectDay(
+  starts: readonly ProjectSessionStartRow[],
+): Map<string, Map<string, number>> {
+  const grouped = new Map<string, Map<string, number>>();
+  for (const row of starts) {
+    const day = toDayBucket(row.startTime);
+    const perDay = grouped.get(row.projectId) ?? new Map<string, number>();
+    perDay.set(day, (perDay.get(day) ?? 0) + 1);
+    grouped.set(row.projectId, perDay);
+  }
+  return grouped;
+}
+
+function projectTrendSeries(
+  days: readonly string[],
+  perDay: Map<string, number> | undefined,
+): { day: string; sessionCount: number }[] {
+  return days.map((day) => ({ day, sessionCount: perDay?.get(day) ?? 0 }));
+}
+
+interface LeaderboardMaps {
+  readonly sessionCounts: Map<string, number>;
+  readonly tokenTotals: Map<string, ProjectTokenTotalsRow>;
+  readonly cleanCompletion: Map<string, ProjectCleanCompletionRow>;
+  readonly lastActive: Map<string, ProjectLastActiveRow>;
+  readonly trendByProject: Map<string, Map<string, number>>;
+}
+
+function loadWindowedLeaderboardRows(
+  queryable: Queryable,
+  portfolioId: string,
+  window: { start: number; end: number },
+) {
+  return Promise.all([
+    ProjectLeaderboardStore.getSessionCountsByProjectInWindow(
+      queryable,
+      portfolioId,
+      window.start,
+      window.end,
+    ),
+    ProjectLeaderboardStore.getTokenTotalsByProjectInWindow(
+      queryable,
+      portfolioId,
+      window.start,
+      window.end,
+    ),
+    ProjectLeaderboardStore.getCleanCompletionByProjectInWindow(
+      queryable,
+      portfolioId,
+      window.start,
+      window.end,
+    ),
+  ]);
+}
+
+async function loadLeaderboardMaps(
+  queryable: Queryable,
+  portfolioId: string,
+  window: { start: number; end: number },
+  trendWindow: { start: number; end: number },
+): Promise<LeaderboardMaps> {
+  const [[sessionCountRows, tokenRows, cleanRows], lastActiveRows, startRows] = await Promise.all([
+    loadWindowedLeaderboardRows(queryable, portfolioId, window),
+    ProjectLeaderboardStore.getLastActiveByProject(queryable, portfolioId),
+    ProjectLeaderboardStore.getSessionStartsByProjectInWindow(
+      queryable,
+      portfolioId,
+      trendWindow.start,
+      trendWindow.end,
+    ),
+  ]);
+  return {
+    sessionCounts: new Map(sessionCountRows.map((r) => [r.projectId, r.sessionCount])),
+    tokenTotals: new Map(tokenRows.map((r) => [r.projectId, r])),
+    cleanCompletion: new Map(cleanRows.map((r) => [r.projectId, r])),
+    lastActive: new Map(lastActiveRows.map((r) => [r.projectId, r])),
+    trendByProject: groupSessionStartsByProjectDay(startRows),
+  };
+}
+
+function leaderboardRow(
+  project: { id: string; name: string },
+  maps: LeaderboardMaps,
+  days: readonly string[],
+): ProjectLeaderboardRow {
+  const tokenRow = maps.tokenTotals.get(project.id);
+  const cleanRow = maps.cleanCompletion.get(project.id);
+  const activeRow = maps.lastActive.get(project.id);
+  return {
+    projectId: project.id,
+    name: project.name,
+    sessionCount: maps.sessionCounts.get(project.id) ?? 0,
+    tokens: {
+      inputTokens: tokenRow?.inputSum ?? 0,
+      inputKnownN: tokenRow?.inputKnownN ?? 0,
+      outputTokens: tokenRow?.outputSum ?? 0,
+      outputKnownN: tokenRow?.outputKnownN ?? 0,
+    },
+    cleanRate: {
+      value: cleanRow && cleanRow.knownN > 0 ? cleanRow.cleanN / cleanRow.knownN : null,
+      eligibleN: cleanRow?.eligibleN ?? 0,
+      knownN: cleanRow?.knownN ?? 0,
+    },
+    lastActiveAt: formatTime(activeRow?.lastStart ?? activeRow?.lastEnd ?? null),
+    trend: projectTrendSeries(days, maps.trendByProject.get(project.id)),
+  };
+}
+
+function projectLeaderboardToken(
+  tokens: { analysisReleaseId: string; generationId: string; comparabilityGroupId: string },
+  portfolioId: string,
+  n: number,
+  measurementClass: MeasurementClass,
+): AnalyticsToken {
+  return makeBaseToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    n,
+    n,
+    0,
+    measurementClass,
+    'project-leaderboard-0.1.0',
+    [evidenceLink('portfolio', portfolioId, 'Project leaderboard')],
+  );
+}
+
+export async function getProjectLeaderboard(
+  queryable: Queryable,
+  query: AnalyticsQuery,
+): Promise<ProjectLeaderboard> {
+  const portfolioId = await resolvePortfolioId(queryable, query);
+  const tokens = pageTokens(query, []);
+  if (!portfolioId) {
+    return { token: projectLeaderboardToken(tokens, 'unknown', 0, 'observed'), rows: [] };
+  }
+  const window = currentWindowMs(query);
+  const trendWindow = leaderboardTrendWindowMs(query);
+  const days = trendDayBuckets(trendWindow.end);
+  const [projects, maps] = await Promise.all([
+    ProjectStore.listByPortfolio(queryable, portfolioId),
+    loadLeaderboardMaps(queryable, portfolioId, window, trendWindow),
+  ]);
+  const rows = projects.map((project) => leaderboardRow(project, maps, days));
+  const token = projectLeaderboardToken(tokens, portfolioId, rows.length, 'derived');
+  return { token, rows };
 }

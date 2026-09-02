@@ -8,6 +8,8 @@ import {
   INVOCATIONS_BY_DOMAIN_METRIC_DEFINITION,
   INVOCATIONS_BY_DOMAIN_METRIC_ID,
   MODEL_HARNESS_COHORT_LOW_N_THRESHOLD,
+  PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION,
+  PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_ID,
   PORTFOLIO_SESSIONS_DELTA_METRIC_DEFINITION,
   PORTFOLIO_SESSIONS_DELTA_METRIC_ID,
   SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS,
@@ -80,6 +82,40 @@ describe('INVOCATIONS_BY_DOMAIN_METRIC_DEFINITION (issue #169)', () => {
       statisticalPolicyId,
     });
     expect(definition.metricId).toBe(INVOCATIONS_BY_DOMAIN_METRIC_ID);
+  });
+});
+
+describe('PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION (issue #169)', () => {
+  it('is a project-grain cut reusing the portfolio clean-completion formula', () => {
+    expect(PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_ID).toBe(
+      'portfolio:project_leaderboard_clean_rate',
+    );
+    expect(PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION.grain).toBe('project');
+    expect(PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION.description).toContain(
+      'classified with a clean outcome',
+    );
+  });
+
+  it('registers successfully (query surface: PortfolioView.getProjectLeaderboard)', async () => {
+    const executor = await createExecutor();
+    const statisticalPolicyId = await claudeDefaultPolicyId(executor);
+    const { definition } = await addMetricDefinition(executor, {
+      ...PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION,
+      statisticalPolicyId,
+    });
+    expect(definition.metricId).toBe(PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_ID);
+    expect(definition.missingDataBehavior).toBe('unknown');
+  });
+
+  it('has a stable checksum that changes if its population rule changes (version-bump gate)', () => {
+    const checksum = computeMetricDefinitionChecksum(
+      PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION,
+    );
+    const mutated = computeMetricDefinitionChecksum({
+      ...PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION,
+      populationRule: 'different-population',
+    });
+    expect(checksum).not.toBe(mutated);
   });
 });
 
