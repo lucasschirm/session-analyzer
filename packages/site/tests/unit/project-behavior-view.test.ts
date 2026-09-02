@@ -119,10 +119,10 @@ function outcomesFixture(
   return {
     token: tokenFixture() as SessionOutcomeDistribution['token'],
     buckets: [
-      { outcome: 'clean', count: 7 },
-      { outcome: 'interrupted_by_user', count: 2 },
-      { outcome: 'ended_on_error', count: 1 },
-      { outcome: null, count: 0 },
+      { outcome: 'clean', count: 7, percent: 70 },
+      { outcome: 'interrupted_by_user', count: 2, percent: 20 },
+      { outcome: 'ended_on_error', count: 1, percent: 10 },
+      { outcome: null, count: 0, percent: 0 },
     ],
     ...overrides,
   };
@@ -271,8 +271,8 @@ describe('project-behavior-view outcomes legend', () => {
     projectMock.getOutcomeMix.mockResolvedValue(
       outcomesFixture({
         buckets: [
-          { outcome: 'clean', count: 5 },
-          { outcome: null, count: 2 },
+          { outcome: 'clean', count: 5, percent: 71 },
+          { outcome: null, count: 2, percent: 29 },
         ],
       }),
     );

@@ -263,55 +263,36 @@ export interface OutcomeMixView {
   unreadableTailPercent: number;
 }
 
-/**
- * Largest-remainder integer-percentage allocation so bucket percentages sum
- * to exactly 100 (never 99/101 from independent rounding) whenever
- * `total > 0` — the issue's "percentages ... sum to the session total"
- * acceptance criterion.
- */
-function allocatePercentages(counts: readonly number[], total: number): number[] {
-  if (total <= 0) return counts.map(() => 0);
-  const raw = counts.map((c) => (c / total) * 100);
-  const floors = raw.map(Math.floor);
-  const used = floors.reduce((sum, v) => sum + v, 0);
-  const remainder = Math.round(100 - used);
-  const order = raw.map((v, i) => ({ i, frac: v - Math.floor(v) })).sort((a, b) => b.frac - a.frac);
-  const result = [...floors];
-  for (let k = 0; k < remainder; k++) {
-    const slot = order[k % order.length];
-    result[slot.i] += 1;
-  }
-  return result;
-}
-
-function bucketCount(
+/** Formats already-computed `count`/`percent` fields from the
+ * `SessionOutcomeBucket` DTO (`getSessionOutcomeDistribution`,
+ * `packages/db/src/analytics-session.ts`). The largest-remainder rounding
+ * that makes percentages sum to exactly 100 happens once there, not here
+ * (`.agents/rules/no-canonical-metrics-in-lit.md`). */
+function bucketFor(
   buckets: readonly SessionOutcomeBucket[],
   outcome: ClassifiedOutcome | null,
-): number {
-  return buckets.find((b) => b.outcome === outcome)?.count ?? 0;
+): SessionOutcomeBucket {
+  return buckets.find((b) => b.outcome === outcome) ?? { outcome, count: 0, percent: 0 };
 }
 
 export function outcomeMixToView(mix: SessionOutcomeDistribution): OutcomeMixView {
-  const counts = [
-    ...OUTCOME_ORDER.map((o) => bucketCount(mix.buckets, o)),
-    bucketCount(mix.buckets, null),
-  ];
-  const total = counts.reduce((sum, c) => sum + c, 0);
-  const percents = allocatePercentages(counts, total);
-
-  const rows: OutcomeLegendRow[] = OUTCOME_ORDER.map((outcome, i) => ({
-    outcome,
-    label: OUTCOME_LABELS[outcome],
-    color: OUTCOME_COLORS[outcome],
-    count: counts[i] as number,
-    percent: percents[i] as number,
-  }));
+  const tailBucket = bucketFor(mix.buckets, null);
+  const rows: OutcomeLegendRow[] = OUTCOME_ORDER.map((outcome) => {
+    const bucket = bucketFor(mix.buckets, outcome);
+    return {
+      outcome,
+      label: OUTCOME_LABELS[outcome],
+      color: OUTCOME_COLORS[outcome],
+      count: bucket.count,
+      percent: bucket.percent,
+    };
+  });
 
   return {
     rows,
-    total,
-    unreadableTailCount: counts[3] as number,
-    unreadableTailPercent: percents[3] as number,
+    total: mix.token.eligibleN,
+    unreadableTailCount: tailBucket.count,
+    unreadableTailPercent: tailBucket.percent,
   };
 }
 

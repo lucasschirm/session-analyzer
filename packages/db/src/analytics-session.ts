@@ -813,6 +813,29 @@ async function getValidationSummary(
 }
 
 /**
+ * Largest-remainder integer-percentage allocation so bucket percentages sum
+ * to exactly 100 (never 99/101 from independently rounding each bucket)
+ * whenever `total > 0`. Shared by every DTO that reports a percentage
+ * breakdown of an already-aggregated count so the rounding policy — and the
+ * "sums to the total" guarantee — is defined once, in `packages/db`, not
+ * re-derived by a component (`.agents/rules/no-canonical-metrics-in-lit.md`).
+ */
+function allocateIntegerPercentages(counts: readonly number[], total: number): number[] {
+  if (total <= 0) return counts.map(() => 0);
+  const raw = counts.map((c) => (c / total) * 100);
+  const floors = raw.map(Math.floor);
+  const used = floors.reduce((sum, v) => sum + v, 0);
+  const remainder = Math.round(100 - used);
+  const order = raw.map((v, i) => ({ i, frac: v - Math.floor(v) })).sort((a, b) => b.frac - a.frac);
+  const result = [...floors];
+  for (let k = 0; k < remainder; k++) {
+    const slot = order[k % order.length];
+    result[slot.i] += 1;
+  }
+  return result;
+}
+
+/**
  * Project-scoped session outcome distribution for the `session:outcome`
  * metric. Exposes the db-core rollup (finality='final' sessions grouped by
  * outcome, including the `null`/unclassifiable bucket) as an
@@ -850,9 +873,18 @@ export async function getSessionOutcomeDistribution(
     [evidenceLink('project', projectId, `Project ${projectId}`)],
   );
 
+  const percents = allocateIntegerPercentages(
+    rows.map((row) => row.count),
+    eligibleN,
+  );
+
   return {
     token,
-    buckets: rows.map((row) => ({ outcome: row.outcome, count: row.count })),
+    buckets: rows.map((row, i) => ({
+      outcome: row.outcome,
+      count: row.count,
+      percent: percents[i] as number,
+    })),
   };
 }
 

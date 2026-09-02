@@ -95,15 +95,24 @@ test.describe('Project Behavior drill-down (issue #171)', () => {
 
   test('UX-033: outcomes legend counts sum to the session total', async ({ page }) => {
     // `session:outcome` is scoped to `finality = 'final'` sessions
-    // (`SessionOutcomeStore.rollupByProject`); manually-imported/seeded
-    // sessions are always ingested with `finality: 'partial'`
-    // (`packages/db/src/manual-ingestion.ts`), so this fixture path
-    // legitimately renders the card's empty state rather than populated
-    // legend rows — proving the wiring and the genuine-empty affordance
-    // (not silently blank). The sum-to-total percentage/count invariant
-    // itself is proven exactly, including the largest-remainder rounding,
-    // by the unit tests in `project-behavior-chart-helpers.test.ts`
-    // (`outcomeMixToView`).
+    // (`SessionOutcomeStore.rollupByProject`). No harness plugin emits
+    // `finality: 'final'` yet for *any* session, seeded or real-synced — a
+    // known, separately-tracked gap noted in the issue #178 signal audit
+    // and worked around directly in `packages/db/tests/pipeline/
+    // pipe-013-session-outcome-rollup.test.ts` (`markFinal`, which forces
+    // it via `SessionStore.update` since the transformer never produces
+    // it). This E2E fixture path therefore legitimately renders the card's
+    // empty state rather than populated legend rows — proving the wiring
+    // and the genuine-empty affordance (not silently blank) — and the same
+    // holds for real production sessions until issue #178 lands, not only
+    // for this manual-ingestion fixture path. The sum-to-total percentage/
+    // count invariant itself is proven exactly, including the
+    // largest-remainder rounding, in `packages/db` — see
+    // `packages/db/tests/unit/project-behavior-171.test.ts`
+    // ("getOutcomeMix bucket percent allocation") — which is where that
+    // math is computed (`.agents/rules/no-canonical-metrics-in-lit.md`);
+    // `project-behavior-chart-helpers.test.ts` only proves the DTO's
+    // precomputed fields are formatted/passed through unmodified.
     const projectName = 'PB171 Outcomes Legend';
     await seedProjectBehaviorSession(page, projectName);
 

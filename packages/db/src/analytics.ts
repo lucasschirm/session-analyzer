@@ -582,6 +582,14 @@ export interface SessionValidationSummary {
 export interface SessionOutcomeBucket {
   readonly outcome: 'clean' | 'interrupted_by_user' | 'ended_on_error' | null;
   readonly count: number;
+  /**
+   * Integer percentage of `token.eligibleN` this bucket represents, computed
+   * once here via largest-remainder allocation so every consumer's bucket
+   * percentages sum to exactly 100 (never 99/101 from independently rounding
+   * `count / eligibleN`) — `0` when `eligibleN` is `0`. Consumers only format
+   * this value; they never recompute it (`.agents/rules/no-canonical-metrics-in-lit.md`).
+   */
+  readonly percent: number;
 }
 
 /**

@@ -13,7 +13,7 @@ import {
   statStripToView,
 } from '../../src/pages/project-behavior/project-behavior-chart-helpers';
 
-function tokenStub() {
+function tokenStub(overrides: Partial<ProjectStatStrip['token']> = {}) {
   return {
     analysisReleaseId: 'rel-1',
     generationId: 'gen-1',
@@ -26,6 +26,7 @@ function tokenStub() {
     confidence: 'high',
     metricVersion: '1',
     evidenceLinks: [],
+    ...overrides,
   } as ProjectStatStrip['token'];
 }
 
@@ -74,54 +75,48 @@ describe('durationHistogramToChartSeries (issue #171)', () => {
 });
 
 describe('outcomeMixToView (issue #171)', () => {
-  it('sums bucket counts to the session total exactly', () => {
+  // The largest-remainder rounding that makes bucket percentages sum to
+  // exactly 100 happens once in `getSessionOutcomeDistribution`
+  // (`packages/db/src/analytics-session.ts`) — proven exhaustively by
+  // `packages/db/tests/unit/project-behavior-171.test.ts`
+  // ("getOutcomeMix bucket percent allocation"). `outcomeMixToView` only
+  // formats the DTO's already-computed `count`/`percent` fields
+  // (`.agents/rules/no-canonical-metrics-in-lit.md`) — these tests prove it
+  // passes them through unmodified, not that the math is correct.
+  it('reads count/percent straight through from the DTO buckets, and total from token.eligibleN', () => {
     const mix: SessionOutcomeDistribution = {
-      token: tokenStub(),
+      token: tokenStub({ eligibleN: 13 }),
       buckets: [
-        { outcome: 'clean', count: 7 },
-        { outcome: 'interrupted_by_user', count: 2 },
-        { outcome: 'ended_on_error', count: 1 },
-        { outcome: null, count: 3 },
+        { outcome: 'clean', count: 7, percent: 54 },
+        { outcome: 'interrupted_by_user', count: 2, percent: 15 },
+        { outcome: 'ended_on_error', count: 1, percent: 8 },
+        { outcome: null, count: 3, percent: 23 },
       ],
     };
     const view = outcomeMixToView(mix);
-    const countSum = view.rows.reduce((sum, r) => sum + r.count, 0) + view.unreadableTailCount;
-    expect(countSum).toBe(13);
     expect(view.total).toBe(13);
+    expect(view.rows.map((r) => [r.outcome, r.count, r.percent])).toEqual([
+      ['clean', 7, 54],
+      ['interrupted_by_user', 2, 15],
+      ['ended_on_error', 1, 8],
+    ]);
+    expect(view.unreadableTailCount).toBe(3);
+    expect(view.unreadableTailPercent).toBe(23);
   });
 
-  it('sums bucket percentages to exactly 100 when total > 0', () => {
-    // A deliberately awkward split to exercise the largest-remainder rounding.
+  it('defaults a missing bucket to count/percent 0 rather than throwing', () => {
     const mix: SessionOutcomeDistribution = {
-      token: tokenStub(),
-      buckets: [
-        { outcome: 'clean', count: 1 },
-        { outcome: 'interrupted_by_user', count: 1 },
-        { outcome: 'ended_on_error', count: 1 },
-        { outcome: null, count: 0 },
-      ],
+      token: tokenStub({ eligibleN: 5 }),
+      buckets: [{ outcome: 'clean', count: 5, percent: 100 }],
     };
     const view = outcomeMixToView(mix);
-    const percentSum =
-      view.rows.reduce((sum, r) => sum + r.percent, 0) + view.unreadableTailPercent;
-    expect(percentSum).toBe(100);
+    expect(view.rows.find((r) => r.outcome === 'interrupted_by_user')?.count).toBe(0);
+    expect(view.unreadableTailCount).toBe(0);
+    expect(view.unreadableTailPercent).toBe(0);
   });
 
-  it('reports the unreadable-tail count separately from classified outcomes', () => {
-    const mix: SessionOutcomeDistribution = {
-      token: tokenStub(),
-      buckets: [
-        { outcome: 'clean', count: 5 },
-        { outcome: null, count: 2 },
-      ],
-    };
-    const view = outcomeMixToView(mix);
-    expect(view.unreadableTailCount).toBe(2);
-    expect(view.rows.find((r) => r.outcome === 'clean')?.count).toBe(5);
-  });
-
-  it('reports zero for every bucket when there are no sessions at all', () => {
-    const mix: SessionOutcomeDistribution = { token: tokenStub(), buckets: [] };
+  it('reports zero total when there are no eligible sessions at all', () => {
+    const mix: SessionOutcomeDistribution = { token: tokenStub({ eligibleN: 0 }), buckets: [] };
     const view = outcomeMixToView(mix);
     expect(view.total).toBe(0);
     expect(view.rows.every((r) => r.count === 0 && r.percent === 0)).toBe(true);

@@ -649,7 +649,7 @@ export class ProjectBehaviorPage extends PageLitElement {
         >${this.renderOutcomeSegments(view)}</div>
         <div class="outcome-legend">${this.renderOutcomeLegend(view)}</div>
         <div class="outcome-footnote">
-          Derived from each session's final native event.
+          n=${view.total} sessions • derived from each session's final native event.
           ${
             view.unreadableTailCount > 0
               ? html`${view.unreadableTailCount} session${view.unreadableTailCount === 1 ? '' : 's'} had an unreadable tail (${view.unreadableTailPercent}%).`

@@ -296,3 +296,53 @@ describe('getStatStrip costHarnessCoverage (issue #171)', () => {
     expect(result.costHarnessCoverage).toEqual({ reportingHarnessCount: 1, totalHarnessCount: 2 });
   });
 });
+
+describe('getOutcomeMix bucket percent allocation (issue #171)', () => {
+  async function insertSessionWithOutcome(
+    executor: WasmSqliteExecutor,
+    id: string,
+    outcome: 'clean' | 'interrupted_by_user' | 'ended_on_error' | null,
+  ): Promise<void> {
+    await SessionStore.insert(executor, {
+      id,
+      projectId: PROJECT_ID,
+      ingestionSourceId: SOURCE_ID,
+      nativeSessionId: id,
+      harness: 'claude-code',
+      finality: 'final',
+      outcome,
+    });
+  }
+
+  it('allocates bucket percentages that sum to exactly 100 for an awkward split', async () => {
+    const executor = await createExecutor('Alpha');
+    // 7 sessions split 1/1/1/4 — raw shares (14.28..%, 14.28..%, 14.28..%,
+    // 57.14..%) round independently to 14/14/14/57 = 99, so the
+    // largest-remainder allocation must add the missing point to the
+    // highest-remainder bucket rather than leaving the total short.
+    await insertSessionWithOutcome(executor, 's1', 'clean');
+    await insertSessionWithOutcome(executor, 's2', 'interrupted_by_user');
+    await insertSessionWithOutcome(executor, 's3', 'ended_on_error');
+    await insertSessionWithOutcome(executor, 's4', null);
+    await insertSessionWithOutcome(executor, 's5', null);
+    await insertSessionWithOutcome(executor, 's6', null);
+    await insertSessionWithOutcome(executor, 's7', null);
+
+    const view = createProjectBehaviorView(executor);
+    const mix = await view.getOutcomeMix(PROJECT_ID);
+
+    expect(mix.token.eligibleN).toBe(7);
+    const percentSum = mix.buckets.reduce((sum, b) => sum + b.percent, 0);
+    expect(percentSum).toBe(100);
+    const countSum = mix.buckets.reduce((sum, b) => sum + b.count, 0);
+    expect(countSum).toBe(mix.token.eligibleN);
+  });
+
+  it('reports 0 percent for every bucket when there are no eligible sessions', async () => {
+    const executor = await createExecutor('Alpha');
+    const view = createProjectBehaviorView(executor);
+    const mix = await view.getOutcomeMix(PROJECT_ID);
+    expect(mix.token.eligibleN).toBe(0);
+    expect(mix.buckets.every((b) => b.percent === 0)).toBe(true);
+  });
+});
