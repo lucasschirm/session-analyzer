@@ -1,8 +1,13 @@
 import process from 'node:process';
 
+import { getDataDir } from '@lucasschirm/sal-sync';
+import { validateCliConfig } from './cli/config.js';
+import { resolveCliEnv } from './cli/env.js';
 import { parseDevinHookInput, readStdin, toHarnessSession } from './devin.js';
+import { DevinHarnessProfile } from './devin-profile.js';
 import { type RunDevinHookSyncOptions, runDevinHookSync } from './hook-common.js';
 import { isMainModule } from './is-main-module.js';
+import { captureDevinModels } from './models/capture.js';
 
 export type RunSessionStartOptions = Partial<
   Omit<RunDevinHookSyncOptions, 'sessionId' | 'cwd' | 'trigger'>
@@ -26,11 +31,25 @@ export async function runSessionStart(
   }
 
   const cwd = options.cwd ?? process.cwd();
+  const env = options.env ?? (await resolveCliEnv(cwd));
   const session = toHarnessSession(parsed.input, cwd);
   session.startedAt = session.startedAt ?? new Date().toISOString();
 
+  const validation = validateCliConfig(env, cwd);
+  if (validation.ok) {
+    const dataDir = getDataDir(env);
+    const profile = options.harnessProfile ?? DevinHarnessProfile;
+    const models = await captureDevinModels({ dataDir, devinCliVersion: profile.harnessVersion });
+    if (models.error) {
+      (options.stderr ?? process.stderr).write(
+        `devin-session-sync session-start: models capture warning: ${models.error}\n`,
+      );
+    }
+  }
+
   await runDevinHookSync('session-start', {
     ...options,
+    env,
     sessionId: session.sessionId,
     cwd: session.cwd,
     trigger: 'session-start',

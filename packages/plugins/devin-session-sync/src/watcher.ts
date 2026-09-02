@@ -31,6 +31,7 @@ import { DevinHarnessProfile } from './devin-profile.js';
 import { type DevinSnapshot, readDevinSnapshot } from './devin-snapshot.js';
 import type { DevinExtractedTables, DevinSessionRow } from './extractor/types.js';
 import { isMainModule } from './is-main-module.js';
+import { captureDevinModels } from './models/capture.js';
 import { type DevinSessionSyncOutcome, runDevinSessionSync } from './session-sync.js';
 
 export const DEFAULT_WATCHER_POLL_INTERVAL_MS = 15_000;
@@ -142,6 +143,7 @@ interface PollDependencies {
   env: Record<string, string | undefined>;
   storageAdapter: StorageAdapter;
   profile: HarnessProfile;
+  stderr: NodeJS.WritableStream;
   sessionsDbPath?: string;
   homeDir?: string;
 }
@@ -151,6 +153,14 @@ async function pollOnce(
   signatures: WatcherSignatures,
   stdout: NodeJS.WritableStream,
 ): Promise<{ checked: number; changed: number; failed: number }> {
+  const models = await captureDevinModels({
+    dataDir: deps.dataDir,
+    devinCliVersion: deps.profile.harnessVersion,
+  });
+  if (models.error) {
+    deps.stderr.write(`devin-watcher: models capture warning: ${models.error}\n`);
+  }
+
   const snapshot = await readDevinSnapshot({
     env: deps.env,
     devinCliVersion: deps.profile.harnessVersion,
@@ -202,6 +212,7 @@ async function resolveWatcherDependencies(
     env,
     storageAdapter: options.storageAdapter ?? buildStorageAdapter(config),
     profile,
+    stderr: options.stderr ?? process.stderr,
     sessionsDbPath: options.sessionsDbPath,
     homeDir: options.homeDir,
   };

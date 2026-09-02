@@ -27,16 +27,18 @@ import {
   sha256Hex,
 } from '@lucasschirm/sal-sync';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
 import { runDownloadCommand } from '../../src/cli/download-command.js';
 import { runListCommand } from '../../src/cli/list-command.js';
 import { runMigrateCommand } from '../../src/cli/migrate-command.js';
 import { runRemoveCommand } from '../../src/cli/remove-command.js';
 import { runSyncCommand } from '../../src/cli/sync-command.js';
+import { createDevinHarnessProfile } from '../../src/devin-profile.js';
 import { runHook } from '../../src/hook.js';
+import { captureDevinModels } from '../../src/models/capture.js';
 import { runSessionEnd } from '../../src/session-end.js';
 import { runSessionStart } from '../../src/session-start.js';
 import { buildFixtureDb, type FixtureDbHandle } from '../extractor/fixtures/build-fixture-db.js';
+import { devinModelsListFixture } from '../models/fixture.js';
 
 class InMemoryStorageAdapter implements StorageAdapter {
   readonly calls: PutObjectInput[] = [];
@@ -99,6 +101,8 @@ function envFor(dataDir: string): Record<string, string> {
   };
 }
 
+const harnessProfile = createDevinHarnessProfile('v1');
+
 function writable(): { stream: NodeJS.WritableStream; lines: string[] } {
   const lines: string[] = [];
   return {
@@ -120,6 +124,11 @@ describe('Devin sync pipeline: sessions.db -> manifest -> artifact set', () => {
   beforeEach(async () => {
     dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'devin-pipeline-data-'));
     homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'devin-pipeline-home-'));
+    await captureDevinModels({
+      dataDir,
+      devinCliVersion: harnessProfile.harnessVersion,
+      runModelsList: async () => devinModelsListFixture,
+    });
     fixture = buildFixtureDb({
       sessions: [
         {
@@ -171,29 +180,51 @@ describe('Devin sync pipeline: sessions.db -> manifest -> artifact set', () => {
       storageAdapter: storage,
       sessionsDbPath: fixture.path,
       homeDir,
+      harnessProfile,
     });
     expect(startExit).toBe(0);
 
     const stopExit = await runHook(
       { ...hookInput, hook_event_name: 'Stop' },
-      { env: envFor(dataDir), storageAdapter: storage, sessionsDbPath: fixture.path, homeDir },
+      {
+        env: envFor(dataDir),
+        storageAdapter: storage,
+        sessionsDbPath: fixture.path,
+        homeDir,
+        harnessProfile,
+      },
     );
     expect(stopExit).toBe(0);
 
     const endExit = await runSessionEnd(
       { ...hookInput, hook_event_name: 'SessionEnd', reason: 'completed' },
-      { env: envFor(dataDir), storageAdapter: storage, sessionsDbPath: fixture.path, homeDir },
+      {
+        env: envFor(dataDir),
+        storageAdapter: storage,
+        sessionsDbPath: fixture.path,
+        homeDir,
+        harnessProfile,
+      },
     );
     expect(endExit).toBe(0);
 
     expect(storage.hasKeyEndingWith('manifest.json')).toBe(true);
     expect(storage.hasKeyEndingWith('transcript.jsonl')).toBe(true);
     expect(storage.hasKeyEndingWith('native/schema-descriptor.json')).toBe(true);
+    expect(storage.hasKeyEndingWith('native/models.json')).toBe(true);
+    expect(storage.hasKeyEndingWith('native/models-list.raw.json')).toBe(true);
 
     const manifestKey = [...storage.calls]
       .reverse()
       .find((c) => c.scope === 'manifest')?.relativePath;
     expect(manifestKey).toBe('manifest.json');
+
+    const manifestCall = [...storage.calls].reverse().find((c) => c.scope === 'manifest');
+    if (!manifestCall) throw new Error('expected a manifest call');
+    const manifest = JSON.parse(Buffer.from(manifestCall.body).toString('utf8'));
+    const artifactPaths = manifest.artifacts.map((a: { relativePath: string }) => a.relativePath);
+    expect(artifactPaths).toContain('native/models.json');
+    expect(artifactPaths).toContain('native/models-list.raw.json');
   });
 
   it('SYNC-007: Stop-hook-only mitigation completes sync when SessionStart/SessionEnd never fire (simulated Devin Cloud gap)', async () => {
@@ -202,11 +233,19 @@ describe('Devin sync pipeline: sessions.db -> manifest -> artifact set', () => {
     // verified Cloud-session caveat (Part A3).
     const stopExit = await runHook(
       { session_id: 'sess-local', cwd: '/tmp/local-project', hook_event_name: 'Stop' },
-      { env: envFor(dataDir), storageAdapter: storage, sessionsDbPath: fixture.path, homeDir },
+      {
+        env: envFor(dataDir),
+        storageAdapter: storage,
+        sessionsDbPath: fixture.path,
+        homeDir,
+        harnessProfile,
+      },
     );
     expect(stopExit).toBe(0);
     expect(storage.hasKeyEndingWith('transcript.jsonl')).toBe(true);
     expect(storage.hasKeyEndingWith('manifest.json')).toBe(true);
+    expect(storage.hasKeyEndingWith('native/models.json')).toBe(true);
+    expect(storage.hasKeyEndingWith('native/models-list.raw.json')).toBe(true);
 
     // The bulk `devin-sync sync` catch-up path must also independently
     // complete the session (e.g. run on a schedule to catch anything Stop
@@ -218,6 +257,7 @@ describe('Devin sync pipeline: sessions.db -> manifest -> artifact set', () => {
       homeDir,
       storageAdapter: storage,
       stdout,
+      harnessProfile,
     });
     expect(syncCode).toBe(0);
   });
@@ -231,6 +271,7 @@ describe('Devin sync pipeline: sessions.db -> manifest -> artifact set', () => {
       sessionsDbPath: fixture.path,
       homeDir,
       storageAdapter: storage,
+      harnessProfile,
     });
     expect(syncCode).toBe(0);
 

@@ -12,6 +12,7 @@ import {
 import { DevinHarnessProfile } from '../devin-profile.js';
 import { type DevinSnapshot, readDevinSnapshot } from '../devin-snapshot.js';
 import type { DevinSessionRow } from '../extractor/types.js';
+import { captureDevinModels } from '../models/capture.js';
 import {
   type DevinSessionSyncOutcome,
   type DevinSyncProgressEvent,
@@ -172,6 +173,11 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
   const storageAdapter = options.storageAdapter ?? buildStorageAdapter(config);
   const dataDir = getDataDir(env);
   await clearForceState(force, dataDir, config.projectId, stdout);
+
+  const models = await captureDevinModels({ dataDir, devinCliVersion: profile.harnessVersion });
+  if (models.error) {
+    stderr.write(`devin-sync: models capture warning: ${models.error}\n`);
+  }
 
   stdout.write(
     `Syncing ${snapshot.tables.sessions.length} session(s) for project "${config.projectId}"...\n\n`,

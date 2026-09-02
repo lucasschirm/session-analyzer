@@ -9,8 +9,11 @@ import {
   sha256Hex,
 } from '@lucasschirm/sal-sync';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { DevinHarnessProfile } from '../src/devin-profile.js';
 import { runDevinHookSync } from '../src/hook-common.js';
+import { captureDevinModels } from '../src/models/capture.js';
 import { buildFixtureDb, type FixtureDbHandle } from './extractor/fixtures/build-fixture-db.js';
+import { devinModelsListFixture } from './models/fixture.js';
 
 class RecordingStorageAdapter implements StorageAdapter {
   readonly calls: PutObjectInput[] = [];
@@ -29,6 +32,11 @@ describe('runDevinHookSync', () => {
 
   beforeEach(async () => {
     dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'devin-hook-common-'));
+    await captureDevinModels({
+      dataDir,
+      devinCliVersion: DevinHarnessProfile.harnessVersion,
+      runModelsList: async () => devinModelsListFixture,
+    });
     fixture = buildFixtureDb({
       sessions: [
         {
@@ -97,6 +105,8 @@ describe('runDevinHookSync', () => {
       expect(result.outcome.failed).toBe(0);
     }
     expect(storage.calls.some((c) => c.scope === 'manifest')).toBe(true);
+    expect(storage.calls.some((c) => c.relativePath === 'native/models.json')).toBe(true);
+    expect(storage.calls.some((c) => c.relativePath === 'native/models-list.raw.json')).toBe(true);
   });
 
   it('falls back to resolveCliEnv when no env is explicitly provided', async () => {
