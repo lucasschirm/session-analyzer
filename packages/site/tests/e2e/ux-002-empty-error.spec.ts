@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
 import { assertEmptyAffordance, assertErrorBoundary } from './helpers/chart-content';
+import { buildFailingQueryWorker, installFailingWorker } from './helpers/worker-failure';
 
 /**
  * UX-002: Empty state vs error state are visually and structurally
@@ -48,79 +49,15 @@ async function importSession(page: Page, projectName: string, fileNames: string[
 }
 
 /**
- * Worker script used to inject a query failure. It responds to init,
- * resolveProjectId and other housekeeping messages so the app can load; any
- * analytics query is forced to return an error response, which the main-thread
- * client turns into a rejected promise and the page turns into the chart error
- * state.
- */
-const FAKE_ANALYTICS_WORKER = `
-  self.onmessage = (event) => {
-    const request = event.data;
-    const id = request.id ?? 0;
-
-    switch (request.type) {
-      case 'init':
-      case 'getBackend':
-        self.postMessage({
-          id,
-          ok: true,
-          backend: {
-            backendName: 'wasm-memory',
-            durability: 'ephemeral',
-            journalMode: 'delete',
-            storage: 'memory',
-            fallbackReason: undefined,
-          },
-          storage: 'memory',
-          fallbackReason: undefined,
-        });
-        break;
-
-      case 'resolveProjectId':
-        self.postMessage({ id, ok: true, result: request.projectId });
-        break;
-
-      case 'query':
-        self.postMessage({
-          id,
-          ok: false,
-          error: 'Simulated worker query failure',
-        });
-        break;
-
-      default:
-        self.postMessage({ id, ok: true });
-    }
-  };
-`;
-
-/**
- * Replace the analytics worker with the fake worker above while leaving the
- * database and sync workers untouched.
+ * Replace the analytics worker with a fake worker that answers the boot
+ * handshake but fails every query, while leaving the database and sync
+ * workers untouched. See `helpers/worker-failure.ts`.
  */
 async function installFakeAnalyticsWorker(page: Page): Promise<void> {
-  await page.addInitScript((workerScript: string) => {
-    const OriginalWorker = window.Worker;
-
-    class PatchedWorker extends OriginalWorker {
-      constructor(scriptURL: string | URL, options?: WorkerOptions) {
-        const href =
-          typeof scriptURL === 'string'
-            ? new URL(scriptURL, window.location.href).href
-            : scriptURL.href;
-
-        if (href.includes('analytics-worker')) {
-          const blob = new Blob([workerScript], { type: 'application/javascript' });
-          super(URL.createObjectURL(blob), { type: 'module' });
-        } else {
-          super(scriptURL, options);
-        }
-      }
-    }
-
-    window.Worker = PatchedWorker as unknown as typeof Worker;
-  }, FAKE_ANALYTICS_WORKER);
+  await installFailingWorker(page, {
+    match: 'analytics-worker',
+    workerScript: buildFailingQueryWorker('Simulated worker query failure'),
+  });
 }
 
 const EMPTY_PROJECT = 'UX002Empty';
