@@ -26,16 +26,22 @@ importers:
       '@lucasschirm/sal-sync-core':
         specifier: workspace:*
         version: link:../sync-core
-      '@lucasschirm/sal-transformer':
+      '@lucasschirm/sal-transformer-shared':
         specifier: workspace:*
-        version: link:../transformer
+        version: link:../transformers/transformer-shared
     devDependencies:
       '@lucasschirm/claude-session-sync':
         specifier: workspace:*
         version: link:../plugins/claude-session-sync
+      '@lucasschirm/sal-claude-transformer':
+        specifier: workspace:*
+        version: link:../transformers/claude-transformer
       '@lucasschirm/sal-sync':
         specifier: workspace:*
         version: link:../sync
+      '@lucasschirm/sal-transformer-registry':
+        specifier: workspace:*
+        version: link:../transformers/registry
       '@sqlite.org/sqlite-wasm':
         specifier: 3.53.0-build1
         version: 3.53.0-build1
@@ -129,6 +135,9 @@ importers:
       '@lucasschirm/sal-claude-session-parser':
         specifier: workspace:*
         version: link:../parsers/claude-session-parser
+      '@lucasschirm/sal-claude-transformer':
+        specifier: workspace:*
+        version: link:../transformers/claude-transformer
       '@lucasschirm/sal-db':
         specifier: workspace:*
         version: link:../db
@@ -138,9 +147,12 @@ importers:
       '@lucasschirm/sal-sync-core':
         specifier: workspace:*
         version: link:../sync-core
-      '@lucasschirm/sal-transformer':
+      '@lucasschirm/sal-transformer-registry':
         specifier: workspace:*
-        version: link:../transformer
+        version: link:../transformers/registry
+      '@lucasschirm/sal-transformer-shared':
+        specifier: workspace:*
+        version: link:../transformers/transformer-shared
       '@sqlite.org/sqlite-wasm':
         specifier: 3.53.0-build1
         version: 3.53.0-build1
@@ -229,11 +241,51 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@26.2.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0))
 
-  packages/transformer:
+  packages/transformers/claude-transformer:
     dependencies:
       '@lucasschirm/sal-claude-session-parser':
         specifier: workspace:*
-        version: link:../parsers/claude-session-parser
+        version: link:../../parsers/claude-session-parser
+      '@lucasschirm/sal-transformer-shared':
+        specifier: workspace:*
+        version: link:../transformer-shared
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      '@vitest/coverage-v8':
+        specifier: ^4.1.10
+        version: 4.1.10(vitest@4.1.10)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@26.2.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/transformers/registry:
+    dependencies:
+      '@lucasschirm/sal-claude-transformer':
+        specifier: workspace:*
+        version: link:../claude-transformer
+      '@lucasschirm/sal-transformer-shared':
+        specifier: workspace:*
+        version: link:../transformer-shared
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      '@vitest/coverage-v8':
+        specifier: ^4.1.10
+        version: 4.1.10(vitest@4.1.10)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@26.2.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/transformers/transformer-shared:
     devDependencies:
       '@types/node':
         specifier: ^26.2.0

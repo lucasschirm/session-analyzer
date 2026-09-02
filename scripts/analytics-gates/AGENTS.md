@@ -15,7 +15,7 @@ CI maintenance gate scripts for the analytics data platform. Each gate is a stan
 - `gate-05-migration-append-only-checksum.mjs` — Confirms migrations are checksummed, append-only, and transactional.
 - `gate-06-fresh-upgraded-schema-parity.mjs` — Confirms a fresh schema equals a sequentially upgraded schema.
 - `gate-07-acyclic-dependencies.mjs` — Confirms the pnpm workspace dependency graph is acyclic.
-- `gate-08-transformer-conformance.mjs` — Confirms the shared transformer conformance suite passes.
+- `gate-08-transformer-conformance.mjs` — Confirms the shared transformer conformance suite passes for every transformer plugin package under `packages/transformers/*-transformer`.
 - `gate-09-comparability-group-prevention.mjs` — Confirms mixed comparability groups are prevented.
 - `gate-10-rollup-reconciliation.mjs` — Confirms rollup counts reconcile with contributions.
 - `gate-11-policy-versioning.mjs` — Confirms statistical, attribution, and rollup policies are versioned and complete.
@@ -27,5 +27,5 @@ CI maintenance gate scripts for the analytics data platform. Each gate is a stan
 
 ## Key relationships
 
-- Gate scripts depend on the built `dist/` output of `packages/db-core`, `packages/db`, and `packages/transformer` (runner `ensureDist()` will build them if missing).
+- Gate scripts depend on the built `dist/` output of `packages/db-core`, `packages/db`, and `packages/transformers/{transformer-shared,claude-transformer}` (runner `ensureDist()` will build them if missing).
 - The GitHub Actions workflow `.github/workflows/analytics-gates.yml` invokes `pnpm run analytics-gates`, which calls `run-all-gates.mjs`.

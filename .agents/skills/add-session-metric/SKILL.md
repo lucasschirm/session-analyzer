@@ -38,8 +38,8 @@ code; they are computed by transformers and stored by `db`.
 | Concern | Path |
 |---|---|
 | Metric definitions type | `packages/db-core/src/metrics.ts` |
-| Metric computation (transformer) | `packages/transformer/src/metric.ts` |
-| Comparability groups | `packages/transformer/src/comparability.ts` |
+| Metric computation (transformer) | `packages/transformers/transformer-shared/src/metric.ts` |
+| Comparability groups | `packages/transformers/transformer-shared/src/comparability.ts` |
 | Metric values store | `packages/db-core/src/metrics.ts` |
 | Rollup contributions | `packages/db-core/src/schema.ts` |
 | Analytics data source (DTOs) | `packages/db/src/dto.ts` |
@@ -174,9 +174,8 @@ Is the metric scalar and per-session?
 Implement deterministic computation in the transformer, never in UI code.
 
 ```ts
-// packages/transformer/src/plugin/<harness>/metric-<metricId>.ts
-import type { TransformResult } from '../../session';
-import type { MetricValue } from '../../metric';
+// packages/transformers/<harness>-transformer/src/plugin/metric-<metricId>.ts
+import type { MetricValue, TransformResult } from '@lucasschirm/sal-transformer-shared';
 
 export function compute<metricId>(
   evidence: NormalizedEvidence,
@@ -195,7 +194,7 @@ export function compute<metricId>(
 **Command to test computation:**
 
 ```bash
-cd packages/transformer && pnpm vitest run -- -t "<metricId>"
+cd packages/transformers/<harness>-transformer && pnpm vitest run -- -t "<metricId>"
 ```
 
 ### Step 6 — Update transformer capabilities
@@ -244,7 +243,7 @@ cd packages/db-core && pnpm vitest run -- -t "contribution"
 ### Step 8 — Add anti-double-counting and reconciliation tests
 
 ```ts
-// packages/transformer/tests/<harness>-<metricId>.test.ts
+// packages/transformers/<harness>-transformer/tests/<metricId>.test.ts
 describe('<metricId> anti-double-counting', () => {
   it('root-only value does not include descendant contributions', () => {
     // Transform a root session with child sessions.
@@ -273,7 +272,7 @@ describe('<metricId> rollup reconciliation', () => {
 **Command:**
 
 ```bash
-cd packages/transformer && pnpm vitest run -- -t "<metricId>.*double"
+cd packages/transformers/<harness>-transformer && pnpm vitest run -- -t "<metricId>.*double"
 cd packages/db-core && pnpm vitest run -- -t "<metricId>.*reconcil"
 ```
 

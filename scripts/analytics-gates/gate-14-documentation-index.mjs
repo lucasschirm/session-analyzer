@@ -46,7 +46,7 @@ const requiredAgentsRefs = [
   'scripts/analytics-gates',
   'packages/db-core',
   'packages/db',
-  'packages/transformer',
+  'packages/transformers',
   '.agents/skills',
   '.agents/rules',
 ];

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MIGRATIONS, type Migration, MigrationRunner } from '@lucasschirm/sal-db-core';
-import { createDefaultRegistry } from '@lucasschirm/sal-transformer';
+import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   getSqlite3,

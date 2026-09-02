@@ -1,3 +1,11 @@
+// TODO(#142 / DS-B4): this direct import of the Claude-specific
+// `tryMetricIdToLabel` violates the AnalyticsDataSource boundary
+// (`.agents/rules/no-canonical-metrics-in-lit.md`). It is repointed here
+// from the pre-split `@lucasschirm/sal-transformer` to
+// `@lucasschirm/sal-claude-transformer` as an interim step for the DS-F5
+// (#154) package split; #142 should remove this import entirely and route
+// label lookup through AnalyticsDataSource instead.
+import { tryMetricIdToLabel } from '@lucasschirm/sal-claude-transformer';
 import type {
   ComponentUtilizationPage,
   ComponentUtilizationRow,
@@ -9,7 +17,6 @@ import type {
   ProjectListPage,
   TimeSeriesPoint,
 } from '@lucasschirm/sal-db';
-import { tryMetricIdToLabel } from '@lucasschirm/sal-transformer';
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import { componentHref } from '../component-ecosystem/component-ecosystem-params';

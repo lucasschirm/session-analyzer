@@ -1,5 +1,5 @@
 ---
-globs: "packages/transformer/**,packages/db/**,packages/site/**,packages/parsers/**,packages/plugins/**"
+globs: "packages/transformers/**,packages/db/**,packages/site/**,packages/parsers/**,packages/plugins/**"
 ---
 
 # SQL Exists Only in db-core Migrations/Stores
@@ -11,7 +11,7 @@ globs: "packages/transformer/**,packages/db/**,packages/site/**,packages/parsers
 **Invariants (non-negotiable):**
 
 - SQL statements (raw SQL strings, query builders emitting SQL, DDL) may appear only inside `packages/db-core` migrations and stores.
-- `packages/transformer`, `packages/db`, `packages/site`, and `packages/parsers` must not contain SQL.
+- `packages/transformers` (e.g. `transformer-shared`, `claude-transformer`), `packages/db`, `packages/site`, `packages/parsers`, and `packages/plugins` must not contain SQL.
 - `packages/db` consumes `db-core` stores via typed repository/query methods; it never writes SQL.
 - `packages/site` consumes the `AnalyticsDataSource` read contract; it never touches SQL or the database runtime.
 - If a new query is needed, add a store method in `db-core` and expose it through the appropriate facade — do not inline SQL elsewhere.
@@ -33,5 +33,5 @@ globs: "packages/transformer/**,packages/db/**,packages/site/**,packages/parsers
   database it does not own.
 - Everywhere else in `packages/plugins/` (hooks, CLI, manifest generation,
   and any code outside an extractor module reading a third-party harness
-  database), SQL remains forbidden, same as `packages/transformer`,
+  database), SQL remains forbidden, same as `packages/transformers`,
   `packages/db`, `packages/site`, and `packages/parsers`.

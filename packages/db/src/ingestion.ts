@@ -47,7 +47,7 @@ import type {
   TransformerRegistry,
   TransformResult,
   UnknownArtifactBundle,
-} from '@lucasschirm/sal-transformer';
+} from '@lucasschirm/sal-transformer-shared';
 import type { ArtifactCanonicalizationInput, ArtifactDiffRecordContext } from './artifact-diff.js';
 import { ArtifactDiffRepository } from './artifact-diff.js';
 import { ComponentLifecycleEngine } from './component-lifecycle.js';
