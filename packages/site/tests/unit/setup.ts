@@ -59,3 +59,19 @@ class URLPatternShim {
 if (typeof globalThis.URLPattern === 'undefined') {
   (globalThis as Record<string, unknown>).URLPattern = URLPatternShim;
 }
+
+// happy-dom does not provide a Worker constructor. Unit tests mock the
+// modules that create workers (db-client, analytics-client, sync-manager),
+// but transitive imports still evaluate the worker-creation side effects.
+// Install a no-op Worker stub so those imports don't throw ReferenceError.
+if (typeof globalThis.Worker === 'undefined') {
+  (globalThis as Record<string, unknown>).Worker = class {
+    postMessage(): void {}
+    terminate(): void {}
+    addEventListener(): void {}
+    removeEventListener(): void {}
+    onmessage = null;
+    onmessageerror = null;
+    onerror = null;
+  };
+}

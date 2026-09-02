@@ -134,7 +134,7 @@ test.describe('UX-002: empty vs error state disambiguation', () => {
     // Force a zero-row result by filtering on an analysis release that does
     // not exist. This is a real query with real data that returns no rows.
     await page.goto(
-      `/#/projects/${encodeURIComponent(EMPTY_PROJECT)}/behavior?analysisRelease=no-such-release`,
+      `/#/projects/${encodeURIComponent(EMPTY_PROJECT)}?analysisRelease=no-such-release`,
     );
 
     await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
@@ -158,7 +158,7 @@ test.describe('UX-002: empty vs error state disambiguation', () => {
     // query fails and the page must surface an error state in the chart.
     await installFakeAnalyticsWorker(page);
 
-    await page.goto(`/#/projects/${encodeURIComponent(ERROR_PROJECT)}/behavior`);
+    await page.goto(`/#/projects/${encodeURIComponent(ERROR_PROJECT)}`);
 
     await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
       timeout: 15000,

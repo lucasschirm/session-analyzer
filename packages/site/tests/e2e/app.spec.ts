@@ -26,7 +26,7 @@ function fixture(name: string): string {
 }
 
 async function createProject(page: Page, name: string, description = ''): Promise<void> {
-  await page.goto('/');
+  await page.goto('/#/projects');
   await page.getByRole('button', { name: '+ New Project' }).click();
   await page.locator('#project-name-input').fill(name);
   if (description) {
@@ -141,11 +141,11 @@ async function dropFixtures(page: Page, fileNames: string[]): Promise<void> {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/projects');
 });
 
-test.describe('Home page', () => {
-  test('renders the dashboard shell with an empty project state', async ({ page }) => {
+test.describe('Projects page', () => {
+  test('renders the projects page with an empty project state', async ({ page }) => {
     await expect(page).toHaveTitle(/Session Analyzer/);
     await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
     await expect(page.getByRole('button', { name: '+ New Project' })).toBeVisible();
@@ -179,8 +179,15 @@ test.describe('Full user journey', () => {
     await expect(page.getByText(/Session Evidence —/)).toBeVisible();
 
     // The preview server sends COOP/COEP headers, so the SQLite OPFS backend
-    // must be active (not the in-memory fallback).
-    await expect(page.getByText('OPFS')).toBeVisible();
+    // must be active (not the in-memory fallback). Verify via the Storage
+    // settings page (the header badge was removed in the navigation redesign).
+    await page.goto('/#/settings/storage');
+    await expect(page.getByText('Control Database')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('OPFS').first()).toBeVisible();
+
+    // Go back to the session evidence view.
+    await page.goBack();
+    await expect(page.getByText(/Session Evidence —/)).toBeVisible({ timeout: 10000 });
 
     // The Evidence section should be present with its tab list.
     await expect(page.getByRole('heading', { name: 'Evidence', exact: true })).toBeVisible();
@@ -390,7 +397,7 @@ test.describe('Project deletion', () => {
     await dialog.getByRole('button', { name: 'Delete Project' }).click();
 
     await expect(page.locator('.project-card')).toHaveCount(0);
-    await expect(page.getByText('No projects yet')).toBeVisible();
+    await expect(page.getByText('No projects yet. Create one to get started!')).toBeVisible();
   });
 });
 
@@ -418,7 +425,7 @@ test.describe('Analytics chart geometry (UX-001)', () => {
     await importSession(page, projectName, ['claude-session.jsonl']);
 
     // Navigate to the Project Behavior page and wait for the filter controls.
-    await page.goto(`/#/projects/${projectName}/behavior`);
+    await page.goto(`/#/projects/${projectName}`);
     await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 15000 });
 
     // Pick the token usage trends chart by its title. The test must prove real

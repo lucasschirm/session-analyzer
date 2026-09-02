@@ -85,7 +85,7 @@ export function portfolioParamsToQuery(params: PortfolioParams): AnalyticsQuery 
 export function evidenceLinkHref(link: EvidenceLink, returnParams?: PortfolioParams): string {
   switch (link.entityType) {
     case 'project':
-      return `#/projects/${link.entityId}/behavior?returnContext=${encodeURIComponent(
+      return `#/projects/${link.entityId}?returnContext=${encodeURIComponent(
         buildPortfolioHash(returnParams ?? {}).slice(1),
       )}`;
     case 'session':
@@ -97,8 +97,8 @@ export function evidenceLinkHref(link: EvidenceLink, returnParams?: PortfolioPar
         returnContext: buildPortfolioHash(returnParams ?? {}).slice(1) || undefined,
       });
     case 'portfolio':
-      return `#/portfolio${buildPortfolioHash(returnParams ?? {})}`;
+      return `#/${buildPortfolioHash(returnParams ?? {})}`;
     default:
-      return `#/portfolio${buildPortfolioHash(returnParams ?? {})}`;
+      return `#/${buildPortfolioHash(returnParams ?? {})}`;
   }
 }

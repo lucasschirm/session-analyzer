@@ -238,7 +238,7 @@ function stubComponentLoad(): void {
 
 beforeEach(() => {
   stubComponentLoad();
-  window.location.hash = '#/components';
+  window.location.hash = '#/artifacts';
 });
 
 afterEach(() => {
@@ -258,7 +258,7 @@ describe('component-ecosystem-view', () => {
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    expect(root.textContent).toContain('Component Ecosystem');
+    expect(root.textContent).toContain('Artifact Ecosystem');
 
     const cardTexts = allShadowTexts(root, 'metrics-card').join(' ');
     expect(cardTexts).toContain('Total components');
@@ -305,26 +305,26 @@ describe('component-ecosystem-view', () => {
     ) as LitElement;
     chart.dispatchEvent(
       new CustomEvent('point-click', {
-        detail: { label: 'Open read_file', href: '#/components/read_file?kind=tool' },
+        detail: { label: 'Open read_file', href: '#/artifacts/read_file?kind=tool' },
         bubbles: true,
         composed: true,
       }),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(window.location.hash).toContain('#/components/read_file');
+    expect(window.location.hash).toContain('#/artifacts/read_file');
   });
 
   it('renders a component detail with all panels', async () => {
     window.location.hash =
-      '#/components/read_file?kind=tool&returnContext=project%3Dp1&origin=portfolio';
+      '#/artifacts/read_file?kind=tool&returnContext=project%3Dp1&origin=portfolio';
     const view = Object.assign(document.createElement('component-ecosystem-view'), {
       componentId: 'read_file',
     }) as ComponentEcosystemView;
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    expect(root.textContent).toContain('Component: read_file');
+    expect(root.textContent).toContain('Artifact: read_file');
     expect(root.textContent).toContain('(tool)');
     expect(root.textContent).toContain('Versions');
     expect(root.textContent).toContain('Installation scope');
@@ -348,20 +348,20 @@ describe('component-ecosystem-view', () => {
 
   it('preserves originating filters in breadcrumbs', async () => {
     window.location.hash =
-      '#/components/read_file?kind=tool&returnContext=project%3Dp1&origin=portfolio';
+      '#/artifacts/read_file?kind=tool&returnContext=project%3Dp1&origin=portfolio';
     const view = Object.assign(document.createElement('component-ecosystem-view'), {
       componentId: 'read_file',
     }) as ComponentEcosystemView;
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    const originLink = root.querySelector('a[href^="#/portfolio"]') as HTMLAnchorElement;
+    const originLink = root.querySelector('a[href^="#/"]') as HTMLAnchorElement;
     expect(originLink).not.toBeNull();
-    expect(originLink.getAttribute('href')).toBe('#/portfolio?project=p1');
+    expect(originLink.getAttribute('href')).toBe('#/?project=p1');
   });
 
   it('renders a funnel chart for payload distributions', async () => {
-    window.location.hash = '#/components/read_file';
+    window.location.hash = '#/artifacts/read_file';
     const view = Object.assign(document.createElement('component-ecosystem-view'), {
       componentId: 'read_file',
     }) as ComponentEcosystemView;
@@ -375,7 +375,7 @@ describe('component-ecosystem-view', () => {
   });
 
   it('renders lifecycle timing and a diff link', async () => {
-    window.location.hash = '#/components/read_file';
+    window.location.hash = '#/artifacts/read_file';
     const view = Object.assign(document.createElement('component-ecosystem-view'), {
       componentId: 'read_file',
     }) as ComponentEcosystemView;
@@ -413,7 +413,7 @@ describe('component-ecosystem-view', () => {
 
   it('enters a partial state when one detail panel fails', async () => {
     componentMock.getUtilization.mockRejectedValue(new Error('utilization down'));
-    window.location.hash = '#/components/read_file';
+    window.location.hash = '#/artifacts/read_file';
     const view = Object.assign(document.createElement('component-ecosystem-view'), {
       componentId: 'read_file',
     }) as ComponentEcosystemView;
@@ -453,7 +453,7 @@ describe('component-ecosystem-view', () => {
       generationToken: 'gen-1',
       analysisReleaseToken: 'rel-1',
     });
-    window.location.hash = '#/components/read_file';
+    window.location.hash = '#/artifacts/read_file';
     const view = Object.assign(document.createElement('component-ecosystem-view'), {
       componentId: 'read_file',
     }) as ComponentEcosystemView;
@@ -477,7 +477,7 @@ describe('component-ecosystem-view', () => {
       sessionExposure: {},
     });
 
-    window.location.hash = '#/components/read_file?leftVersion=v1.0.0&rightVersion=v1.1.0';
+    window.location.hash = '#/artifacts/read_file?leftVersion=v1.0.0&rightVersion=v1.1.0';
     const view = Object.assign(document.createElement('component-ecosystem-view'), {
       componentId: 'read_file',
     }) as ComponentEcosystemView;

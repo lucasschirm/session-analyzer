@@ -102,7 +102,7 @@ test.describe('Sessions scope filter', () => {
   test('portfolio: scope filter UI updates the URL', async ({ page }) => {
     await importSession(page, 'Sessions Filter Portfolio', ['claude-session-with-subagent.jsonl']);
 
-    await page.goto('/#/portfolio');
+    await page.goto('/#/');
     await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 10000 });
 
     // Use the filter UI to switch the sessions scope.
@@ -119,7 +119,7 @@ test.describe('Sessions scope filter', () => {
 
     // Navigate directly to the project behavior page using the project name
     // (which is also the native project id). Playwright encodes spaces for us.
-    await page.goto(`/#/projects/${projectName}/behavior`);
+    await page.goto(`/#/projects/${projectName}`);
     await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 10000 });
 
     // Use the filter UI to switch the sessions scope.
@@ -144,7 +144,7 @@ test.describe('Sessions scope filter', () => {
       'claude-session-with-subagent.jsonl',
     ]);
 
-    await page.goto('/#/portfolio');
+    await page.goto('/#/');
     await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 10000 });
 
     // Use the filter UI (not URL manipulation) to switch sessions scope to "All".
@@ -164,7 +164,7 @@ test.describe('Sessions scope filter', () => {
     await importSession(page, projectName, ['claude-session-with-subagent.jsonl']);
 
     // Navigate directly to the project behavior page using the project name.
-    await page.goto(`/#/projects/${projectName}/behavior`);
+    await page.goto(`/#/projects/${projectName}`);
     await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 10000 });
 
     // Use the filter UI to switch sessions scope to "Sub Agents".

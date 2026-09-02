@@ -1,32 +1,45 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import '../components/connect-modal';
-import '../components/passkey-modal';
+import '../components/header-project-selector';
+import '../components/left-nav';
 import '../components/sync-progress-bar';
 import '../components/sync-status-bar';
 import '../components/toast-container';
 import { dbClient } from '../db/db-client';
-import { HashRouter } from '../router';
-import { isUnlocked } from '../sync/credential-crypto';
+import { currentHashPath, HashRouter, navigateTo } from '../router';
 import { syncManager } from '../sync/sync-manager';
-import './home-page';
+import type { Project } from '../types';
+import './projects-page';
 import './portfolio/portfolio-view';
 import './project-behavior/project-behavior-view';
 import './session-evidence/session-evidence-view';
 import './manual-import/manual-import-page';
 import './component-ecosystem/component-ecosystem-view';
 import './artifact-diff/artifact-diff-view';
+import './settings/data-sources-page';
+import './settings/storage-page';
+import './tbd-page';
 
 /**
- * Root application shell: header, hash-based routing outlet and database
- * lifecycle. Routes:
+ * Root application shell: header, left navigation, hash-based routing outlet
+ * and database lifecycle.
  *
- * - `#/`                                   -> Home (projects CRUD)
- * - `#/projects/:projectId/behavior`       -> Project Behavior (precomputed analytics view)
+ * Routes:
+ *
+ * - `#/`                                   -> Dashboard (Portfolio analytics view)
+ * - `#/projects`                           -> Projects list (CRUD)
+ * - `#/projects/:projectId`                -> Project Behavior (precomputed analytics view)
  * - `#/sessions/:sessionId`                -> Session Evidence (precomputed analytics view)
  * - `#/manual-import`                      -> Manual Import (transcript/partial upload)
- * - `#/components`                         -> Component Ecosystem
+ * - `#/artifacts`                          -> Artifact Ecosystem (was "Components")
+ * - `#/artifacts/:componentId`             -> Artifact Ecosystem with a selected component
  * - `#/artifact-diff`                      -> Artifact Diff
+ * - `#/agents`, `#/skills`, `#/tools`, `#/mcp` -> TBD placeholder pages
+ * - `#/settings/data-sources`              -> Settings: Data Sources (S3 connections)
+ * - `#/settings/storage`                   -> Settings: Storage (DB management)
+ *
+ * Legacy redirects: `#/portfolio` -> `#/`, `#/components` -> `#/artifacts`,
+ * `#/projects/:id/behavior` -> `#/projects/:id` (handled by the router).
  */
 function decodeRouteParam(value: string | undefined): string {
   if (!value) return '';
@@ -50,14 +63,15 @@ export class AppRoot extends LitElement {
 
     header {
       background: var(--md-sys-color-surface, #171a21);
-      padding: 14px 24px;
+      padding: 10px 24px;
       border-bottom: 1px solid var(--md-sys-color-outline, #2a303c);
       display: flex;
-      justify-content: space-between;
       align-items: center;
+      gap: 16px;
       position: sticky;
       top: 0;
       z-index: 10;
+      height: 56px;
     }
 
     .logo {
@@ -65,36 +79,20 @@ export class AppRoot extends LitElement {
       font-weight: 700;
       color: var(--md-sys-color-primary, #4f8cff);
       text-decoration: none;
+      flex-shrink: 0;
     }
 
-    .header-right {
+    header-project-selector {
+      flex-shrink: 0;
+    }
+
+    nav.header-nav {
       display: flex;
-      align-items: center;
-      gap: 12px;
+      gap: 4px;
+      flex-shrink: 0;
     }
 
-    .storage-badge {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      padding: 4px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-    }
-
-    .storage-badge.opfs {
-      color: var(--md-sys-color-success, #3ecf8e);
-      border-color: var(--md-sys-color-success, #3ecf8e);
-    }
-
-    nav {
-      display: flex;
-      gap: 8px;
-    }
-
-    nav a {
+    nav.header-nav a {
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
       text-decoration: none;
       padding: 7px 14px;
@@ -103,29 +101,51 @@ export class AppRoot extends LitElement {
       transition: background-color 0.15s ease;
     }
 
-    nav a:hover {
-      background: var(--md-sys-color-surface-container, #1f242e);
-    }
-
-    .connect-button {
+    nav.header-nav a:hover {
       background: var(--md-sys-color-surface-container, #1f242e);
       color: var(--md-sys-color-on-surface, #e6e9ef);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      padding: 7px 14px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background-color 0.15s ease;
     }
 
-    .connect-button:hover {
-      background: var(--md-sys-color-surface-container-hover, #262d3a);
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-left: auto;
+    }
+
+    .settings-button {
+      background: transparent;
+      border: none;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.15s ease, color 0.15s ease;
+    }
+
+    .settings-button:hover {
+      background: var(--md-sys-color-surface-container, #1f242e);
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+    }
+
+    .settings-button svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .app-body {
+      display: flex;
+      min-height: calc(100vh - 56px);
     }
 
     main {
+      flex: 1;
       padding: 24px;
       padding-bottom: 56px;
+      min-width: 0;
     }
 
     .app-error {
@@ -142,32 +162,36 @@ export class AppRoot extends LitElement {
     [
       {
         path: '/',
-        render: () => html`<home-page></home-page>`,
-      },
-      {
-        path: '/portfolio*',
         render: () => html`<portfolio-view></portfolio-view>`,
       },
       {
-        path: '/projects/:projectId/behavior*',
+        path: '/projects',
+        render: () => html`<projects-page></projects-page>`,
+      },
+      {
+        path: '/projects/:projectId*',
         render: (params) =>
-          html`<project-behavior-view project-id=${decodeRouteParam(params.projectId)}></project-behavior-view>`,
+          html`<project-behavior-view
+            project-id=${decodeRouteParam(params.projectId)}
+          ></project-behavior-view>`,
       },
       {
         path: '/sessions/:sessionId',
         render: (params) =>
-          html`<session-evidence-view session-id=${decodeRouteParam(params.sessionId)}></session-evidence-view>`,
+          html`<session-evidence-view
+            session-id=${decodeRouteParam(params.sessionId)}
+          ></session-evidence-view>`,
       },
       {
         path: '/manual-import',
         render: () => html`<manual-import-page></manual-import-page>`,
       },
       {
-        path: '/components',
+        path: '/artifacts',
         render: () => html`<component-ecosystem-view></component-ecosystem-view>`,
       },
       {
-        path: '/components/:componentId',
+        path: '/artifacts/:componentId',
         render: (params) =>
           html`<component-ecosystem-view
             component-id=${decodeRouteParam(params.componentId)}
@@ -177,6 +201,34 @@ export class AppRoot extends LitElement {
         path: '/artifact-diff*',
         render: () => html`<artifact-diff-view></artifact-diff-view>`,
       },
+      {
+        path: '/agents',
+        render: () => html`<tbd-page label="Agents"></tbd-page>`,
+      },
+      {
+        path: '/skills',
+        render: () => html`<tbd-page label="Skills"></tbd-page>`,
+      },
+      {
+        path: '/tools',
+        render: () => html`<tbd-page label="Tools"></tbd-page>`,
+      },
+      {
+        path: '/mcp',
+        render: () => html`<tbd-page label="MCP"></tbd-page>`,
+      },
+      {
+        path: '/settings',
+        render: () => html`<data-sources-page></data-sources-page>`,
+      },
+      {
+        path: '/settings/data-sources',
+        render: () => html`<data-sources-page></data-sources-page>`,
+      },
+      {
+        path: '/settings/storage',
+        render: () => html`<storage-page></storage-page>`,
+      },
     ],
     {
       render: () => html`
@@ -185,112 +237,125 @@ export class AppRoot extends LitElement {
     },
   );
 
-  @state() private storage: 'opfs' | 'memory' | null = null;
-
   @state() private dbError: string | null = null;
 
-  @state() private connectOpen = false;
+  @state() private currentPath = '/';
 
-  @state() private passkeyOpen = false;
+  @state() private selectedProjectSlug = '';
 
-  @state() private passkeyMode: 'create' | 'unlock' = 'create';
+  @state() private projects: Project[] = [];
 
-  @state() private hasConnections = false;
-
-  @state() private hasPasskey = false;
+  private hashChangeHandler = (): void => {
+    this.currentPath = currentHashPath();
+    void this.syncProjectSelector();
+  };
 
   async firstUpdated(): Promise<void> {
     try {
-      const storage = await dbClient.ensureReady();
+      await dbClient.ensureReady();
       await syncManager.init();
-      await this.loadSecurityState();
-      this.storage = storage;
+      this.currentPath = currentHashPath();
+      await this.loadProjects();
+      void this.syncProjectSelector();
     } catch (error) {
       this.dbError = `Failed to initialize database: ${(error as Error).message}`;
     }
   }
 
-  private async loadSecurityState(): Promise<void> {
-    const [connections, passkeyState] = await Promise.all([
-      dbClient.getConnections(),
-      dbClient.getPasskeyState(),
-    ]);
-    this.hasConnections = connections.length > 0;
-    this.hasPasskey = passkeyState !== null;
+  connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener('hashchange', this.hashChangeHandler);
   }
 
-  private handleConnectClick(): void {
-    if (this.hasConnections && this.hasPasskey && !isUnlocked()) {
-      this.passkeyMode = 'unlock';
-      this.passkeyOpen = true;
-      return;
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.removeEventListener('hashchange', this.hashChangeHandler);
+  }
+
+  private async loadProjects(): Promise<void> {
+    try {
+      this.projects = await dbClient.getProjects();
+    } catch {
+      // Non-fatal — selector stays hidden.
     }
-    this.connectOpen = true;
   }
 
-  private handlePasskeySuccess(): void {
-    this.passkeyOpen = false;
-    this.connectOpen = true;
+  private async syncProjectSelector(): Promise<void> {
+    const path = this.currentPath;
+    const projectMatch = path.match(/^\/projects\/([^/]+)/);
+    if (projectMatch) {
+      const slug = decodeURIComponent(projectMatch[1]);
+      // If the slug is in our project list, use it directly.
+      const found = this.projects.find((p) => (p.readable_id || p.id) === slug);
+      if (found) {
+        this.selectedProjectSlug = slug;
+      } else {
+        // Try resolving via DB (the slug may be a readable_id we haven't loaded yet).
+        try {
+          const project = await dbClient.getProjectByReadableId(slug);
+          if (project) {
+            this.selectedProjectSlug = slug;
+            if (!this.projects.find((p) => p.id === project.id)) {
+              this.projects = [...this.projects, project];
+            }
+          } else {
+            this.selectedProjectSlug = slug;
+          }
+        } catch {
+          this.selectedProjectSlug = slug;
+        }
+      }
+    } else {
+      this.selectedProjectSlug = '';
+    }
   }
 
-  private handlePasskeyClose(): void {
-    this.passkeyOpen = false;
-  }
-
-  private handlePasskeyForgotten(): void {
-    this.passkeyOpen = false;
-    void this.loadSecurityState();
-  }
-
-  private handleConnectClose(): void {
-    this.connectOpen = false;
-    this.passkeyOpen = false;
-    void this.loadSecurityState();
+  private handleSettingsClick(): void {
+    navigateTo('/settings/data-sources');
   }
 
   render() {
+    const showLeftNav =
+      this.currentPath === '/' ||
+      this.currentPath.startsWith('/projects') ||
+      this.currentPath.startsWith('/settings');
+
     return html`
       <header>
-        <a href="#/" class="logo">Session Analyzer</a>
+        <a href="#/" class="logo">SAL</a>
+        <header-project-selector
+          .value=${this.selectedProjectSlug}
+        ></header-project-selector>
+        <nav class="header-nav">
+          <a href="#/">Dashboard</a>
+          <a href="#/artifacts">Artifacts</a>
+        </nav>
         <div class="header-right">
           <sync-progress-bar></sync-progress-bar>
-          ${
-            this.storage
-              ? html`<span class="storage-badge ${this.storage}" title="SQLite storage backend">
-                ${this.storage === 'opfs' ? 'OPFS' : 'In-Memory'}
-              </span>`
-              : ''
-          }
-          <button type="button" class="connect-button" @click=${this.handleConnectClick}>
-            Connect
+          <button
+            type="button"
+            class="settings-button"
+            title="Settings"
+            aria-label="Settings"
+            @click=${this.handleSettingsClick}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+              ></path>
+            </svg>
           </button>
-          <nav>
-            <a href="#/portfolio">Portfolio</a>
-            <a href="#/components">Components</a>
-            <a href="#/">Home</a>
-            <a href="#/manual-import">Manual Import</a>
-          </nav>
         </div>
       </header>
 
-      <main>
-        ${this.dbError ? html`<div class="app-error">${this.dbError}</div>` : ''}
-        ${this.router.outlet()}
-      </main>
-
-      <connect-modal
-        .open=${this.connectOpen}
-        @modal-close=${this.handleConnectClose}
-      ></connect-modal>
-
-      <passkey-modal
-        .open=${this.passkeyOpen}
-        .mode=${this.passkeyMode}
-        @passkey-created=${this.handlePasskeySuccess}
-        @passkey-unlocked=${this.handlePasskeySuccess}
-        @passkey-forgotten=${this.handlePasskeyForgotten}
-        @modal-close=${this.handlePasskeyClose}
-      ></passkey-modal>
+      <div class="app-body">
+        ${showLeftNav ? html`<left-nav .path=${this.currentPath}></left-nav>` : ''}
+        <main>
+          ${this.dbError ? html`<div class="app-error">${this.dbError}</div>` : ''}
+          ${this.router.outlet()}
+        </main>
+      </div>
 
       <sync-status-bar></sync-status-bar>
 

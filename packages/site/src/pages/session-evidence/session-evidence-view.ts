@@ -553,7 +553,7 @@ export class SessionEvidenceView extends LitElement {
           <thead>
             <tr>
               <th scope="col">Kind</th>
-              <th scope="col">Component</th>
+              <th scope="col">Artifact</th>
               <th scope="col">Invocations</th>
               <th scope="col">Outcome</th>
               <th scope="col">Metrics</th>

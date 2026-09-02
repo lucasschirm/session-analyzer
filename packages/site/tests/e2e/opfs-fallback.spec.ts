@@ -6,8 +6,11 @@ import { expect, test } from '@playwright/test';
  * The sqlite-wasm build recognizes the undocumented `?opfs-disable` URL
  * argument to skip OPFS VFS installation. By appending that argument to every
  * Worker URL before the app loads, the database workers fall back to an
- * in-memory SQLite instance, and the app should surface the "In-Memory"
- * storage indicator instead of the normal "OPFS" persistent-storage badge.
+ * in-memory SQLite instance, and the Storage settings page should surface the
+ * "In-Memory" backend indicator instead of the normal "OPFS" persistent
+ * storage backend. (The header storage badge was removed in the navigation
+ * redesign — the backend configuration now lives on the Storage settings page
+ * at `#/settings/storage`.)
  */
 
 const OPFS_DISABLE_PARAM = 'opfs-disable';
@@ -35,15 +38,20 @@ test.describe('OPFS fallback (UX-014)', () => {
       window.Worker = PatchedWorker as unknown as typeof Worker;
     }, OPFS_DISABLE_PARAM);
 
-    await page.goto('/');
+    await page.goto('/#/settings/storage');
 
-    const badge = page.locator('.storage-badge');
-    await expect(badge).toBeVisible({ timeout: 15000 });
+    // Wait for the Storage settings page to load — the "Control Database"
+    // config card renders once the backend info is available.
+    await expect(page.getByText('Control Database')).toBeVisible({ timeout: 15000 });
 
-    // The fallback indicator must be visible and distinct from the
-    // persistent-storage "OPFS" badge shown in the normal code path.
-    await expect(badge).toHaveText('In-Memory');
-    await expect(badge).not.toHaveText('OPFS');
-    await expect(badge).not.toHaveClass(/opfs/);
+    // The database table's Backend column shows "In-Memory" instead of "OPFS"
+    // when OPFS is unavailable. The table is populated after the backend
+    // report resolves, so wait for the fallback indicator to appear.
+    const dbTable = page.locator('.db-table');
+    await expect(dbTable).toContainText('In-Memory', { timeout: 15000 });
+
+    // The persistent-storage "OPFS" backend must not appear in the table when
+    // OPFS is unavailable.
+    await expect(dbTable).not.toContainText('OPFS');
   });
 });

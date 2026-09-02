@@ -262,7 +262,7 @@ export class ProjectBehaviorPage extends LitElement {
   }
 
   private handleHashChange(): void {
-    if (window.location.hash.startsWith(`#/projects/${this.projectId}/behavior`)) {
+    if (window.location.hash.startsWith(`#/projects/${this.projectId}`)) {
       void this.load();
     }
   }
@@ -341,14 +341,14 @@ export class ProjectBehaviorPage extends LitElement {
     const record = { ...this.filters } as unknown as Record<string, string | undefined>;
     record[key as string] = value === '' ? undefined : value;
     navigateTo(
-      `/projects/${this.projectId}/behavior${buildProjectBehaviorHash(
+      `/projects/${this.projectId}${buildProjectBehaviorHash(
         record as unknown as ProjectBehaviorParams,
       )}`,
     );
   }
 
   private resetFilters(): void {
-    navigateTo(`/projects/${this.projectId}/behavior`);
+    navigateTo(`/projects/${this.projectId}`);
   }
 
   private goToMetric(metric: MetricCardView): void {
@@ -378,9 +378,9 @@ export class ProjectBehaviorPage extends LitElement {
 
   private renderBreadcrumb() {
     const back = this.filters.returnContext
-      ? `#/portfolio?${new URLSearchParams(this.filters.returnContext).toString()}`
-      : '#/portfolio';
-    return html`<a class="back-link" href=${back}>← Back to Portfolio</a>`;
+      ? `#/?${new URLSearchParams(this.filters.returnContext).toString()}`
+      : '#/';
+    return html`<a class="back-link" href=${back}>← Back to Dashboard</a>`;
   }
 
   private renderFilters() {
@@ -435,7 +435,7 @@ export class ProjectBehaviorPage extends LitElement {
           </select>
         </label>
         <label>
-          Component
+          Artifact
           <input
             type="text"
             .value=${this.filters.component ?? ''}

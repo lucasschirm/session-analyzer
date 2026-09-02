@@ -336,7 +336,7 @@ export class ComponentEcosystemView extends LitElement {
   }
 
   private handleHashChange(): void {
-    if (window.location.hash.startsWith('#/components')) {
+    if (window.location.hash.startsWith('#/artifacts')) {
       this.filters = parseComponentEcosystemHash(window.location.hash, this.componentId);
       this.load();
     }
@@ -521,12 +521,12 @@ export class ComponentEcosystemView extends LitElement {
         ${
           originLink
             ? html`<a href=${originLink}>
-              ${origin === 'portfolio' ? 'Portfolio' : origin === 'project' ? 'Project' : 'Session'}
+              ${origin === 'portfolio' ? 'Dashboard' : origin === 'project' ? 'Project' : 'Session'}
             </a>`
-            : html`<a href="#/portfolio">Portfolio</a>`
+            : html`<a href="#/">Dashboard</a>`
         }
         <span aria-hidden="true">/</span>
-        <a href="#/components">Component Ecosystem</a>
+        <a href="#/artifacts">Artifact Ecosystem</a>
         ${
           this.componentId
             ? html`
@@ -655,7 +655,7 @@ export class ComponentEcosystemView extends LitElement {
           )}
         </div>
         <analytics-chart
-          title="Components by kind"
+          title="Artifacts by kind"
           .series=${countSeries}
           .state=${this.chartState(this.summary.state)}
         ></analytics-chart>
@@ -1033,7 +1033,7 @@ ${this.diff.unifiedDiff.split('\n').map((line) => {
       <div class="component-ecosystem-view">
         ${this.renderBreadcrumbs()}
         <h1>
-          ${this.componentId ? `Component: ${this.componentId}` : 'Component Ecosystem'}
+          ${this.componentId ? `Artifact: ${this.componentId}` : 'Artifact Ecosystem'}
         </h1>
         ${
           this.globalState === 'error' && this.globalError

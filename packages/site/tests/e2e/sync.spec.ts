@@ -18,32 +18,29 @@ function attachLoggers(page: Page): void {
 }
 
 async function openConnectModal(page: Page): Promise<void> {
-  await page.goto('/');
-  await page
-    .locator('app-root')
-    .getByText(/OPFS|In-Memory/)
-    .waitFor({ state: 'visible', timeout: 10000 });
-  const button = page.getByRole('button', { name: 'Connect' });
-  await expect(button).toBeVisible({ timeout: 10000 });
-  await button.click();
-  await expect(page.getByRole('dialog', { name: 'Connections' })).toBeVisible({ timeout: 10000 });
+  await page.goto('/#/settings/data-sources');
+  await expect(
+    page.locator('connect-modal').getByRole('heading', { name: 'Connections' }),
+  ).toBeVisible({
+    timeout: 10000,
+  });
 }
 
 async function fillConnectionForm(
   page: Page,
   options: { name?: string; syncOnlyNew?: boolean } = {},
 ): Promise<void> {
-  const modal = page.getByRole('dialog', { name: 'Connections' });
-  await modal.getByRole('button', { name: '+ New connection' }).click();
-  await modal.getByLabel('Connection name').fill(options.name ?? 'E2E');
-  await modal.getByLabel('Region').fill('us-east-1');
-  await modal.getByLabel('Bucket').fill(S3_BUCKET);
-  await modal.getByLabel('Endpoint (optional)').fill(S3_ENDPOINT);
-  await modal.getByLabel('Access key ID').fill('AKIA');
-  await modal.getByLabel('Secret access key').fill('secret');
-  await modal.getByLabel('Save to local storage').check();
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: '+ New connection' }).click();
+  await panel.getByLabel('Connection name').fill(options.name ?? 'E2E');
+  await panel.getByLabel('Region').fill('us-east-1');
+  await panel.getByLabel('Bucket').fill(S3_BUCKET);
+  await panel.getByLabel('Endpoint (optional)').fill(S3_ENDPOINT);
+  await panel.getByLabel('Access key ID').fill('AKIA');
+  await panel.getByLabel('Secret access key').fill('secret');
+  await panel.getByLabel('Save to local storage').check();
   if (options.syncOnlyNew) {
-    await modal.getByLabel('Sync only new sessions').check();
+    await panel.getByLabel('Sync only new sessions').check();
   }
 }
 
@@ -61,25 +58,44 @@ async function confirmPasskey(page: Page, passkey = PASSKEY): Promise<void> {
 }
 
 /**
- * Click Connect and unlock the vault if needed. When the vault is already
- * unlocked (e.g. after a previous sync in the same page session), the Connect
- * button opens the connections modal directly without a passkey prompt.
+ * Navigate to the Data Sources settings page and unlock the vault if needed.
+ * The inline connect-modal does not prompt for a passkey on load (unlike the
+ * old header "Connect" button). To unlock the vault, edit an existing
+ * connection and save — the save triggers the passkey unlock prompt when the
+ * vault is locked. When the vault is already unlocked (e.g. after a previous
+ * sync in the same page session), the save completes without a passkey
+ * prompt.
  */
 async function openConnectForResync(page: Page): Promise<void> {
-  await page
-    .locator('app-root')
-    .getByText(/OPFS|In-Memory/)
-    .waitFor({ state: 'visible', timeout: 10000 });
-  await page.getByRole('button', { name: 'Connect' }).click();
-  // If the passkey modal appears, unlock it. Otherwise, the connect modal
-  // should be visible directly (vault already unlocked).
-  const passkeyModal = page.getByRole('dialog', { name: 'Passkey' });
-  if (await passkeyModal.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await confirmPasskey(page);
-  }
-  await expect(page.getByRole('dialog', { name: 'Connections' })).toBeVisible({
+  // Reload the page to ensure the connect-modal is freshly mounted in list
+  // view. Without a reload, navigating to the same hash URL is a no-op and
+  // the modal stays in whatever view it was in (e.g. form view from the
+  // initial sync setup).
+  await page.goto('/#/projects');
+  await page.goto('/#/settings/data-sources');
+  const panel = page.locator('connect-modal');
+  await expect(panel.getByRole('heading', { name: 'Connections' })).toBeVisible({
     timeout: 10000,
   });
+  // Wait for at least one connection row to appear, then edit and save to
+  // unlock the vault if needed.
+  const editButton = panel.getByRole('button', { name: 'Edit' }).first();
+  await expect(editButton).toBeVisible({ timeout: 10000 });
+  await editButton.click();
+  await panel.getByRole('button', { name: 'Save' }).click();
+  // After reload, the vault is locked and saving triggers the passkey prompt.
+  // Use waitFor with a short race: either the passkey modal appears (vault
+  // locked) or the Connections list reappears (vault already unlocked).
+  const passkeyModal = page.getByRole('dialog', { name: 'Passkey' });
+  const connectionsHeading = panel.getByRole('heading', { name: 'Connections' });
+  await Promise.race([
+    passkeyModal.waitFor({ state: 'visible', timeout: 5000 }),
+    connectionsHeading.waitFor({ state: 'visible', timeout: 5000 }),
+  ]);
+  if (await passkeyModal.isVisible().catch(() => false)) {
+    await confirmPasskey(page);
+  }
+  await expect(connectionsHeading).toBeVisible({ timeout: 10000 });
 }
 
 function progressBar(page: Page): Locator {
@@ -94,8 +110,8 @@ async function startSyncFromHome(
   await bucket.installRoute(page);
   await openConnectModal(page);
   await fillConnectionForm(page, options);
-  const modal = page.getByRole('dialog', { name: 'Connections' });
-  await modal.getByRole('button', { name: 'Sync' }).click();
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: 'Sync' }).click();
   await confirmPasskey(page);
   await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
 }
@@ -121,16 +137,16 @@ async function waitForSyncIdle(page: Page, timeout = 30000): Promise<void> {
 }
 
 /**
- * Click a project card on the home page to navigate to the Project Behavior
- * analytics view. In the new architecture, clicking a project card routes to
- * `#/projects/<slug>/behavior` which renders `<h1>Project Behavior</h1>`.
+ * Click a project card on the projects page to navigate to the Project Behavior
+ * analytics view. Clicking a project card routes to `#/projects/<slug>` which
+ * renders `<h1>Project Behavior</h1>`.
  */
 async function openProjectByName(page: Page, name: string): Promise<void> {
-  await page.goto('/');
+  await page.goto('/#/projects');
   const card = page.locator('.project-card', { hasText: name });
   await expect(card.first()).toBeVisible({ timeout: 10000 });
   await card.first().click();
-  await expect(page).toHaveURL(/#\/projects\/.+\/behavior/);
+  await expect(page).toHaveURL(/#\/projects\/[^/]+/);
   await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
     timeout: 10000,
   });
@@ -141,7 +157,7 @@ async function openProjectByName(page: Page, name: string): Promise<void> {
  * readable_id (the S3 manifest projectId for sync-created projects).
  */
 async function openProjectBehavior(page: Page, projectId: string): Promise<void> {
-  await page.goto(`/#/projects/${projectId}/behavior`);
+  await page.goto(`/#/projects/${projectId}`);
   await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
     timeout: 10000,
   });
@@ -152,7 +168,10 @@ async function openProjectBehavior(page: Page, projectId: string): Promise<void>
  * visible (either during an active run or the completed-summary window).
  */
 async function openSyncStatusModal(page: Page): Promise<Locator> {
-  await progressBar(page).click();
+  // Error toasts from sync failures can overlap the progress bar in the
+  // header. Dispatch a click event directly to bypass Playwright's
+  // pointer-interception check while still triggering the Lit handler.
+  await progressBar(page).dispatchEvent('click');
   const modal = page.getByRole('dialog', { name: 'Sync status' });
   await expect(modal).toBeVisible({ timeout: 5000 });
   return modal;
@@ -261,7 +280,7 @@ test('global namespace is reserved and never treated as a project', async ({ pag
   await expectChartContains(page, 'Token usage trends', 'Total tokens');
 
   // No project was created for the rogue global folder.
-  await page.goto('/');
+  await page.goto('/#/projects');
   await expect(page.locator('.project-card', { hasText: 'CAS Project' })).toHaveCount(1);
 
   // The rogue global folder was never treated as a project — its manifest
@@ -421,7 +440,7 @@ test('project folder without a project manifest is skipped', async ({ page }) =>
   await startSyncFromHome(page, bucket);
   await waitForSyncIdle(page);
 
-  await page.goto('/');
+  await page.goto('/#/projects');
   await expect(page.locator('.project-card', { hasText: 'Good Project' })).toHaveCount(1);
 });
 
@@ -454,13 +473,13 @@ test('sync-only-new skips existing sessions without re-fetching their manifest',
 
   // Enable sync-only-new on the existing connection.
   await openConnectForResync(page);
-  const modal = page.getByRole('dialog', { name: 'Connections' });
-  await modal.getByRole('button', { name: 'Edit' }).click();
-  await modal.getByLabel('Sync only new sessions').check();
-  await modal.getByRole('button', { name: 'Save' }).click();
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: 'Edit' }).click();
+  await panel.getByLabel('Sync only new sessions').check();
+  await panel.getByRole('button', { name: 'Save' }).click();
 
   bucket.clearRequests();
-  await modal.getByRole('button', { name: 'Sync' }).click();
+  await panel.getByRole('button', { name: 'Sync' }).click();
   await waitForSyncIdle(page);
 
   const manifestGets = bucket
@@ -497,8 +516,8 @@ test('re-syncing unchanged files receives an empty download list', async ({ page
 
   bucket.clearRequests();
   await openConnectForResync(page);
-  const modal = page.getByRole('dialog', { name: 'Connections' });
-  await modal.getByRole('button', { name: 'Sync' }).click();
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: 'Sync' }).click();
   await waitForSyncIdle(page);
 
   const transcriptGets = bucket
@@ -556,12 +575,12 @@ test('failed session can be retried after the remote file is fixed', async ({ pa
   );
   bucket.setManifestContent('retry-proj', 'e2e-retry', Buffer.from(JSON.stringify(fixed)));
 
-  // Re-sync from the Connect modal. The session is in 'failed' state, so
+  // Re-sync from the Data Sources page. The session is in 'failed' state, so
   // isSyncNeeded() returns true and the session is re-downloaded and
   // re-ingested.
   await openConnectForResync(page);
-  modal = page.getByRole('dialog', { name: 'Connections' });
-  await modal.getByRole('button', { name: 'Sync' }).click();
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: 'Sync' }).click();
   await waitForSyncCompleted(page, 60000);
 
   // After re-sync, the session should no longer be in the failed state.
@@ -673,8 +692,8 @@ test('reloading mid-sync reconciles stale session states', async ({ page }) => {
   // After reload, the sync manager reconciles stale states. The session
   // should be marked as failed. Re-trigger a sync to see it in the modal.
   await openConnectForResync(page);
-  const modal = page.getByRole('dialog', { name: 'Connections' });
-  await modal.getByRole('button', { name: 'Sync' }).click();
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: 'Sync' }).click();
   await waitForSyncCompleted(page);
 
   // The reconciled session should be in_sync (re-synced successfully) or
@@ -711,7 +730,7 @@ test('second tab follows the active sync as a read-only follower', async ({ cont
   const page2 = await context.newPage();
   attachLoggers(page2);
   await bucket.installRoute(page2);
-  await page2.goto('/');
+  await page2.goto('/#/projects');
 
   // The follower should mirror the active run without making S3 requests of
   // its own - only the leader tab's worker fetches, so the transcript is
@@ -759,14 +778,19 @@ test('locked vault prompts for passkey and forgot wipes saved credentials', asyn
 
   await page.reload();
   await page.waitForLoadState('networkidle');
-  await page
-    .locator('app-root')
-    .getByText(/OPFS|In-Memory/)
-    .waitFor({ state: 'visible', timeout: 10000 });
 
-  await page.getByRole('button', { name: 'Connect' }).click();
+  // Navigate to the Data Sources settings page. The inline connect-modal
+  // does not prompt for a passkey on load — edit the existing connection and
+  // save to trigger the unlock prompt.
+  await page.goto('/#/settings/data-sources');
+  const panel = page.locator('connect-modal');
+  await expect(panel.getByRole('heading', { name: 'Connections' })).toBeVisible({
+    timeout: 10000,
+  });
+  await panel.getByRole('button', { name: 'Edit' }).first().click();
+  await panel.getByRole('button', { name: 'Save' }).click();
   const passkeyModal = page.getByRole('dialog', { name: 'Passkey' });
-  await expect(passkeyModal).toBeVisible();
+  await expect(passkeyModal).toBeVisible({ timeout: 10000 });
 
   // Wrong passkey shows an error.
   await passkeyModal.getByLabel('Passkey').first().fill('wrong-pass');
@@ -778,12 +802,14 @@ test('locked vault prompts for passkey and forgot wipes saved credentials', asyn
   await passkeyModal.getByRole('button', { name: 'Delete all saved secrets' }).click();
   await expect(passkeyModal).toBeHidden({ timeout: 10000 });
 
-  // Connect now opens the connection form, not the passkey modal, because the
-  // vault has been deleted.
-  await page.getByRole('button', { name: 'Connect' }).click();
-  const connectModal = page.getByRole('dialog', { name: 'Connections' });
-  await expect(connectModal).toBeVisible({ timeout: 10000 });
-  await expect(connectModal.getByRole('button', { name: '+ New connection' })).toBeVisible();
+  // After forgetting, the edit form is still showing — cancel back to the
+  // connections list. The vault has been deleted, so the list shows without
+  // a passkey prompt.
+  await panel.getByRole('button', { name: 'Cancel' }).click();
+  await expect(panel.getByRole('heading', { name: 'Connections' })).toBeVisible({
+    timeout: 10000,
+  });
+  await expect(panel.getByRole('button', { name: '+ New connection' })).toBeVisible();
 });
 
 // =============================================================================
@@ -911,6 +937,7 @@ test('unresolvable artifact in one session does not stop the sync run', async ({
   // The run should complete without a "Sync failed" error toast; the good
   // session should still be imported, leaving two sessions in the project.
   await expect(page.locator('.toast.error')).not.toBeVisible();
+  await page.goto('/#/projects');
   await expect(page.locator('.project-card', { hasText: /2 sessions/ })).toBeVisible({
     timeout: 10000,
   });
@@ -986,8 +1013,8 @@ test('UX-006: export after sync includes session rows', async ({ page }) => {
   await startSyncFromHome(page, bucket);
   await waitForSyncIdle(page);
 
-  // Go back to the home page and export the control database.
-  await page.goto('/');
+  // Go back to the projects page and export the control database.
+  await page.goto('/#/projects');
   const [download] = await Promise.all([
     page.waitForEvent('download'),
     page.getByRole('button', { name: 'Export Database' }).click(),
@@ -1032,10 +1059,10 @@ test('UX-004: sync completion makes the synced session queryable in the dashboar
   await startSyncFromHome(page, bucket);
   await waitForSyncIdle(page);
 
-  // The synced session must appear in the project's session list on the home
-  // page (control DB). This proves the sync manager discovered the session and
-  // the sync worker reached the completed state for this project.
-  await page.goto('/');
+  // The synced session must appear in the project's session list on the
+  // projects page (control DB). This proves the sync manager discovered the
+  // session and the sync worker reached the completed state for this project.
+  await page.goto('/#/projects');
   const projectCard = page.locator('.project-card', { hasText: 'UX-004 Project' });
   await expect(projectCard).toBeVisible({ timeout: 10000 });
   await expect(projectCard).toContainText('1 session', { timeout: 10000 });

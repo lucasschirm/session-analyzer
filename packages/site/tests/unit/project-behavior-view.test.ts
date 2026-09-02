@@ -215,7 +215,7 @@ function stubProjectBehaviorLoad(): void {
 
 beforeEach(() => {
   stubProjectBehaviorLoad();
-  window.location.hash = '#/projects/p1/behavior';
+  window.location.hash = '#/projects/p1';
 });
 
 afterEach(() => {
@@ -319,7 +319,7 @@ describe('project-behavior-view', () => {
   });
 
   it('parses filters from the hash and re-loads', async () => {
-    window.location.hash = '#/projects/p1/behavior?harness=claude&mode=plan';
+    window.location.hash = '#/projects/p1?harness=claude&mode=plan';
 
     const view = Object.assign(document.createElement('project-behavior-view'), {
       projectId: 'p1',
@@ -336,8 +336,8 @@ describe('project-behavior-view', () => {
     );
   });
 
-  it('navigates back to portfolio preserving return context', async () => {
-    window.location.hash = '#/projects/p1/behavior?returnContext=project%3Dp1';
+  it('navigates back to dashboard preserving return context', async () => {
+    window.location.hash = '#/projects/p1?returnContext=project%3Dp1';
 
     const view = Object.assign(document.createElement('project-behavior-view'), {
       projectId: 'p1',
@@ -345,14 +345,14 @@ describe('project-behavior-view', () => {
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    const back = root.querySelector('a[href^="#/portfolio"]') as HTMLAnchorElement;
+    const back = root.querySelector('a[href^="#/"]') as HTMLAnchorElement;
     expect(back).not.toBeNull();
     expect(back.getAttribute('href')).toMatch(/project=p1/);
 
     back.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(window.location.hash).toMatch(/#\/portfolio\?/);
+    expect(window.location.hash).toMatch(/#\/\?/);
     expect(window.location.hash).toMatch(/project=p1/);
   });
 

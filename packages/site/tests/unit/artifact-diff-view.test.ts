@@ -278,7 +278,7 @@ describe('artifact-diff-view', () => {
 
     const backLink = root.querySelector('.breadcrumbs a') as HTMLAnchorElement;
     expect(backLink).not.toBeNull();
-    expect(backLink.getAttribute('href')).toContain('#/components/');
+    expect(backLink.getAttribute('href')).toContain('#/artifacts/');
     expect(backLink.getAttribute('href')).toContain('project=p1');
   });
 

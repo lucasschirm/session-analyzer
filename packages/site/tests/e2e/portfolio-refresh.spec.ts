@@ -180,8 +180,8 @@ test.describe('Portfolio refresh liveness', () => {
 
     const projectName = `UX-003-Portfolio-Refresh-${randomUUID()}`;
 
-    // 1. Land on the Portfolio view once and never reload or navigate away.
-    await page.goto('/#/portfolio');
+    // 1. Land on the Portfolio (Dashboard) view once and never reload or navigate away.
+    await page.goto('/#/');
     await expect(page.locator('portfolio-view')).toBeVisible({ timeout: 30000 });
     await expect(page.getByText('Loading portfolio…')).not.toBeVisible({ timeout: 30000 });
 
@@ -194,7 +194,7 @@ test.describe('Portfolio refresh liveness', () => {
     const preMetric = await readPortfolioSessionCount(page);
     const preGeometry = await getChartGeometryByTitle(page, 'Session Metrics');
 
-    // 4. Ingest session B into the same project, still on #/portfolio.
+    // 4. Ingest session B into the same project, still on #/ (Dashboard).
     await ingestSessionFromPortfolio(
       page,
       projectName,

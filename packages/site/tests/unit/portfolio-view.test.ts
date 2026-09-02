@@ -200,7 +200,7 @@ function stubPortfolioLoad(): void {
 
 beforeEach(() => {
   stubPortfolioLoad();
-  window.location.hash = '#/portfolio';
+  window.location.hash = '#/';
 });
 
 afterEach(() => {
@@ -222,7 +222,7 @@ describe('portfolio-view', () => {
     expect(cardTexts).toContain('Total Tokens');
     expect(cardTexts).toContain('1.2M');
     expect(root.textContent).toContain('Project One');
-    expect(root.textContent).toContain('Component utilization');
+    expect(root.textContent).toContain('Artifact utilization');
     expect(root.textContent).toContain('Model × harness cohorts');
   });
 
@@ -270,7 +270,7 @@ describe('portfolio-view', () => {
     link.click();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(window.location.hash).toContain('#/projects/Project%20One/behavior?returnContext=');
+    expect(window.location.hash).toContain('#/projects/Project%20One?returnContext=');
   });
 
   it('applies filters and updates the hash', async () => {
@@ -288,7 +288,7 @@ describe('portfolio-view', () => {
   });
 
   it('parses filters from the hash and re-loads', async () => {
-    window.location.hash = '#/portfolio?project=p1&harness=claude';
+    window.location.hash = '#/?project=p1&harness=claude';
 
     const view = document.createElement('portfolio-view') as PortfolioView;
     await mount(view);

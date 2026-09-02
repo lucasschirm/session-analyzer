@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import './delete-confirmation-modal';
+import './passkey-modal';
 import { dbClient } from '../db/db-client';
 import { generateId } from '../lib/id';
 import { hintForS3Error } from '../lib/s3-errors';
@@ -419,6 +420,13 @@ export class ConnectModal extends LitElement {
 
   @property({ type: Boolean, reflect: true }) open = false;
 
+  /**
+   * When true, renders the connection management UI inline (no fixed overlay,
+   * no close button) for embedding in a page like Settings > Data Sources.
+   * When `inline` is true, `open` is ignored — the panel is always visible.
+   */
+  @property({ type: Boolean, reflect: true }) inline = false;
+
   @state() private view: ModalView = 'list';
 
   @state() private items: ListItem[] = [];
@@ -478,6 +486,12 @@ export class ConnectModal extends LitElement {
     if (changed.has('open') && !this.open) {
       this.passkeyOpen = false;
       this.pendingAction = '';
+    }
+    // When inline, load connections on first render.
+    if (changed.has('inline') && this.inline) {
+      this.resetToList();
+      this.loadConnections().catch(() => undefined);
+      this.handleSyncChange();
     }
   }
 
@@ -1041,7 +1055,32 @@ export class ConnectModal extends LitElement {
   }
 
   render(): TemplateResult {
-    if (!this.open) return html``;
+    if (!this.open && !this.inline) return html``;
+    if (this.inline) {
+      return html`
+        <div class="connect-inline">
+          ${this.view === 'list' ? this.renderList() : this.renderForm()}
+          <passkey-modal
+            .open=${this.passkeyOpen}
+            .mode=${this.passkeyMode}
+            @passkey-created=${this.handlePasskeySuccess}
+            @passkey-unlocked=${this.handlePasskeySuccess}
+            @passkey-forgotten=${this.handlePasskeyForgotten}
+            @modal-close=${this.handlePasskeyClose}
+          ></passkey-modal>
+
+          <delete-confirmation-modal
+            .open=${this.deleteDialogOpen}
+            .message=${this.deleteItem ? `Delete "${this.deleteItem.name}"? This cannot be undone.` : ''}
+            .confirmLabel=${'Delete Connection'}
+            .titleText=${'Delete connection?'}
+            .trigger=${this.deleteTrigger}
+            @delete-confirmed=${this.handleDeleteConfirm}
+            @modal-close=${this.handleDeleteCancel}
+          ></delete-confirmation-modal>
+        </div>
+      `;
+    }
     return html`
       <div class="connect-modal" @click=${this.handleOverlayClick} @keydown=${this.handleKeydown}>
         <div class="panel" role="dialog" aria-modal="true" aria-label="Connections">

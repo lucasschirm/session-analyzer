@@ -138,6 +138,10 @@ export interface DeleteProjectRequest extends BaseRequest {
   readonly projectId: string;
 }
 
+export interface ExportAnalyticsDatabaseRequest extends BaseRequest {
+  readonly type: 'exportAnalyticsDatabase';
+}
+
 export type AnalyticsRequest =
   | InitRequest
   | GetBackendRequest
@@ -149,6 +153,7 @@ export type AnalyticsRequest =
   | IngestSyncManifestRequest
   | ResolveProjectIdRequest
   | DeleteProjectRequest
+  | ExportAnalyticsDatabaseRequest
   | CloseRequest;
 
 export type AnalyticsRequestPayload =
@@ -162,6 +167,7 @@ export type AnalyticsRequestPayload =
   | Omit<IngestSyncManifestRequest, 'id'>
   | Omit<ResolveProjectIdRequest, 'id'>
   | Omit<DeleteProjectRequest, 'id'>
+  | Omit<ExportAnalyticsDatabaseRequest, 'id'>
   | Omit<CloseRequest, 'id'>;
 
 interface BaseResponse {
@@ -174,6 +180,8 @@ export interface AnalyticsSuccessResponse extends BaseResponse {
   readonly backend?: AnalyticsBackendReport;
   readonly storage?: 'opfs' | 'memory';
   readonly fallbackReason?: 'locked' | 'unsupported';
+  /** Serialized SQLite database bytes (exportAnalyticsDatabase only). */
+  readonly bytes?: Uint8Array;
 }
 
 export interface AnalyticsErrorResponse extends BaseResponse {

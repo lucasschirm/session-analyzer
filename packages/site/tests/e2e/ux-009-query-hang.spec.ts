@@ -106,7 +106,7 @@ test.describe('UX-009: query hang bounded', () => {
     test.setTimeout(70_000);
 
     await installHangingAnalyticsWorker(page);
-    await page.goto(`/#/projects/${encodeURIComponent(HANGING_PROJECT)}/behavior`);
+    await page.goto(`/#/projects/${encodeURIComponent(HANGING_PROJECT)}`);
 
     await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
       timeout: 15_000,

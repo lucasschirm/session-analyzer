@@ -434,7 +434,7 @@ describe('projectListToRows', () => {
     expect(rows[0].name).toBe('Project A');
     expect(rows[0].sessionCount).toBe(10);
     expect(rows[0].harness).toBe('claude-code');
-    expect(rows[0].href).toContain('#/projects/Project A/behavior');
+    expect(rows[0].href).toContain('#/projects/Project A');
     expect(rows[0].href).toContain('returnContext=');
   });
 });
