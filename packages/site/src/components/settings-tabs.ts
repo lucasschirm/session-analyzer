@@ -89,18 +89,6 @@ export class SettingsTabs extends LitElement {
     this.path = currentHashPath();
   };
 
-  render() {
-    return html`
-      <nav>
-        ${repeat(
-          TABS,
-          (tab) => tab.id,
-          (tab) => this.renderTab(tab),
-        )}
-      </nav>
-    `;
-  }
-
   private renderTab(tab: SettingsTab) {
     const active = tab.isActive(this.path);
     return html`
@@ -111,6 +99,18 @@ export class SettingsTabs extends LitElement {
       >
         ${tab.label}
       </a>
+    `;
+  }
+
+  render() {
+    return html`
+      <nav>
+        ${repeat(
+          TABS,
+          (tab) => tab.id,
+          (tab) => this.renderTab(tab),
+        )}
+      </nav>
     `;
   }
 }

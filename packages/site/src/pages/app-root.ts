@@ -173,15 +173,17 @@ export class AppRoot extends LitElement {
     }
 
     /* Global chrome that must stay mounted across every route and every
-     * sync run transition. Positioned to sit just left of the header's
-     * settings button (the only thing left in .header-right now) so it
-     * never collides with the sticky header, but stays visible/clickable
-     * on every route. */
+     * sync run transition. Fixed just below the 56px header (not inside
+     * its flex layout, so a header-cleanup PR can remove the header from
+     * a route without unmounting this) and clear of it vertically at any
+     * viewport width, so it can never overlap header-nav/
+     * header-project-selector the way an overlapping right-offset would
+     * once the progress bar's content grows or the header narrows. */
     .sync-chrome {
       position: fixed;
-      top: 11px;
-      right: 76px;
-      z-index: 20;
+      top: 64px;
+      right: 24px;
+      z-index: 15;
     }
 
     .app-error {
