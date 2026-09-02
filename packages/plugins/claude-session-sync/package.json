@@ -5,6 +5,11 @@
   "type": "module",
   "license": "ISC",
   "description": "Claude Code plugin adapter for the @lucasschirm/sal-sync session data sync engine.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucasschirm/session-analyzer.git",
+    "directory": "packages/plugins/claude-session-sync"
+  },
   "bin": {
     "claude-sync": "bin/claude-sync",
     "claude-session-sync": "bin/claude-sync"
