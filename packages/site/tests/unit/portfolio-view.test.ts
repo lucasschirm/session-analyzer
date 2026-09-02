@@ -20,9 +20,17 @@ const portfolioMock = vi.hoisted(() => ({
   getProjectList: vi.fn(),
 }));
 
+const metadataMock = vi.hoisted(() => ({
+  getDimensionDomains: vi.fn(),
+}));
+
 const mockAnalyticsClient = vi.hoisted(() => {
-  const client = new EventTarget() as { portfolio: typeof portfolioMock } & EventTarget;
+  const client = new EventTarget() as {
+    portfolio: typeof portfolioMock;
+    metadata: typeof metadataMock;
+  } & EventTarget;
   client.portfolio = portfolioMock;
+  client.metadata = metadataMock;
   return client;
 });
 
@@ -49,12 +57,6 @@ async function mount<T extends LitElement>(element: T): Promise<T> {
   await flush(element);
   await flush(element);
   return element;
-}
-
-function shadowText(parent: ShadowRoot, selector: string): string {
-  const child = parent.querySelector(selector) as LitElement | null;
-  expect(child).not.toBeNull();
-  return (child?.shadowRoot?.textContent ?? '') as string;
 }
 
 function allShadowTexts(parent: ShadowRoot, selector: string): string[] {
@@ -196,6 +198,12 @@ function stubPortfolioLoad(): void {
   portfolioMock.getComponentUtilization.mockResolvedValue(componentsFixture());
   portfolioMock.getModelHarnessCohorts.mockResolvedValue(cohortsFixture());
   portfolioMock.getProjectList.mockResolvedValue(projectsFixture());
+  metadataMock.getDimensionDomains.mockResolvedValue({
+    token: tokenFixture(),
+    projects: ['Project One', 'zero-session-harness-project'],
+    harnesses: ['claude'],
+    models: ['claude-3-5-sonnet'],
+  });
 }
 
 beforeEach(() => {
@@ -278,13 +286,38 @@ describe('portfolio-view', () => {
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    const projectInput = root.querySelector('input') as HTMLInputElement;
-    projectInput.value = 'p1';
-    projectInput.dispatchEvent(new Event('change'));
+    const filterBar = root.querySelector('filter-bar') as LitElement;
+    await filterBar.updateComplete;
+    const harnessChip = filterBar.shadowRoot?.querySelector(
+      'dimension-chip[label="Harness"]',
+    ) as LitElement;
+    await harnessChip.updateComplete;
+    const select = harnessChip.shadowRoot?.querySelector('select') as HTMLSelectElement;
+    select.value = 'claude';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(window.location.hash).toMatch(/project=p1/);
+    expect(window.location.hash).toMatch(/harness=claude/);
     expect(portfolioMock.getOverview).toHaveBeenCalled();
+  });
+
+  it('passes the unfiltered dimension domains as chip options, independent of the active filter selection', async () => {
+    window.location.hash = '#/?harness=claude';
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    expect(metadataMock.getDimensionDomains).toHaveBeenCalledWith();
+
+    const filterBar = root.querySelector('filter-bar') as LitElement;
+    await filterBar.updateComplete;
+    const projectChip = filterBar.shadowRoot?.querySelector(
+      'dimension-chip[label="Project"]',
+    ) as LitElement;
+    await projectChip.updateComplete;
+    const select = projectChip.shadowRoot?.querySelector('select') as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toContain('zero-session-harness-project');
   });
 
   it('parses filters from the hash and re-loads', async () => {
@@ -301,6 +334,66 @@ describe('portfolio-view', () => {
         { field: 'harness', operator: 'eq', value: 'claude' },
       ]),
     );
+  });
+
+  it('renders the trend chart empty affordance when the series is empty but other panels are not', async () => {
+    portfolioMock.getTrends.mockResolvedValue(trendsFixture({ series: [] }));
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const trendChart = Array.from(root.querySelectorAll('analytics-chart')).find((el) =>
+      (el as LitElement).shadowRoot?.textContent?.includes('Session Metrics'),
+    ) as (LitElement & { state?: string }) | undefined;
+    expect(trendChart?.state).toBe('empty');
+    // A genuinely empty range must not be reported as a global error.
+    expect(root.textContent).not.toContain('All portfolio views failed to load.');
+  });
+
+  /**
+   * Integration-level proof of the stale-response guard (issue #167
+   * acceptance criterion + `pr-review` follow-up): `load()` allows
+   * overlapping requests rather than queuing them, so a filter change
+   * re-issues immediately instead of waiting for a slower in-flight query.
+   * Here the first (slow) request resolves *after* the second (fast) one —
+   * its response must be discarded, not applied over the fresher data, and
+   * `loading` must end up cleared (owned by the still-current second load).
+   */
+  it('discards a stale response that resolves after a superseding request (stale-response guard)', async () => {
+    let resolveFirst: (value: PortfolioOverview) => void = () => {};
+    const firstPending = new Promise<PortfolioOverview>((resolve) => {
+      resolveFirst = resolve;
+    });
+    portfolioMock.getOverview
+      .mockReturnValueOnce(firstPending)
+      .mockResolvedValueOnce(
+        overviewFixture({ headlineMetrics: [metricValueFixture({ label: 'Fresh Metric' })] }),
+      );
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    document.body.appendChild(view);
+    await view.updateComplete;
+
+    // A second, faster load starts (e.g. a filter change) while the first
+    // is still pending. happy-dom fires 'hashchange' on its own when the
+    // hash is assigned, same as a real browser — no manual dispatch needed.
+    window.location.hash = '#/?harness=claude';
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The slow first request resolves last — it must be discarded.
+    resolveFirst(
+      overviewFixture({ headlineMetrics: [metricValueFixture({ label: 'Stale Metric' })] }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flush(view);
+    await flush(view);
+
+    const root = view.shadowRoot as ShadowRoot;
+    const cardTexts = allShadowTexts(root, 'metrics-card').join(' ');
+    expect(cardTexts).toContain('Fresh Metric');
+    expect(cardTexts).not.toContain('Stale Metric');
+    expect(root.textContent).not.toContain('Loading portfolio');
   });
 
   it('re-queries when the analytics client reports a data change', async () => {

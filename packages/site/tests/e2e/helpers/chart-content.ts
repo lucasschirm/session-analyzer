@@ -196,6 +196,32 @@ export async function assertErrorBoundary(locator: Locator): Promise<void> {
 }
 
 /**
+ * Polling counterpart to `assertEmptyAffordance`, for use right after an
+ * action (e.g. a filter change) that re-issues a query asynchronously — a
+ * single-shot check can race the still-in-flight previous render.
+ */
+export async function expectEmptyAffordance(
+  locator: Locator,
+  options?: { timeout?: number },
+): Promise<void> {
+  const timeout = options?.timeout ?? 5000;
+  const target = locator.first();
+
+  await expect
+    .poll(
+      async () => {
+        const content = await queryChartContent(target);
+        return content.emptyCount > 0 && content.errorCount === 0;
+      },
+      {
+        message: 'Expected an empty (not error) affordance to be present',
+        timeout,
+      },
+    )
+    .toBe(true);
+}
+
+/**
  * Asserts the presence of an empty (or unavailable) affordance and the absence
  * of an error affordance. Used together with `assertErrorBoundary` to prove that
  * zero-row results and query failures never render the same DOM shape.

@@ -148,8 +148,11 @@ the disposition and pointer to any replacement coverage).
 | UX-025 | Domain pages reachability via Artifacts | From `/`, click the Artifacts rail item, then click each of the four "Domain pages" links (Agents/Skills/Tools/MCP) added to the `/artifacts` view, and assert each lands on its respective `tbd-page` route — documents/tests the interim 2-click path (rail → Artifacts → domain) per issue #165's disposition table, until sub-issue 7 restores 1-click parity from `/` | none | 3 | 3 | 3 | 27 | `icon-rail.spec.ts` | GREEN |
 | UX-026 | Chart layer error affordance retry control (issue #168) | `echarts-base`'s error-state panel (`.chart-affordance.state-error`) carries a "Retry" button; clicking it dispatches a bubbling/composed `chart-retry` `CustomEvent` a hosting page listens for to re-issue the failed query, proven end-to-end (real click → real event, not just markup presence) | `assertErrorBoundary` (`chart-content.ts`) | 3 | 4 | 3 | 36 | `ux-026-chart-retry.spec.ts` | GREEN |
 | UX-027 | Heatmap missing-vs-zero cell distinction (issue #168) | A `heatmap`-type `analytics-chart` renders a missing native value (`ChartBucket.y === null`) as a dashed "—" cell with `data-missing="true"`, DOM-distinct from a measured `0` cell (`data-missing="false"`, text "0"); the ramp legend surfaces the series max | none (direct `[data-missing]` DOM assertion on the real `rd-heatmap-grid` shadow tree — no existing helper covers heatmap cell classification) | 3 | 5 | 4 | 60 | `ux-027-heatmap-missing.spec.ts` | GREEN |
+| UX-028 | Global filter bar & time-range control (issue #167) | Selecting the 7d segment on the Portfolio view's `filter-bar` narrows the range past the seeded fixture's daily rollups: the "Session Metrics" trend chart transitions to a distinct empty affordance (not an error) and the URL hash gains explicit `timeStart`/`timeEnd` | `expectRenderedGeometry`, `expectEmptyAffordance` (new), `assertNoErrorBoundary` (`chart-content.ts`); `seedSession` (`seeded-store.ts`) | 3 | 4 | 3 | 36 | `filter-bar.spec.ts` | GREEN |
+| UX-029 | Global filter bar & time-range control (issue #167) | Selecting a time-range preset (30d) and reloading the page preserves the `timeStart`/`timeEnd` URL params and the segmented control's `aria-selected` state; the trend chart re-renders with data | `expectRenderedGeometry` (`chart-content.ts`) | 3 | 3 | 3 | 27 | `filter-bar.spec.ts` | GREEN |
+| UX-030 | Global filter bar & time-range control (issue #167) | Selecting 30d then 7d then pressing the browser Back button restores the 30d segment's `aria-selected` state and its rendered trend-chart geometry, not the intervening 7d empty state | `expectRenderedGeometry`, `expectEmptyAffordance` (new) (`chart-content.ts`) | 3 | 4 | 3 | 36 | `filter-bar.spec.ts` | GREEN |
 
-New redesign entries allocate **UX-028** and up next.
+New redesign entries allocate **UX-031** and up next.
 
 ### 6.2 Tier B — Analytics pipeline integration (`PIPE-###`)
 
@@ -253,6 +256,39 @@ filter-param remap verification).
   pointing back here. The Projects rail item's active-route mapping
   (including nested `/projects/:slug` routes) is now covered by the new
   UX-023 row (`icon-rail.spec.ts`).
+- **UX-028/UX-029/UX-030 (issue #167) assert against the trend chart, not
+  metric cards.** The issue's test plan says a range change should update
+  "the existing trend chart + metric cards"; in the current (pre-sub-issue-7)
+  `packages/db/src/analytics-portfolio.ts`, `getPortfolioOverview`'s headline
+  metrics and `countSessionsInPortfolio`/`sumTotalTokensInPortfolio` do not
+  consult `query.timeRange` at all — only `getPortfolioTrends`'s daily
+  rollups are range-scoped (`isDailyRollupInQuery`). This is a pre-existing
+  backend gap, not something issue #167 (a UI-mounting issue, dependent on
+  #169's already-merged `AnalyticsDataSource` additions) touches or should
+  fix — `packages/db` query changes are out of its scope, and the redesigned,
+  genuinely range-scoped KPI band lands with the sub-issue-7 portfolio
+  rebuild. The three new rows instead assert the trend chart's
+  geometry/empty-affordance transition, the URL hash, and the segmented
+  control's own `aria-selected` state, which are the parts of the acceptance
+  criteria this PR's backend actually supports today.
+- **`sessions-filter.spec.ts` (UX-010) needed no selector remap for issue
+  #167.** `filter-bar.ts`'s shadow-DOM wrapper carries `class="filter-bar"`
+  (the tag-name-matching wrapper class required by
+  `.agents/rules/frontend-coding-style.md`), and the sessions-scope control
+  is still rendered as a `<label>Sessions<select>…</select></label>` inside
+  it — Playwright's CSS engine pierces open shadow roots, so the existing
+  `.filter-bar label` / `select, input` selectors in `sessions-filter.spec.ts`
+  resolve unchanged through the new nested `<filter-bar>` custom element.
+- Added `expectEmptyAffordance` to `helpers/chart-content.ts` — a polling
+  counterpart to the existing single-shot `assertEmptyAffordance`, needed
+  because a filter change re-issues its query asynchronously and a
+  single-shot check can race the still-in-flight previous render. Also fixed
+  a latent `no-silent-empty-states` gap in `portfolio-view.ts`'s
+  `panelStateFromResult`: it only recognized the cursor-page `items` shape as
+  potentially empty, so `PortfolioTrendSeries` (which exposes `series`, not
+  `items`) was never classified `'empty'` — a range with zero matching
+  rollups silently rendered as `'ok'` with no data, rather than the
+  distinct empty affordance. Covered by a new `portfolio-view.test.ts` case.
 
 ## 10. Maintenance model
 
