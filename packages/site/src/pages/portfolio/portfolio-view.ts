@@ -192,8 +192,6 @@ export class PortfolioView extends PageLitElement {
 
   @state() private domains: DimensionDomains | null = null;
 
-  private pendingReload = false;
-
   private readonly requestGuard = new RequestSequenceGuard();
 
   private hashListener = () => this.handleHashChange();
@@ -226,17 +224,23 @@ export class PortfolioView extends PageLitElement {
     this.load();
   }
 
+  /**
+   * Deliberately allows overlapping calls rather than queuing them behind
+   * an in-flight request: a filter change re-issues immediately (no
+   * waiting for a prior, possibly slow, query to finish) and `requestGuard`
+   * discards whichever response is no longer current when it resolves — a
+   * slow 90d response arriving after a faster 7d one must not overwrite it.
+   * `this.filters`/`globalState = 'loading'` are set synchronously (in call
+   * order, before the `await`) so the filter bar reflects the new
+   * selection immediately; only applying the resolved data and clearing
+   * `loading` are gated on the request still being current.
+   */
   private async load(): Promise<void> {
-    if (this.loading) {
-      this.pendingReload = true;
-      return;
-    }
+    const requestToken = this.requestGuard.begin();
     this.loading = true;
-    this.pendingReload = false;
     this.globalState = 'loading';
     this.globalError = null;
 
-    const requestToken = this.requestGuard.begin();
     const params = parsePortfolioHash(window.location.hash);
     this.filters = params;
     const query = portfolioParamsToQuery(params);
@@ -250,20 +254,13 @@ export class PortfolioView extends PageLitElement {
       analyticsClient.metadata.getDimensionDomains(),
     ]);
 
-    this.loading = false;
-    // A newer reload may have started while this one was in flight (e.g. a
-    // fast filter change fired while a slower request was still pending) —
-    // discard this stale response rather than overwriting fresher data.
-    if (this.requestGuard.isCurrent(requestToken)) {
-      this.applyResults(overview, trends, components, cohorts, projects, domains);
-    }
-    await this.reloadIfPending();
-  }
+    // A newer load has since started — discard this stale response
+    // (including `loading`, which the newer, still-in-flight load owns)
+    // rather than overwriting fresher data or clearing its loading state.
+    if (!this.requestGuard.isCurrent(requestToken)) return;
 
-  private async reloadIfPending(): Promise<void> {
-    if (!this.pendingReload) return;
-    this.pendingReload = false;
-    await this.load();
+    this.applyResults(overview, trends, components, cohorts, projects, domains);
+    this.loading = false;
   }
 
   private applyResults(

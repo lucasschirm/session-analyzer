@@ -35,11 +35,14 @@ const PRESET_DAYS: Record<Exclude<RangePreset, 'all'>, number> = {
   '90d': 90,
 };
 
-/** Tolerance for matching an explicit `timeStart`/`timeEnd` pair back to the
- * preset that produced it: the preset serializes an absolute window at
- * selection time, so a reload/back-navigation minutes later must still be
- * recognized as "that preset", not drift into `custom`. */
-const PRESET_MATCH_TOLERANCE_MS = 5 * 60 * 1000;
+/** Tolerance for matching an explicit `timeStart`/`timeEnd` pair's duration
+ * back to the preset that produced it. Matching is duration-only — not
+ * "how recently was this selected" — because `detectRangeSelection` is
+ * re-derived on every render (e.g. a `data-change` event long after the
+ * user picked the preset); tying the match to a freshness window would
+ * make a still-correct, still-active preset silently drift into `custom`
+ * as time passes. */
+const PRESET_MATCH_TOLERANCE_MS = 60 * 1000;
 
 /**
  * Resolves a range preset to an explicit `{ timeStart, timeEnd }` window,
@@ -60,13 +63,13 @@ export function resolveRangePreset(
 
 /**
  * Determines which segment the time-range switch should show as selected
- * for the current params: a known preset if `timeStart`/`timeEnd` matches
- * that preset's resolved window within tolerance, `all` when both are
- * omitted, or `custom` (an old bookmarked hash with an arbitrary range).
+ * for the current params: a known preset if `timeStart`/`timeEnd` spans
+ * that preset's duration (within tolerance), `all` when both are omitted,
+ * or `custom` (an old bookmarked hash with an arbitrary range). Matching is
+ * duration-only and independent of "now" — see `PRESET_MATCH_TOLERANCE_MS`.
  */
 export function detectRangeSelection(
   params: Pick<PortfolioParams, 'timeStart' | 'timeEnd'>,
-  now: Date = new Date(),
 ): RangeSelection {
   if (!params.timeStart && !params.timeEnd) return 'all';
   if (!params.timeStart || !params.timeEnd) return 'custom';
@@ -76,21 +79,14 @@ export function detectRangeSelection(
   if (Number.isNaN(start) || Number.isNaN(end)) return 'custom';
 
   for (const preset of Object.keys(PRESET_DAYS) as Array<Exclude<RangePreset, 'all'>>) {
-    if (matchesPreset(preset, start, end, now)) return preset;
+    if (matchesPreset(preset, start, end)) return preset;
   }
   return 'custom';
 }
 
-function matchesPreset(
-  preset: Exclude<RangePreset, 'all'>,
-  start: number,
-  end: number,
-  now: Date,
-): boolean {
+function matchesPreset(preset: Exclude<RangePreset, 'all'>, start: number, end: number): boolean {
   const expectedDurationMs = PRESET_DAYS[preset] * 24 * 60 * 60 * 1000;
-  const durationOk = Math.abs(end - start - expectedDurationMs) < PRESET_MATCH_TOLERANCE_MS;
-  const endIsRecent = Math.abs(now.getTime() - end) < PRESET_MATCH_TOLERANCE_MS;
-  return durationOk && endIsRecent;
+  return Math.abs(end - start - expectedDurationMs) < PRESET_MATCH_TOLERANCE_MS;
 }
 
 export function parsePortfolioHash(hash: string): PortfolioParams {

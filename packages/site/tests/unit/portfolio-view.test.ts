@@ -351,6 +351,51 @@ describe('portfolio-view', () => {
     expect(root.textContent).not.toContain('All portfolio views failed to load.');
   });
 
+  /**
+   * Integration-level proof of the stale-response guard (issue #167
+   * acceptance criterion + `pr-review` follow-up): `load()` allows
+   * overlapping requests rather than queuing them, so a filter change
+   * re-issues immediately instead of waiting for a slower in-flight query.
+   * Here the first (slow) request resolves *after* the second (fast) one —
+   * its response must be discarded, not applied over the fresher data, and
+   * `loading` must end up cleared (owned by the still-current second load).
+   */
+  it('discards a stale response that resolves after a superseding request (stale-response guard)', async () => {
+    let resolveFirst: (value: PortfolioOverview) => void = () => {};
+    const firstPending = new Promise<PortfolioOverview>((resolve) => {
+      resolveFirst = resolve;
+    });
+    portfolioMock.getOverview
+      .mockReturnValueOnce(firstPending)
+      .mockResolvedValueOnce(
+        overviewFixture({ headlineMetrics: [metricValueFixture({ label: 'Fresh Metric' })] }),
+      );
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    document.body.appendChild(view);
+    await view.updateComplete;
+
+    // A second, faster load starts (e.g. a filter change) while the first
+    // is still pending. happy-dom fires 'hashchange' on its own when the
+    // hash is assigned, same as a real browser — no manual dispatch needed.
+    window.location.hash = '#/?harness=claude';
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The slow first request resolves last — it must be discarded.
+    resolveFirst(
+      overviewFixture({ headlineMetrics: [metricValueFixture({ label: 'Stale Metric' })] }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flush(view);
+    await flush(view);
+
+    const root = view.shadowRoot as ShadowRoot;
+    const cardTexts = allShadowTexts(root, 'metrics-card').join(' ');
+    expect(cardTexts).toContain('Fresh Metric');
+    expect(cardTexts).not.toContain('Stale Metric');
+    expect(root.textContent).not.toContain('Loading portfolio');
+  });
+
   it('re-queries when the analytics client reports a data change', async () => {
     const view = document.createElement('portfolio-view') as PortfolioView;
     await mount(view);

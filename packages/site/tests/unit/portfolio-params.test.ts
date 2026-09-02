@@ -184,34 +184,44 @@ describe('detectRangeSelection', () => {
   const now = new Date('2026-09-02T12:00:00.000Z');
 
   it('detects all when both bounds are omitted', () => {
-    expect(detectRangeSelection({}, now)).toBe('all');
+    expect(detectRangeSelection({})).toBe('all');
   });
 
   it('detects a preset from its resolved window', () => {
     const range = resolveRangePreset('7d', now);
-    expect(detectRangeSelection(range, now)).toBe('7d');
+    expect(detectRangeSelection(range)).toBe('7d');
   });
 
   it('detects 30d and 90d symmetrically', () => {
-    expect(detectRangeSelection(resolveRangePreset('30d', now), now)).toBe('30d');
-    expect(detectRangeSelection(resolveRangePreset('90d', now), now)).toBe('90d');
+    expect(detectRangeSelection(resolveRangePreset('30d', now))).toBe('30d');
+    expect(detectRangeSelection(resolveRangePreset('90d', now))).toBe('90d');
   });
 
   it('falls back to custom for an arbitrary legacy range', () => {
     const legacy = { timeStart: '2024-01-01T00:00:00.000Z', timeEnd: '2024-02-01T00:00:00.000Z' };
-    expect(detectRangeSelection(legacy, now)).toBe('custom');
+    expect(detectRangeSelection(legacy)).toBe('custom');
   });
 
   it('falls back to custom when only one bound is present', () => {
-    expect(detectRangeSelection({ timeStart: '2024-01-01T00:00:00.000Z' }, now)).toBe('custom');
-    expect(detectRangeSelection({ timeEnd: '2024-01-01T00:00:00.000Z' }, now)).toBe('custom');
+    expect(detectRangeSelection({ timeStart: '2024-01-01T00:00:00.000Z' })).toBe('custom');
+    expect(detectRangeSelection({ timeEnd: '2024-01-01T00:00:00.000Z' })).toBe('custom');
   });
 
-  it('still recognizes a preset a few minutes after selection (reload/back-nav)', () => {
+  /**
+   * Regression for a `pr-review` finding on #167: matching must be
+   * duration-only, never tied to how long ago the preset was selected.
+   * `detectRangeSelection` is re-derived on every `filter-bar` render (e.g.
+   * a `data-change` event long after selection), so a "recency of now"
+   * check would make a still-correct, still-active preset silently drift
+   * into `custom` — disabling the segmented control — purely because time
+   * passed while the tab stayed open. Proven days, not minutes, later.
+   */
+  it('keeps recognizing a preset no matter how much later it is viewed', () => {
     const selectedAt = new Date('2026-09-02T12:00:00.000Z');
     const range = resolveRangePreset('7d', selectedAt);
-    const viewedAt = new Date('2026-09-02T12:02:00.000Z');
-    expect(detectRangeSelection(range, viewedAt)).toBe('7d');
+    expect(detectRangeSelection(range)).toBe('7d');
+    // detectRangeSelection no longer takes a "now" — re-asserting against
+    // the same stored range at any later point must still resolve '7d'.
   });
 });
 

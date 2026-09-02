@@ -183,10 +183,10 @@ export class FilterBar extends LitElement {
   ) {
     return html`
       <dimension-chip
+        ?fixed=${fixed}
+        .options=${options}
         label=${label}
         value=${this.filters[key] ?? ''}
-        .options=${options}
-        ?fixed=${fixed}
         @value-changed=${(e: CustomEvent<string>) => this.updateStringField(key, e.detail)}
       ></dimension-chip>
     `;
