@@ -431,4 +431,29 @@ describe('ProjectBehaviorStore.getModelHarnessCohortRows', () => {
       },
     ]);
   });
+
+  it('never treats a request with only one side known as a fully-known 0-contribution', async () => {
+    // Same invariant as ProjectBehaviorStore.getSessionTokensInWindow: a
+    // model_requests row missing one of input/output tokens must not be
+    // coerced into the cohort's tokensSum with the missing side treated as
+    // 0 — that would undercount `project:model_harness_cohort`'s
+    // medianTokens (`.agents/rules/missing-is-never-zero.md`).
+    const executor = await seed();
+    await insertSession(executor, 's-partial', 1000, null, 'clean');
+    await insertGeneration(executor, 's-partial', 'gen-1');
+    await insertModelRequest(executor, 's-partial', 'gen-1', 0, 'claude-sonnet', 100, null);
+    await insertModelRequest(executor, 's-partial', 'gen-1', 1, 'claude-sonnet', null, 40);
+    await insertModelRequest(executor, 's-partial', 'gen-1', 2, 'claude-sonnet', 10, 20);
+
+    const rows = await ProjectBehaviorStore.getModelHarnessCohortRows(
+      executor,
+      PROJECT_ID,
+      0,
+      5000,
+    );
+    const row = rows.find((r) => r.sessionId === 's-partial');
+    // Only the fully-known row (10 + 20) contributes; the two partial rows
+    // are excluded entirely rather than fabricating a 0 for their missing side.
+    expect(row?.tokensSum).toBe(30);
+  });
 });
