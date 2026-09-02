@@ -31,7 +31,6 @@ export class SyncConfirmModal extends LitElement {
       justify-content: center;
       z-index: 100;
       padding: 16px;
-      outline: none;
     }
 
     .panel {
@@ -87,6 +86,11 @@ export class SyncConfirmModal extends LitElement {
       cursor: pointer;
     }
 
+    button:focus-visible {
+      outline: 2px solid var(--md-sys-color-primary, #4f8cff);
+      outline-offset: 2px;
+    }
+
     button.secondary {
       background: var(--md-sys-color-surface-container, #1f242e);
       color: var(--md-sys-color-on-surface, #e6e9ef);
@@ -107,7 +111,7 @@ export class SyncConfirmModal extends LitElement {
 
   @state() private syncOnlyNew = false;
 
-  @query('.sync-confirm-modal') private overlay!: HTMLDivElement;
+  @query('.actions button.secondary') private cancelButton!: HTMLButtonElement;
 
   private localStorageKey(): string {
     return `sal-sync-only-new:${this.connectionId}`;
@@ -122,10 +126,11 @@ export class SyncConfirmModal extends LitElement {
 
   async updated(changed: PropertyValues<this>): Promise<void> {
     if (changed.has('open') && this.open) {
-      // Move focus into the modal so keyboard users can close it with
-      // Escape (the keydown listener is inside this shadow tree).
+      // Move focus to the Cancel button so keyboard users have a visible
+      // focus indicator and can close the modal with Escape (the keydown
+      // listener is inside this shadow tree).
       await this.updateComplete;
-      this.overlay?.focus();
+      this.cancelButton?.focus();
     }
   }
 
@@ -168,7 +173,6 @@ export class SyncConfirmModal extends LitElement {
     return html`
       <div
         class="sync-confirm-modal"
-        tabindex="-1"
         @click=${this.handleOverlayClick}
         @keydown=${this.handleKeydown}
       >

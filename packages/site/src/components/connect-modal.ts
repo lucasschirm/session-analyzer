@@ -507,14 +507,16 @@ export class ConnectModal extends LitElement {
       this.handleSyncChange();
     }
     // React to route-driven connectionId changes (inline mode only).
-    // pushState/replaceState in updateDataSourcesHash do not fire hashchange,
-    // so the router never re-renders and connectionId only changes on genuine
+    // pushState in updateDataSourcesHash does not fire hashchange, so the
+    // router never re-renders and connectionId only changes on genuine
     // navigation (direct URL, link click, or Browser Back/Forward).
+    // We call the *form-population* helpers (not the button-click handlers)
+    // so we don't re-push the URL — the navigation already set it.
     if (changed.has('connectionId') && this.inline) {
       if (this.connectionId && this.connectionId !== 'new') {
-        this.handleEditConnection(this.connectionId);
+        this.showEditForm(this.connectionId);
       } else if (this.connectionId === 'new') {
-        this.handleNewConnection();
+        this.showNewForm();
       } else if (this.connectionId === '' && changed.get('connectionId')) {
         // Navigated back to the bare data-sources route — return to the list.
         this.resetToList();
@@ -674,10 +676,23 @@ export class ConnectModal extends LitElement {
     this.setForm('syncOnlyNew', (event.target as HTMLInputElement).checked);
   }
 
+  /**
+   * Button-click handler for "New connection". Updates the URL (pushState)
+   * then populates the blank form. Called from the "+ New connection" button.
+   */
   private handleNewConnection(): void {
     if (this.inline) {
       this.updateDataSourcesHash('new');
     }
+    this.showNewForm();
+  }
+
+  /**
+   * Populates the blank new-connection form without touching the URL.
+   * Called from handleNewConnection (button) and from willUpdate
+   * (route-driven navigation to /new).
+   */
+  private showNewForm(): void {
     this.form = blankForm();
     this.editingId = '';
     this.editingInMemory = false;
@@ -687,10 +702,23 @@ export class ConnectModal extends LitElement {
     this.view = 'form';
   }
 
+  /**
+   * Button-click handler for "Edit". Updates the URL (pushState) then
+   * populates the edit form. Called from row Edit buttons.
+   */
   private handleEditConnection(id: string): void {
     if (this.inline) {
       this.updateDataSourcesHash(id);
     }
+    this.showEditForm(id);
+  }
+
+  /**
+   * Populates the edit form for the given connection without touching the
+   * URL. Called from handleEditConnection (button) and from willUpdate
+   * (route-driven navigation to /:connectionId).
+   */
+  private showEditForm(id: string): void {
     const inMemory = this.inMemoryConnections.get(id);
     if (inMemory) {
       this.populateFormFromInMemory(id, inMemory);
