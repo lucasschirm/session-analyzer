@@ -5,13 +5,58 @@ import {
   type CanonicalInvariant,
   type ComponentSummary,
   type MetricCapability,
+  type MetricUnavailableReason,
   type NormalizedEvidenceRecord,
+  type Provenance,
   type ScalarMetricValue,
   type SessionTransformer,
   type TransformResult,
   type UnknownArtifactBundle,
 } from '../../src/index.js';
 import type { ConformanceFixture, TransformerFixtures } from './fixtures/index.js';
+
+// ---------------------------------------------------------------------------
+// Base-contract-only metric helpers
+//
+// `ScalarMetricValue` (src/metric.ts) is the minimal shared contract every
+// harness transformer must satisfy. Claude's transformer additionally emits
+// a richer `ClaudeMetricValue` (per-metric `provenance`, `evidenceRecordIds`,
+// `unavailableReason`, ...), but those fields are NOT part of the shared
+// contract. A spec-conformant transformer for another harness may emit plain
+// `ScalarMetricValue` objects, so these generic conformance checks must
+// treat the extended fields as optional and fall back to the base contract
+// (`provenanceArtifactId`, `TransformResult.unavailableReasons`) instead of
+// requiring them.
+// ---------------------------------------------------------------------------
+
+interface ExtendedMetricFields {
+  readonly unavailableReason?: string;
+  readonly evidenceRecordIds?: readonly string[];
+  readonly provenance?: readonly Provenance[];
+}
+
+function extended(metric: ScalarMetricValue): ExtendedMetricFields {
+  return metric as ScalarMetricValue & ExtendedMetricFields;
+}
+
+function unavailableReasonFor(
+  metric: ScalarMetricValue,
+  unavailableReasons: readonly MetricUnavailableReason[],
+): string | undefined {
+  return (
+    extended(metric).unavailableReason ??
+    unavailableReasons.find(
+      (r) => r.metricId === metric.metricId && r.definitionVersion === metric.definitionVersion,
+    )?.reason
+  );
+}
+
+function metricHasProvenance(metric: ScalarMetricValue): boolean {
+  const ext = extended(metric);
+  if ((ext.provenance?.length ?? 0) > 0) return true;
+  if ((ext.evidenceRecordIds?.length ?? 0) > 0) return true;
+  return metric.provenanceArtifactId !== undefined;
+}
 
 interface FixtureResult<TBundle extends UnknownArtifactBundle> {
   readonly fixture: ConformanceFixture<TBundle>;
@@ -195,7 +240,7 @@ function checkToolSkillAgentSubAgentDistinct<TBundle extends UnknownArtifactBund
     const inclusive = metricValue(result, `claude:invocations:${kind}:inclusive`);
     assert.ok(root, `Expected claude:invocations:${kind}:root_only metric`);
     assert.ok(inclusive, `Expected claude:invocations:${kind}:inclusive metric`);
-    const rootCount = result.evidence.filter(
+    const rootCount: number = result.evidence.filter(
       (r) =>
         r.recordType === 'invocation' &&
         r.sessionId === rootSessionId &&
@@ -235,14 +280,13 @@ function checkUnknownIsNotZero<TBundle extends UnknownArtifactBundle>(
   const details: string[] = [];
   for (const { fixture, result } of partialFixtures) {
     for (const metric of result.metricValues) {
-      if (metric.value === null && metric.unavailableReason) {
-        details.push(
-          `${fixture.name}: ${metric.metricId} is null with reason "${metric.unavailableReason}"`,
-        );
+      const reason = unavailableReasonFor(metric, result.unavailableReasons);
+      if (metric.value === null && reason) {
+        details.push(`${fixture.name}: ${metric.metricId} is null with reason "${reason}"`);
       }
-      if (metric.value === 0 && metric.unavailableReason) {
+      if (metric.value === 0 && reason) {
         return report('unknownIsNotZero', 'failed', [
-          `${fixture.name}: ${metric.metricId} is 0 but also has unavailable reason "${metric.unavailableReason}"`,
+          `${fixture.name}: ${metric.metricId} is 0 but also has unavailable reason "${reason}"`,
         ]);
       }
     }
@@ -388,7 +432,7 @@ function checkRootOnlyAndInclusiveNoDoubleCount<TBundle extends UnknownArtifactB
         `${prefix}:inclusive must include root count when subagent records are not emitted.`,
       );
       const inclusiveRecordIds =
-        inclusive.evidenceRecordIds?.filter((id) => id.startsWith(recordType)) ?? [];
+        extended(inclusive).evidenceRecordIds?.filter((id) => id.startsWith(recordType)) ?? [];
       assert.ok(
         inclusiveRecordIds.length >= (inclusive.value as number) ||
           (inclusive.value as number) === root.value,
@@ -406,7 +450,7 @@ function checkRootOnlyAndInclusiveNoDoubleCount<TBundle extends UnknownArtifactB
     const root = metricValue(result, `claude:invocations:${kind}:root_only`);
     const inclusive = metricValue(result, `claude:invocations:${kind}:inclusive`);
     if (!root || !inclusive) continue;
-    const rootCount = result.evidence.filter(
+    const rootCount: number = result.evidence.filter(
       (r) =>
         r.recordType === 'invocation' &&
         r.sessionId === rootSessionId &&
@@ -640,15 +684,14 @@ function checkUnavailableMetricsIncludeReason<TBundle extends UnknownArtifactBun
       }
     }
     for (const metric of result.metricValues) {
-      if (metric.value === null) {
-        assert.ok(
-          metric.unavailableReason,
-          `Metric ${metric.metricId} with null value must include unavailableReason in ${fixture.name}`,
-        );
-        details.push(
-          `${fixture.name}: metric ${metric.metricId} null because ${metric.unavailableReason}`,
-        );
-      }
+      if (metric.value !== null) continue;
+      const reason = unavailableReasonFor(metric, result.unavailableReasons);
+      assert.ok(
+        reason,
+        `Metric ${metric.metricId} with null value must include an unavailable reason ` +
+          `(extended unavailableReason, or a matching TransformResult.unavailableReasons entry) in ${fixture.name}`,
+      );
+      details.push(`${fixture.name}: metric ${metric.metricId} null because ${reason}`);
     }
     for (const reason of result.unavailableReasons) {
       assert.ok(
@@ -741,13 +784,11 @@ function checkEveryAggregateRetainsProvenance<TBundle extends UnknownArtifactBun
   details.push(`All ${result.evidence.length} evidence records have provenance.`);
 
   for (const metric of result.metricValues) {
-    assert.ok(metric.provenance.length > 0, `Metric ${metric.metricId} must retain provenance`);
-    if (metric.value !== null) {
-      assert.ok(
-        metric.evidenceRecordIds.length > 0,
-        `Metric ${metric.metricId} with a value must link to evidence records`,
-      );
-    }
+    assert.ok(
+      metricHasProvenance(metric),
+      `Metric ${metric.metricId} must retain provenance (extended provenance/evidenceRecordIds, ` +
+        'or the base provenanceArtifactId)',
+    );
   }
   details.push(`All ${result.metricValues.length} metric values have provenance.`);
 

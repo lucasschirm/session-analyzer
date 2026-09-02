@@ -158,7 +158,10 @@ export const claudeConformanceFixtures: TransformerFixtures<UnknownArtifactBundl
       name: 'config-classification',
       description:
         'A bundle of configuration artifacts and an unclassified file, with no root transcript.',
-      bundle: bundle([...commonConfigArtifacts, artifact('unknown.bin', 'some binary content')]),
+      bundle: bundle([
+        ...commonConfigArtifacts,
+        artifact('unknown.bin', 'some binary content', 'application/octet-stream'),
+      ]),
       context: testContext,
       tags: ['classification', 'multi-component', 'unclassified'],
     },
