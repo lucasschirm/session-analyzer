@@ -303,6 +303,26 @@ describe('ProjectBehaviorStore.getSessionTokensInWindow', () => {
       ]),
     );
   });
+
+  it('never treats a request with only one side known as a fully-known 0-contribution', async () => {
+    // A request row with input_tokens known but output_tokens missing (or
+    // vice versa) must not silently coerce the missing side to 0 and count
+    // the row as "known" — that would undercount the session's true total
+    // (`.agents/rules/missing-is-never-zero.md`). The row is excluded from
+    // both the sum and the known count until both sides are recorded.
+    const executor = await seed();
+    await insertSession(executor, 's-partial', 1000);
+    await insertGeneration(executor, 's-partial', 'gen-1');
+    await insertModelRequest(executor, 's-partial', 'gen-1', 0, 'claude-sonnet', 100, null);
+    await insertModelRequest(executor, 's-partial', 'gen-1', 1, 'claude-sonnet', null, 40);
+    await insertModelRequest(executor, 's-partial', 'gen-1', 2, 'claude-sonnet', 10, 20);
+
+    const rows = await ProjectBehaviorStore.getSessionTokensInWindow(executor, PROJECT_ID, 0, 5000);
+    const row = rows.find((r) => r.sessionId === 's-partial');
+    // Only the fully-known row (10 + 20) contributes; the two partial rows
+    // are excluded entirely rather than fabricating a 0 for their missing side.
+    expect(row).toEqual({ sessionId: 's-partial', tokensSum: 30 });
+  });
 });
 
 describe('ProjectBehaviorStore.getSessionCostInWindow', () => {

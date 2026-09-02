@@ -70,11 +70,19 @@ export interface SessionTokensRow {
   readonly tokensSum: number | null;
 }
 
+/** A `model_requests` row only contributes to `tokens_sum` when BOTH
+ * `input_tokens` and `output_tokens` are known — a row with only one side
+ * recorded is excluded entirely rather than treating its missing side as 0
+ * (`.agents/rules/missing-is-never-zero.md`). This mirrors the separate
+ * `input_known`/`output_known` tracking in `portfolio-kpi.ts`'s
+ * `SUM_TOKENS_IN_WINDOW_SQL`, collapsed to a single known/unknown flag per
+ * row since this query reports one combined total per session. */
 const SESSION_TOKENS_IN_WINDOW_SQL = `
   SELECT s.id AS session_id,
-    SUM(COALESCE(mr.input_tokens, 0) + COALESCE(mr.output_tokens, 0)) AS tokens_sum,
-    SUM(CASE WHEN mr.input_tokens IS NOT NULL OR mr.output_tokens IS NOT NULL THEN 1 ELSE 0 END)
-      AS known_n
+    SUM(CASE WHEN mr.input_tokens IS NOT NULL AND mr.output_tokens IS NOT NULL
+      THEN mr.input_tokens + mr.output_tokens ELSE 0 END) AS tokens_sum,
+    SUM(CASE WHEN mr.input_tokens IS NOT NULL AND mr.output_tokens IS NOT NULL
+      THEN 1 ELSE 0 END) AS known_n
   FROM sessions s
   JOIN model_requests mr ON mr.session_id = s.id
   WHERE s.project_id = ? AND s.start_time IS NOT NULL
@@ -100,9 +108,12 @@ const SESSION_COST_IN_WINDOW_SQL = `
 `;
 
 /** One ISO-week bucket's tool-invocation totals (issue #169). Weeks with no
- * tool-kind invocation are simply absent from the result — the db-package
- * layer fills those gaps as `n = 0, rate = null` rather than this store
- * fabricating a row. */
+ * tool-kind invocation are simply absent from the result — this store never
+ * fabricates a zero-row for an unobserved week. `packages/db/src/
+ * project-behavior.ts`'s `getWeeklyToolErrorRate` currently renders only the
+ * weeks present in this result (a sparse series), rather than back-filling
+ * gaps as explicit `n = 0, rate = null` points; a consumer must treat an
+ * absent week bucket as "no data", not "zero error rate". */
 export interface WeeklyToolInvocationRow {
   readonly weekBucket: string;
   readonly totalToolCalls: number;

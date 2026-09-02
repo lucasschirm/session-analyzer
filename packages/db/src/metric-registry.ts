@@ -332,11 +332,9 @@ export const INVOCATIONS_BY_DOMAIN_METRIC_VERSION = 1;
 
 /**
  * Portfolio invocations-by-domain metric (issue #169) — id
- * `portfolio:invocations_by_domain`, version 1. **Registry documentation
- * only as of this issue**: the query surface
- * (`PortfolioView`/`ComponentEcosystemView`) is not wired up yet — see the
- * issue #169 implementation report's deviations section. Recorded now so
- * the domain rule and dimensions are fixed before any query is built.
+ * `portfolio:invocations_by_domain`, version 1. Backed by
+ * `PortfolioKpiStore.getInvocationsByDomainInWindow` and wired into
+ * `PortfolioView.getInvocationsByDomain` (`packages/db/src/analytics-portfolio.ts`).
  *
  * - **Population**: every row in `invocations` (`INVOCATION_KINDS` =
  *   `tool | skill | agent | sub_agent` in

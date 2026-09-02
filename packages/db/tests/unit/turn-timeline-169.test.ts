@@ -97,8 +97,14 @@ async function insertInvocation(
   kind: string,
   componentId: string,
   createdAt: number,
+  id?: string,
 ): Promise<void> {
   await InvocationStore.insert(executor, {
+    // The store derives an id from (sessionId, kind, startId) when no `id`
+    // is given, colliding when two same-kind invocations with no `startId`
+    // are inserted within the same millisecond (as with concurrent tool
+    // calls in this fixture) — pass an explicit id to keep them distinct.
+    id,
     sessionId: SESSION_ID,
     generationId,
     kind,
@@ -276,6 +282,74 @@ describe('SessionEvidenceView.getTurnTimeline (issue #169)', () => {
 
     expect(timeline.segments).toEqual([]);
     expect(timeline.totalDurationMs).toBeNull();
+  });
+
+  it('lays out overlapping (concurrent) invocations sequentially by start time, never overlapping or double-counting duration', async () => {
+    // Two tool invocations that started within the same wall-clock window
+    // (e.g. parallel tool calls in one turn) are not modeled as truly
+    // concurrent — the `TurnTimelineSegment` doc calls this out as a
+    // documented simplification: segments are laid out on a single
+    // sequential track by start time. This test locks in that degraded but
+    // bounded behavior: durations still sum exactly to the session bounds,
+    // segments remain contiguous, and no segment's duration goes negative.
+    const executor = await createExecutor();
+    await seedPortfolio(executor);
+    await insertSession(executor, SESSION_ID, 0, 1000);
+    const generationId = await seedGeneration(executor);
+    const toolComponentId = await ComponentIdentityStore.insert(executor, {
+      portfolioId: PORTFOLIO_ID,
+      kind: 'tool',
+      canonicalSourceIdentity: 'Read',
+      nativeId: 'Read',
+      displayName: 'Read file',
+    } as never);
+    const otherToolComponentId = await ComponentIdentityStore.insert(executor, {
+      portfolioId: PORTFOLIO_ID,
+      kind: 'tool',
+      canonicalSourceIdentity: 'Grep',
+      nativeId: 'Grep',
+      displayName: 'Grep',
+    } as never);
+
+    await insertMessage(executor, generationId, 'user', 1, 100);
+    // Two tool invocations start at the *same* instant (200ms) — a parallel
+    // tool-call batch within one turn.
+    await insertInvocation(
+      executor,
+      generationId,
+      'tool',
+      toolComponentId,
+      200,
+      'inv-concurrent-1',
+    );
+    await insertInvocation(
+      executor,
+      generationId,
+      'tool',
+      otherToolComponentId,
+      200,
+      'inv-concurrent-2',
+    );
+    await insertMessage(executor, generationId, 'assistant', 2, 800);
+
+    const view = createSessionEvidenceView(executor);
+    const timeline = await view.getTurnTimeline(SESSION_ID);
+
+    expect(timeline.totalDurationMs).toBe(1000);
+    const sum = timeline.segments.reduce((acc, s) => acc + s.durationMs, 0);
+    expect(sum).toBe(1000);
+    for (const segment of timeline.segments) {
+      expect(segment.durationMs).toBeGreaterThanOrEqual(0);
+    }
+    let cursor = 0;
+    for (const segment of timeline.segments) {
+      expect(segment.startMs).toBe(cursor);
+      cursor += segment.durationMs;
+    }
+    expect(cursor).toBe(1000);
+    // Both concurrent tool invocations still appear as their own
+    // (sequentially laid out) invocation segments — neither is dropped.
+    expect(timeline.segments.filter((s) => s.kind === 'invocation')).toHaveLength(2);
   });
 
   it('reports sample size via the token (eligibleN vs knownN)', async () => {
