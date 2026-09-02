@@ -19,18 +19,24 @@ jobs:
           app-id: ${{ vars.VERSION_BUMP_APP_ID }}
           private-key: ${{ secrets.VERSION_BUMP_APP_PRIVATE_KEY }}
 
+      # ref: main (not the trigger SHA) so re-runs see the branch as it is now,
+      # including the [skip ci] bump commit a previous attempt may have pushed.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: main
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
+      # Node 24 ships npm >= 11.5.1, required for npm trusted publishing (OIDC).
+      # Node 22's npm 10 cannot mint a registry token, and the registry answers
+      # the unauthenticated PUT with a misleading 404.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
           cache: 'pnpm'
 
@@ -45,21 +51,38 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # Only bump when the current version already exists on npm. If a previous
+      # run bumped but failed to publish, this run publishes that version
+      # instead of widening the gap, and re-runs become idempotent.
       - name: Bump plugin patch version
-        run: pnpm run version:patch
+        run: |
+          current=$(node -p "require('./packages/plugins/claude-session-sync/package.json').version")
+          if npm view "@lucasschirm/claude-session-sync@${current}" version >/dev/null 2>&1; then
+            pnpm run version:patch
+          else
+            echo "Version ${current} is not on npm yet; publishing it without bumping."
+          fi
 
+      # If main moved while this job ran (concurrent merge already pushed a
+      # bump), drop our local bump and publish from the remote state instead of
+      # failing; both runs converge on the same version and the duplicate
+      # publish resolves as already-published below.
       - name: Commit and push
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             git add -A
             git commit --no-verify -m "chore: bump @lucasschirm/claude-session-sync patch version [skip ci]"
-            git push
+            if ! git push; then
+              echo "Push rejected (main moved concurrently); publishing from remote main state instead."
+              git fetch origin main
+              git reset --hard FETCH_HEAD
+            fi
           fi
 
       - name: Publish packages
         run: |
           set +e
-          max_attempts=3
+          max_attempts=2
           for attempt in $(seq 1 "$max_attempts"); do
             output=$(pnpm run version:publish 2>&1)
             status=$?
@@ -67,11 +90,13 @@ jobs:
             if [ $status -eq 0 ]; then
               exit 0
             fi
-            if echo "$output" | grep -qi "cannot publish over\|previously published"; then
+            if echo "$output" | grep -qiE "cannot publish over|previously published|EPUBLISHCONFLICT"; then
               echo "Version already published on npm; treating as success."
               exit 0
             fi
             if [ "$attempt" -eq "$max_attempts" ]; then
+              echo "=== npm debug logs (real auth/publish error is usually here) ==="
+              tail -n 80 /home/runner/.npm/_logs/*-debug-0.log 2>/dev/null || true
               echo "::error::pnpm run version:publish failed after $max_attempts attempts"
               exit $status
             fi
