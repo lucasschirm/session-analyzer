@@ -29,8 +29,14 @@ follow the same loop with `main` as the PR base.
 | IN_REVIEW | PR open for the issue's branch |
 | COMPLETED | PR merged; issue closed by its `Closes #<n>` |
 
+- **Review can move work backwards**: when the PR review (or a failing gate)
+  finds defects, the issue is back IN_PROGRESS on the same branch — record
+  the findings as an issue comment, fix, and re-verify. Never skip back to
+  IN_REVIEW without the gates re-run.
 - Only the orchestrator moves status (labels, branch links). Implementing
   agents report results; the orchestrator advances state after verification.
+- Ticking an issue's Acceptance-criteria checkboxes is the ONE body edit the
+  orchestrator makes without approval — marks only, never the criteria text.
 - Never skip review: work always lands through a PR, never a direct push.
 - Never rewrite an issue's Scope / Acceptance / Dependencies to fit the
   implementation - a needed contract change is proposed to the user first
@@ -51,12 +57,16 @@ Identify: issues already `In Progress` (finish these first), ready issues,
 and blocked issues with their blocker chain. An issue is **ready** when every
 issue named in its body's `Dependencies:` line is CLOSED (read the body with
 `gh issue view <n> --json body`; the `k/N` title order is a hint, the
-Dependencies line is the contract).
+Dependencies line is the contract). Older features (e.g. #182's sub-issues)
+express the same contract as `Blocked by:` / `Blocks:` lines inside a
+`## Dependencies` section — parse those the same way; `Blocked by` is what
+gates readiness.
 
 ### 2. Select the next issue
 
 1. Any issue already `In Progress` (resume it).
-2. The lowest-`k/N` ready open issue.
+2. The lowest-`k/N` ready open issue (older features without `k/N` titles,
+   e.g. #182's: the lowest-numbered ready issue).
 3. Nothing ready → report the blocker chain and stop; never start an issue
    whose dependencies are open.
 
@@ -66,6 +76,9 @@ Dependencies line is the contract).
 gh issue edit <n> --add-label "In Progress"
 gh issue develop <n> --name <branch-name> --base <base>   # creates the linked branch
 ```
+
+(For a branch that already exists, link it via the `createLinkedBranch`
+GraphQL mutation instead — per workspace-rules.)
 
 - One issue per branch; never mix issues on a branch.
 - **Base selection**: if the issue's parent is a Feature issue (parent
@@ -85,7 +98,8 @@ Implement against the issue text, not a summary of it.
 
 ### 5. Delegate or implement
 
-Same delegation table as the `task-orchestrator` agent:
+The `task-orchestrator` delegation table, extended for issue work (E2E
+coverage, TS review):
 
 | Work profile | Agent | When |
 |---|---|---|
@@ -95,6 +109,8 @@ Same delegation table as the `task-orchestrator` agent:
 | DB migration / query / rollup review | `db-migration-reviewer` | `db-core`/`db` migrations, queries, indexes, rollups |
 | UI / chart / accessibility review | `ui-chart-reviewer` | chart components, dashboard views, DTO consumption |
 | GitHub PR review | `pr-review` | the opened PR, before requesting merge |
+| TypeScript quality review | `ts-best-practices` | reviewing a completed issue's TS before the PR opens |
+| E2E planning / implementation / triage | `e2e-test-planner` / `e2e-test-implementer` / `e2e-failure-fixer` | issues whose acceptance criteria include catalog-mapped E2E coverage; red suites |
 | Read-only exploration | Explore subagent | context gathering before implementation |
 | General implementation | general subagent | default for file edits when no specialist fits |
 | Orchestratorial / small edits | (yourself) | labels, comments, small config edits |
@@ -154,7 +170,9 @@ First-class responsibility, exactly as in the task-orchestrator:
 Record each discovery before calling the issue done: a dated entry in
 `docs/superpowers/discoveries/<feature-slug>.md` (create if absent) using the
 same entry format as the task-orchestrator (`Discovery / Proposed artifact /
-Location / Status`), and a pointer comment on the issue.
+Location / Status`), and a pointer comment on the issue. When a discovery
+warrants its own tracked work, open a new issue for it (label `enhancement`
+or `bug`) instead of widening the current one.
 
 ### 10. Loop or report
 
@@ -162,6 +180,39 @@ Issue closed and more ready sub-issues remain → loop to step 1 (or report and
 await the user, per the autonomy granted). When the LAST sub-issue merges
 into the feature branch, open the Feature branch's PR to `main`; its merge
 closes the Feature issue.
+
+## Pre-delegation checklist
+
+- [ ] Issue selected is ready (all dependency issues CLOSED).
+- [ ] Issue body, its comments, and the parent Feature's guardrails read in
+      full (comments carry review feedback and prior progress).
+- [ ] `In Progress` label applied and branch linked before work starts.
+- [ ] Delegate prompt includes: issue number + body, feature number, branch
+      name, target files, verification gates, report-back instructions.
+- [ ] No parallel delegate writes to the same files or branch as another
+      running delegate.
+
+## Pre-completion checklist
+
+- [ ] Every Acceptance criterion verified (boxes ticked — marks only).
+- [ ] `pnpm verify` + `node scripts/analytics-gates/run-all-gates.mjs` green,
+      plus the issue's own Test-plan gates.
+- [ ] Self-critique performed on the diff.
+- [ ] PR opened with `Closes #<n>` against the correct base; catalog IDs
+      cited; `pr-review` findings addressed.
+- [ ] Implementation-summary comment posted (built / verified / deviations).
+- [ ] Discoveries recorded in `docs/superpowers/discoveries/<feature-slug>.md`.
+
+## Error handling
+
+- **Delegate reports an unresolvable blocker**: comment it on the issue, keep
+  `In Progress` (or remove the label with a reason comment if no work was
+  done), surface the exact failure and candidate next actions to the user.
+- **Verification fails**: never open/merge the PR. Comment the failure on the
+  issue, fix or delegate the fix, re-run the gates.
+- **Dependencies discovered wrong** (missing or spurious): never silently
+  edit the issue body — propose the change to the user with rationale, edit
+  only after approval.
 
 ## Decision policy
 
