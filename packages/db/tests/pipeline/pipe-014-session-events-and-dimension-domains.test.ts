@@ -198,6 +198,34 @@ describe('PIPE-014: session events + dimension domains (claude-code)', () => {
 
       const cohorts = await projectView.getModelHarnessCohorts(canonicalProject, {});
       expect(cohorts.rows).toEqual([]);
+
+      // Turn-timeline segments (issue #169, final round). Same documented
+      // ingestion gap: DefaultIngestionOrchestrator does not populate
+      // messages/turns/invocations, so there is no timestamped evidence to
+      // place on the timeline (segments: []) — but sessions.start_time/
+      // end_time ARE populated, so the timeline's outer bounds are a real
+      // known duration, not missing. This exercises exactly the "bounded
+      // window, no evidence yet" branch of `resolveTimelineBounds`.
+      const timeline = await sessionView.getTurnTimeline(receipt.sessionId);
+      expect(timeline.segments).toEqual([]);
+      expect(timeline.totalDurationMs).not.toBeNull();
+      expect(timeline.token.eligibleN).toBe(0);
+
+      // Project leaderboard (issue #169, final round). sessionCount is a
+      // real measured 1 (sessions are populated); tokens/clean-rate are
+      // honestly unknown/null for the same documented ingestion gap as the
+      // stat strip above.
+      const leaderboard = await portfolioView.getProjectLeaderboard({ portfolioId });
+      const leaderboardRow = leaderboard.rows.find((r) => r.projectId === canonicalProject);
+      expect(leaderboardRow?.sessionCount).toBe(1);
+      expect(leaderboardRow?.tokens).toEqual({
+        inputTokens: 0,
+        inputKnownN: 0,
+        outputTokens: 0,
+        outputKnownN: 0,
+      });
+      expect(leaderboardRow?.cleanRate).toEqual({ value: null, eligibleN: 0, knownN: 0 });
+      expect(leaderboardRow?.trend).toHaveLength(30);
     },
   );
 });
