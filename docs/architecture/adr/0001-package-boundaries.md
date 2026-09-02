@@ -99,3 +99,40 @@ would force transformer plugins to transitively depend on SQLite contracts.
 intentionally SQLite-focused. A generic ORM would add complexity without
 benefit since SQLite is the only target runtime, and it would obscure
 SQLite-specific optimizations (STRICT tables, PRAGMAs, generated columns).
+
+## Amendment (2026-09-02, DS-F5 / #154)
+
+The single `@lucasschirm/sal-transformer` (`packages/transformer`) package
+described above was split into three packages under `packages/transformers/`,
+to let a second harness transformer (`devin-transformer`, DS-F7 / #149) be
+added without pulling in the Claude-specific plugin cluster:
+
+- **`@lucasschirm/sal-transformer-shared`** (`packages/transformers/transformer-shared`)
+  — the harness-agnostic contract layer (bundle, classification, component,
+  context, comparability, evidence, metric, session, provenance, invariants,
+  registry, plugin contract) plus the conformance suite and fixture contract,
+  published as the public subpath `@lucasschirm/sal-transformer-shared/conformance`
+  so any transformer plugin package can consume it without a `tests/`-relative
+  reach-through.
+- **`@lucasschirm/sal-claude-transformer`** (`packages/transformers/claude-transformer`)
+  — the Claude Code plugin cluster (`claude-code*.ts`), moved as one atomic
+  unit; depends on `transformer-shared` for contract types.
+- **`@lucasschirm/sal-transformer-registry`** (`packages/transformers/registry`)
+  — the default `TransformerRegistry` composition root (`createDefaultRegistry`),
+  so adding a future harness plugin means registering it in one place rather
+  than touching every consumer.
+
+The import-level dependency matrix updates to:
+
+```text
+transformer-shared -> (no harness parser dependency)
+claude-transformer -> transformer-shared + claude parser
+transformer-registry -> transformer-shared + claude-transformer (+ future harness transformer packages)
+db -> transformer-shared (contract types only) + db-core + narrow sync-core manifest contracts
+site runtime -> transformer-registry (composition) + db + db-core adapter contracts + sync/source adapters
+site pages -> AnalyticsDataSource DTO/client contracts only
+```
+
+`packages/transformer` (the pre-split package) was deleted outright once every
+import site was repointed; no deprecated re-export shim was kept, since a shim
+would add a second publish target with no offsetting benefit.

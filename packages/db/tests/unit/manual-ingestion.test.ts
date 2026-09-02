@@ -9,6 +9,7 @@ import {
 } from '@lucasschirm/sal-db-core';
 import type { ManifestSchemaVersion, SyncManifest } from '@lucasschirm/sal-sync-core';
 import { MANIFEST_SCHEMA_VERSION } from '@lucasschirm/sal-sync-core';
+import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
 import type {
   Artifact,
   ArtifactContent,
@@ -16,8 +17,7 @@ import type {
   TransformContext,
   TransformResult,
   UnknownArtifactBundle,
-} from '@lucasschirm/sal-transformer';
-import { createDefaultRegistry } from '@lucasschirm/sal-transformer';
+} from '@lucasschirm/sal-transformer-shared';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import {

@@ -1,12 +1,12 @@
 ---
-globs: "packages/plugins/**,packages/transformer/**"
+globs: "packages/plugins/**,packages/transformers/**"
 ---
 
 # Harness Plugins Pass Conformance
 
 **When to use this rule:**
 
-- When adding or modifying a harness transformer plugin (e.g. `packages/plugins/claude-session-sync`) or the transformer conformance suite under `packages/transformer`.
+- When adding or modifying a harness transformer plugin (e.g. `packages/transformers/claude-transformer`) or the transformer conformance suite under `packages/transformers/transformer-shared`.
 
 **Invariants (non-negotiable):**
 

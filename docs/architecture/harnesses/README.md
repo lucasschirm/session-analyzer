@@ -21,7 +21,7 @@ transformer plugins remain pure and deterministic.
 ## Transformer plugin contract
 
 A transformer plugin implements `SessionTransformer<TBundle>` (see
-`packages/transformer/src/plugin/contract.ts`):
+`packages/transformers/transformer-shared/src/plugin/contract.ts`):
 
 ```ts
 interface SessionTransformer<TBundle> {
@@ -51,7 +51,10 @@ All generated identifiers must be deterministic from stable source identity.
 
 ## Registry
 
-`TransformerRegistry` (`packages/transformer/src/registry.ts`) manages plugins:
+`TransformerRegistry` (`packages/transformers/transformer-shared/src/registry.ts`) manages plugins.
+The default registry composing every transformer plugin package lives in
+`packages/transformers/registry/src/default-registry.ts`
+(`@lucasschirm/sal-transformer-registry`):
 
 - `register(plugin)` — Registers by ID and harness names.
 - `resolve(harness)` — Manifest-declared harness resolution.
@@ -60,7 +63,7 @@ All generated identifiers must be deterministic from stable source identity.
 
 ## Claude Code
 
-**Plugin**: `ClaudeCodeTransformer` (`packages/transformer/src/plugin/claude-code.ts`)
+**Plugin**: `ClaudeCodeTransformer` (`packages/transformers/claude-transformer/src/plugin/claude-code.ts`)
 **Parser**: `@lucasschirm/sal-claude-session-parser`
 **Harness ID**: `claude_code`
 
@@ -134,9 +137,10 @@ registration, and conformance guidance.
 
 ## Conformance suite
 
-Every transformer plugin must pass the shared conformance suite
-(`packages/transformer/tests/conformance/suite.ts`) proving the 10 canonical
-invariants:
+Every transformer plugin must pass the shared conformance suite, published as
+the public subpath `@lucasschirm/sal-transformer-shared/conformance`
+(`packages/transformers/transformer-shared/src/conformance/suite.ts`),
+proving the 10 canonical invariants:
 
 1. Tool, Skill, Agent, and Sub Agent remain distinct.
 2. Unknown is not zero.
@@ -155,4 +159,4 @@ invariants:
 - ADR-0003: Component identity
 - ADR-0004: Manifest authority
 - ADR-0006: Metric versioning
-- Implementation: `packages/transformer/src/plugin/`, `packages/transformer/src/registry.ts`, `packages/transformer/src/classification.ts`
+- Implementation: `packages/transformers/claude-transformer/src/plugin/`, `packages/transformers/transformer-shared/src/registry.ts`, `packages/transformers/transformer-shared/src/classification.ts`
