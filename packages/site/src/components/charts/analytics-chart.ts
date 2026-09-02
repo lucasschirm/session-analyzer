@@ -1,8 +1,8 @@
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import './echarts-base';
 import { toEChartsOption } from './chart-helpers';
-import type { ChartSeries, ChartState } from './chart-types';
+import type { ChartSeries, ChartState, EChartsCoreOption } from './chart-types';
 import { textualSummary } from './chart-types';
 
 /**
@@ -72,7 +72,7 @@ export class AnalyticsChart extends LitElement {
     }
   `;
 
-  @property({ type: Object }) series: ChartSeries | null = null;
+  @property({ type: Object, attribute: false }) series: ChartSeries | null = null;
 
   @property({ type: String }) state: ChartState | null = null;
 
@@ -80,10 +80,34 @@ export class AnalyticsChart extends LitElement {
 
   @property({ type: String }) description = '';
 
+  /** Passed through to `echarts-base` to override the default empty-state copy. */
+  @property({ type: String }) emptyMessage = 'No sessions in this range';
+
+  /** Passed through to `echarts-base` to override the default error-state copy. */
+  @property({ type: String }) errorMessage = 'This chart could not load. Try again.';
+
   @state() private summaryVisible = false;
 
-  private get option() {
-    return this.series ? toEChartsOption(this.series) : null;
+  /**
+   * Memoized ECharts option, recomputed only when `series` changes (not on
+   * every unrelated re-render, e.g. toggling the textual summary). `option`
+   * is bound to `echarts-base` via reference equality (`@property({type:
+   * Object})`'s default `hasChanged`); a fresh object on every render would
+   * trigger a full `setOption`/`resize` even when nothing chart-relevant
+   * changed.
+   *
+   * Skipped for `heatmap` series: `echarts-base` renders those via
+   * `rd-heatmap-grid` instead of ECharts (see its `isHeatmap` gate), so
+   * building an ECharts option for one would be pure waste — no consumer
+   * ever reads it.
+   */
+  @state() private computedOption: EChartsCoreOption | null = null;
+
+  willUpdate(changed: PropertyValues<this>): void {
+    if (changed.has('series')) {
+      this.computedOption =
+        this.series && this.series.chartType !== 'heatmap' ? toEChartsOption(this.series) : null;
+    }
   }
 
   private get summary(): string {
@@ -126,10 +150,12 @@ export class AnalyticsChart extends LitElement {
             : ''
         }
         <echarts-base
-          .option=${this.option}
+          .option=${this.computedOption}
           .series=${this.series}
           .state=${this.state}
           .ariaDescription=${this.summary}
+          .emptyMessage=${this.emptyMessage}
+          .errorMessage=${this.errorMessage}
         ></echarts-base>
       </div>
     `;

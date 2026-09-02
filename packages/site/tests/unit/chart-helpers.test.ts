@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { toEChartsOption } from '../../src/components/charts/chart-helpers';
+import { colorForEntity, toEChartsOption } from '../../src/components/charts/chart-helpers';
 import {
   type ChartBucket,
   type ChartSeries,
   type ChartState,
+  classifyHeatmapCell,
   formatChartValue,
   stateIcon,
   stateLabel,
   textualSummary,
   toTableRows,
 } from '../../src/components/charts/chart-types';
+import { inkTokens, statusTokens } from '../../src/styles/tokens';
 
 function makeBucket(overrides: Partial<ChartBucket> = {}): ChartBucket {
   return { x: 'a', y: 1, label: 'A', ...overrides };
@@ -200,6 +202,170 @@ describe('textualSummary', () => {
   });
 });
 
+describe('classifyHeatmapCell', () => {
+  it('classifies a null value as missing, never as a measured zero', () => {
+    expect(classifyHeatmapCell(null, 100)).toBe('missing');
+  });
+
+  it('classifies a measured 0 as zero, distinct from missing', () => {
+    expect(classifyHeatmapCell(0, 100)).toBe('zero');
+  });
+
+  it('classifies a value below ~55% of max as low', () => {
+    expect(classifyHeatmapCell(50, 100)).toBe('low');
+  });
+
+  it('classifies a value at/above ~55% of max as high', () => {
+    expect(classifyHeatmapCell(55, 100)).toBe('high');
+    expect(classifyHeatmapCell(100, 100)).toBe('high');
+  });
+
+  it('falls back to fraction 0 when max is 0', () => {
+    expect(classifyHeatmapCell(5, 0)).toBe('low');
+  });
+});
+
+describe('colorForEntity', () => {
+  it('is a pure function of the entity id (deterministic across calls)', () => {
+    expect(colorForEntity('claude-code')).toBe(colorForEntity('claude-code'));
+  });
+
+  it('assigns different ids to potentially different slots without index dependence', () => {
+    const colorA = colorForEntity('agent-a');
+    const colorB = colorForEntity('agent-b');
+    // Both must come from the validated 5-slot palette, never a status color.
+    expect(Object.values(statusTokens)).not.toContain(colorA);
+    expect(Object.values(statusTokens)).not.toContain(colorB);
+  });
+
+  it('keeps a surviving series color stable when another series is removed from the input', () => {
+    const full = makeSeries({
+      chartType: 'time_series',
+      buckets: [
+        makeBucket({ x: 'a', y: 1, label: 'A', series: 'alpha' }),
+        makeBucket({ x: 'a', y: 2, label: 'A', series: 'beta' }),
+        makeBucket({ x: 'a', y: 3, label: 'A', series: 'gamma' }),
+      ],
+    });
+    const filtered = makeSeries({
+      chartType: 'time_series',
+      buckets: full.buckets.filter((b) => b.series !== 'alpha'),
+    });
+
+    const fullOption = toEChartsOption(full) as {
+      series: Array<{ name: string; itemStyle: { color: string } }>;
+    };
+    const filteredOption = toEChartsOption(filtered) as {
+      series: Array<{ name: string; itemStyle: { color: string } }>;
+    };
+
+    const betaBefore = fullOption.series.find((s) => s.name === 'beta')?.itemStyle.color;
+    const gammaBefore = fullOption.series.find((s) => s.name === 'gamma')?.itemStyle.color;
+    const betaAfter = filteredOption.series.find((s) => s.name === 'beta')?.itemStyle.color;
+    const gammaAfter = filteredOption.series.find((s) => s.name === 'gamma')?.itemStyle.color;
+
+    expect(betaAfter).toBe(betaBefore);
+    expect(gammaAfter).toBe(gammaBefore);
+  });
+});
+
+describe('legend gating', () => {
+  it('omits the legend for a single series', () => {
+    const series = makeSeries({
+      chartType: 'time_series',
+      buckets: [makeBucket({ x: 'a', y: 1, label: 'A', series: 'solo' })],
+    });
+    const option = toEChartsOption(series) as Record<string, unknown>;
+    expect(option.legend).toBeUndefined();
+  });
+
+  it('renders a legend for 2+ series', () => {
+    const series = makeSeries({
+      chartType: 'time_series',
+      buckets: [
+        makeBucket({ x: 'a', y: 1, label: 'A', series: 'one' }),
+        makeBucket({ x: 'a', y: 2, label: 'A', series: 'two' }),
+      ],
+    });
+    const option = toEChartsOption(series) as Record<string, unknown>;
+    expect(option.legend).toBeDefined();
+  });
+});
+
+describe('horizontal_bar option builder', () => {
+  it('sorts by value descending and applies a minimum pixel floor', () => {
+    const series = makeSeries({
+      chartType: 'horizontal_bar',
+      buckets: [
+        makeBucket({ x: 'x', y: 5, label: 'Small' }),
+        makeBucket({ x: 'x', y: 50, label: 'Large' }),
+      ],
+    });
+    const option = toEChartsOption(series) as {
+      yAxis: { data: string[] };
+      series: Array<{ barMinHeight: number; showBackground: boolean }>;
+    };
+    expect(option.yAxis.data).toEqual(['Large', 'Small']);
+    expect(option.series[0]?.barMinHeight).toBeGreaterThan(0);
+    expect(option.series[0]?.showBackground).toBe(true);
+  });
+
+  it('renders missing (null) buckets as a labeled "—" track row, never a measured-zero-looking bar', () => {
+    const series = makeSeries({
+      chartType: 'horizontal_bar',
+      buckets: [
+        makeBucket({ x: 'x', y: 10, label: 'Present' }),
+        makeBucket({ x: 'x', y: null, label: 'Missing' }),
+      ],
+    });
+    const option = toEChartsOption(series) as {
+      yAxis: { data: string[] };
+      series: Array<{ data: Array<{ value: number; label?: { formatter: () => string } }> }>;
+    };
+    // Present values sort first; the missing row still gets a category, not
+    // a silent omission.
+    expect(option.yAxis.data).toEqual(['Present', 'Missing']);
+    const missingDatum = option.series[0]?.data[1];
+    expect(missingDatum?.value).toBe(0);
+    expect(missingDatum?.label?.formatter()).toBe('—');
+  });
+
+  it('never shows the raw 0 value in the tooltip for a missing bar row', () => {
+    const series = makeSeries({
+      chartType: 'horizontal_bar',
+      buckets: [makeBucket({ x: 'x', y: null, label: 'Missing' })],
+    });
+    const option = toEChartsOption(series) as {
+      series: Array<{ data: Array<{ tooltip?: { formatter: () => string } }> }>;
+    };
+    const missingDatum = option.series[0]?.data[0];
+    expect(missingDatum?.tooltip?.formatter()).toBe('Missing: —');
+    expect(missingDatum?.tooltip?.formatter()).not.toContain('0');
+  });
+
+  it('formats value labels via a plain-ink label formatter, not series color', () => {
+    const series = makeSeries({
+      chartType: 'horizontal_bar',
+      buckets: [makeBucket({ x: 'x', y: 10, label: 'Row' })],
+    });
+    const option = toEChartsOption(series) as {
+      series: Array<{ label: { color: string } }>;
+    };
+    expect(option.series[0]?.label.color).toBe(inkTokens.inkPrimary);
+  });
+});
+
+describe('heatmap ramp', () => {
+  it('uses the sequential ramp tokens for the visualMap color range', () => {
+    const series = makeSeries({
+      chartType: 'heatmap',
+      buckets: [makeBucket({ x: 'a', y: 10, label: 'A' })],
+    });
+    const option = toEChartsOption(series) as { visualMap: { inRange: { color: string[] } } };
+    expect(option.visualMap.inRange.color.length).toBeGreaterThan(1);
+  });
+});
+
 describe('toEChartsOption', () => {
   it.each([
     'time_series',
@@ -209,6 +375,7 @@ describe('toEChartsOption', () => {
     'percentile_bands',
     'scatter',
     'heatmap',
+    'horizontal_bar',
     'box',
     'distribution',
     'funnel',

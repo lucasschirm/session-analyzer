@@ -24,6 +24,7 @@ export const CHART_TYPE_OPTIONS = [
   'percentile_bands',
   'scatter',
   'heatmap',
+  'horizontal_bar',
   'box',
   'distribution',
   'funnel',
@@ -127,6 +128,23 @@ export function formatChartValue(value: number | null, unit = ''): string {
   if (unit === 'percent' || unit === 'ratio') return `${formatted}${unit === 'percent' ? '%' : ''}`;
   if (unit && unit !== 'count') return `${formatted} ${unit}`;
   return formatted;
+}
+
+export type HeatmapCellKind = 'missing' | 'zero' | 'low' | 'high';
+
+/**
+ * Classifies a heatmap cell's value against the sequential ramp.
+ *
+ * `missing` (native value unavailable, `y === null`) is never conflated with
+ * a measured `zero` — see `.agents/rules/missing-is-never-zero.md`. `high`
+ * marks cells at or above ~55% ramp intensity, where in-cell text switches
+ * to dark ink for contrast against the lighter ramp steps.
+ */
+export function classifyHeatmapCell(value: number | null, max: number): HeatmapCellKind {
+  if (value === null) return 'missing';
+  if (value === 0) return 'zero';
+  const fraction = max > 0 ? value / max : 0;
+  return fraction >= 0.55 ? 'high' : 'low';
 }
 
 export function toTableRows(series: ChartSeries): TableRow[] {
