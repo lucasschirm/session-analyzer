@@ -14,6 +14,7 @@ import {
   zeroRun,
 } from '@lucasschirm/sal-sync';
 import { parseClaudeHookInput, readStdin, toHarnessSession, toSyncInput } from './claude.js';
+import { ClaudeHarnessProfile } from './claude-profile.js';
 import { resolveCliEnv } from './cli/env.js';
 import { isMainModule } from './is-main-module.js';
 
@@ -86,6 +87,7 @@ export async function runSessionStart(
     ...options,
     input: syncInput,
     spawnWatcher: spawner,
+    harnessProfile: ClaudeHarnessProfile,
   });
 
   return result.exitCode;
