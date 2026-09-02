@@ -3,9 +3,10 @@ import type {
   ManualIngestionDetection,
   ProjectListItem,
 } from '@lucasschirm/sal-db';
-import { css, html, LitElement } from 'lit';
+import { css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
+import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/manual-import/manual-import-harness-selector';
 import '../../components/manual-import/manual-import-project-workspace';
 import '../../components/manual-import/manual-import-state';
@@ -30,12 +31,10 @@ import { navigateTo } from '../../router';
  * surfaced for explicit user resolution rather than silently replaced.
  */
 @customElement('manual-import-page')
-export class ManualImportPage extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-    }
-
+export class ManualImportPage extends PageLitElement {
+  static styles = [
+    pageHostStyles,
+    css`
     .manual-import-page {
       display: flex;
       flex-direction: column;
@@ -141,7 +140,8 @@ export class ManualImportPage extends LitElement {
       border-radius: 8px;
       font-size: 14px;
     }
-  `;
+  `,
+  ];
 
   client: AnalyticsClient = new AnalyticsClient();
 

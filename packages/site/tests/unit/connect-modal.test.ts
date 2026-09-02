@@ -120,6 +120,7 @@ const savedCredentials: StoredS3Credentials = {
 afterEach(() => {
   document.body.innerHTML = '';
   vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
 beforeEach(() => {
@@ -361,6 +362,7 @@ describe('connect-modal', () => {
   it('syncs a saved connection and closes the modal', async () => {
     mockDbClient.getConnections.mockResolvedValue([savedConnection]);
     mockDbClient.getS3Credentials.mockResolvedValue(savedCredentials);
+    localStorage.setItem('sal-sync-only-new:c1', 'true');
 
     const modal = await mount(document.createElement('connect-modal') as ConnectModal);
     let closed = 0;
@@ -372,7 +374,14 @@ describe('connect-modal', () => {
     clickButtonByText(root, 'Sync');
     await flush(modal);
 
-    expect(mockSyncManager.requestRun).toHaveBeenCalledWith('c1');
+    // The sync-confirm modal should now be open.
+    const confirmModal = root.querySelector('sync-confirm-modal');
+    expect(confirmModal).not.toBeNull();
+    const confirmRoot = (confirmModal as LitElement).shadowRoot as ShadowRoot;
+    clickButtonByText(confirmRoot, 'Start Sync');
+    await flush(modal);
+
+    expect(mockSyncManager.requestRun).toHaveBeenCalledWith('c1', { syncOnlyNew: true });
     expect(closed).toBe(1);
   });
 

@@ -27,6 +27,14 @@ export class HeaderProjectSelector extends LitElement {
     :host {
       display: inline-block;
       min-width: 220px;
+      --typeahead-text-color: var(--md-sys-color-on-surface, #e6e9ef);
+      --typeahead-background-color: var(--md-sys-color-surface, #171a21);
+      --typeahead-border-color: var(--md-sys-color-outline, #2a303c);
+      --typeahead-icon-color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      --typeahead-focus-outline-color: var(--md-sys-color-primary, #4f8cff);
+      --typeahead-selected-color: var(--md-sys-color-primary-container, #1c2b4a);
+      --typeahead-highlight-color: var(--md-sys-color-surface-container, #1f242e);
+      --typeahead-shadow-color: rgba(0, 0, 0, 0.4);
     }
 
     lit-typeahead {

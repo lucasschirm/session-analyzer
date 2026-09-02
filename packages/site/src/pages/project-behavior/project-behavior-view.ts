@@ -1,7 +1,8 @@
-import { css, html, LitElement, type PropertyValues } from 'lit';
+import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { analyticsClient } from '../../db/analytics-client';
 import { navigateTo } from '../../router';
+import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
 import type {
@@ -64,11 +65,11 @@ function panelStateFromResult<T>(
  * SQL types or compute canonical metrics.
  */
 @customElement('project-behavior-view')
-export class ProjectBehaviorPage extends LitElement {
-  static styles = css`
+export class ProjectBehaviorPage extends PageLitElement {
+  static styles = [
+    pageHostStyles,
+    css`
     :host {
-      display: block;
-      padding: 24px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
@@ -215,7 +216,8 @@ export class ProjectBehaviorPage extends LitElement {
       font-weight: 600;
       color: var(--md-sys-color-error, #ff6b6b);
     }
-  `;
+  `,
+  ];
 
   @property({ type: String, attribute: 'project-id' }) projectId = '';
 

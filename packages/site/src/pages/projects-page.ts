@@ -1,6 +1,7 @@
-import { css, html, LitElement } from 'lit';
+import { css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
+import { PageLitElement, pageHostStyles } from './page-lit-element';
 import '../components/delete-confirmation-modal';
 import '../components/project-modal';
 import '../components/project-sync-indicator';
@@ -20,10 +21,11 @@ import type { Project } from '../types';
  * - Clicking a project card routes to the Project View.
  */
 @customElement('projects-page')
-export class ProjectsPage extends LitElement {
-  static styles = css`
+export class ProjectsPage extends PageLitElement {
+  static styles = [
+    pageHostStyles,
+    css`
     :host {
-      display: block;
       max-width: 1200px;
       margin: 0 auto;
     }
@@ -172,7 +174,8 @@ export class ProjectsPage extends LitElement {
       border-radius: 8px;
       font-size: 13px;
     }
-  `;
+  `,
+  ];
 
   @state() private projects: Project[] = [];
 

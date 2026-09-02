@@ -1,7 +1,8 @@
 import type { ManifestArtifact, SyncManifest } from '@lucasschirm/sal-sync-core';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { analyticsClient } from '../../src/db/analytics-client';
 import type { AnalyticsRequest } from '../../src/db/analytics-protocol';
+import { requestPasskey, setPasskeyPrompt } from '../../src/sync/passkey-prompt';
 import {
   type DownloadedFile,
   type S3Client,
@@ -215,5 +216,40 @@ describe('ingestSyncManifest protocol contract', () => {
       files: [{ file: 'session/transcript.jsonl', hash: 'abc', size: 10, status: 'downloaded' }],
     };
     expect(message.files.length).toBe(1);
+  });
+});
+
+/**
+ * Regression: the syncManager singleton must wire `onPasskeyRequired` to
+ * `requestPasskey()` so that a sync attempt with a locked vault prompts for
+ * the passkey instead of failing with "Could not unlock S3 credentials".
+ */
+describe('syncManager singleton passkey prompt wiring', () => {
+  afterEach(() => {
+    // Reset the prompt to avoid leaking state between test suites.
+    setPasskeyPrompt(async () => false);
+  });
+
+  it('onPasskeyRequired delegates to the registered passkey prompt', async () => {
+    setPasskeyPrompt(async () => true);
+    // @ts-expect-error — accessing private field for regression test
+    const result = await syncManager.onPasskeyRequired?.();
+    expect(result).toBe(true);
+  });
+
+  it('onPasskeyRequired returns false when no prompt is registered', async () => {
+    // Temporarily clear the prompt by registering a no-op that returns false.
+    setPasskeyPrompt(async () => false);
+    // @ts-expect-error — accessing private field for regression test
+    const result = await syncManager.onPasskeyRequired?.();
+    expect(result).toBe(false);
+  });
+
+  it('requestPasskey resolves to false when no prompt is set', async () => {
+    // The default state (before app-root registers a prompt) must not
+    // throw — it should resolve to false so the sync run fails gracefully.
+    setPasskeyPrompt(async () => false);
+    const result = await requestPasskey();
+    expect(result).toBe(false);
   });
 });

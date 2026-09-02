@@ -1,5 +1,6 @@
-import { css, html, LitElement } from 'lit';
+import { css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { PageLitElement, pageHostStyles } from './page-lit-element';
 
 /**
  * Placeholder page for top-level navigation entries that do not yet have a
@@ -8,11 +9,11 @@ import { customElement, property } from 'lit/decorators.js';
  * being built.
  */
 @customElement('tbd-page')
-export class TbdPage extends LitElement {
-  static styles = css`
+export class TbdPage extends PageLitElement {
+  static styles = [
+    pageHostStyles,
+    css`
     :host {
-      display: block;
-      padding: 24px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
@@ -42,7 +43,8 @@ export class TbdPage extends LitElement {
       font-size: 16px;
       margin-bottom: 8px;
     }
-  `;
+  `,
+  ];
 
   /** Human-readable label shown in the heading (e.g. "Agents"). */
   @property() label = '';

@@ -148,7 +148,7 @@ See the per-package `AGENTS.md` files for source maps and invariants.
   transformers-never-write-sqlite, workspace-rules.
 - `.agents/skills/` — Project-specific reusable skills:
   add-analytics-view, add-db-migration, add-e2e-test, add-harness-integration,
-  add-pipeline-e2e-test, add-session-metric, feature-planning,
+  add-pipeline-e2e-test, add-session-metric, feature-planning, pr-review,
   reprocess-analytics, triage-e2e-failure.
 - `.agents/agents/` — Project-specific agent definitions:
   db-migration-reviewer, e2e-failure-fixer, e2e-test-implementer,

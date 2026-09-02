@@ -1,5 +1,6 @@
-import { css, html, LitElement } from 'lit';
+import { css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/delete-confirmation-modal';
 import { type AnalyticsBackendReport, analyticsClient } from '../../db/analytics-client';
 import { dbClient } from '../../db/db-client';
@@ -23,11 +24,11 @@ interface DatabaseRow {
  * fresh empty databases are created on the next boot.
  */
 @customElement('storage-page')
-export class StoragePage extends LitElement {
-  static styles = css`
+export class StoragePage extends PageLitElement {
+  static styles = [
+    pageHostStyles,
+    css`
     :host {
-      display: block;
-      padding: 24px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
       max-width: 800px;
     }
@@ -163,7 +164,8 @@ export class StoragePage extends LitElement {
       margin-bottom: 16px;
       font-size: 13px;
     }
-  `;
+  `,
+  ];
 
   @state() private controlBackend: 'opfs' | 'memory' | null = null;
 

@@ -1,9 +1,19 @@
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { dbClient } from '../db/db-client';
 import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 import type { Project } from '../types';
+
+function formatRelativeDate(timestamp: number): string {
+  const now = Date.now();
+  const diff = now - timestamp;
+  const day = 24 * 60 * 60 * 1000;
+  if (diff < day) return 'Updated today';
+  if (diff < 2 * day) return 'Updated yesterday';
+  if (diff < 7 * day) return `Updated ${Math.floor(diff / day)} days ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
 
 /**
  * Route-aware left navigation.
@@ -84,15 +94,26 @@ export class LeftNav extends LitElement {
     }
 
     .nav-child {
-      display: block;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
       padding: 6px 12px;
       border-radius: 6px;
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
       text-decoration: none;
       font-size: 13px;
+    }
+
+    .nav-child-name {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .nav-child-stats {
+      font-size: 11px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      opacity: 0.7;
     }
 
     .nav-child:hover {
@@ -131,8 +152,8 @@ export class LeftNav extends LitElement {
     this.syncSnapshot = syncManager.getSnapshot();
     syncManager.addEventListener('change', this.handleSyncChange);
     void this.loadProjects();
-    // Default-expand the Projects section when on a projects route.
-    this.projectsExpanded = this.path.startsWith('/projects');
+    // Only auto-expand when viewing a specific project, not the projects list page.
+    this.projectsExpanded = /^\/projects\/[^/]+/.test(this.path);
   }
 
   disconnectedCallback(): void {
@@ -140,10 +161,11 @@ export class LeftNav extends LitElement {
     syncManager.removeEventListener('change', this.handleSyncChange);
   }
 
-  protected updated(): void {
+  protected willUpdate(changed: PropertyValues<this>): void {
     // Keep expansion in sync when navigating between dashboard/projects routes.
-    if (this.path.startsWith('/projects') && !this.projectsExpanded) {
-      this.projectsExpanded = true;
+    // Only auto-expand when viewing a specific project, not the projects list.
+    if (changed.has('path')) {
+      this.projectsExpanded = /^\/projects\/[^/]+/.test(this.path);
     }
   }
 
@@ -217,11 +239,14 @@ export class LeftNav extends LitElement {
                   (project) => {
                     const slug = project.readable_id || project.id;
                     const href = `#/projects/${slug}`;
+                    const sessionLabel = `${project.session_count} session${project.session_count === 1 ? '' : 's'}`;
                     return html`<a
                       href=${href}
                       class="nav-child ${this.path === `/projects/${slug}` ? 'active' : ''}"
-                      >${project.name}</a
-                    >`;
+                    >
+                      <span class="nav-child-name">${project.name}</span>
+                      <span class="nav-child-stats">${sessionLabel} · ${formatRelativeDate(project.updated_at)}</span>
+                    </a>`;
                   },
                 )}
                 ${

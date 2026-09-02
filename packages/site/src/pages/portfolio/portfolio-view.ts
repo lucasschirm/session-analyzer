@@ -1,7 +1,8 @@
-import { css, html, LitElement } from 'lit';
+import { css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { analyticsClient } from '../../db/analytics-client';
 import { navigateTo } from '../../router';
+import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
 import type {
@@ -43,11 +44,11 @@ interface PanelState<T> {
 }
 
 @customElement('portfolio-view')
-export class PortfolioView extends LitElement {
-  static styles = css`
+export class PortfolioView extends PageLitElement {
+  static styles = [
+    pageHostStyles,
+    css`
     :host {
-      display: block;
-      padding: 24px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
@@ -196,7 +197,8 @@ export class PortfolioView extends LitElement {
       font-size: 13px;
       padding: 12px;
     }
-  `;
+  `,
+  ];
 
   @property({ type: Object }) params: Record<string, string> = {};
 

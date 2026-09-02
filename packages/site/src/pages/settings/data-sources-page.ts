@@ -1,5 +1,6 @@
-import { css, html, LitElement } from 'lit';
-import { customElement } from 'lit/decorators.js';
+import { css, html } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
+import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/connect-modal';
 
 /**
@@ -10,11 +11,16 @@ import '../../components/connect-modal';
  * flows that previously lived behind the header "Connect" button.
  */
 @customElement('data-sources-page')
-export class DataSourcesPage extends LitElement {
-  static styles = css`
+export class DataSourcesPage extends PageLitElement {
+  /** Optional connection id from the route (`/settings/data-sources/:connectionId`).
+   * Passed down to the inline connect-modal so it can auto-open the edit form
+   * for that connection (or the "new connection" form when the id is `new`). */
+  @property({ type: String }) connectionId = '';
+
+  static styles = [
+    pageHostStyles,
+    css`
     :host {
-      display: block;
-      padding: 24px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
       max-width: 800px;
     }
@@ -29,7 +35,8 @@ export class DataSourcesPage extends LitElement {
       font-size: 14px;
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
     }
-  `;
+  `,
+  ];
 
   render() {
     return html`
@@ -38,7 +45,7 @@ export class DataSourcesPage extends LitElement {
         Manage remote S3 connections for syncing session data. Connections can be saved to local
         storage (encrypted with a passkey) or kept in-memory for the current session.
       </p>
-      <connect-modal inline></connect-modal>
+      <connect-modal inline .connectionId=${this.connectionId}></connect-modal>
     `;
   }
 }

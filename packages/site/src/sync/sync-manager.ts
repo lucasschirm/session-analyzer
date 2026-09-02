@@ -32,7 +32,8 @@ import type {
   SessionFileRecord,
   SessionStub,
 } from '../types';
-import { decryptField, isUnlocked, unlock } from './credential-crypto';
+import { decryptField, isUnlocked } from './credential-crypto';
+import { requestPasskey } from './passkey-prompt';
 import type {
   FileSummary,
   FileToDownload,
@@ -107,8 +108,14 @@ export interface SyncManagerOptions {
   ) => Promise<void>;
   /** Async seam for resolving a missing project manifest. */
   onProjectMissing?: (folder: string) => Promise<ProjectManifestInput | null>;
-  /** Async seam for requesting the passkey from the user. */
-  onPasskeyRequired?: () => Promise<string>;
+  /**
+   * Async seam for unlocking the credential vault when a sync run needs
+   * S3 credentials but the vault is locked. The callback is responsible
+   * for prompting the user and unlocking the vault (e.g. via the passkey
+   * modal). Resolves to `true` if the vault is now unlocked, `false` if
+   * the user cancelled or unlocking failed.
+   */
+  onPasskeyRequired?: () => Promise<boolean>;
   /** Optional consumer of run summary updates. */
   onRunSummary?: (summary: RunSummary) => void;
   /** Optional consumer fired each time a warning is added to a run. */
@@ -186,6 +193,9 @@ interface SyncRun {
   targetProjectId?: string;
   /** When set, bypass the connection's sync-only-new setting. */
   bypassSyncOnlyNew?: boolean;
+  /** When set, overrides the connection's sync-only-new setting with the value
+   * chosen by the user in the per-sync confirmation modal. */
+  overrideSyncOnlyNew?: boolean;
 }
 
 interface BroadcastMessage {
@@ -252,7 +262,7 @@ export class SyncManager extends EventTarget {
     projectId: string,
   ) => Promise<void>;
   private readonly onProjectMissing?: (folder: string) => Promise<ProjectManifestInput | null>;
-  private readonly onPasskeyRequired?: () => Promise<string>;
+  private readonly onPasskeyRequired?: () => Promise<boolean>;
   private readonly onRunSummary?: (summary: RunSummary) => void;
   private readonly onWarning?: (warning: string) => void;
   private readonly eventTarget: EventTarget;
@@ -323,10 +333,14 @@ export class SyncManager extends EventTarget {
    * Only one run is active at a time; duplicates for the same connection are
    * ignored.
    */
-  requestRun(connectionId: string): void {
+  requestRun(connectionId: string, options?: { syncOnlyNew?: boolean }): void {
     if (this.readOnly) return;
     if (this.findRunForConnection(connectionId)) return;
-    this.runQueue.push(this.createRun(connectionId));
+    const run = this.createRun(connectionId);
+    if (options?.syncOnlyNew !== undefined) {
+      run.overrideSyncOnlyNew = options.syncOnlyNew;
+    }
+    this.runQueue.push(run);
     this.processQueue();
   }
 
@@ -492,7 +506,12 @@ export class SyncManager extends EventTarget {
     const connection = await this.getConnection(run.connectionId);
     if (!connection) throw new Error('Connection not found');
     run.connection = connection;
-    run.syncOnlyNew = run.bypassSyncOnlyNew ? false : connection.sync_only_new;
+    run.syncOnlyNew =
+      run.overrideSyncOnlyNew !== undefined
+        ? run.overrideSyncOnlyNew
+        : run.bypassSyncOnlyNew
+          ? false
+          : connection.sync_only_new;
 
     const credentials = await this.resolveS3Credentials(run.connectionId);
     if (!credentials) throw new Error('Could not unlock S3 credentials');
@@ -508,10 +527,13 @@ export class SyncManager extends EventTarget {
     if (!stored) return null;
 
     if (!isUnlocked()) {
-      const passkey = await this.onPasskeyRequired?.();
-      if (!passkey) return null;
-      const ok = await unlock(passkey);
-      if (!ok) return null;
+      const unlocked = await this.onPasskeyRequired?.();
+      if (!unlocked) return null;
+      // The callback is responsible for unlocking the vault (e.g. by
+      // opening the passkey modal, which calls `unlock()` internally).
+      // Re-check before decrypting credentials; if the callback did not
+      // actually unlock, the run cannot proceed.
+      if (!isUnlocked()) return null;
     }
 
     try {
@@ -1782,6 +1804,7 @@ export class SyncManager extends EventTarget {
 /** App-wide sync singleton. */
 export const syncManager = new SyncManager({
   onWarning: (warning) => toastManager.warning('Sync warning', { message: warning }),
+  onPasskeyRequired: async () => requestPasskey(),
   onRunSummary: (summary) => {
     if (summary.state === 'failed') {
       const hasWarnings = summary.warnings.length > 0;
@@ -1829,46 +1852,7 @@ export const syncManager = new SyncManager({
   },
 });
 
-// Surface analytics auto-reprocessing events (emitted by the analytics worker
-// on boot when the stored processing version is older than the current
-// version) as toasts so the user knows the dashboard is being updated.
-let reprocessToastId: string | null = null;
-
-analyticsClient.addEventListener('reprocess-started', ((event: Event) => {
-  const detail = (event as CustomEvent).detail as { reason: string };
-  reprocessToastId = toastManager.info(detail.reason ?? 'Updating analytics data…', {
-    message: 'Reprocessing existing sessions with the latest analytics logic.',
-  });
-}) as EventListener);
-
-analyticsClient.addEventListener('reprocess-progress', ((event: Event) => {
-  const detail = (event as CustomEvent).detail as {
-    step: string;
-    completed: number;
-    total: number;
-  };
-  const pct = detail.total > 0 ? Math.round((detail.completed / detail.total) * 100) : 0;
-  if (reprocessToastId) {
-    toastManager.dismiss(reprocessToastId);
-  }
-  reprocessToastId = toastManager.info(`${detail.step}: ${pct}%`, {
-    message: 'Reprocessing existing sessions with the latest analytics logic.',
-  });
-}) as EventListener);
-
-analyticsClient.addEventListener('reprocess-completed', ((event: Event) => {
-  const detail = (event as CustomEvent).detail as { ok: boolean; error?: string };
-  if (reprocessToastId) {
-    toastManager.dismiss(reprocessToastId);
-  }
-  reprocessToastId = null;
-  if (detail.ok) {
-    toastManager.success('Analytics data updated', {
-      message: 'All sessions have been reprocessed with the latest analytics logic.',
-    });
-  } else {
-    toastManager.error('Analytics update failed', {
-      message: detail.error ?? 'An error occurred during reprocessing.',
-    });
-  }
-}) as EventListener);
+// Analytics auto-reprocessing events (emitted by the analytics worker on boot
+// when the stored processing version is older than the current version) are
+// handled by app-root.ts, which renders a full-screen blocking overlay with
+// progress. No toast listeners are needed here.
