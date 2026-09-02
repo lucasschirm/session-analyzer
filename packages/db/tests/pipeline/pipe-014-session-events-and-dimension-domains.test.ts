@@ -10,6 +10,7 @@ import { createPortfolioView } from '../../src/analytics-portfolio.js';
 import { createMetadataView, createSessionEvidenceView } from '../../src/analytics-session.js';
 import type { IngestionReceipt } from '../../src/ingestion.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';
+import { createProjectBehaviorView } from '../../src/project-behavior.js';
 
 /**
  * PIPE-014: full-detail session events + portfolio dimension domains
@@ -166,6 +167,37 @@ describe('PIPE-014: session events + dimension domains (claude-code)', () => {
       const invocationsByDomain = await portfolioView.getInvocationsByDomain({ portfolioId });
       expect(invocationsByDomain.totalInvocations).toBe(0);
       expect(invocationsByDomain.rows).toEqual([]);
+
+      // Project Behavior stat strip / histogram / weekly tool error rate /
+      // top tools / model x harness cohorts (issue #169, this pass). Same
+      // documented ingestion gap as above: these read
+      // sessions.end_time/turns/model_requests/model_usage/invocations,
+      // none of which DefaultIngestionOrchestrator populates yet, so every
+      // DTO here is honestly empty/null/unknown — this pins that contract
+      // against a real ingested session rather than only a synthetic
+      // db-core/db unit fixture.
+      const projectView = createProjectBehaviorView(executor);
+      const canonicalProject = canonicalProjectId(PROJECT);
+      const statStrip = await projectView.getStatStrip(canonicalProject, {});
+      expect(statStrip.sessions.current).toBe(1);
+      // start_time/end_time are both populated by ingestion (unlike
+      // turns/model_requests/model_usage/invocations, which are not) — this
+      // session's duration is a real measured value, not missing.
+      expect(statStrip.durationMedianMs.eligibleN).toBe(1);
+      expect(statStrip.tokensPerSession).toEqual({ value: null, eligibleN: 1, knownN: 0 });
+
+      const histogram = await projectView.getDurationHistogram(canonicalProject, {});
+      expect(histogram.eligibleN).toBe(1);
+
+      const errorRate = await projectView.getWeeklyToolErrorRate(canonicalProject);
+      expect(errorRate.series).toEqual([]);
+      expect(errorRate.currentValue).toBeNull();
+
+      const topTools = await projectView.getTopTools(canonicalProject, {});
+      expect(topTools.rows).toEqual([]);
+
+      const cohorts = await projectView.getModelHarnessCohorts(canonicalProject, {});
+      expect(cohorts.rows).toEqual([]);
     },
   );
 });
