@@ -8,7 +8,7 @@ import { buildFailingQueryWorker, installFailingWorker } from './helpers/worker-
 
 /**
  * E2E for the redesigned Portfolio analytics home page (issue #170).
- * Catalog IDs: UX-031, UX-032, UX-033, UX-034, UX-035 (see
+ * Catalog IDs: UX-036, UX-037, UX-038, UX-039, UX-040 (see
  * docs/superpowers/plans/2026-08-27-e2e-coverage-enhancement.md §6.1).
  *
  * The seeded fixture (`claude-session-with-subagent.jsonl`) is timestamped
@@ -73,7 +73,7 @@ const BASE_FIXTURES = `
 
 /** Fake analytics worker that answers the boot handshake and every
  * `portfolio`/`metadata` query with a canned fixture — used to exercise the
- * heatmap missing-cell affordance deterministically (UX-033), without
+ * heatmap missing-cell affordance deterministically (UX-038), without
  * depending on real ingestion producing a never-observed (model, harness)
  * pair by chance. */
 function buildPortfolioFixtureWorker(): string {
@@ -102,13 +102,13 @@ function buildPortfolioFixtureWorker(): string {
   `;
 }
 
-/** Alias documenting intent at the UX-034b call site: the fixture worker's
+/** Alias documenting intent at the UX-039b call site: the fixture worker's
  * `getProjectLeaderboard` already returns zero rows by default — a
  * legitimate empty result, never coerced to the error affordance. */
 const buildPortfolioEmptyLeaderboardWorker = buildPortfolioFixtureWorker;
 
 test.describe('Portfolio redesign (issue #170)', () => {
-  test('UX-031: load renders the KPI band with an n= sample-size caption on every tile', async ({
+  test('UX-036: load renders the KPI band with an n= sample-size caption on every tile', async ({
     page,
   }) => {
     await captureAnalyticsWorker(page);
@@ -130,7 +130,7 @@ test.describe('Portfolio redesign (issue #170)', () => {
     await expect(page.locator('.chart-caption', { hasText: /n=\d+/ }).first()).toBeVisible();
   });
 
-  test('UX-032: switching the time range changes both the KPI band and the token trend chart', async ({
+  test('UX-037: switching the time range changes both the KPI band and the token trend chart', async ({
     page,
   }) => {
     await captureAnalyticsWorker(page);
@@ -157,7 +157,7 @@ test.describe('Portfolio redesign (issue #170)', () => {
       .not.toBe(allTimeValue);
   });
 
-  test('UX-033: a never-observed (model, harness) heatmap cell renders "—", not "0"', async ({
+  test('UX-038: a never-observed (model, harness) heatmap cell renders "—", not "0"', async ({
     page,
   }) => {
     await installFailingWorker(page, {
@@ -178,7 +178,7 @@ test.describe('Portfolio redesign (issue #170)', () => {
     await expect(heatmapChart.locator('[data-missing="false"]', { hasText: '0' })).toHaveCount(0);
   });
 
-  test('UX-034a: a failing KPI-band query surfaces a distinguishable error affordance without blanking the leaderboard', async ({
+  test('UX-039a: a failing KPI-band query surfaces a distinguishable error affordance without blanking the leaderboard', async ({
     page,
   }) => {
     await installFailingWorker(page, {
@@ -197,11 +197,11 @@ test.describe('Portfolio redesign (issue #170)', () => {
     // Every other section failed identically (one fake worker fails every
     // query) — the point under test is that the failure affordance itself,
     // not a blank page, is what every section shows; none of them collapse
-    // to the legitimate empty-state copy used by UX-034b.
+    // to the legitimate empty-state copy used by UX-039b.
     await expect(page.locator('text=No projects found.')).toHaveCount(0);
   });
 
-  test('UX-034b: a legitimately empty leaderboard renders distinctly from the error affordance', async ({
+  test('UX-039b: a legitimately empty leaderboard renders distinctly from the error affordance', async ({
     page,
   }) => {
     await installFailingWorker(page, {
@@ -215,7 +215,7 @@ test.describe('Portfolio redesign (issue #170)', () => {
     await expect(page.locator('.panel-error')).toHaveCount(0);
   });
 
-  test('UX-035: clicking a leaderboard row navigates to the project page carrying returnContext', async ({
+  test('UX-040: clicking a leaderboard row navigates to the project page carrying returnContext', async ({
     page,
   }) => {
     await captureAnalyticsWorker(page);
