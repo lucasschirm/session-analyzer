@@ -2,9 +2,6 @@ name: Analytics Maintenance Gates
 
 on:
   pull_request:
-    branches:
-      - main
-      - develop
 
 jobs:
   analytics-gates:
