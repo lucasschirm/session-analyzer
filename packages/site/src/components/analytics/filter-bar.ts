@@ -217,17 +217,50 @@ export class FilterBar extends LitElement {
         <summary>Advanced</summary>
         <div class="advanced-grid">
           <label>Mode
-            <select .value=${f.mode ?? ''} @change=${set('mode')}>
+            <select
+              .value=${f.mode ?? ''}
+              @change=${set('mode')}
+            >
               <option value="">All</option>
               <option value="auto">Auto</option>
               <option value="plan">Plan</option>
             </select>
           </label>
-          <label>Component<input type="text" .value=${f.component ?? ''} @change=${set('component')} /></label>
-          <label>Search<input type="text" .value=${f.search ?? ''} @change=${set('search')} /></label>
-          <label>Analysis release<input type="text" .value=${f.analysisRelease ?? ''} @change=${set('analysisRelease')} /></label>
-          <label>Comparability group<input type="text" .value=${f.comparabilityGroup ?? ''} @change=${set('comparabilityGroup')} /></label>
-          <label>Generation<input type="text" .value=${f.generation ?? ''} @change=${set('generation')} /></label>
+          <label>Component
+            <input
+              .value=${f.component ?? ''}
+              type="text"
+              @change=${set('component')}
+            />
+          </label>
+          <label>Search
+            <input
+              .value=${f.search ?? ''}
+              type="text"
+              @change=${set('search')}
+            />
+          </label>
+          <label>Analysis release
+            <input
+              .value=${f.analysisRelease ?? ''}
+              type="text"
+              @change=${set('analysisRelease')}
+            />
+          </label>
+          <label>Comparability group
+            <input
+              .value=${f.comparabilityGroup ?? ''}
+              type="text"
+              @change=${set('comparabilityGroup')}
+            />
+          </label>
+          <label>Generation
+            <input
+              .value=${f.generation ?? ''}
+              type="text"
+              @change=${set('generation')}
+            />
+          </label>
         </div>
       </details>
     `;

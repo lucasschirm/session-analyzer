@@ -143,13 +143,13 @@ export class TimeRangeSwitch extends LitElement {
         ${
           showCustom
             ? html`<button
+                disabled
                 type="button"
                 class="is-custom"
                 role="tab"
                 data-value="custom"
                 aria-selected="true"
                 tabindex="0"
-                disabled
               >${CUSTOM_SEGMENT.label}</button>`
             : ''
         }

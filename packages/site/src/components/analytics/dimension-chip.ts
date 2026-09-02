@@ -103,7 +103,10 @@ export class DimensionChip extends LitElement {
 
   private renderFixed() {
     return html`
-      <span class="dimension-chip fixed-chip" title="${this.label} is locked">
+      <span
+        class="dimension-chip fixed-chip"
+        title="${this.label} is locked"
+      >
         <span class="lock" aria-hidden="true">&#128274;</span>
         ${this.label}: ${this.value || 'All'}
       </span>
@@ -114,8 +117,8 @@ export class DimensionChip extends LitElement {
     return html`
       <span class="dimension-chip">
         <select
-          aria-label=${this.label}
           .value=${this.value}
+          aria-label=${this.label}
           @change=${this.handleChange}
         >
           <option value="">${this.label}: All</option>
