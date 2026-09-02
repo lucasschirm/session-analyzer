@@ -57,4 +57,24 @@ jobs:
           fi
 
       - name: Publish packages
-        run: pnpm run version:publish
+        run: |
+          set +e
+          max_attempts=3
+          for attempt in $(seq 1 "$max_attempts"); do
+            output=$(pnpm run version:publish 2>&1)
+            status=$?
+            echo "$output"
+            if [ $status -eq 0 ]; then
+              exit 0
+            fi
+            if echo "$output" | grep -qi "cannot publish over\|previously published"; then
+              echo "Version already published on npm; treating as success."
+              exit 0
+            fi
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              echo "::error::pnpm run version:publish failed after $max_attempts attempts"
+              exit $status
+            fi
+            echo "::warning::Publish attempt $attempt failed (exit $status); retrying in 15s..."
+            sleep 15
+          done
