@@ -12,6 +12,7 @@ import {
   PortfolioDailyRollupStore,
   PortfolioDimensionRollupStore,
   PortfolioDistributionStore,
+  PortfolioKpiStore,
   ProjectStore,
 } from '@lucasschirm/sal-db-core';
 import type {
@@ -20,11 +21,14 @@ import type {
   ComponentUtilizationRow,
   ModelHarnessCohort,
   ModelHarnessCohortPage,
+  PeriodDelta,
+  PortfolioKpiBand,
   PortfolioOverview,
   PortfolioTrendSeries,
   PortfolioView,
   ProjectListItem,
   ProjectListPage,
+  TimeRange,
   TimeSeriesPoint,
 } from './analytics.js';
 import {
@@ -1122,9 +1126,87 @@ export async function getProjectList(
 export function createPortfolioView(queryable: Queryable): PortfolioView {
   return {
     getOverview: (query) => getPortfolioOverview(queryable, query),
+    getKpiBand: (query) => getKpiBand(queryable, query),
     getTrends: (query) => getPortfolioTrends(queryable, query),
     getComponentUtilization: (query) => getComponentUtilization(queryable, query),
     getModelHarnessCohorts: (query) => getModelHarnessCohorts(queryable, query),
     getProjectList: (query) => getProjectList(queryable, query),
   };
+}
+
+/**
+ * Derives the equal-length previous window for a period-over-period delta
+ * (issue #169). Pure date-epoch arithmetic — safe across DST transitions and
+ * short months because it operates on millisecond durations, not calendar
+ * fields. Returns `undefined` when `range` has no `start` (the "All" time
+ * preset): there is no bounded window to mirror, so no previous window
+ * exists — callers must omit the delta, never report a fabricated 0%
+ * (`.agents/rules/missing-is-never-zero.md`).
+ */
+export function resolvePreviousWindow(range: TimeRange | undefined): TimeRange | undefined {
+  if (!range?.start) return undefined;
+  const startMs = Date.parse(range.start);
+  const endMs = Date.parse(range.end);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs) return undefined;
+  const durationMs = endMs - startMs;
+  return {
+    start: new Date(startMs - durationMs).toISOString(),
+    end: new Date(startMs).toISOString(),
+  };
+}
+
+async function sessionCountDelta(
+  queryable: Queryable,
+  portfolioId: string,
+  query: AnalyticsQuery,
+): Promise<PeriodDelta> {
+  const range = query.timeRange;
+  if (!range) {
+    const current = await countSessionsInPortfolio(queryable, portfolioId, query);
+    return { current, currentN: current };
+  }
+  const currentStart = Date.parse(range.start);
+  const currentEnd = Date.parse(range.end);
+  const current = await PortfolioKpiStore.countSessionsInWindow(
+    queryable,
+    portfolioId,
+    currentStart,
+    currentEnd,
+  );
+  const previousWindow = resolvePreviousWindow(range);
+  if (!previousWindow) {
+    return { current, currentN: current };
+  }
+  const previous = await PortfolioKpiStore.countSessionsInWindow(
+    queryable,
+    portfolioId,
+    Date.parse(previousWindow.start),
+    Date.parse(previousWindow.end),
+  );
+  return { current, currentN: current, previous, previousN: previous };
+}
+
+export async function getKpiBand(
+  queryable: Queryable,
+  query: AnalyticsQuery,
+): Promise<PortfolioKpiBand> {
+  const portfolioId = await resolvePortfolioId(queryable, query);
+  const sessions = portfolioId
+    ? await sessionCountDelta(queryable, portfolioId, query)
+    : { current: 0, currentN: 0 };
+
+  const tokens = pageTokens(query, []);
+  const token = makeBaseToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    sessions.currentN,
+    sessions.currentN,
+    0,
+    'derived',
+    'portfolio-kpi-band-0.1.0',
+    [evidenceLink('portfolio', portfolioId ?? 'unknown', 'Portfolio KPI band')],
+  );
+
+  return { token, sessions };
 }

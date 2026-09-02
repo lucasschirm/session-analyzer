@@ -87,6 +87,32 @@ export interface PortfolioOverview {
   readonly harnessCount: number;
 }
 
+/**
+ * A period-over-period comparison for one KPI (issue #169). `previous`/
+ * `previousN` are omitted — not `0` — when no comparable previous window
+ * exists (the "All" time preset has no start bound, so there is no
+ * equal-length prior window to compare against). Consumers render "—" in
+ * that case rather than fabricating a 0% delta
+ * (`.agents/rules/missing-is-never-zero.md`).
+ */
+export interface PeriodDelta {
+  readonly current: number;
+  readonly currentN: number;
+  readonly previous?: number;
+  readonly previousN?: number;
+}
+
+/**
+ * Portfolio KPI band (issue #169). Currently covers the sessions-count
+ * delta only; token totals, cost coverage, and clean-completion rate are
+ * tracked as a follow-up (see the issue #169 implementation report) and are
+ * deliberately not stubbed with fabricated values here.
+ */
+export interface PortfolioKpiBand {
+  readonly token: AnalyticsToken;
+  readonly sessions: PeriodDelta;
+}
+
 export interface PortfolioTrendSeries {
   readonly token: AnalyticsToken;
   readonly series: readonly TimeSeriesPoint[];
@@ -387,6 +413,89 @@ export interface FilterMetadata {
   readonly analysisReleaseToken: string;
 }
 
+/**
+ * `kind` vocabulary for a full-detail session-events row (issue #169): the
+ * four canonical invocation kinds (`INVOCATION_KINDS` in
+ * `packages/db-core/src/session-evidence.ts`) plus the two message kinds.
+ * Nothing else — MCP is a sub-classification within `tool`, never a
+ * separate kind (`.agents/rules/analytics-domain-distinctions.md`).
+ */
+export type SessionEventKind =
+  | 'tool'
+  | 'skill'
+  | 'agent'
+  | 'sub_agent'
+  | 'user_message'
+  | 'assistant_message';
+
+/**
+ * A payload attached to a session-events row, capped at
+ * `PAYLOAD_TRUNCATION_BYTES` (db-core) for the bulk transfer. When
+ * `truncated` is true, the full body is available via
+ * `SessionEvidenceView.getEventPayload`. `tokens` is omitted (never `0`)
+ * when neither exact nor estimated token counts were recorded.
+ */
+export interface SessionEventPayloadSummary {
+  readonly payloadId: string;
+  readonly content: string | null;
+  readonly truncated: boolean;
+  readonly sizeBytes?: number;
+  readonly tokens?: number;
+}
+
+/**
+ * One row of the full-detail, non-paginated session-events DTO. `timestamp`,
+ * `turnNumber`, `tokens`, and `durationMs` are all optional-missing (never
+ * coerced to `0`) — see the documented invocation/turn-linkage limitation in
+ * `packages/db-core/src/session-events-detail.ts`.
+ */
+export interface SessionEventRow {
+  readonly id: string;
+  readonly timestamp?: string;
+  readonly turnNumber?: number;
+  readonly kind: SessionEventKind;
+  readonly name: string;
+  readonly target?: string;
+  readonly tokens?: number;
+  readonly durationMs?: number;
+  readonly status: string;
+  readonly inputPayload?: SessionEventPayloadSummary;
+  readonly resultPayload?: SessionEventPayloadSummary;
+}
+
+/**
+ * Full (non-paginated) session-events DTO. `token.eligibleN`/`knownN` are
+ * the total event count and the count with a fully-populated `timestamp`
+ * respectively, per `.agents/rules/aggregates-expose-sample-size.md`. This
+ * exists alongside `getEvidencePages` (still the paginated path for
+ * existing consumers) — see the docstring on `SessionEvidenceView`.
+ */
+export interface SessionEventsDetail {
+  readonly token: AnalyticsToken;
+  readonly sessionId: string;
+  readonly events: readonly SessionEventRow[];
+}
+
+/** The full, untruncated body of one payload — the "fetch full payload" affordance. */
+export interface SessionEventPayloadDetail {
+  readonly payloadId: string;
+  readonly content: string | null;
+  readonly sizeBytes?: number;
+  readonly tokens?: number;
+}
+
+/**
+ * Distinct dimension-value lists observed over the *unfiltered* store for a
+ * portfolio (issue #169) — backs the filter-bar chips. An empty list is a
+ * legitimate "nothing observed yet", not an error.
+ */
+export interface DimensionDomains {
+  readonly token: AnalyticsToken;
+  readonly projects: readonly string[];
+  readonly harnesses: readonly string[];
+  readonly models: readonly string[];
+}
+
 export interface CoverageExplanation {
   readonly metricId: string;
   readonly coverage: Coverage;
@@ -400,6 +509,7 @@ export interface CoverageExplanation {
 
 export interface PortfolioView {
   getOverview(query: AnalyticsQuery): Promise<PortfolioOverview>;
+  getKpiBand(query: AnalyticsQuery): Promise<PortfolioKpiBand>;
   getTrends(query: AnalyticsQuery): Promise<PortfolioTrendSeries>;
   getComponentUtilization(query: AnalyticsQuery): Promise<ComponentUtilizationPage>;
   getModelHarnessCohorts(query: AnalyticsQuery): Promise<ModelHarnessCohortPage>;
@@ -415,8 +525,23 @@ export interface ProjectBehaviorView {
   ): Promise<ConfigurationTimeline>;
   getOutliers(projectId: string, query: AnalyticsQuery): Promise<OutlierPage>;
   getComparisons(projectId: string, query: AnalyticsQuery): Promise<ComparisonPage>;
+  /**
+   * Session outcome mix (clean / interrupted-by-user / ended-on-error, plus
+   * the unreadable-tail bucket) for the project-behavior drill-down. Built
+   * on the `session:outcome` signal from issue #178
+   * (`SessionOutcomeStore.rollupByProject` / `getSessionOutcomeDistribution`
+   * in `analytics-session.ts`) — this method only wires that existing DTO
+   * into the read contract, it does not reclassify anything.
+   */
+  getOutcomeMix(projectId: string, query?: AnalyticsQuery): Promise<SessionOutcomeDistribution>;
 }
 
+/**
+ * `getSessionEvents`/`getEventPayload` are the new full-detail,
+ * non-paginated read path for the redesigned evidence table (issue #169).
+ * `getEvidencePages`/`getTranscriptPages` remain the cursor-paginated path
+ * for existing consumers until that page migrates.
+ */
 export interface SessionEvidenceView {
   getSummary(sessionId: string, query?: AnalyticsQuery): Promise<SessionEvidenceSummary>;
   getContextTimingSeries(sessionId: string, query?: AnalyticsQuery): Promise<ContextTimingSeries>;
@@ -428,6 +553,12 @@ export interface SessionEvidenceView {
   ): Promise<SessionValidationSummary>;
   getEvidencePages(sessionId: string, query?: AnalyticsQuery): Promise<EvidencePage>;
   getTranscriptPages(sessionId: string, query?: AnalyticsQuery): Promise<EvidencePage>;
+  getSessionEvents(sessionId: string, query?: AnalyticsQuery): Promise<SessionEventsDetail>;
+  getEventPayload(
+    sessionId: string,
+    payloadId: string,
+    query?: AnalyticsQuery,
+  ): Promise<SessionEventPayloadDetail | null>;
 }
 
 export interface ComponentEcosystemView {
@@ -464,6 +595,7 @@ export interface ProjectSessionSearchView {
 export interface MetadataView {
   getFilterMetadata(query?: AnalyticsQuery): Promise<FilterMetadata>;
   getCoverageExplanation(metricId: string, query?: AnalyticsQuery): Promise<CoverageExplanation>;
+  getDimensionDomains(query?: AnalyticsQuery): Promise<DimensionDomains>;
 }
 
 export interface AnalyticsDataSource {

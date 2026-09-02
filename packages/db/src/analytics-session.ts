@@ -1,7 +1,13 @@
 import type { SqliteExecutor, SqliteRow, SqliteTransaction } from '@lucasschirm/sal-db-core';
 import {
   ComponentIdentityStore,
+  DimensionDomainStore,
+  PAYLOAD_TRUNCATION_BYTES,
+  type RawInvocationEventRow,
+  type RawMessageEventRow,
+  type RawPayloadRef,
   SessionComponentStatStore,
+  SessionEventsDetailStore,
   SessionOutcomeStore,
   SourceTombstoneStore,
   ValidationStore,
@@ -27,6 +33,7 @@ import type {
   ContextTimingPoint,
   ContextTimingSeries,
   CoverageExplanation,
+  DimensionDomains,
   EvidencePage,
   EvidenceRow,
   FilterField,
@@ -40,6 +47,11 @@ import type {
   ProjectSessionSearchView,
   RootChildBreakdown,
   RootChildEntry,
+  SessionEventKind,
+  SessionEventPayloadDetail,
+  SessionEventPayloadSummary,
+  SessionEventRow,
+  SessionEventsDetail,
   SessionEvidenceSummary,
   SessionEvidenceView,
   SessionOutcomeDistribution,
@@ -445,6 +457,9 @@ export function createSessionEvidenceView(queryable: Queryable): SessionEvidence
     getValidationSummary: (sessionId, query) => getValidationSummary(queryable, sessionId, query),
     getEvidencePages: (sessionId, query) => getEvidencePages(queryable, sessionId, query),
     getTranscriptPages: (sessionId, query) => getTranscriptPages(queryable, sessionId, query),
+    getSessionEvents: (sessionId, query) => getSessionEvents(queryable, sessionId, query),
+    getEventPayload: (sessionId, payloadId, query) =>
+      getEventPayload(queryable, sessionId, payloadId, query),
   };
 }
 
@@ -1062,6 +1077,126 @@ async function getTranscriptPages(
     previousCursor: offset > 0 ? String(Math.max(0, offset - limit)) : undefined,
     generationToken: tokens.generationId,
     analysisReleaseToken: tokens.analysisReleaseId,
+  };
+}
+
+// Full-detail session events (issue #169)
+
+/** MCP-server calls are a `tool` sub-classification, never a distinct kind. */
+function invocationEventName(row: RawInvocationEventRow): string {
+  return row.displayName || row.nativeId || 'unknown';
+}
+
+function invocationEventTarget(row: RawInvocationEventRow): string | undefined {
+  return row.componentKind ?? undefined;
+}
+
+function summedKnownTokens(...refs: readonly (RawPayloadRef | null)[]): number | undefined {
+  let total: number | undefined;
+  for (const ref of refs) {
+    const known = ref?.exactTokens ?? ref?.estimatedTokens ?? undefined;
+    if (known !== undefined) total = (total ?? 0) + known;
+  }
+  return total;
+}
+
+function payloadSummaryFrom(ref: RawPayloadRef | null): SessionEventPayloadSummary | undefined {
+  if (!ref) return undefined;
+  const overCap = (ref.content?.length ?? 0) > PAYLOAD_TRUNCATION_BYTES;
+  const content = overCap
+    ? (ref.content as string).slice(0, PAYLOAD_TRUNCATION_BYTES)
+    : ref.content;
+  return {
+    payloadId: ref.payloadId,
+    content,
+    truncated: overCap || ref.storedTruncated,
+    sizeBytes: ref.sizeBytes ?? undefined,
+    tokens: ref.exactTokens ?? ref.estimatedTokens ?? undefined,
+  };
+}
+
+function invocationToEventRow(row: RawInvocationEventRow): SessionEventRow {
+  return {
+    id: row.id,
+    timestamp: formatTimestamp(row.createdAt),
+    turnNumber: row.turnOrdering ?? undefined,
+    kind: row.kind as SessionEventKind,
+    name: invocationEventName(row),
+    target: invocationEventTarget(row),
+    tokens: summedKnownTokens(row.inputPayload, row.resultPayload),
+    durationMs: row.latencyMs ?? undefined,
+    status: row.status,
+    inputPayload: payloadSummaryFrom(row.inputPayload),
+    resultPayload: payloadSummaryFrom(row.resultPayload),
+  };
+}
+
+function messageToEventRow(row: RawMessageEventRow): SessionEventRow {
+  const kind: SessionEventKind = row.role === 'user' ? 'user_message' : 'assistant_message';
+  return {
+    id: row.id,
+    timestamp: formatTimestamp(row.timestamp),
+    turnNumber: row.turnOrdering ?? undefined,
+    kind,
+    name: row.role,
+    status: 'completed',
+  };
+}
+
+function sortEventRows(events: readonly SessionEventRow[]): SessionEventRow[] {
+  return [...events].sort((a, b) => (a.timestamp ?? '').localeCompare(b.timestamp ?? ''));
+}
+
+async function getSessionEvents(
+  queryable: Queryable,
+  sessionId: string,
+  query: AnalyticsQuery | undefined,
+): Promise<SessionEventsDetail> {
+  const [invocationRows, messageRows] = await Promise.all([
+    SessionEventsDetailStore.listInvocationEvents(queryable, sessionId),
+    SessionEventsDetailStore.listMessageEvents(queryable, sessionId),
+  ]);
+  const events = sortEventRows([
+    ...invocationRows.map(invocationToEventRow),
+    ...messageRows
+      .filter((row) => row.role === 'user' || row.role === 'assistant')
+      .map(messageToEventRow),
+  ]);
+
+  const knownN = events.filter((event) => event.timestamp !== undefined).length;
+  const tokens = pageTokens(query, {
+    analysisReleaseId: query?.analysisReleaseId ?? 'unknown',
+    generationId: query?.generationId ?? 'unknown',
+    comparabilityGroupId: query?.comparabilityGroupId ?? 'session-events',
+  });
+  const token = makeToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    events.length,
+    knownN,
+    events.length - knownN,
+    'observed',
+    'session-events-0.1.0',
+    [evidenceLink('session', sessionId, 'Session events')],
+  );
+
+  return { token, sessionId, events };
+}
+
+async function getEventPayload(
+  queryable: Queryable,
+  _sessionId: string,
+  payloadId: string,
+  _query: AnalyticsQuery | undefined,
+): Promise<SessionEventPayloadDetail | null> {
+  const ref = await SessionEventsDetailStore.getPayloadContent(queryable, payloadId);
+  if (!ref) return null;
+  return {
+    payloadId: ref.payloadId,
+    content: ref.content,
+    sizeBytes: ref.sizeBytes ?? undefined,
+    tokens: ref.exactTokens ?? ref.estimatedTokens ?? undefined,
   };
 }
 
@@ -1874,7 +2009,42 @@ export function createMetadataView(queryable: Queryable): MetadataView {
   return {
     getFilterMetadata: (query) => getFilterMetadata(queryable, query),
     getCoverageExplanation: (metricId, query) => getCoverageExplanation(queryable, metricId, query),
+    getDimensionDomains: (query) => getDimensionDomains(queryable, query),
   };
+}
+
+async function getDimensionDomains(
+  queryable: Queryable,
+  query: AnalyticsQuery | undefined,
+): Promise<DimensionDomains> {
+  const portfolioId = await resolvePortfolioId(queryable, query);
+  const [projects, harnesses, models] = portfolioId
+    ? await Promise.all([
+        DimensionDomainStore.getProjectDomain(queryable, portfolioId),
+        DimensionDomainStore.getHarnessDomain(queryable, portfolioId),
+        DimensionDomainStore.getModelDomain(queryable, portfolioId),
+      ])
+    : [[], [], []];
+
+  const total = projects.length + harnesses.length + models.length;
+  const tokens = pageTokens(query, {
+    analysisReleaseId: query?.analysisReleaseId ?? 'unknown',
+    generationId: query?.generationId ?? 'unknown',
+    comparabilityGroupId: query?.comparabilityGroupId ?? 'dimension-domains',
+  });
+  const token = makeToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    total,
+    total,
+    0,
+    'observed',
+    'dimension-domains-0.1.0',
+    [evidenceLink('portfolio', portfolioId ?? 'unknown', 'Dimension domains')],
+  );
+
+  return { token, projects, harnesses, models };
 }
 
 async function getFilterMetadata(

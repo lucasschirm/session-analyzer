@@ -25,9 +25,11 @@ import type {
   OutlierRow,
   ProjectBehaviorSummary,
   ProjectBehaviorView,
+  SessionOutcomeDistribution,
   SessionTrendSeries,
   TimeSeriesPoint,
 } from './analytics.js';
+import { getSessionOutcomeDistribution } from './analytics-session.js';
 import {
   type BuildCohortInput,
   buildMatchedCohort,
@@ -898,5 +900,14 @@ export function createProjectBehaviorView(queryable: Queryable): ProjectBehavior
       getConfigurationTimeline(queryable, projectId, query),
     getOutliers: (projectId, query) => getOutliers(queryable, projectId, query),
     getComparisons: (projectId, query) => getComparisons(queryable, projectId, query),
+    getOutcomeMix: (projectId, query) => getOutcomeMix(queryable, projectId, query),
   };
+}
+
+function getOutcomeMix(
+  queryable: Queryable,
+  projectId: string,
+  query: AnalyticsQuery | undefined,
+): Promise<SessionOutcomeDistribution> {
+  return getSessionOutcomeDistribution(queryable, projectId, query);
 }

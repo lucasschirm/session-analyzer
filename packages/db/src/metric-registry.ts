@@ -286,6 +286,120 @@ export const SESSION_OUTCOME_METRIC_DEFINITION: InsertMetricDefinitionInput = {
   provenanceRequirement: 'final native event(s) per harness',
 };
 
+export const PORTFOLIO_SESSIONS_DELTA_METRIC_ID = 'portfolio:sessions_delta';
+export const PORTFOLIO_SESSIONS_DELTA_METRIC_VERSION = 1;
+
+/**
+ * Portfolio KPI-band sessions period-over-period delta (issue #169) — id
+ * `portfolio:sessions_delta`, version 1. Implemented:
+ * `PortfolioView.getKpiBand` / `getKpiBand` in `analytics-portfolio.ts`.
+ *
+ * - **Population**: sessions with a non-null `start_time` inside the query
+ *   window (`AnalyticsQuery.timeRange`). Sessions with no `start_time` are
+ *   excluded from both windows' counts, never coerced into either bucket.
+ * - **Missingness policy**: the "All" time preset has no `start` bound, so
+ *   there is no equal-length previous window to compare against —
+ *   `resolvePreviousWindow` returns `undefined` and the delta fields
+ *   (`PeriodDelta.previous`/`previousN`) are omitted entirely, never a
+ *   fabricated `0`/`0%` (`.agents/rules/missing-is-never-zero.md`). Covered
+ *   by `packages/db/tests/unit/analytics-datasource-169.test.ts`.
+ * - **Comparability**: both windows are equal-length (millisecond-epoch
+ *   arithmetic, DST/short-month safe) and read the same metric version.
+ */
+export const PORTFOLIO_SESSIONS_DELTA_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: PORTFOLIO_SESSIONS_DELTA_METRIC_ID,
+  version: PORTFOLIO_SESSIONS_DELTA_METRIC_VERSION,
+  label: 'Portfolio sessions period-over-period delta',
+  description: 'Session count in the query window compared to the equal-length prior window.',
+  family: 'session_shape',
+  measurementClass: 'derived',
+  unit: 'count',
+  valueType: 'integer',
+  grain: 'portfolio',
+  dimensions: [],
+  populationRule: 'start_time IS NOT NULL AND start_time IN [window.start, window.end)',
+  statusRule: 'committed',
+  aggregation: 'count',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'both',
+  provenanceRequirement: 'sessions.start_time',
+};
+
+export const INVOCATIONS_BY_DOMAIN_METRIC_ID = 'portfolio:invocations_by_domain';
+export const INVOCATIONS_BY_DOMAIN_METRIC_VERSION = 1;
+
+/**
+ * Portfolio invocations-by-domain metric (issue #169) — id
+ * `portfolio:invocations_by_domain`, version 1. **Registry documentation
+ * only as of this issue**: the query surface
+ * (`PortfolioView`/`ComponentEcosystemView`) is not wired up yet — see the
+ * issue #169 implementation report's deviations section. Recorded now so
+ * the domain rule and dimensions are fixed before any query is built.
+ *
+ * - **Population**: every row in `invocations` (`INVOCATION_KINDS` =
+ *   `tool | skill | agent | sub_agent` in
+ *   `packages/db-core/src/session-evidence.ts`) — exactly four canonical
+ *   domains, never five.
+ * - **MCP sub-classification rule** (`.agents/rules/analytics-domain-
+ *   distinctions.md`): an MCP-server invocation is stored as `kind =
+ *   'tool'` with a `component_identities.kind = 'mcp_server'` component. It
+ *   is counted once, inside the `tool` bucket. A consumer that wants the
+ *   MCP subset filters `tool` invocations by component kind — it must
+ *   never be added as a fifth chart series, and doing so would double-count
+ *   against the `tool` total.
+ */
+export const INVOCATIONS_BY_DOMAIN_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: INVOCATIONS_BY_DOMAIN_METRIC_ID,
+  version: INVOCATIONS_BY_DOMAIN_METRIC_VERSION,
+  label: 'Invocations by component domain',
+  description:
+    'Count of invocations grouped by the four canonical kinds (tool, skill, agent, ' +
+    'sub_agent); MCP-server calls are a sub-classification within tool, not a fifth domain.',
+  family: 'invocations',
+  measurementClass: 'observed',
+  unit: 'count',
+  valueType: 'integer',
+  grain: 'invocation',
+  dimensions: ['kind'],
+  populationRule: 'true',
+  statusRule: 'planned',
+  aggregation: 'count',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'both',
+  provenanceRequirement: 'invocations.kind',
+};
+
+/**
+ * Low-sample-size flag threshold for model×harness cohort rows (issue
+ * #169): a cohort with fewer than this many sessions is flagged low-n by
+ * consumers rather than treated as a statistically reliable comparison
+ * point. Centralized here (not in the UI) per
+ * `.agents/rules/aggregates-expose-sample-size.md`.
+ */
+export const MODEL_HARNESS_COHORT_LOW_N_THRESHOLD = 5;
+
+/**
+ * Session-duration histogram bin edges, in milliseconds (issue #169).
+ * Defined in the registry, not the UI, so the binning policy is versioned
+ * alongside the metric it backs. `SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS`
+ * has `n` edges producing `n - 1` bins; the last bin is open-ended (">= last
+ * edge"). Query implementation is tracked as a follow-up — see the issue
+ * #169 report.
+ */
+export const SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS = [
+  0,
+  60_000,
+  5 * 60_000,
+  15 * 60_000,
+  30 * 60_000,
+  60 * 60_000,
+  2 * 60 * 60_000,
+] as const;
+
 function buildPlannedMetricDefinitionInput(
   recipe: PlannedMetricRecipe,
 ): InsertMetricDefinitionInput {
