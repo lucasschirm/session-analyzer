@@ -10,6 +10,7 @@ import {
   SessionEventsDetailStore,
   SessionOutcomeStore,
   SourceTombstoneStore,
+  TurnTimelineStore,
   ValidationStore,
 } from '@lucasschirm/sal-db-core';
 import type {
@@ -59,6 +60,9 @@ import type {
   SessionTreeNode,
   SessionValidation,
   SessionValidationSummary,
+  TurnTimeline,
+  TurnTimelineSegment,
+  TurnTimelineSegmentKind,
 } from './analytics.js';
 import { ArtifactDiffRepository } from './artifact-diff.js';
 import type {
@@ -460,6 +464,7 @@ export function createSessionEvidenceView(queryable: Queryable): SessionEvidence
     getSessionEvents: (sessionId, query) => getSessionEvents(queryable, sessionId, query),
     getEventPayload: (sessionId, payloadId, query) =>
       getEventPayload(queryable, sessionId, payloadId, query),
+    getTurnTimeline: (sessionId, query) => getTurnTimeline(queryable, sessionId, query),
   };
 }
 
@@ -1197,6 +1202,167 @@ async function getEventPayload(
     content: ref.content,
     sizeBytes: ref.sizeBytes ?? undefined,
     tokens: ref.exactTokens ?? ref.estimatedTokens ?? undefined,
+  };
+}
+
+// Turn timeline (issue #169)
+
+/** An event placed on the timeline track, reduced to a single instant in time. */
+interface TimelineInstant {
+  readonly kind: TurnTimelineSegmentKind;
+  readonly startMs: number;
+  readonly invocationKind?: 'tool' | 'skill' | 'agent';
+  readonly sourceId: string;
+}
+
+function invocationTimelineKind(kind: string): TurnTimelineSegmentKind {
+  return kind === 'sub_agent' ? 'sub_agent' : 'invocation';
+}
+
+function invocationTimelineSubKind(kind: string): 'tool' | 'skill' | 'agent' | undefined {
+  return kind === 'tool' || kind === 'skill' || kind === 'agent' ? kind : undefined;
+}
+
+function instantsFromInvocations(rows: readonly RawInvocationEventRow[]): TimelineInstant[] {
+  return rows.map((row) => ({
+    kind: invocationTimelineKind(row.kind),
+    startMs: row.createdAt,
+    invocationKind: invocationTimelineSubKind(row.kind),
+    sourceId: row.id,
+  }));
+}
+
+function instantsFromMessages(rows: readonly RawMessageEventRow[]): TimelineInstant[] {
+  const instants: TimelineInstant[] = [];
+  for (const row of rows) {
+    if (row.role !== 'user' && row.role !== 'assistant') continue;
+    if (row.timestamp === null) continue;
+    instants.push({ kind: row.role, startMs: row.timestamp, sourceId: row.id });
+  }
+  return instants;
+}
+
+/**
+ * Resolves the timeline's outer bounds (issue #169). Prefers the session's
+ * own recorded `start_time`/`end_time`; when either is missing, falls back
+ * to the min/max instant timestamp so the timeline can still be built from
+ * whatever evidence exists. Returns `null` only when there is neither a
+ * session bound nor a single timestamped instant to anchor the timeline.
+ */
+function resolveTimelineBounds(
+  instants: readonly TimelineInstant[],
+  sessionStart: number | null,
+  sessionEnd: number | null,
+): { start: number; end: number } | null {
+  if (instants.length === 0) {
+    if (sessionStart === null || sessionEnd === null) return null;
+    return { start: sessionStart, end: sessionEnd };
+  }
+  const starts = instants.map((i) => i.startMs);
+  const instantMin = Math.min(...starts);
+  const instantMax = Math.max(...starts);
+  const start = sessionStart === null ? instantMin : Math.min(sessionStart, instantMin);
+  const end = sessionEnd === null ? instantMax : Math.max(sessionEnd, instantMax);
+  return { start, end };
+}
+
+/**
+ * Builds the ordered, non-overlapping turn-timeline segments (issue #169)
+ * from the sorted instants and the resolved outer bounds.
+ *
+ * **Gap-filling policy (consecutive-boundary attribution, folded forward):**
+ * segment `i` starts where instant `i` starts and ends where instant `i+1`
+ * starts (the last segment ends at `bounds.end`); any lead-in gap before the
+ * first instant is folded backward into the first segment by starting it at
+ * `bounds.start`. This guarantees `sum(durationMs) === bounds.end -
+ * bounds.start` by construction — see the invariant unit test in
+ * `packages/db/tests/unit/turn-timeline-169.test.ts`.
+ *
+ * A silent gap between two recorded events (e.g. the interval after a tool
+ * call ends and before the next assistant turn begins) is real elapsed idle
+ * time with no recorded activity — nothing failed to be captured, there was
+ * simply nothing to capture. That is a *layout* choice, not an instance of
+ * `.agents/rules/missing-is-never-zero.md` (which governs metric *values*,
+ * not this derived timeline's segment widths). A 5th "idle" band was
+ * considered and rejected: the segment `kind` vocabulary is fixed to the
+ * four domains named in the issue, and
+ * `.agents/rules/analytics-domain-distinctions.md` forbids inventing a
+ * fifth domain — folding the gap into the preceding segment keeps the
+ * vocabulary closed while still covering the full session duration.
+ *
+ * Concurrent invocations (e.g. two tool calls overlapping in wall-clock
+ * time) are laid out sequentially by start time on this single track — a
+ * documented simplification; this DTO does not model concurrency lanes.
+ */
+function buildTurnTimelineSegments(
+  instants: readonly TimelineInstant[],
+  bounds: { start: number; end: number },
+): TurnTimelineSegment[] {
+  const sorted = [...instants].sort((a, b) => a.startMs - b.startMs);
+  return sorted.map((instant, i) => {
+    const segmentStart = i === 0 ? bounds.start : instant.startMs;
+    const segmentEnd = i === sorted.length - 1 ? bounds.end : sorted[i + 1].startMs;
+    return {
+      kind: instant.kind,
+      startMs: segmentStart,
+      durationMs: Math.max(0, segmentEnd - segmentStart),
+      invocationKind: instant.invocationKind,
+      sourceId: instant.sourceId,
+    };
+  });
+}
+
+function turnTimelineToken(
+  query: AnalyticsQuery | undefined,
+  sessionId: string,
+  eligibleN: number,
+  knownN: number,
+): AnalyticsToken {
+  const tokens = pageTokens(query, {
+    analysisReleaseId: query?.analysisReleaseId ?? 'unknown',
+    generationId: query?.generationId ?? 'unknown',
+    comparabilityGroupId: query?.comparabilityGroupId ?? 'turn-timeline',
+  });
+  return makeToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    eligibleN,
+    knownN,
+    eligibleN - knownN,
+    'derived',
+    'turn-timeline-0.1.0',
+    [evidenceLink('session', sessionId, 'Turn timeline')],
+  );
+}
+
+async function getTurnTimeline(
+  queryable: Queryable,
+  sessionId: string,
+  query: AnalyticsQuery | undefined,
+): Promise<TurnTimeline> {
+  const [invocationRows, messageRows, window] = await Promise.all([
+    SessionEventsDetailStore.listInvocationEvents(queryable, sessionId),
+    SessionEventsDetailStore.listMessageEvents(queryable, sessionId),
+    TurnTimelineStore.getSessionWindow(queryable, sessionId),
+  ]);
+  const instants = [
+    ...instantsFromInvocations(invocationRows),
+    ...instantsFromMessages(messageRows),
+  ];
+  const bounds = resolveTimelineBounds(
+    instants,
+    window?.startTime ?? null,
+    window?.endTime ?? null,
+  );
+  const segments = bounds ? buildTurnTimelineSegments(instants, bounds) : [];
+  const eligibleN = invocationRows.length + messageRows.length;
+  const token = turnTimelineToken(query, sessionId, eligibleN, instants.length);
+  return {
+    token,
+    sessionId,
+    segments,
+    totalDurationMs: bounds ? bounds.end - bounds.start : null,
   };
 }
 

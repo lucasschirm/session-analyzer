@@ -243,6 +243,72 @@ export interface ModelHarnessCohortPage extends CursorPage<ModelHarnessCohort> {
 
 export interface ProjectListPage extends CursorPage<ProjectListItem> {}
 
+/**
+ * Per-project token totals for a project-leaderboard row (issue #169). Same
+ * missingness policy as {@link PortfolioTokenTotals}: `inputKnownN`/
+ * `outputKnownN` are each the count of requests with a known value on that
+ * side, never inflated by the other side's coverage
+ * (`.agents/rules/missing-is-never-zero.md`).
+ */
+export interface ProjectTokenTotals {
+  readonly inputTokens: number;
+  readonly inputKnownN: number;
+  readonly outputTokens: number;
+  readonly outputKnownN: number;
+}
+
+/**
+ * Per-project clean-completion rate for a leaderboard row (issue #169),
+ * reusing the `portfolio:clean_completion_rate` formula (`cleanN / knownN`)
+ * at project grain — see `PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION`
+ * in `metric-registry.ts`. `value` is `null`, never `0`, when `knownN` is 0.
+ */
+export interface ProjectCleanRate {
+  readonly value: number | null;
+  readonly eligibleN: number;
+  readonly knownN: number;
+}
+
+/**
+ * One day's session count in a project's 30-day trend sparkline (issue
+ * #169). Every day inside the trend window is present in `series`, even
+ * when a project had 0 sessions that day — a real observed zero, distinct
+ * from the *window itself* being unavailable (which is instead an empty
+ * `series` array on {@link ProjectLeaderboardRow}, only when the project's
+ * window bounds could not be resolved at all).
+ */
+export interface ProjectTrendPoint {
+  readonly day: string;
+  readonly sessionCount: number;
+}
+
+/**
+ * One row of the portfolio project leaderboard (issue #169): sessions,
+ * tokens, clean rate, last-active, and a 30-day session-count trend per
+ * project. `lastActiveAt` is omitted (never a fabricated timestamp) for a
+ * project with no session start time recorded yet.
+ */
+export interface ProjectLeaderboardRow {
+  readonly projectId: string;
+  readonly name: string;
+  readonly sessionCount: number;
+  readonly tokens: ProjectTokenTotals;
+  readonly cleanRate: ProjectCleanRate;
+  readonly lastActiveAt?: string;
+  readonly trend: readonly ProjectTrendPoint[];
+}
+
+/**
+ * Full project-leaderboard DTO (issue #169). `rows` includes every project
+ * in the portfolio — a project with zero sessions in the query window still
+ * gets a row with `sessionCount: 0` (a real measured zero), never an
+ * omitted row (`.agents/rules/missing-is-never-zero.md`).
+ */
+export interface ProjectLeaderboard {
+  readonly token: AnalyticsToken;
+  readonly rows: readonly ProjectLeaderboardRow[];
+}
+
 export interface ProjectBehaviorSummary {
   readonly token: AnalyticsToken;
   readonly headlineMetrics: readonly MetricValueDto[];
@@ -701,6 +767,55 @@ export interface SessionEventPayloadDetail {
 }
 
 /**
+ * `kind` vocabulary for a turn-timeline segment (issue #169). Tool/Skill/
+ * Agent wall-clock time is combined into a single `invocation` band — the
+ * band is never labelled with the specific domain name, which would
+ * conflate Tool/Skill/Agent (`.agents/rules/analytics-domain-distinctions.md`).
+ * The specific underlying kind is carried on `TurnTimelineSegment.invocationKind`
+ * so a tooltip can show it without the band label doing so. `sub_agent` is
+ * always its own band — sub-session time is never folded into `invocation`.
+ */
+export type TurnTimelineSegmentKind = 'user' | 'assistant' | 'invocation' | 'sub_agent';
+
+/**
+ * One ordered, non-overlapping segment of the turn timeline (issue #169).
+ * Segments are laid out on a single track in start-time order and are built
+ * to exactly partition `[bounds.start, bounds.end]` — see the gap-filling
+ * policy documented on `buildTurnTimelineSegments`
+ * (`packages/db/src/analytics-session.ts`). `durationMs` is therefore a
+ * *layout width*, not the underlying event's own measured latency (which
+ * remains separately nullable on `SessionEventRow.durationMs`); concurrent
+ * invocations are laid out sequentially by start time on this single track,
+ * a documented simplification.
+ */
+export interface TurnTimelineSegment {
+  readonly kind: TurnTimelineSegmentKind;
+  readonly startMs: number;
+  readonly durationMs: number;
+  /** Only set on `kind: 'invocation'` segments. */
+  readonly invocationKind?: 'tool' | 'skill' | 'agent';
+  /** The underlying invocation/message id this segment was built from. */
+  readonly sourceId: string;
+}
+
+/**
+ * Full turn-timeline DTO (issue #169). `token.eligibleN` is every
+ * turns/messages/invocations row considered; `token.knownN` is the subset
+ * with a resolvable start time and therefore placed into a segment. An
+ * empty `segments` array is a legitimate "no timestamped evidence yet"
+ * state, distinguishable from a query failure via the token/coverage
+ * machinery (`.agents/rules/no-silent-empty-states.md`). `totalDurationMs`
+ * is `null` only when neither the session's recorded start/end nor any
+ * timestamped event exists to bound the timeline.
+ */
+export interface TurnTimeline {
+  readonly token: AnalyticsToken;
+  readonly sessionId: string;
+  readonly segments: readonly TurnTimelineSegment[];
+  readonly totalDurationMs: number | null;
+}
+
+/**
  * Distinct dimension-value lists observed over the *unfiltered* store for a
  * portfolio (issue #169) — backs the filter-bar chips. An empty list is a
  * legitimate "nothing observed yet", not an error.
@@ -733,6 +848,8 @@ export interface PortfolioView {
   getSessionsByModel(query: AnalyticsQuery): Promise<SessionsByModelBar>;
   getModelHarnessMatrix(query: AnalyticsQuery): Promise<ModelHarnessMatrix>;
   getInvocationsByDomain(query: AnalyticsQuery): Promise<InvocationsByDomain>;
+  /** Project leaderboard rows: sessions, tokens, clean rate, last-active, 30d trend (issue #169). */
+  getProjectLeaderboard(query: AnalyticsQuery): Promise<ProjectLeaderboard>;
 }
 
 export interface ProjectBehaviorView {
@@ -794,6 +911,8 @@ export interface SessionEvidenceView {
     payloadId: string,
     query?: AnalyticsQuery,
   ): Promise<SessionEventPayloadDetail | null>;
+  /** Ordered turn-timeline segments (issue #169) — see `TurnTimeline`. */
+  getTurnTimeline(sessionId: string, query?: AnalyticsQuery): Promise<TurnTimeline>;
 }
 
 export interface ComponentEcosystemView {
