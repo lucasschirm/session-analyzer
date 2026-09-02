@@ -83,9 +83,11 @@ Claude Code plugin that bundles the sync engine.
 │   │   ├── vitest.config.ts      # Vitest test configuration (coverage thresholds)
 │   │   └── playwright.config.ts  # Playwright E2E configuration (chromium)
 │   ├── parsers/
-│   │   └── claude-session-parser/  # @lucasschirm/sal-claude-session-parser
-│   │       ├── src/                # Pure, dependency-free Claude Code parser
-│   │       └── tests/              # Parser unit tests
+│   │   ├── claude-session-parser/  # @lucasschirm/sal-claude-session-parser
+│   │   │   ├── src/                # Pure, dependency-free Claude Code parser
+│   │   │   └── tests/              # Parser unit tests
+│   │   └── devin-session-parser/   # @lucasschirm/sal-devin-session-parser
+│   │       └── src/                # Pure, dependency-free Devin CLI parser (jsonl/atif/models/schema-descriptor), tests colocated
 │   ├── sync/                       # @lucasschirm/sal-sync
 │   │   ├── src/                    # Session data sync engine (harness-agnostic)
 │   │   └── tests/                  # Sync engine unit tests
@@ -129,6 +131,7 @@ The monorepo also contains the analytics data platform packages:
 - `packages/transformer/` (`@lucasschirm/sal-transformer`) — Pure, deterministic transformer plugin registry and conformance suite.
 - `packages/sync-core/` (`@lucasschirm/sal-sync-core`) — Shared manifest and sync contract types.
 - `packages/parsers/claude-session-parser/` (`@lucasschirm/sal-claude-session-parser`) — Pure Claude Code session parser.
+- `packages/parsers/devin-session-parser/` (`@lucasschirm/sal-devin-session-parser`) — Pure, dependency-free Devin CLI parser: `devin-session-jsonl/v1` lines, ATIF v1.7 native transcripts, `models.json` (DS-F4-forward-compatible three-state pricing), and `schema-descriptor.json`. No SQLite/SQL; never depends on `db-core`/`db`/`packages/plugins/*`.
 - `packages/plugins/claude-session-sync/` (`@lucasschirm/claude-session-sync`) — Claude Code plugin bundles for the sync engine.
 - `packages/plugins/devin-session-sync/` (`@lucasschirm/devin-session-sync`) — Devin CLI plugin adapter; currently hosts the `sessions.db` -> `devin-session-jsonl/v1` extractor (`src/extractor/`), read-only via `node:sqlite` (see the `sql-only-in-db-core` carve-out). Plugin manifest/hooks/CLI land separately.
 
