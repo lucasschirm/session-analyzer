@@ -1,5 +1,4 @@
 import { expect, type Page, test } from '@playwright/test';
-import { assertErrorBoundary } from './helpers/chart-content';
 
 const HANGING_PROJECT = 'UX009Hang';
 
@@ -113,17 +112,21 @@ test.describe('UX-009: query hang bounded', () => {
       timeout: 15_000,
     });
 
-    // The "Cost / time / outcome distributions" chart derives its state from
-    // the summary query, so it transitions to the error state with the summary.
-    const distributionChart = page
-      .locator('.section', { hasText: 'Cost / time / outcome distributions' })
-      .locator('analytics-chart');
+    // The Overview section derives its state from the summary query, so it
+    // transitions to the error state when the summary query times out.
+    const overviewSection = page.locator('.section', { hasText: 'Overview' });
 
     await expect(page.getByText(/analytics query timed out after 30000ms/)).toBeVisible({
       timeout: 35_000,
     });
 
-    await expect(() => assertErrorBoundary(distributionChart)).toPass({ timeout: 5_000 });
+    // The error affordance must appear inside the Overview section (not just
+    // as a floating toast), proving the panel surfaced the bounded timeout
+    // instead of an indefinite loading spinner.
+    await expect(overviewSection.locator('.error')).toContainText(
+      /analytics query timed out after 30000ms/,
+      { timeout: 5_000 },
+    );
     await expect(page.getByText('Loading project behavior…')).toBeHidden();
   });
 });

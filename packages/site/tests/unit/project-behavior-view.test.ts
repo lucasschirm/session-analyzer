@@ -265,7 +265,7 @@ describe('project-behavior-view', () => {
     const root = view.shadowRoot as ShadowRoot;
 
     expect(root.textContent).toContain('Configuration timeline');
-    const chart = root.querySelectorAll('analytics-chart')[3] as LitElement;
+    const chart = root.querySelectorAll('analytics-chart')[2] as LitElement;
     const chartRoot = chart.shadowRoot as ShadowRoot;
     const echarts = chartRoot.querySelector('echarts-base') as LitElement;
     expect(echarts).not.toBeNull();

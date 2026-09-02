@@ -46,7 +46,20 @@ export function stripScopeSuffix(label: string): string {
 /** tryMetricIdToLabel with the scope suffix stripped. */
 export function metricLabel(metricId: string, fallback?: string): string {
   const raw = tryMetricIdToLabel(metricId) ?? fallback ?? metricId;
-  return stripScopeSuffix(raw);
+  const stripped = stripScopeSuffix(raw);
+  // The duration metric is stored in minutes; surface the unit in the label
+  // so chart axes and tooltips read "Session duration (min)".
+  if (/^claude:duration:wall_ms/.test(metricId)) return 'Session duration (min)';
+  return stripped;
+}
+
+/**
+ * Returns true when the metric is the wall-clock duration metric, so chart
+ * helpers can round displayed values to 0 decimals (minutes are integers in
+ * practice and fractional minutes add noise).
+ */
+export function isDurationMetric(metricId: string): boolean {
+  return /^claude:duration:wall_ms/.test(metricId);
 }
 
 /**
@@ -117,7 +130,7 @@ export function trendToChartSeries(
   const filtered = filterByScope(trend.series, scope).filter((p) => !isTokenMetric(p.metricId));
   const buckets: ChartBucket[] = filtered.map((p) => ({
     x: p.time,
-    y: p.value,
+    y: isDurationMetric(p.metricId) && p.value !== null ? Math.round(p.value) : p.value,
     label: `${p.time}: ${formatChartValue(p.value)}`,
     series: metricLabel(p.metricId, p.label),
   }));
@@ -159,12 +172,12 @@ export function componentUtilizationToChartSeries(
   params?: PortfolioParams,
 ): ChartSeries {
   const buckets: ChartBucket[] = page.items.map((row: ComponentUtilizationRow) => ({
-    x: row.componentId,
+    x: row.name || row.componentId,
     y: row.sessionCount,
-    label: `${row.componentId} (${row.kind})`,
+    label: `${row.name || row.componentId} (${row.kind})`,
     series: row.kind,
     evidenceLink: {
-      label: `Open ${row.componentId}`,
+      label: `Open ${row.name || row.componentId}`,
       href: componentHref(row.componentId, {
         project: params?.project,
         harness: params?.harness,

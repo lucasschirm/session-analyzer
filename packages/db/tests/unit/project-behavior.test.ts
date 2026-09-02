@@ -300,27 +300,31 @@ describe('project-behavior', () => {
     );
   });
 
-  it('returns project behavior summary from distributions', async () => {
+  it('returns project behavior summary from daily rollups', async () => {
     const statPolicyId = await createStatisticalPolicy(executor);
     const defId = await createMetricDefinition(executor, {
       metricId: 'm-duration',
       statisticalPolicyId: statPolicyId,
-      aggregation: 'distribution',
+      aggregation: 'sum',
       valueType: 'real',
       unit: 'ms',
     });
 
-    const beforeTime = BASE_TIME - 86_400_000;
-    const afterTime = BASE_TIME;
-    await createSession(executor, 'se-1', 'sess-1', beforeTime);
+    await createSession(executor, 'se-1', 'sess-1', BASE_TIME);
     await createGeneration(executor, 'se-1', 'gen-1');
-    await createSession(executor, 'se-2', 'sess-2', afterTime);
-    await createGeneration(executor, 'se-2', 'gen-2');
 
     await createRealMetricValue(executor, defId, 'gen-1', 'se-1', 100, 'mv-1');
-    await createRealMetricValue(executor, defId, 'gen-2', 'se-2', 120, 'mv-2');
 
-    await rebuildProjectDistributions(executor, PROJECT_ID, ANALYSIS_RELEASE_ID, 'gen-1');
+    await applyRollupsForSession(executor, 'se-1', 'gen-1');
+    await executor.transaction(async (tx) => {
+      await rebuildProjectPortfolioRollups(
+        tx,
+        PROJECT_ID,
+        PORTFOLIO_ID,
+        ANALYSIS_RELEASE_ID,
+        'gen-1',
+      );
+    });
 
     const summary = await getProjectBehaviorSummary(executor, PROJECT_ID, {
       analysisReleaseId: ANALYSIS_RELEASE_ID,

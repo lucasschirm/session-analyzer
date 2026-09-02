@@ -11,13 +11,21 @@ import type {
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import { formatFullNumber } from '../../lib/format';
-import { filterByScope, isTokenMetric, metricLabel } from '../portfolio/portfolio-chart-helpers';
+import {
+  filterByScope,
+  isDurationMetric,
+  isTokenMetric,
+  metricLabel,
+} from '../portfolio/portfolio-chart-helpers';
 import type { SessionsScope } from '../portfolio/portfolio-params';
 import type { ProjectBehaviorParams } from './project-behavior-params';
 import { evidenceLinkHref } from './project-behavior-params';
 
 export function formatMetricValue(metric: MetricValueDto | undefined): string {
   if (!metric) return '—';
+  if (isDurationMetric(metric.metricId) && metric.value !== null) {
+    return formatChartValue(Math.round(metric.value), metric.unit);
+  }
   return formatChartValue(metric.value, metric.unit);
 }
 
@@ -59,7 +67,7 @@ export function sessionTrendToChartSeries(
   const filtered = filterByScope(trend.series, scope).filter((p) => !isTokenMetric(p.metricId));
   const buckets: ChartBucket[] = filtered.map((p) => ({
     x: p.time,
-    y: p.value,
+    y: isDurationMetric(p.metricId) && p.value !== null ? Math.round(p.value) : p.value,
     label: `${p.time}: ${formatChartValue(p.value)}`,
     series: metricLabel(p.metricId, p.label),
   }));
@@ -92,29 +100,6 @@ export function sessionTokenTrendToChartSeries(
     chartType: 'time_series',
     xLabel: 'Time',
     yLabel: 'Tokens',
-    buckets,
-  };
-}
-
-export function headlineMetricsToDistributionSeries(summary: ProjectBehaviorSummary): ChartSeries {
-  const buckets: ChartBucket[] = summary.headlineMetrics
-    .filter((m) => m.value !== null)
-    .map((m) => {
-      const label = metricLabel(m.metricId, m.label);
-      return {
-        x: label,
-        y: m.value,
-        label: `${label}: ${formatChartValue(m.value, m.unit)}`,
-        series: m.metricId,
-      };
-    });
-
-  return {
-    seriesId: 'metric-distributions',
-    label: 'Cost / time / outcome distributions',
-    chartType: 'histogram',
-    xLabel: 'Metric',
-    yLabel: 'Value',
     buckets,
   };
 }

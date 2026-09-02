@@ -19,7 +19,6 @@ import {
   comparisonPageToRows,
   configurationTimelineToChartSeries,
   formatMetricValue,
-  headlineMetricsToDistributionSeries,
   type MetricCardView,
   type OutlierRowView,
   outlierPageToRows,
@@ -61,8 +60,8 @@ function panelStateFromResult<T>(
  * Project Behavior analytics view.
  *
  * Renders from the AnalyticsDataSource DTOs: session-to-session context growth,
- * cost/time/outcome distributions, a configuration timeline, matched cohorts,
- * and outliers. It does not import SQL types or compute canonical metrics.
+ * a configuration timeline, matched cohorts, and outliers. It does not import
+ * SQL types or compute canonical metrics.
  */
 @customElement('project-behavior-view')
 export class ProjectBehaviorPage extends LitElement {
@@ -513,7 +512,12 @@ export class ProjectBehaviorPage extends LitElement {
 
   private renderOverview() {
     if (this.summary.state === 'error') {
-      return html`<div class="error">${this.summary.error}</div>`;
+      return html`
+        <div class="section">
+          <h2>Overview</h2>
+          <div class="error">${this.summary.error}</div>
+        </div>
+      `;
     }
     if (!this.summary.data) {
       return html`
@@ -579,23 +583,6 @@ export class ProjectBehaviorPage extends LitElement {
           .series=${series}
           .state=${this.chartState(this.trends.state)}
           style="margin-top: 24px;"
-        ></analytics-chart>
-      </div>
-    `;
-  }
-
-  private renderDistributions() {
-    const series: ChartSeries | null = this.summary.data
-      ? headlineMetricsToDistributionSeries(this.summary.data)
-      : null;
-    return html`
-      <div class="section">
-        <h2>Cost / time / outcome distributions</h2>
-        <analytics-chart
-          title="Cost / time / outcome distributions"
-          description="How cost, wall-clock duration, and outcome metrics are distributed across sessions in this project, highlighting typical ranges and outliers."
-          .series=${series}
-          .state=${this.chartState(this.summary.state)}
         ></analytics-chart>
       </div>
     `;
@@ -747,7 +734,6 @@ export class ProjectBehaviorPage extends LitElement {
         ${this.loading ? html`<p class="notice">Loading project behavior…</p>` : ''}
         ${this.renderOverview()}
         ${this.renderTrends()}
-        ${this.renderDistributions()}
         ${this.renderConfigurationTimeline()}
         ${this.renderCohorts()}
         ${this.renderOutliers()}

@@ -1828,3 +1828,47 @@ export const syncManager = new SyncManager({
     }
   },
 });
+
+// Surface analytics auto-reprocessing events (emitted by the analytics worker
+// on boot when the stored processing version is older than the current
+// version) as toasts so the user knows the dashboard is being updated.
+let reprocessToastId: string | null = null;
+
+analyticsClient.addEventListener('reprocess-started', ((event: Event) => {
+  const detail = (event as CustomEvent).detail as { reason: string };
+  reprocessToastId = toastManager.info(detail.reason ?? 'Updating analytics data…', {
+    message: 'Reprocessing existing sessions with the latest analytics logic.',
+  });
+}) as EventListener);
+
+analyticsClient.addEventListener('reprocess-progress', ((event: Event) => {
+  const detail = (event as CustomEvent).detail as {
+    step: string;
+    completed: number;
+    total: number;
+  };
+  const pct = detail.total > 0 ? Math.round((detail.completed / detail.total) * 100) : 0;
+  if (reprocessToastId) {
+    toastManager.dismiss(reprocessToastId);
+  }
+  reprocessToastId = toastManager.info(`${detail.step}: ${pct}%`, {
+    message: 'Reprocessing existing sessions with the latest analytics logic.',
+  });
+}) as EventListener);
+
+analyticsClient.addEventListener('reprocess-completed', ((event: Event) => {
+  const detail = (event as CustomEvent).detail as { ok: boolean; error?: string };
+  if (reprocessToastId) {
+    toastManager.dismiss(reprocessToastId);
+  }
+  reprocessToastId = null;
+  if (detail.ok) {
+    toastManager.success('Analytics data updated', {
+      message: 'All sessions have been reprocessed with the latest analytics logic.',
+    });
+  } else {
+    toastManager.error('Analytics update failed', {
+      message: detail.error ?? 'An error occurred during reprocessing.',
+    });
+  }
+}) as EventListener);
