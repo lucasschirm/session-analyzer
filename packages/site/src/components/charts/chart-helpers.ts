@@ -1,4 +1,11 @@
 import { formatCompactNumber } from '../../lib/format';
+import {
+  borderTokens,
+  inkTokens,
+  rampTokens,
+  seriesTokens,
+  surfaceTokens,
+} from '../../styles/tokens';
 import type { ChartBucket, ChartSeries, EChartsCoreOption } from './chart-types';
 
 function sortedUnique<T>(items: T[]): T[] {
@@ -16,21 +23,54 @@ function groupBySeries(buckets: readonly ChartBucket[]): Map<string, ChartBucket
   return groups;
 }
 
-const LEGEND_TEXT_COLOR = '#c4cad6';
-const AXIS_TEXT_COLOR = '#9aa4b2';
+// Every color used by these option builders comes from `styles/tokens.ts` —
+// echarts cannot resolve `var(--rd-*)` CSS custom properties, so this module
+// is the one place literal hex values are allowed outside the token module.
+const TOOLTIP_SURFACE = surfaceTokens.surfaceRowHover; // #1f2531
+const TOOLTIP_BORDER = borderTokens.borderEmphasis2; // #3a4150
+const AXIS_TEXT_COLOR = inkTokens.inkFaint; // #7d8794
+const GRIDLINE_COLOR = borderTokens.border2; // #232936
+const BASELINE_COLOR = borderTokens.borderEmphasis; // #313947
+const LEGEND_TEXT_COLOR = inkTokens.inkSecondary; // #c9d4e3
+const TRACK_COLOR = borderTokens.border1; // #20242e
+
+function hashEntityId(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+/**
+ * Assigns a stable categorical color to a series/entity id from the five
+ * validated palette slots. The color is a pure function of the id — never of
+ * the id's position among currently-visible series — so removing a series
+ * from the input never repaints the remaining series' colors.
+ */
+export function colorForEntity(id: string): string {
+  const key = id || 'value';
+  const slot = hashEntityId(key) % seriesTokens.length;
+  return seriesTokens[slot] as string;
+}
 
 const baseGrid = { left: '3%', right: '4%', bottom: '3%', containLabel: true };
 const baseTooltip = {
   trigger: 'axis',
-  backgroundColor: '#1f242e',
-  borderColor: '#3a4150',
-  textStyle: { color: '#e6e9ef' },
+  backgroundColor: TOOLTIP_SURFACE,
+  borderColor: TOOLTIP_BORDER,
+  textStyle: { color: inkTokens.inkPrimary },
+  axisPointer: {
+    type: 'cross',
+    label: { backgroundColor: TOOLTIP_BORDER },
+    crossStyle: { color: BASELINE_COLOR },
+  },
 };
 const baseLegend = {
   type: 'plain',
   top: 0,
   textStyle: { color: LEGEND_TEXT_COLOR },
-  inactiveColor: '#4a5260',
+  inactiveColor: AXIS_TEXT_COLOR,
   pageTextStyle: { color: LEGEND_TEXT_COLOR },
 };
 const baseXAxis = {
@@ -38,8 +78,8 @@ const baseXAxis = {
   nameLocation: 'middle',
   nameGap: 24,
   axisLabel: { color: AXIS_TEXT_COLOR },
-  axisLine: { lineStyle: { color: '#3a4150' } },
-  splitLine: { lineStyle: { color: '#252b36' } },
+  axisLine: { lineStyle: { color: BASELINE_COLOR } },
+  splitLine: { lineStyle: { color: GRIDLINE_COLOR } },
   nameTextStyle: { color: AXIS_TEXT_COLOR },
 };
 const baseYAxis = {
@@ -47,8 +87,8 @@ const baseYAxis = {
   nameLocation: 'middle',
   nameGap: 36,
   axisLabel: { color: AXIS_TEXT_COLOR },
-  axisLine: { lineStyle: { color: '#3a4150' } },
-  splitLine: { lineStyle: { color: '#252b36' } },
+  axisLine: { lineStyle: { color: BASELINE_COLOR } },
+  splitLine: { lineStyle: { color: GRIDLINE_COLOR } },
   nameTextStyle: { color: AXIS_TEXT_COLOR },
 };
 const baseDataZoom = [
@@ -63,25 +103,70 @@ const baseDataZoom = [
   },
 ];
 
+/** Legend is shown only for 2+ distinct series; a single series is titled instead. */
+function legendFor(groupCount: number): typeof baseLegend | undefined {
+  return groupCount >= 2 ? baseLegend : undefined;
+}
+
+/**
+ * Builds a `markPoint` that draws a single emphasis dot on the last
+ * non-null value of a line series, colored to match the series (never a
+ * status color — status tokens are reserved for outcome encodings).
+ */
+function lastPointMarker(
+  xAxisData: string[],
+  byX: Map<string, number | null>,
+  color: string,
+): Record<string, unknown> | undefined {
+  for (let i = xAxisData.length - 1; i >= 0; i--) {
+    const x = xAxisData[i] as string;
+    const y = byX.get(x);
+    if (y !== null && y !== undefined) {
+      return {
+        symbol: 'circle',
+        symbolSize: 8,
+        animation: false,
+        label: { show: false },
+        itemStyle: { color, borderColor: TOOLTIP_SURFACE, borderWidth: 2 },
+        data: [{ coord: [x, y] }],
+      };
+    }
+  }
+  return undefined;
+}
+
 function buildSeries(
   type: 'line' | 'bar',
   xAxisData: string[],
   groups: Map<string, ChartBucket[]>,
   stacked = false,
   area = false,
+  areaOpacity = 0.13,
 ): unknown[] {
   return Array.from(groups.entries())
     .sort(([a], [b]) => (a || '').localeCompare(b || ''))
     .map(([name, buckets]) => {
       const byX = new Map(buckets.map((b) => [String(b.x), b.y]));
-      return {
+      const color = colorForEntity(name || 'value');
+      const data = xAxisData.map((x) => byX.get(x) ?? null);
+      const base: Record<string, unknown> = {
         name: name || 'value',
         type,
         stack: stacked ? 'total' : undefined,
-        areaStyle: area ? {} : undefined,
+        itemStyle: { color },
         emphasis: { focus: 'series' },
-        data: xAxisData.map((x) => byX.get(x) ?? null),
+        data,
       };
+      if (type === 'line') {
+        base.lineStyle = { color, width: 2 };
+        base.showSymbol = false;
+        base.symbol = 'circle';
+        if (area) {
+          base.areaStyle = { color, opacity: areaOpacity };
+        }
+        base.markPoint = lastPointMarker(xAxisData, byX, color);
+      }
+      return base;
     });
 }
 
@@ -91,7 +176,7 @@ function timeSeriesOption(series: ChartSeries): EChartsCoreOption {
   return {
     aria: { enabled: true },
     tooltip: baseTooltip,
-    legend: baseLegend,
+    legend: legendFor(groups.size),
     grid: { ...baseGrid, bottom: '12%' },
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
@@ -107,7 +192,7 @@ function stackedBarOption(series: ChartSeries): EChartsCoreOption {
   return {
     aria: { enabled: true },
     tooltip: baseTooltip,
-    legend: baseLegend,
+    legend: legendFor(groups.size),
     grid: { ...baseGrid, bottom: '12%' },
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
@@ -123,12 +208,12 @@ function stackedAreaOption(series: ChartSeries): EChartsCoreOption {
   return {
     aria: { enabled: true },
     tooltip: baseTooltip,
-    legend: baseLegend,
+    legend: legendFor(groups.size),
     grid: { ...baseGrid, bottom: '12%' },
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
     dataZoom: baseDataZoom,
-    series: buildSeries('line', xAxisData, groups, true, true),
+    series: buildSeries('line', xAxisData, groups, true, true, 0.1),
     animation: false,
   } as EChartsCoreOption;
 }
@@ -136,10 +221,10 @@ function stackedAreaOption(series: ChartSeries): EChartsCoreOption {
 function histogramOption(series: ChartSeries): EChartsCoreOption {
   const xAxisData = sortedUnique(series.buckets.map((b) => String(b.x)));
   const byX = new Map(series.buckets.map((b) => [String(b.x), b.y]));
+  const color = colorForEntity(series.seriesId || series.label);
   return {
     aria: { enabled: true },
     tooltip: baseTooltip,
-    legend: baseLegend,
     grid: baseGrid,
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
@@ -147,6 +232,7 @@ function histogramOption(series: ChartSeries): EChartsCoreOption {
       {
         name: series.label,
         type: 'bar',
+        itemStyle: { color },
         data: xAxisData.map((x) => byX.get(x) ?? null),
       },
     ],
@@ -160,12 +246,12 @@ function percentileBandsOption(series: ChartSeries): EChartsCoreOption {
   return {
     aria: { enabled: true },
     tooltip: baseTooltip,
-    legend: baseLegend,
+    legend: legendFor(groups.size),
     grid: { ...baseGrid, bottom: '12%' },
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
     dataZoom: baseDataZoom,
-    series: buildSeries('line', xAxisData, groups, false, true),
+    series: buildSeries('line', xAxisData, groups, false, true, 0.13),
     animation: false,
   } as EChartsCoreOption;
 }
@@ -187,13 +273,16 @@ function scatterOption(series: ChartSeries): EChartsCoreOption {
     aria: { enabled: true },
     tooltip: {
       trigger: 'item',
+      backgroundColor: TOOLTIP_SURFACE,
+      borderColor: TOOLTIP_BORDER,
+      textStyle: { color: inkTokens.inkPrimary },
       formatter: (params: unknown) => {
         const p = params as { value?: [number | string, number, string] };
         const value = Array.isArray(p.value) ? p.value[1] : null;
         return `${p.value?.[2] ?? ''}: ${value === null ? '—' : formatCompactNumber(value as number)}`;
       },
     },
-    legend: baseLegend,
+    legend: undefined,
     grid: baseGrid,
     xAxis: {
       ...baseXAxis,
@@ -202,7 +291,14 @@ function scatterOption(series: ChartSeries): EChartsCoreOption {
       data: xAxisType === 'category' ? xValues : undefined,
     },
     yAxis: { ...baseYAxis, name: series.yLabel },
-    series: [{ name: series.label, type: 'scatter', data }],
+    series: [
+      {
+        name: series.label,
+        type: 'scatter',
+        itemStyle: { color: colorForEntity(series.label) },
+        data,
+      },
+    ],
     animation: false,
   } as EChartsCoreOption;
 }
@@ -218,11 +314,12 @@ function heatmapOption(series: ChartSeries): EChartsCoreOption {
       b.y as number,
     ]);
 
-  const maxValue = Math.max(1, ...data.map((d) => d[2] as number));
+  const values = series.buckets.map((b) => b.y).filter((v): v is number => v !== null);
+  const maxValue = values.length > 0 ? Math.max(1, ...values) : 1;
 
   return {
     aria: { enabled: true },
-    tooltip: { position: 'top' },
+    tooltip: { position: 'top', backgroundColor: TOOLTIP_SURFACE, borderColor: TOOLTIP_BORDER },
     grid: { height: '70%', top: '10%' },
     xAxis: { ...baseXAxis, data: xLabels, splitArea: { show: true } },
     yAxis: {
@@ -238,6 +335,8 @@ function heatmapOption(series: ChartSeries): EChartsCoreOption {
       orient: 'horizontal',
       left: 'center',
       bottom: '0%',
+      inRange: { color: [...rampTokens] },
+      textStyle: { color: AXIS_TEXT_COLOR },
     },
     series: [
       {
@@ -246,6 +345,68 @@ function heatmapOption(series: ChartSeries): EChartsCoreOption {
         data,
         label: { show: true },
         emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } },
+      },
+    ],
+    animation: false,
+  } as EChartsCoreOption;
+}
+
+/**
+ * Horizontal bar list: a track (`TRACK_COLOR`) behind a filled, end-radiused
+ * bar per row, value labels in plain ink to the right (never series-colored
+ * text), and a pixel floor (`barMinHeight`) so tiny values stay visible.
+ * Buckets with a missing (`null`) value still get a row — a track-only bar
+ * labeled "—" — rather than being omitted (which would read as "this entity
+ * doesn't exist") or drawn as a zero-length bar conflated with a measured
+ * `0` — see `.agents/rules/missing-is-never-zero.md`.
+ */
+function horizontalBarOption(series: ChartSeries): EChartsCoreOption {
+  const present = series.buckets.filter((b) => b.y !== null);
+  const missing = series.buckets.filter((b) => b.y === null);
+  const sorted = [...present].sort((a, b) => (b.y as number) - (a.y as number));
+  const rows = [...sorted, ...missing];
+  const categories = rows.map((b) => b.label || String(b.x));
+  const data = rows.map((b) =>
+    b.y === null
+      ? { value: 0, itemStyle: { color: 'transparent' }, label: { formatter: () => '—' } }
+      : {
+          value: b.y,
+          itemStyle: {
+            color: colorForEntity(b.series ?? b.label ?? String(b.x)),
+            borderRadius: [0, 5, 5, 0],
+          },
+        },
+  );
+
+  return {
+    aria: { enabled: true },
+    tooltip: { ...baseTooltip, trigger: 'item', axisPointer: undefined },
+    grid: { left: '3%', right: '14%', top: '4%', bottom: '4%', containLabel: true },
+    xAxis: { type: 'value', show: false, splitLine: { show: false } },
+    yAxis: {
+      type: 'category',
+      inverse: true,
+      data: categories,
+      axisLabel: { color: LEGEND_TEXT_COLOR },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { show: false },
+    },
+    series: [
+      {
+        name: series.label,
+        type: 'bar',
+        data,
+        barMinHeight: 4,
+        barWidth: '60%',
+        showBackground: true,
+        backgroundStyle: { color: TRACK_COLOR, borderRadius: [0, 5, 5, 0] },
+        label: {
+          show: true,
+          position: 'right',
+          color: inkTokens.inkPrimary,
+          formatter: (p: unknown) => formatCompactNumber((p as { value: number }).value ?? 0),
+        },
       },
     ],
     animation: false,
@@ -276,11 +437,21 @@ function boxOption(series: ChartSeries): EChartsCoreOption {
   return {
     aria: { enabled: true },
     tooltip: baseTooltip,
-    legend: baseLegend,
+    legend: undefined,
     grid: baseGrid,
     xAxis: { ...baseXAxis, name: series.xLabel, data: categories },
     yAxis: { ...baseYAxis, name: series.yLabel },
-    series: [{ name: series.label, type: 'boxplot', data }],
+    series: [
+      {
+        name: series.label,
+        type: 'boxplot',
+        itemStyle: {
+          color: colorForEntity(series.label),
+          borderColor: colorForEntity(series.label),
+        },
+        data,
+      },
+    ],
     animation: false,
   } as EChartsCoreOption;
 }
@@ -292,13 +463,23 @@ function distributionOption(series: ChartSeries): EChartsCoreOption {
 function funnelOption(series: ChartSeries): EChartsCoreOption {
   const data = series.buckets
     .filter((b) => b.y !== null)
-    .map((b) => ({ name: String(b.x), value: b.y as number }))
+    .map((b) => ({
+      name: String(b.x),
+      value: b.y as number,
+      itemStyle: { color: colorForEntity(b.series ?? String(b.x)) },
+    }))
     .sort((a, b) => b.value - a.value);
 
   return {
     aria: { enabled: true },
-    tooltip: { trigger: 'item', formatter: '{b}: {c}' },
-    legend: baseLegend,
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: TOOLTIP_SURFACE,
+      borderColor: TOOLTIP_BORDER,
+      textStyle: { color: inkTokens.inkPrimary },
+      formatter: '{b}: {c}',
+    },
+    legend: legendFor(data.length),
     series: [{ name: series.label, type: 'funnel', data }],
     animation: false,
   } as EChartsCoreOption;
@@ -308,8 +489,8 @@ function annotatedTimelineOption(series: ChartSeries): EChartsCoreOption {
   const option = timeSeriesOption(series) as Record<string, unknown>;
   const markLines = (series.annotations ?? []).map((a) => ({
     xAxis: a.position,
-    label: { formatter: a.label },
-    lineStyle: { type: 'dashed' },
+    label: { formatter: a.label, color: AXIS_TEXT_COLOR },
+    lineStyle: { type: 'dashed', color: BASELINE_COLOR },
   }));
   const seriesArray = (option.series as unknown[]) ?? [];
   if (seriesArray.length > 0) {
@@ -334,6 +515,8 @@ export function toEChartsOption(series: ChartSeries): EChartsCoreOption {
       return scatterOption(series);
     case 'heatmap':
       return heatmapOption(series);
+    case 'horizontal_bar':
+      return horizontalBarOption(series);
     case 'box':
       return boxOption(series);
     case 'distribution':
@@ -346,7 +529,7 @@ export function toEChartsOption(series: ChartSeries): EChartsCoreOption {
       return {
         aria: { enabled: true },
         tooltip: baseTooltip,
-        legend: baseLegend,
+        legend: undefined,
         grid: baseGrid,
         xAxis: { ...baseXAxis, name: series.xLabel },
         yAxis: { ...baseYAxis, name: series.yLabel },
