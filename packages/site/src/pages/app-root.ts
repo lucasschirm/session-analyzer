@@ -614,6 +614,15 @@ export class AppRoot extends LitElement {
    * sub-issue's disposition table. Every other route keeps the global
    * header. `sync-progress-bar`/`sync-status-bar` stay mounted below
    * regardless of route — the page's sync chip only complements them.
+   *
+   * Known, deliberate trade-off: `header-project-selector`'s type-ahead
+   * "jump straight to any project by name" search is not replicated on `/`.
+   * The filter bar's Project chip only *scopes* the Portfolio view, it does
+   * not navigate. From `/`, reaching a specific project's page still takes
+   * one action — a project leaderboard row click (carries the current
+   * filter context as `returnContext`), or the icon rail's Projects
+   * destination, which has its own full, searchable list. Every other
+   * route keeps the fast type-ahead selector.
    */
   private get showGlobalHeader(): boolean {
     return this.currentPath !== '/';

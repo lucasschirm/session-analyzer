@@ -626,6 +626,14 @@ export class PortfolioView extends PageLitElement {
     `;
   }
 
+  private renderHeatmapCaption() {
+    const token = this.matrix.data?.token;
+    if (!token) return null;
+    return html`
+      <p class="chart-caption">n=${token.knownN} of ${token.eligibleN} (model, harness) cells</p>
+    `;
+  }
+
   private renderHeatmapDomainsRow() {
     const heatmapSeries = this.matrix.data
       ? modelHarnessMatrixToHeatmapSeries(this.matrix.data)
@@ -639,12 +647,15 @@ export class PortfolioView extends PageLitElement {
 
     return html`
       <div class="section split-row">
-        <analytics-chart
-          title="Sessions by model × harness"
-          description="Session counts for every observed (model, harness) combination. A dashed cell means that combination has never run."
-          .series=${heatmapSeries}
-          .state=${this.chartState(this.matrix.state)}
-        ></analytics-chart>
+        <div>
+          <analytics-chart
+            title="Sessions by model × harness"
+            description="Session counts for every observed (model, harness) combination. A dashed cell means that combination has never run."
+            .series=${heatmapSeries}
+            .state=${this.chartState(this.matrix.state)}
+          ></analytics-chart>
+          ${this.renderHeatmapCaption()}
+        </div>
         <div>
           <analytics-chart
             title="Invocations by domain"

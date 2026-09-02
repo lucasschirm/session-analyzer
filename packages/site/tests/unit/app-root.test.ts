@@ -169,8 +169,23 @@ describe('app-root', () => {
     const root = app.shadowRoot as ShadowRoot;
     expect(root.querySelector('header')).toBeNull();
     expect(root.querySelector('.logo')).toBeNull();
+    // Known trade-off (see `showGlobalHeader`'s docstring): the type-ahead
+    // "jump to any project" selector goes with the header on `/` — the
+    // filter bar's Project chip only scopes the Portfolio view, it does not
+    // navigate. This assertion locks that in as deliberate, not a silent
+    // regression.
+    expect(root.querySelector('header-project-selector')).toBeNull();
     // The sync chrome (sync-progress-bar) stays mounted regardless of route.
     expect(root.querySelector('sync-progress-bar')).not.toBeNull();
+  });
+
+  it('restores header-project-selector (the type-ahead project jump) on every other route', async () => {
+    window.location.hash = '#/artifacts';
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    expect(root.querySelector('header-project-selector')).not.toBeNull();
   });
 
   it('does not render the old storage badge or connect button', async () => {

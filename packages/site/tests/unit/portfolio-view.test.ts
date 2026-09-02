@@ -324,6 +324,25 @@ describe('portfolio-view', () => {
     expect(portfolioMock.getKpiBand).toHaveBeenCalled();
   });
 
+  it('passes the unfiltered dimension domains as chip options, independent of the active filter selection', async () => {
+    window.location.hash = '#/?harness=claude';
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    expect(metadataMock.getDimensionDomains).toHaveBeenCalledWith();
+
+    const filterBar = root.querySelector('filter-bar') as LitElement;
+    await filterBar.updateComplete;
+    const projectChip = filterBar.shadowRoot?.querySelector(
+      'dimension-chip[label="Project"]',
+    ) as LitElement;
+    await projectChip.updateComplete;
+    const select = projectChip.shadowRoot?.querySelector('select') as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toContain('zero-session-harness-project');
+  });
+
   it('parses filters from the hash and re-loads, and always queries the leaderboard without a time range', async () => {
     window.location.hash =
       '#/?project=p1&harness=claude&timeStart=2024-01-01T00:00:00.000Z&timeEnd=2024-01-08T00:00:00.000Z';
