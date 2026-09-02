@@ -1,0 +1,12 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": [],
+    "lib": ["ES2021"]
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}
