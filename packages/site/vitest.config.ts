@@ -12,6 +12,9 @@ export default defineConfig({
       exclude: [
         'src/main.ts',
         'src/types/**',
+        // Dev-only Storybook-style fixture wiring (analytics-cards-demo.html),
+        // exercised manually — not part of the production bundle.
+        'src/dev/**',
         // Thin worker glue exercised end-to-end by the Playwright suite.
         'src/db/db-worker.ts',
         'src/db/analytics-worker.ts',

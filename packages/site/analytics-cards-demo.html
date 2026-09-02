@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>Analytics Cards — Component Demo</title>
+  <style>
+    :root {
+      /* Kept in sync with packages/site/src/styles/tokens.ts and the
+         --rd-* block in index.html (see tests/unit/tokens.test.ts). This
+         demo page intentionally duplicates only the subset it needs. */
+      --rd-surface-page: #0c0e13;
+      --rd-surface-card: #171b24;
+      --rd-surface-inset: #12151c;
+      --rd-border-1: #20242e;
+      --rd-border-2: #232936;
+      --rd-border-3: #2a303c;
+      --rd-border-emphasis: #313947;
+      --rd-ink-primary: #e6e9ef;
+      --rd-ink-secondary: #c9d4e3;
+      --rd-ink-muted: #9aa4b2;
+      --rd-ink-faint: #7d8794;
+      --rd-accent: #4f8cff;
+      --rd-accent-container: #1c2b4a;
+      --rd-accent-success: #3ecf8e;
+      --rd-accent-error: #ff6b6b;
+    }
+
+    body {
+      margin: 0;
+      padding: 32px;
+      background: var(--rd-surface-page);
+      color: var(--rd-ink-primary);
+      font-family: 'Space Grotesk', 'Segoe UI', Arial, sans-serif;
+    }
+
+    h1 {
+      font-size: 20px;
+      margin: 0 0 4px;
+    }
+
+    p.intro {
+      color: var(--rd-ink-muted);
+      margin: 0 0 32px;
+    }
+
+    section {
+      margin-bottom: 40px;
+    }
+
+    h2 {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--rd-ink-muted);
+      margin: 0 0 12px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .tile-wrap {
+      height: 180px;
+    }
+
+    #log {
+      font-size: 12px;
+      color: var(--rd-ink-faint);
+      white-space: pre-wrap;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Analytics Cards — Component Demo</h1>
+  <p class="intro">
+    Storybook-style fixture rendering every variant of the shared analytics
+    card components (issue #166). Click any clickable tile to see the
+    <code>card-click</code> event logged below.
+  </p>
+
+  <section>
+    <h2>analytics-card — variants</h2>
+    <div class="row">
+      <analytics-card card-title="Default" caption="n=128 · last 30d">
+        <div>Body content</div>
+      </analytics-card>
+      <analytics-card variant="inset" card-title="Inset" caption="n=128 · last 30d">
+        <div>Body content</div>
+      </analytics-card>
+      <analytics-card variant="dashed" card-title="Dashed" caption="missing state">
+        <div>Body content</div>
+      </analytics-card>
+      <analytics-card card-title="Clickable" caption="n=42" clickable>
+        <div>Click me</div>
+      </analytics-card>
+    </div>
+  </section>
+
+  <section>
+    <h2>stat-tile-hero</h2>
+    <div class="row">
+      <div class="tile-wrap">
+        <stat-tile-hero
+          id="hero-up"
+          label="Total Sessions"
+          value="1,204"
+          footnote="vs. prior 30 days"
+          sample-label="n=1,204"
+          clickable
+        ></stat-tile-hero>
+      </div>
+      <div class="tile-wrap">
+        <stat-tile-hero
+          id="hero-down"
+          label="Error Rate"
+          value="3.2%"
+          footnote="vs. prior 30 days"
+          sample-label="n=1,204"
+        ></stat-tile-hero>
+      </div>
+      <div class="tile-wrap">
+        <stat-tile-hero
+          id="hero-flat"
+          label="Avg. Duration"
+          value="14m 20s"
+          sample-label="n=980"
+        ></stat-tile-hero>
+      </div>
+      <div class="tile-wrap">
+        <stat-tile-hero
+          accent
+          label="Active Projects"
+          value="18"
+          sample-label="n=18"
+        ></stat-tile-hero>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>stat-tile-delta</h2>
+    <div class="row">
+      <div class="tile-wrap">
+        <stat-tile-delta
+          id="delta-tile"
+          label="Task Outcomes"
+          value="842"
+          sample-label="n=842"
+          clickable
+        ></stat-tile-delta>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>stat-tile-missing</h2>
+    <div class="row">
+      <div class="tile-wrap">
+        <stat-tile-missing
+          label="Avg. Cost"
+          reason="Harness does not report cost natively."
+        ></stat-tile-missing>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>stat-ring</h2>
+    <div class="row">
+      <analytics-card>
+        <stat-ring
+          id="ring-normal"
+          percent="82"
+          center-text="82%"
+          label="Success rate"
+          description="Sessions ending without error"
+          sample-label="n=310"
+        ></stat-ring>
+      </analytics-card>
+      <analytics-card>
+        <stat-ring percent="0" center-text="0%" label="Empty" sample-label="n=0"></stat-ring>
+      </analytics-card>
+      <analytics-card>
+        <stat-ring percent="100" center-text="100%" label="Full" sample-label="n=12"></stat-ring>
+      </analytics-card>
+    </div>
+  </section>
+
+  <section>
+    <h2>stat-strip</h2>
+    <div id="strip-wrap"></div>
+  </section>
+
+  <section>
+    <h2>rd-sparkline — edge cases (0 / 1 / N points)</h2>
+    <div class="row">
+      <analytics-card card-title="Empty (0 points)">
+        <rd-sparkline id="spark-empty" width="120" height="34"></rd-sparkline>
+      </analytics-card>
+      <analytics-card card-title="Single point (flat)">
+        <rd-sparkline id="spark-one" width="120" height="34"></rd-sparkline>
+      </analytics-card>
+      <analytics-card card-title="60 points">
+        <rd-sparkline id="spark-many" width="120" height="34" area></rd-sparkline>
+      </analytics-card>
+    </div>
+  </section>
+
+  <pre id="log">card-click events will appear here…</pre>
+
+  <script type="module" src="./src/dev/analytics-cards-demo.ts"></script>
+</body>
+</html>
