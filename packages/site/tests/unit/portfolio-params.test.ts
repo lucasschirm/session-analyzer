@@ -2,10 +2,12 @@ import type { EvidenceLink } from '@lucasschirm/sal-db';
 import { describe, expect, it } from 'vitest';
 import {
   buildPortfolioHash,
+  detectRangeSelection,
   evidenceLinkHref,
   type PortfolioParams,
   parsePortfolioHash,
   portfolioParamsToQuery,
+  resolveRangePreset,
 } from '../../src/pages/portfolio/portfolio-params';
 
 function makeLink(overrides: Partial<EvidenceLink> = {}): EvidenceLink {
@@ -150,6 +152,101 @@ describe('portfolioParamsToQuery', () => {
     expect(query.analysisReleaseId).toBe('r1');
     expect(query.comparabilityGroupId).toBe('g1');
     expect(query.generationId).toBe('gen1');
+  });
+});
+
+describe('resolveRangePreset', () => {
+  const now = new Date('2026-09-02T12:00:00.000Z');
+
+  it('resolves 7d to an explicit start/end window', () => {
+    const range = resolveRangePreset('7d', now);
+    expect(range.timeEnd).toBe(now.toISOString());
+    expect(range.timeStart).toBe(new Date('2026-08-26T12:00:00.000Z').toISOString());
+  });
+
+  it('resolves 30d and 90d windows', () => {
+    expect(resolveRangePreset('30d', now).timeStart).toBe(
+      new Date('2026-08-03T12:00:00.000Z').toISOString(),
+    );
+    expect(resolveRangePreset('90d', now).timeStart).toBe(
+      new Date('2026-06-04T12:00:00.000Z').toISOString(),
+    );
+  });
+
+  it('resolves all to both bounds omitted (unbounded window)', () => {
+    const range = resolveRangePreset('all', now);
+    expect(range.timeStart).toBeUndefined();
+    expect(range.timeEnd).toBeUndefined();
+  });
+});
+
+describe('detectRangeSelection', () => {
+  const now = new Date('2026-09-02T12:00:00.000Z');
+
+  it('detects all when both bounds are omitted', () => {
+    expect(detectRangeSelection({}, now)).toBe('all');
+  });
+
+  it('detects a preset from its resolved window', () => {
+    const range = resolveRangePreset('7d', now);
+    expect(detectRangeSelection(range, now)).toBe('7d');
+  });
+
+  it('detects 30d and 90d symmetrically', () => {
+    expect(detectRangeSelection(resolveRangePreset('30d', now), now)).toBe('30d');
+    expect(detectRangeSelection(resolveRangePreset('90d', now), now)).toBe('90d');
+  });
+
+  it('falls back to custom for an arbitrary legacy range', () => {
+    const legacy = { timeStart: '2024-01-01T00:00:00.000Z', timeEnd: '2024-02-01T00:00:00.000Z' };
+    expect(detectRangeSelection(legacy, now)).toBe('custom');
+  });
+
+  it('falls back to custom when only one bound is present', () => {
+    expect(detectRangeSelection({ timeStart: '2024-01-01T00:00:00.000Z' }, now)).toBe('custom');
+    expect(detectRangeSelection({ timeEnd: '2024-01-01T00:00:00.000Z' }, now)).toBe('custom');
+  });
+
+  it('still recognizes a preset a few minutes after selection (reload/back-nav)', () => {
+    const selectedAt = new Date('2026-09-02T12:00:00.000Z');
+    const range = resolveRangePreset('7d', selectedAt);
+    const viewedAt = new Date('2026-09-02T12:02:00.000Z');
+    expect(detectRangeSelection(range, viewedAt)).toBe('7d');
+  });
+});
+
+describe('legacy bookmarked hash compatibility', () => {
+  it('round-trips a hash containing every current param', () => {
+    const hash =
+      '#/portfolio?project=p1&harness=claude-code&model=sonnet&mode=auto&component=c1&search=test&timeStart=2024-01-01T00%3A00%3A00.000Z&timeEnd=2024-02-01T00%3A00%3A00.000Z&analysisRelease=r1&comparabilityGroup=g1&generation=gen1&sessions=all';
+    const params = parsePortfolioHash(hash);
+    const rebuilt = buildPortfolioHash(params);
+    const reparsed = parsePortfolioHash(`#/portfolio${rebuilt}`);
+
+    expect(reparsed).toEqual(params);
+    expect(detectRangeSelection(params)).toBe('custom');
+
+    const query = portfolioParamsToQuery(params);
+    expect(query.timeRange).toEqual({
+      start: '2024-01-01T00:00:00.000Z',
+      end: '2024-02-01T00:00:00.000Z',
+    });
+    expect(query.analysisReleaseId).toBe('r1');
+  });
+
+  it('round-trips the All preset as omitted timeStart/timeEnd', () => {
+    const params: PortfolioParams = { sessions: 'main' };
+    const hash = buildPortfolioHash(params);
+    expect(hash).not.toContain('timeStart');
+    expect(hash).not.toContain('timeEnd');
+
+    const reparsed = parsePortfolioHash(`#/portfolio${hash}`);
+    expect(detectRangeSelection(reparsed)).toBe('all');
+  });
+
+  it('parses a hash with only the legacy sessions param and defaults the rest', () => {
+    const params = parsePortfolioHash('#/portfolio?sessions=sub_agents');
+    expect(params).toEqual({ sessions: 'sub_agents' });
   });
 });
 

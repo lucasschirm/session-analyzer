@@ -1,12 +1,15 @@
 import { css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 import { analyticsClient } from '../../db/analytics-client';
 import { navigateTo } from '../../router';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
+import '../../components/analytics/filter-bar';
 import type {
   ComponentUtilizationPage,
+  DimensionDomains,
   ModelHarnessCohortPage,
   PortfolioOverview,
   PortfolioTrendSeries,
@@ -34,8 +37,16 @@ import {
   portfolioParamsToQuery,
   type SessionsScope,
 } from './portfolio-params';
+import { RequestSequenceGuard } from './request-sequence-guard';
 
 type LoadState = 'idle' | 'loading' | 'ok' | 'empty' | 'partial' | 'error';
+
+/** Stable empty-array reference for `filter-bar`'s `*Options` properties
+ * before the dimension domains have loaded — reusing one instance (instead
+ * of a fresh `[]` per render) avoids forcing `dimension-chip`'s
+ * `@property({ type: Array })` to see a changed reference, and re-render,
+ * on every unrelated `portfolio-view` update. */
+const EMPTY_DIMENSION_OPTIONS: readonly string[] = [];
 
 interface PanelState<T> {
   data: T | null;
@@ -58,50 +69,9 @@ export class PortfolioView extends PageLitElement {
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
-    .filter-bar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      align-items: end;
+    filter-bar {
+      display: block;
       margin-bottom: 24px;
-      padding: 16px;
-      background: var(--md-sys-color-surface-container, #1f242e);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 12px;
-    }
-
-    .filter-bar label {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      font-size: 12px;
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-      min-width: 140px;
-    }
-
-    .filter-bar input, .filter-bar select {
-      background: var(--md-sys-color-surface, #171a21);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 6px;
-      padding: 8px;
-      color: var(--md-sys-color-on-surface, #e6e9ef);
-      font: inherit;
-    }
-
-    .filter-bar button {
-      background: var(--md-sys-color-primary, #4f8cff);
-      color: var(--md-sys-color-on-primary, #fff);
-      border: none;
-      border-radius: 6px;
-      padding: 8px 16px;
-      font: inherit;
-      cursor: pointer;
-    }
-
-    .filter-bar button.secondary {
-      background: transparent;
-      color: var(--md-sys-color-primary, #4f8cff);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
     }
 
     .section {
@@ -220,7 +190,11 @@ export class PortfolioView extends PageLitElement {
 
   @state() private projects: PanelState<ProjectListPage> = { data: null, state: 'idle' };
 
+  @state() private domains: DimensionDomains | null = null;
+
   private pendingReload = false;
+
+  private readonly requestGuard = new RequestSequenceGuard();
 
   private hashListener = () => this.handleHashChange();
 
@@ -262,23 +236,50 @@ export class PortfolioView extends PageLitElement {
     this.globalState = 'loading';
     this.globalError = null;
 
+    const requestToken = this.requestGuard.begin();
     const params = parsePortfolioHash(window.location.hash);
     this.filters = params;
     const query = portfolioParamsToQuery(params);
 
-    const [overview, trends, components, cohorts, projects] = await Promise.allSettled([
+    const [overview, trends, components, cohorts, projects, domains] = await Promise.allSettled([
       analyticsClient.portfolio.getOverview(query),
       analyticsClient.portfolio.getTrends(query),
       analyticsClient.portfolio.getComponentUtilization(query),
       analyticsClient.portfolio.getModelHarnessCohorts(query),
       analyticsClient.portfolio.getProjectList({ ...query, limit: 50 }),
+      analyticsClient.metadata.getDimensionDomains(),
     ]);
 
+    this.loading = false;
+    // A newer reload may have started while this one was in flight (e.g. a
+    // fast filter change fired while a slower request was still pending) —
+    // discard this stale response rather than overwriting fresher data.
+    if (this.requestGuard.isCurrent(requestToken)) {
+      this.applyResults(overview, trends, components, cohorts, projects, domains);
+    }
+    await this.reloadIfPending();
+  }
+
+  private async reloadIfPending(): Promise<void> {
+    if (!this.pendingReload) return;
+    this.pendingReload = false;
+    await this.load();
+  }
+
+  private applyResults(
+    overview: PromiseSettledResult<PortfolioOverview>,
+    trends: PromiseSettledResult<PortfolioTrendSeries>,
+    components: PromiseSettledResult<ComponentUtilizationPage>,
+    cohorts: PromiseSettledResult<ModelHarnessCohortPage>,
+    projects: PromiseSettledResult<ProjectListPage>,
+    domains: PromiseSettledResult<DimensionDomains>,
+  ): void {
     this.overview = panelStateFromResult(overview);
     this.trends = panelStateFromResult(trends);
     this.components = panelStateFromResult(components);
     this.cohorts = panelStateFromResult(cohorts);
     this.projects = panelStateFromResult(projects);
+    this.domains = domains.status === 'fulfilled' ? domains.value : this.domains;
 
     const states = [
       this.overview.state,
@@ -295,24 +296,10 @@ export class PortfolioView extends PageLitElement {
       this.globalState = 'error';
       this.globalError = 'All portfolio views failed to load.';
     }
-
-    this.loading = false;
-    if (this.pendingReload) {
-      this.pendingReload = false;
-      await this.load();
-    }
   }
 
-  private updateFilter(key: keyof PortfolioParams, value: string): void {
-    const next = { ...this.filters, [key]: value };
-    if (value === '') {
-      delete next[key];
-    }
-    navigateTo(`/${buildPortfolioHash(next)}`);
-  }
-
-  private resetFilters(): void {
-    navigateTo('/');
+  private handleFiltersChanged(event: CustomEvent<PortfolioParams>): void {
+    navigateTo(`/${buildPortfolioHash(event.detail)}`);
   }
 
   private goToProject(row: ProjectRowView): void {
@@ -330,79 +317,13 @@ export class PortfolioView extends PageLitElement {
 
   private renderFilters() {
     return html`
-      <div class="filter-bar">
-        <label>
-          Project
-          <input
-            type="text"
-            .value=${this.filters.project ?? ''}
-            @change=${(e: Event) => this.updateFilter('project', (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          Harness
-          <input
-            type="text"
-            .value=${this.filters.harness ?? ''}
-            @change=${(e: Event) => this.updateFilter('harness', (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          Model
-          <input
-            type="text"
-            .value=${this.filters.model ?? ''}
-            @change=${(e: Event) => this.updateFilter('model', (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          Mode
-          <select
-            .value=${this.filters.mode ?? ''}
-            @change=${(e: Event) => this.updateFilter('mode', (e.target as HTMLSelectElement).value)}
-          >
-            <option value="">All</option>
-            <option value="auto">Auto</option>
-            <option value="plan">Plan</option>
-          </select>
-        </label>
-        <label>
-          Sessions
-          <select
-            .value=${this.filters.sessions ?? 'main'}
-            @change=${(e: Event) => this.updateFilter('sessions', (e.target as HTMLSelectElement).value)}
-          >
-            <option value="main">Main</option>
-            <option value="all">All</option>
-            <option value="sub_agents">Sub Agents</option>
-          </select>
-        </label>
-        <label>
-          Component
-          <input
-            type="text"
-            .value=${this.filters.component ?? ''}
-            @change=${(e: Event) => this.updateFilter('component', (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          From
-          <input
-            type="date"
-            .value=${this.filters.timeStart ?? ''}
-            @change=${(e: Event) => this.updateFilter('timeStart', (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label>
-          To
-          <input
-            type="date"
-            .value=${this.filters.timeEnd ?? ''}
-            @change=${(e: Event) => this.updateFilter('timeEnd', (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <button class="secondary" @click=${this.resetFilters}>Reset</button>
-      </div>
+      <filter-bar
+        .filters=${this.filters}
+        .projectOptions=${this.domains?.projects ?? EMPTY_DIMENSION_OPTIONS}
+        .harnessOptions=${this.domains?.harnesses ?? EMPTY_DIMENSION_OPTIONS}
+        .modelOptions=${this.domains?.models ?? EMPTY_DIMENSION_OPTIONS}
+        @filters-changed=${this.handleFiltersChanged}
+      ></filter-bar>
     `;
   }
 
@@ -436,7 +357,9 @@ export class PortfolioView extends PageLitElement {
       <div class="section">
         <h2>Overview</h2>
         <div class="metric-grid">
-          ${cards.map(
+          ${repeat(
+            cards,
+            (card) => card.label,
             (card) => html`
               <metrics-card
                 label=${card.label}
@@ -563,7 +486,9 @@ export class PortfolioView extends PageLitElement {
             </tr>
           </thead>
           <tbody>
-            ${rows.map(
+            ${repeat(
+              rows,
+              (row) => row.href,
               (row) => html`
                 <tr>
                   <td><a href=${row.href} @click=${(e: Event) => {
@@ -602,13 +527,14 @@ export class PortfolioView extends PageLitElement {
   }
 }
 
+/** Cursor/list-page DTOs expose `items`; the trend series DTO exposes
+ * `series` instead — both are checked so a range narrowed to zero rows
+ * (e.g. the 7d preset excluding every rollup) renders the empty affordance
+ * rather than being silently mistaken for 'ok' (`.agents/rules/no-silent-empty-states.md`). */
 function panelStateFromResult<T>(result: PromiseSettledResult<T>): PanelState<T> {
   if (result.status === 'fulfilled') {
     const data = result.value;
-    const isEmpty =
-      data && typeof data === 'object' && 'items' in data
-        ? (data as { items: unknown[] }).items.length === 0
-        : false;
+    const isEmpty = isEmptyPanelData(data);
     return { data, state: isEmpty ? 'empty' : 'ok' };
   }
   return {
@@ -616,6 +542,13 @@ function panelStateFromResult<T>(result: PromiseSettledResult<T>): PanelState<T>
     state: 'error',
     error: result.reason instanceof Error ? result.reason.message : String(result.reason),
   };
+}
+
+function isEmptyPanelData(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false;
+  if ('items' in data) return (data as { items: unknown[] }).items.length === 0;
+  if ('series' in data) return (data as { series: unknown[] }).series.length === 0;
+  return false;
 }
 
 declare global {

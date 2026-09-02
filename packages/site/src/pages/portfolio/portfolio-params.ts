@@ -3,6 +3,14 @@ import { componentHref } from '../component-ecosystem/component-ecosystem-params
 
 export type SessionsScope = 'all' | 'main' | 'sub_agents';
 
+/** Time-range segmented-control presets (issue #167). */
+export type RangePreset = '7d' | '30d' | '90d' | 'all';
+
+/** What the segmented control should display as selected — a known preset,
+ * or `custom` when the current `timeStart`/`timeEnd` don't match any preset
+ * window (e.g. an old bookmarked hash with an arbitrary explicit range). */
+export type RangeSelection = RangePreset | 'custom';
+
 export interface PortfolioParams {
   project?: string;
   harness?: string;
@@ -19,6 +27,71 @@ export interface PortfolioParams {
 }
 
 const DEFAULT_PARAMS: PortfolioParams = { sessions: 'main' };
+
+/** Preset window length in days; `all` has no length — both bounds are omitted. */
+const PRESET_DAYS: Record<Exclude<RangePreset, 'all'>, number> = {
+  '7d': 7,
+  '30d': 30,
+  '90d': 90,
+};
+
+/** Tolerance for matching an explicit `timeStart`/`timeEnd` pair back to the
+ * preset that produced it: the preset serializes an absolute window at
+ * selection time, so a reload/back-navigation minutes later must still be
+ * recognized as "that preset", not drift into `custom`. */
+const PRESET_MATCH_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
+ * Resolves a range preset to an explicit `{ timeStart, timeEnd }` window,
+ * anchored at `now`. `all` resolves to both bounds omitted — the unbounded
+ * window — per the URL-param backward-compatibility contract.
+ */
+export function resolveRangePreset(
+  preset: RangePreset,
+  now: Date = new Date(),
+): Pick<PortfolioParams, 'timeStart' | 'timeEnd'> {
+  if (preset === 'all') return { timeStart: undefined, timeEnd: undefined };
+
+  const days = PRESET_DAYS[preset];
+  const end = now;
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  return { timeStart: start.toISOString(), timeEnd: end.toISOString() };
+}
+
+/**
+ * Determines which segment the time-range switch should show as selected
+ * for the current params: a known preset if `timeStart`/`timeEnd` matches
+ * that preset's resolved window within tolerance, `all` when both are
+ * omitted, or `custom` (an old bookmarked hash with an arbitrary range).
+ */
+export function detectRangeSelection(
+  params: Pick<PortfolioParams, 'timeStart' | 'timeEnd'>,
+  now: Date = new Date(),
+): RangeSelection {
+  if (!params.timeStart && !params.timeEnd) return 'all';
+  if (!params.timeStart || !params.timeEnd) return 'custom';
+
+  const start = Date.parse(params.timeStart);
+  const end = Date.parse(params.timeEnd);
+  if (Number.isNaN(start) || Number.isNaN(end)) return 'custom';
+
+  for (const preset of Object.keys(PRESET_DAYS) as Array<Exclude<RangePreset, 'all'>>) {
+    if (matchesPreset(preset, start, end, now)) return preset;
+  }
+  return 'custom';
+}
+
+function matchesPreset(
+  preset: Exclude<RangePreset, 'all'>,
+  start: number,
+  end: number,
+  now: Date,
+): boolean {
+  const expectedDurationMs = PRESET_DAYS[preset] * 24 * 60 * 60 * 1000;
+  const durationOk = Math.abs(end - start - expectedDurationMs) < PRESET_MATCH_TOLERANCE_MS;
+  const endIsRecent = Math.abs(now.getTime() - end) < PRESET_MATCH_TOLERANCE_MS;
+  return durationOk && endIsRecent;
+}
 
 export function parsePortfolioHash(hash: string): PortfolioParams {
   const clean = hash.replace(/^#/, '');
