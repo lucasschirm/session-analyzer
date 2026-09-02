@@ -24,11 +24,13 @@ import type {
   ConfigurationTimeline,
   ConfigurationTimelineEvent,
   DurationHistogramBin,
+  HarnessCoverage,
   OutlierPage,
   OutlierRow,
   PeriodDelta,
   ProjectBehaviorSummary,
   ProjectBehaviorView,
+  ProjectHeader,
   ProjectModelHarnessCohortRow,
   ProjectModelHarnessCohorts,
   ProjectStatStrip,
@@ -923,6 +925,44 @@ export function createProjectBehaviorView(queryable: Queryable): ProjectBehavior
     getTopTools: (projectId, query) => getTopTools(queryable, projectId, query),
     getModelHarnessCohorts: (projectId, query) =>
       getProjectModelHarnessCohorts(queryable, projectId, query),
+    getHeader: (projectId) => getProjectHeader(queryable, projectId),
+  };
+}
+
+/**
+ * Project drill-down header (issue #171): display name, all-time harnesses
+ * observed, all-time session count, and the project's active window
+ * (earliest/latest known session `start_time`). Scoped all-time rather than
+ * to the current filter window — see {@link ProjectHeader}.
+ */
+export async function getProjectHeader(
+  queryable: Queryable,
+  projectId: string,
+): Promise<ProjectHeader> {
+  const [displayName, harnessRows] = await Promise.all([
+    ProjectBehaviorStore.getProjectDisplayName(queryable, projectId),
+    ProjectBehaviorStore.getHarnessSessionCounts(queryable, projectId),
+  ]);
+  const harnesses = harnessRows.map((r) => r.harness).sort();
+  const sessionCount = harnessRows.reduce((sum, r) => sum + r.sessionCount, 0);
+  const starts = harnessRows.map((r) => r.minStartMs).filter((v): v is number => v !== null);
+  const ends = harnessRows.map((r) => r.maxStartMs).filter((v): v is number => v !== null);
+  const token = projectToken(
+    undefined,
+    projectId,
+    sessionCount,
+    sessionCount,
+    'observed',
+    'project-header-0.1.0',
+    'Project header',
+  );
+  return {
+    token,
+    displayName: displayName ?? projectId,
+    harnesses,
+    sessionCount,
+    activeWindowStart: starts.length > 0 ? new Date(Math.min(...starts)).toISOString() : undefined,
+    activeWindowEnd: ends.length > 0 ? new Date(Math.max(...ends)).toISOString() : undefined,
   };
 }
 
@@ -1018,12 +1058,30 @@ async function turnsPercentileStats(
   };
 }
 
+function averageOfKnown(values: readonly (number | null)[]): {
+  value: number | null;
+  knownN: number;
+} {
+  const known = values.filter((v): v is number => v !== null);
+  const value = known.length > 0 ? known.reduce((sum, v) => sum + v, 0) / known.length : null;
+  return { value, knownN: known.length };
+}
+
+/**
+ * Tokens/session (issue #169), extended with a previous-window comparison
+ * (issue #171) so the stat strip can render a `+X%` delta chip. No previous
+ * window exists under the "All time" preset (`resolvePreviousWindow`
+ * returns `undefined` when `query.timeRange` is unset) — `previousValue`
+ * is then omitted, and the Lit layer renders "—" per the datasource
+ * contract rather than fabricating a comparison.
+ */
 async function tokensPerSessionStat(
   queryable: Queryable,
   projectId: string,
   eligibleN: number,
   start: number,
   end: number,
+  query: AnalyticsQuery,
 ): Promise<AggregateStat> {
   const rows = await ProjectBehaviorStore.getSessionTokensInWindow(
     queryable,
@@ -1031,9 +1089,25 @@ async function tokensPerSessionStat(
     start,
     end,
   );
-  const known = rows.filter((r) => r.tokensSum !== null).map((r) => r.tokensSum as number);
-  const value = known.length > 0 ? known.reduce((sum, v) => sum + v, 0) / known.length : null;
-  return { value, eligibleN, knownN: known.length };
+  const { value, knownN } = averageOfKnown(rows.map((r) => r.tokensSum));
+
+  const previousWindow = resolvePreviousWindow(query.timeRange);
+  if (!previousWindow) return { value, eligibleN, knownN };
+  const previousRows = await ProjectBehaviorStore.getSessionTokensInWindow(
+    queryable,
+    projectId,
+    Date.parse(previousWindow.start),
+    Date.parse(previousWindow.end),
+  );
+  const previous = averageOfKnown(previousRows.map((r) => r.tokensSum));
+  return {
+    value,
+    eligibleN,
+    knownN,
+    previousValue: previous.value,
+    previousEligibleN: previousRows.length,
+    previousKnownN: previous.knownN,
+  };
 }
 
 async function costPerSessionStat(
@@ -1047,6 +1121,35 @@ async function costPerSessionStat(
   const known = rows.filter((r) => r.costSum !== null).map((r) => r.costSum as number);
   const value = known.length > 0 ? known.reduce((sum, v) => sum + v, 0) / known.length : null;
   return { value, eligibleN, knownN: known.length };
+}
+
+/**
+ * Per-harness cost-reporting coverage for the stat strip (issue #171): a
+ * harness "reports" cost when at least one of its sessions in the window
+ * has a known `costSum` from the model×harness cohort rows. Reused rather
+ * than a new query — `getModelHarnessCohortRows` already carries `harness`
+ * and `costSum` per session in the window.
+ */
+async function costHarnessCoverageStat(
+  queryable: Queryable,
+  projectId: string,
+  start: number,
+  end: number,
+): Promise<HarnessCoverage> {
+  const rows = await ProjectBehaviorStore.getModelHarnessCohortRows(
+    queryable,
+    projectId,
+    start,
+    end,
+  );
+  const reportsCost = new Map<string, boolean>();
+  for (const row of rows) {
+    reportsCost.set(row.harness, (reportsCost.get(row.harness) ?? false) || row.costSum !== null);
+  }
+  return {
+    totalHarnessCount: reportsCost.size,
+    reportingHarnessCount: [...reportsCost.values()].filter(Boolean).length,
+  };
 }
 
 function projectToken(
@@ -1077,14 +1180,17 @@ async function statStripMetrics(
   eligibleN: number,
   start: number,
   end: number,
+  query: AnalyticsQuery,
 ) {
-  const [duration, turns, tokensPerSession, costPerSession] = await Promise.all([
-    durationPercentileStats(queryable, projectId, eligibleN, start, end),
-    turnsPercentileStats(queryable, projectId, eligibleN, start, end),
-    tokensPerSessionStat(queryable, projectId, eligibleN, start, end),
-    costPerSessionStat(queryable, projectId, eligibleN, start, end),
-  ]);
-  return { duration, turns, tokensPerSession, costPerSession };
+  const [duration, turns, tokensPerSession, costPerSession, costHarnessCoverage] =
+    await Promise.all([
+      durationPercentileStats(queryable, projectId, eligibleN, start, end),
+      turnsPercentileStats(queryable, projectId, eligibleN, start, end),
+      tokensPerSessionStat(queryable, projectId, eligibleN, start, end, query),
+      costPerSessionStat(queryable, projectId, eligibleN, start, end),
+      costHarnessCoverageStat(queryable, projectId, start, end),
+    ]);
+  return { duration, turns, tokensPerSession, costPerSession, costHarnessCoverage };
 }
 
 function assembleStatStrip(
@@ -1092,7 +1198,7 @@ function assembleStatStrip(
   sessions: PeriodDelta,
   metrics: Awaited<ReturnType<typeof statStripMetrics>>,
 ): ProjectStatStrip {
-  const { duration, turns, tokensPerSession, costPerSession } = metrics;
+  const { duration, turns, tokensPerSession, costPerSession, costHarnessCoverage } = metrics;
   return {
     token,
     sessions,
@@ -1102,6 +1208,7 @@ function assembleStatStrip(
     turnsP90: turns.p90,
     tokensPerSession,
     costPerSession,
+    costHarnessCoverage,
   };
 }
 
@@ -1113,7 +1220,7 @@ export async function getStatStrip(
   const { start, end } = statStripWindow(query);
   const sessions = await sessionsDeltaStat(queryable, projectId, query);
   const eligibleN = sessions.currentN;
-  const metrics = await statStripMetrics(queryable, projectId, eligibleN, start, end);
+  const metrics = await statStripMetrics(queryable, projectId, eligibleN, start, end, query);
   const token = projectToken(
     query,
     projectId,

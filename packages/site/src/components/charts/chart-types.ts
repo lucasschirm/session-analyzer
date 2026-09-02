@@ -49,7 +49,10 @@ export interface ChartBucket {
 export interface ChartAnnotation {
   readonly position: string | number;
   readonly label: string;
-  readonly type: 'lifecycle' | 'compaction' | 'mode_change' | 'configuration';
+  /** `threshold` draws a horizontal (y-axis) dashed reference line at
+   * `position`, e.g. a registry-defined review threshold; every other kind
+   * draws a vertical (x-axis) line at a point in time. */
+  readonly type: 'lifecycle' | 'compaction' | 'mode_change' | 'configuration' | 'threshold';
 }
 
 /**

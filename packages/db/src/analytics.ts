@@ -340,6 +340,20 @@ export interface AggregateStat {
  * suppressed — with their `knownN` alongside so consumers can judge
  * reliability (`.agents/rules/aggregates-expose-sample-size.md`).
  */
+/**
+ * Per-harness reporting coverage for `costPerSession` (issue #171): how many
+ * distinct harnesses observed in the stat-strip window have at least one
+ * session with a known cost value, out of how many harnesses were observed
+ * in that window at all. Backs the "Not reported by N of M harnesses" copy
+ * on a missing cost-per-session tile — the count pair is computed here so
+ * the Lit component only formats a string, never derives it
+ * (`.agents/rules/no-canonical-metrics-in-lit.md`).
+ */
+export interface HarnessCoverage {
+  readonly reportingHarnessCount: number;
+  readonly totalHarnessCount: number;
+}
+
 export interface ProjectStatStrip {
   readonly token: AnalyticsToken;
   readonly sessions: PeriodDelta;
@@ -349,6 +363,25 @@ export interface ProjectStatStrip {
   readonly turnsP90: AggregateStat;
   readonly tokensPerSession: AggregateStat;
   readonly costPerSession: AggregateStat;
+  readonly costHarnessCoverage: HarnessCoverage;
+}
+
+/**
+ * Project drill-down header (issue #171): display name, and identity facts
+ * about the project — harnesses ever observed, total session count, and the
+ * active window (earliest/latest known session `start_time`) — scoped
+ * all-time rather than to the current filter window, since these describe
+ * the project itself, not the current selection. `activeWindowStart`/
+ * `activeWindowEnd` are omitted when no session has a known `start_time`
+ * (never coerced to a fabricated date — `.agents/rules/missing-is-never-zero.md`).
+ */
+export interface ProjectHeader {
+  readonly token: AnalyticsToken;
+  readonly displayName: string;
+  readonly harnesses: readonly string[];
+  readonly sessionCount: number;
+  readonly activeWindowStart?: string;
+  readonly activeWindowEnd?: string;
 }
 
 /** One session-duration histogram bin (issue #169). `endMs: null` marks the
@@ -886,6 +919,9 @@ export interface ProjectBehaviorView {
     projectId: string,
     query: AnalyticsQuery,
   ): Promise<ProjectModelHarnessCohorts>;
+  /** Project drill-down header: display name, harnesses observed, all-time
+   * session count, and active window (issue #171). */
+  getHeader(projectId: string): Promise<ProjectHeader>;
 }
 
 /**

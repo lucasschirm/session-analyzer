@@ -507,6 +507,16 @@ export const PROJECT_TOOL_ERROR_RATE_METRIC_ID = 'project:weekly_tool_error_rate
 export const PROJECT_TOOL_ERROR_RATE_METRIC_VERSION = 1;
 
 /**
+ * Review threshold for the weekly tool error rate chart (issue #171): the
+ * rate above which a week is flagged for review. Defined in the registry —
+ * not the UI — so the threshold is versioned alongside the metric it
+ * annotates; the Project Behavior drill-down draws this as a dashed
+ * reference line and formats "currently X%" from `WeeklyToolErrorRateSeries.currentValue`
+ * against it, without deriving the threshold itself in the Lit component.
+ */
+export const PROJECT_TOOL_ERROR_RATE_REVIEW_THRESHOLD = 0.05;
+
+/**
  * Weekly tool-invocation error rate for a project (issue #169) — id
  * `project:weekly_tool_error_rate`, version 1. Implemented:
  * `ProjectBehaviorView.getWeeklyToolErrorRate` /

@@ -68,15 +68,16 @@ test.describe('UX-002: empty vs error state disambiguation', () => {
     // Import a real session so the analytics database has data.
     await importSession(page, EMPTY_PROJECT, ['claude-session.jsonl']);
 
-    // Force a zero-row result by filtering on an analysis release that does
-    // not exist. This is a real query with real data that returns no rows.
+    // Force a zero-row result with a real time window that excludes every
+    // seeded session — the project-behavior query methods (issue #171)
+    // scope by `query.timeRange`, not `analysisReleaseId`, so a narrowed
+    // window (rather than an unmatched release) is what actually empties
+    // the duration-histogram panel.
     await page.goto(
-      `/#/projects/${encodeURIComponent(EMPTY_PROJECT)}?analysisRelease=no-such-release`,
+      `/#/projects/${encodeURIComponent(EMPTY_PROJECT)}?timeStart=2099-01-01T00%3A00%3A00.000Z&timeEnd=2099-01-02T00%3A00%3A00.000Z`,
     );
 
-    await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
-      timeout: 15000,
-    });
+    await expect(page.locator('filter-bar')).toBeVisible({ timeout: 15000 });
 
     // Target a real analytics-chart inside the project-behavior shadow tree.
     const chart = page
@@ -97,9 +98,7 @@ test.describe('UX-002: empty vs error state disambiguation', () => {
 
     await page.goto(`/#/projects/${encodeURIComponent(ERROR_PROJECT)}`);
 
-    await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
-      timeout: 15000,
-    });
+    await expect(page.locator('filter-bar')).toBeVisible({ timeout: 15000 });
 
     // Target a real analytics-chart inside the project-behavior shadow tree.
     const chart = page
