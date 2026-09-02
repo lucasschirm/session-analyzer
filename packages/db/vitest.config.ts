@@ -6,9 +6,11 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     // Pipeline/perf tests exercise a real in-memory SQLite pipeline end to
-    // end; the default 5s timeout is too tight once this suite runs
-    // alongside the other 7 packages' suites under CI parallelism.
+    // end; the default 5s test / 10s hook timeouts are too tight on CI
+    // runners, where WASM SQLite init and fixture setup in beforeAll hooks
+    // run slower than on a dev machine.
     testTimeout: 30000,
+    hookTimeout: 30000,
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
