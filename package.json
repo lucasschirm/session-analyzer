@@ -17,7 +17,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "verify": "pnpm -r build && pnpm -r --parallel run verify",
+    "verify": "pnpm -r build && pnpm -r run verify",
     "analytics-gates": "node scripts/analytics-gates/run-all-gates.mjs",
     "version:patch": "pnpm -r version:patch",
     "prepare": "husky",
