@@ -307,6 +307,28 @@ describe('SessionEventsDetailStore', () => {
     const { executor } = await createSeededExecutor();
     expect(await SessionEventsDetailStore.getPayloadContent(executor, 'does-not-exist')).toBeNull();
   });
+
+  it('resolves invocation events via indexed SEARCH, never a full table SCAN', async () => {
+    const { executor, sessionId } = await createSeededExecutor();
+    const { rows } = await executor.exec(
+      `EXPLAIN QUERY PLAN
+       SELECT i.id AS id FROM invocations i WHERE i.session_id = ? ORDER BY i.created_at`,
+      [sessionId],
+    );
+    const details = rows.map((r) => String(r.detail));
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+
+  it('resolves message events via indexed SEARCH, never a full table SCAN', async () => {
+    const { executor, sessionId } = await createSeededExecutor();
+    const { rows } = await executor.exec(
+      `EXPLAIN QUERY PLAN
+       SELECT m.id AS id FROM messages m WHERE m.session_id = ? ORDER BY m.ordering`,
+      [sessionId],
+    );
+    const details = rows.map((r) => String(r.detail));
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
 });
 
 describe('DimensionDomainStore', () => {

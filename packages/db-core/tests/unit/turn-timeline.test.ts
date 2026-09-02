@@ -110,4 +110,15 @@ describe('TurnTimelineStore.getSessionWindow', () => {
     const { executor } = await seed();
     expect(await TurnTimelineStore.getSessionWindow(executor, 'does-not-exist')).toBeNull();
   });
+
+  it('resolves via the sessions primary key SEARCH, never a full table SCAN', async () => {
+    const { executor } = await seed();
+    const { rows } = await executor.exec(
+      `EXPLAIN QUERY PLAN
+       SELECT start_time, end_time FROM sessions WHERE id = ?`,
+      ['tt-session-2'],
+    );
+    const details = rows.map((r) => String(r.detail));
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
 });
