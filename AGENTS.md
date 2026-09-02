@@ -142,7 +142,8 @@ See the per-package `AGENTS.md` files for source maps and invariants.
   component-identity-not-display-name, e2e-coverage-required,
   frontend-coding-style, harness-plugins-conformance, lifecycle-removal-snapshots,
   manifest-backed-classification, metric-meaning-versioning, missing-is-never-zero,
-  no-canonical-metrics-in-lit, no-silent-empty-states, schema-change-tests,
+  never-display-raw-ids, no-canonical-metrics-in-lit, no-silent-empty-states,
+  schema-change-tests,
   sql-only-in-db-core, sync-progress-observability,
   transformers-never-write-sqlite, workspace-rules.
 - `.agents/skills/` — Project-specific reusable skills:

@@ -505,7 +505,13 @@ async function findUnusedOfferedComponents(
     [portfolioId, query.generationId ?? null, query.generationId ?? null],
   );
   const usedIds = new Set(usedRows.map((r) => asString(r.component_id)));
-  return allIdentities.filter((i) => !usedIds.has(i.id)).map((i) => i.id);
+  // Return human-friendly labels (e.g. `skill/multi-issue-agent`), never raw
+  // component ids. The UI must never display internal ids to end users; see
+  // the `never-display-raw-ids` rule. Falls back to the id only when no
+  // nativeId/displayName is available, which is itself a data-quality signal.
+  return allIdentities
+    .filter((i) => !usedIds.has(i.id))
+    .map((i) => componentDisplayName(i.kind, i.nativeId, i.displayName ?? '', i.id));
 }
 
 function pageTokens(
