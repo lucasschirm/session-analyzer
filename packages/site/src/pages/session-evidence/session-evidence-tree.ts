@@ -28,14 +28,14 @@ export class SessionEvidenceTree extends LitElement {
       align-items: center;
       gap: 8px;
       padding: 8px 10px;
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border: 1px solid var(--rd-border-2, #232936);
       border-radius: 8px;
-      background: var(--md-sys-color-surface, #171a21);
+      background: var(--rd-surface-card, #171b24);
       font-size: 13px;
     }
 
     .tree-row.root {
-      background: var(--md-sys-color-surface-container, #1f242e);
+      background: var(--rd-surface-inset, #12151c);
     }
 
     .tree-indent {
@@ -47,7 +47,7 @@ export class SessionEvidenceTree extends LitElement {
     .tree-badge {
       padding: 2px 8px;
       border-radius: 999px;
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border: 1px solid var(--rd-border-2, #232936);
       font-size: 11px;
       text-transform: uppercase;
       font-weight: 600;
@@ -59,7 +59,7 @@ export class SessionEvidenceTree extends LitElement {
     }
 
     a {
-      color: var(--md-sys-color-primary, #4f8cff);
+      color: var(--rd-accent, #4f8cff);
       text-decoration: none;
     }
 
@@ -68,7 +68,7 @@ export class SessionEvidenceTree extends LitElement {
     }
 
     .tree-empty {
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      color: var(--rd-ink-muted, #9aa4b2);
       font-size: 13px;
     }
   `;

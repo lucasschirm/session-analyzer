@@ -151,8 +151,13 @@ the disposition and pointer to any replacement coverage).
 | UX-028 | Global filter bar & time-range control (issue #167) | Selecting the 7d segment on the Portfolio view's `filter-bar` narrows the range past the seeded fixture's daily rollups: the "Session Metrics" trend chart transitions to a distinct empty affordance (not an error) and the URL hash gains explicit `timeStart`/`timeEnd` | `expectRenderedGeometry`, `expectEmptyAffordance` (new), `assertNoErrorBoundary` (`chart-content.ts`); `seedSession` (`seeded-store.ts`) | 3 | 4 | 3 | 36 | `filter-bar.spec.ts` | GREEN |
 | UX-029 | Global filter bar & time-range control (issue #167) | Selecting a time-range preset (30d) and reloading the page preserves the `timeStart`/`timeEnd` URL params and the segmented control's `aria-selected` state; the trend chart re-renders with data | `expectRenderedGeometry` (`chart-content.ts`) | 3 | 3 | 3 | 27 | `filter-bar.spec.ts` | GREEN |
 | UX-030 | Global filter bar & time-range control (issue #167) | Selecting 30d then 7d then pressing the browser Back button restores the 30d segment's `aria-selected` state and its rendered trend-chart geometry, not the intervening 7d empty state | `expectRenderedGeometry`, `expectEmptyAffordance` (new) (`chart-content.ts`) | 3 | 4 | 3 | 36 | `filter-bar.spec.ts` | GREEN |
+| UX-031 | Session Evidence full journey (issue #172) | Importing a session and clicking through it lands on `/sessions/:id`; the breadcrumb + header card, turn timeline, and events table all render; the global header is swapped for the page-owned title row on this route only; the project the session belongs to is independently reachable | none | 3 | 4 | 3 | 36 | `session-evidence.spec.ts` | GREEN |
+| UX-032 | Session Evidence events table filters (issue #172) | The Tool dropdown, "Errors only" checkbox, and free-text search filter the full-detail events table live (no submit step), AND-combine, and keep an accurate "X of Y events" / "no filters active" counter; the dropdown's options stay stable while other filters narrow the visible rows | none | 3 | 4 | 3 | 36 | `session-evidence.spec.ts` | GREEN |
+| UX-033 | Session Evidence turn timeline drives the events table (issue #172) | Clicking a turn-timeline segment applies a dismissible turn-filter chip on the events table; clicking the chip's × clears it | none | 3 | 4 | 3 | 36 | `session-evidence.spec.ts` | GREEN |
+| UX-034 | Session Evidence error row expand (issue #172) | An error row is visibly tinted/badged while collapsed; expanding it renders pretty-printed Input/Result JSON in an internally-scrolled block | none | 2 | 3 | 3 | 18 | `session-evidence.spec.ts` | GREEN |
+| UX-035 | Session Evidence events table empty vs error (issue #172) | A filter that matches zero rows renders the distinct "no events match" empty affordance; a forced `getSessionEvents`/`getTurnTimeline` worker query failure renders a distinct error affordance (the events table is not rendered at all, never an empty one) | `installFailingWorker`, `buildFailingQueryWorker` (`worker-failure.ts`) | 3 | 5 | 4 | 60 | `session-evidence.spec.ts` | GREEN |
 
-New redesign entries allocate **UX-031** and up next.
+New redesign entries allocate **UX-036** and up next.
 
 ### 6.2 Tier B — Analytics pipeline integration (`PIPE-###`)
 
@@ -289,6 +294,25 @@ filter-param remap verification).
   `items`) was never classified `'empty'` — a range with zero matching
   rollups silently rendered as `'ok'` with no data, rather than the
   distinct empty affordance. Covered by a new `portfolio-view.test.ts` case.
+- **UX-032/033/034 (issue #172) run against a canned worker response, not a
+  really-ingested session.** `DefaultIngestionOrchestrator`
+  (`packages/db/src/ingestion.ts`), used by both the Manual Import flow and
+  the real sync path, does not yet populate the
+  `invocations`/`turns`/`messages`/`payloads` tables `getSessionEvents`/
+  `getTurnTimeline` read from — a pre-existing, documented gap (see
+  `packages/db/tests/pipeline/pipe-014-session-events-and-dimension-domains.test.ts`'s
+  own "KNOWN GAP" comment), out of scope for this site-only issue to fix. A
+  really-ingested session's events table is therefore honestly empty today
+  (asserted directly in UX-031). To still exercise the events table's real
+  filter/expand/timeline-click interactions against the real bundled app
+  code, `session-evidence.spec.ts` installs a canned-success worker
+  (`buildCannedSessionWorker`, modeled on `installFailingWorker`/
+  `buildFailingQueryWorker` in `helpers/worker-failure.ts`) that answers
+  `session.*` queries with a fixed, realistic event/timeline DTO instead of
+  hitting the real (currently-empty) ingestion pipeline. This is real
+  browser E2E coverage of the UI layer, with canned data standing in for the
+  not-yet-populated backend — re-scope to a really-ingested session once the
+  ingestion-population gap closes.
 
 ## 10. Maintenance model
 
