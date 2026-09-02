@@ -117,6 +117,10 @@ added without pulling in the Claude-specific plugin cluster:
 - **`@lucasschirm/sal-claude-transformer`** (`packages/transformers/claude-transformer`)
   — the Claude Code plugin cluster (`claude-code*.ts`), moved as one atomic
   unit; depends on `transformer-shared` for contract types.
+- **`@lucasschirm/sal-devin-transformer`** (`packages/transformers/devin-transformer`)
+  — the Devin CLI transformer plugin (`devin-transformer.ts`, `classification.ts`,
+  `metrics/`, `session-spine.ts`, `tool-invocations.ts`, `token-usage.ts`); depends on
+  `transformer-shared` for contract types and `devin-session-parser` for native parsing.
 - **`@lucasschirm/sal-transformer-registry`** (`packages/transformers/registry`)
   — the default `TransformerRegistry` composition root (`createDefaultRegistry`),
   so adding a future harness plugin means registering it in one place rather
@@ -127,7 +131,8 @@ The import-level dependency matrix updates to:
 ```text
 transformer-shared -> (no harness parser dependency)
 claude-transformer -> transformer-shared + claude parser
-transformer-registry -> transformer-shared + claude-transformer (+ future harness transformer packages)
+devin-transformer -> transformer-shared + devin parser
+transformer-registry -> transformer-shared + claude-transformer + devin-transformer (+ future harness transformer packages)
 db -> transformer-shared (contract types only) + db-core + narrow sync-core manifest contracts
 site runtime -> transformer-registry (composition) + db + db-core adapter contracts + sync/source adapters
 site pages -> AnalyticsDataSource DTO/client contracts only

@@ -1,11 +1,11 @@
 {
-  "name": "@lucasschirm/sal-transformer-registry",
+  "name": "@lucasschirm/sal-devin-transformer",
   "version": "0.1.0",
   "private": false,
   "type": "module",
   "license": "ISC",
   "sideEffects": false,
-  "description": "Default TransformerRegistry composition root: wires every transformer plugin package (claude-transformer today, future harness plugins) into a single registry for production and test consumers.",
+  "description": "Devin CLI session transformer plugin: artifact classification, metric derivation, and evidence normalization.",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -20,7 +20,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/lucasschirm/session-analyzer.git",
-    "directory": "packages/transformers/registry"
+    "directory": "packages/transformers/devin-transformer"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -35,8 +35,7 @@
     "version:publish": "exit 0"
   },
   "dependencies": {
-    "@lucasschirm/sal-claude-transformer": "workspace:*",
-    "@lucasschirm/sal-devin-transformer": "workspace:*",
+    "@lucasschirm/sal-devin-session-parser": "workspace:*",
     "@lucasschirm/sal-transformer-shared": "workspace:*"
   },
   "devDependencies": {

@@ -119,6 +119,35 @@ component retains a source pointer (JSON Pointer or text range).
   in many projects. One global update creates one environment lifecycle event
   and project/session exposure intervals; it is not duplicated per project.
 
+## Devin CLI
+
+**Plugin**: `DevinTransformer` (`packages/transformers/devin-transformer/src/devin-transformer.ts`)
+**Parser**: `@lucasschirm/sal-devin-session-parser`
+**Harness ID**: `devin`
+
+### Artifact classification
+
+Classification uses the bundle's path conventions and, where available,
+schema-validated content:
+
+| Scope/path | Classification |
+|------------|---------------|
+| `transcript.jsonl` | Session transcript |
+| `native/atif-transcript.json` | Native ATIF transcript (role: `native`) |
+| `native/models.json` | Settings/runtime, role: `models` |
+| `native/schema-descriptor.json` | Settings/runtime, role: `schema` |
+| `native/models-list.raw.json` | Settings/runtime, role: `models-raw` |
+| `plans/plan-<id>.md` | Session transcript, role: `plan` |
+| `.devin/config.json`, `config.json` | Settings (workspace/global) |
+
+### Metrics
+
+Phase 1 emits the following comparability groups: token counts (prompt,
+completion, cached, total), step and turn counts, tool/skill/agent
+invocations, wall-clock duration, and total cost. Token counts are exact
+when `ATIF-v1.7` `final_metrics` or `response_dimensions` are present; skill
+and agent counts and session cost require follow-on parser work.
+
 ## Future harnesses
 
 The transformer plugin contract and conformance suite are designed for
@@ -159,4 +188,4 @@ proving the 10 canonical invariants:
 - ADR-0003: Component identity
 - ADR-0004: Manifest authority
 - ADR-0006: Metric versioning
-- Implementation: `packages/transformers/claude-transformer/src/plugin/`, `packages/transformers/transformer-shared/src/registry.ts`, `packages/transformers/transformer-shared/src/classification.ts`
+- Implementation: `packages/transformers/claude-transformer/src/plugin/`, `packages/transformers/devin-transformer/src/`, `packages/transformers/transformer-shared/src/registry.ts`, `packages/transformers/transformer-shared/src/classification.ts`
