@@ -72,7 +72,7 @@ describe('INVOCATIONS_BY_DOMAIN_METRIC_DEFINITION (issue #169)', () => {
     expect(INVOCATIONS_BY_DOMAIN_METRIC_DEFINITION.description).toContain('sub-classification');
   });
 
-  it('registers successfully as registry metadata (query surface not wired up yet)', async () => {
+  it('registers successfully as registry metadata (query surface: PortfolioView.getInvocationsByDomain)', async () => {
     const executor = await createExecutor();
     const statisticalPolicyId = await claudeDefaultPolicyId(executor);
     const { definition } = await addMetricDefinition(executor, {

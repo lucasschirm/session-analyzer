@@ -103,14 +103,115 @@ export interface PeriodDelta {
 }
 
 /**
- * Portfolio KPI band (issue #169). Currently covers the sessions-count
- * delta only; token totals, cost coverage, and clean-completion rate are
- * tracked as a follow-up (see the issue #169 implementation report) and are
- * deliberately not stubbed with fabricated values here.
+ * Token totals for a portfolio KPI window (issue #169). `in`/`out` are each
+ * an independent {@link PeriodDelta} because a `model_requests` row can have
+ * a known `input_tokens` and a missing `output_tokens` (or vice versa) —
+ * `currentN` on each side is the count of requests whose respective token
+ * field was non-null, never inflated by the other side's coverage
+ * (`.agents/rules/missing-is-never-zero.md`).
+ */
+export interface PortfolioTokenTotals {
+  readonly in: PeriodDelta;
+  readonly out: PeriodDelta;
+}
+
+/**
+ * Cost coverage for a portfolio KPI window (issue #169). `currentReportedHarnesses`
+ * of `currentTotalHarnesses` distinct harnesses observed in the window have
+ * at least one non-null `model_usage.cost` row; `currentTotal` sums only
+ * those known rows. When zero harnesses report cost, `currentTotal` is
+ * `null` — a coverage gap, never a fabricated `$0`
+ * (`.agents/rules/missing-is-never-zero.md`). `previousTotal`/
+ * `previousReportedHarnesses` are omitted for the "All" time preset, same as
+ * {@link PeriodDelta}.
+ */
+export interface PortfolioCostSummary {
+  readonly currentTotal: number | null;
+  readonly currentReportedHarnesses: number;
+  readonly currentTotalHarnesses: number;
+  readonly previousTotal?: number | null;
+  readonly previousReportedHarnesses?: number;
+  readonly previousTotalHarnesses?: number;
+}
+
+/**
+ * Clean-completion rate for a portfolio KPI window (issue #169), built on
+ * the `session:outcome` signal (issue #178). `value` is `cleanN / knownN`
+ * and is `null` when `knownN` is 0 (no classified outcome in the window) —
+ * never a fabricated 0%. `eligibleN` is every `finality = 'final'` session
+ * in the window; `knownN` is the classified subset.
+ */
+export interface CleanCompletionRate {
+  readonly value: number | null;
+  readonly eligibleN: number;
+  readonly knownN: number;
+}
+
+/**
+ * Portfolio KPI band (issue #169): sessions delta, token totals, cost
+ * coverage, and clean-completion rate for the query window.
  */
 export interface PortfolioKpiBand {
   readonly token: AnalyticsToken;
   readonly sessions: PeriodDelta;
+  readonly tokens: PortfolioTokenTotals;
+  readonly cost: PortfolioCostSummary;
+  readonly cleanCompletionRate: CleanCompletionRate;
+}
+
+/** One bar of the sessions-by-model bar list (issue #169). Sessions with no
+ * `model_requests` row are grouped under `model: 'unknown'` — a real
+ * observed bucket, not a dropped one. */
+export interface SessionsByModelBarRow {
+  readonly model: string;
+  readonly sessionCount: number;
+}
+
+export interface SessionsByModelBar {
+  readonly token: AnalyticsToken;
+  readonly rows: readonly SessionsByModelBarRow[];
+}
+
+/**
+ * One cell of the model×harness session-count matrix (issue #169).
+ * `sessionCount: null` means this (model, harness) combination has never
+ * been observed in the portfolio (the harness never runs this model) — a
+ * distinct sentinel from a measured `0` (the combination has run before but
+ * had no sessions in this window). See
+ * `.agents/rules/missing-is-never-zero.md`.
+ */
+export interface ModelHarnessMatrixCell {
+  readonly model: string;
+  readonly harness: string;
+  readonly sessionCount: number | null;
+}
+
+export interface ModelHarnessMatrix {
+  readonly token: AnalyticsToken;
+  readonly models: readonly string[];
+  readonly harnesses: readonly string[];
+  readonly cells: readonly ModelHarnessMatrixCell[];
+}
+
+/**
+ * Invocation counts by canonical domain (issue #169) — implements
+ * `portfolio:invocations_by_domain` (`metric-registry.ts`). Exactly the four
+ * canonical `kind` values are present; MCP-server calls are counted inside
+ * `tool`, never as a fifth bucket
+ * (`.agents/rules/analytics-domain-distinctions.md`). `totalInvocations` is
+ * the raw count of every invocation in the window, independent of the
+ * per-kind breakdown, so consumers can assert
+ * `sum(byKind) === totalInvocations` (no double counting).
+ */
+export interface InvocationsByDomainRow {
+  readonly kind: 'tool' | 'skill' | 'agent' | 'sub_agent';
+  readonly count: number;
+}
+
+export interface InvocationsByDomain {
+  readonly token: AnalyticsToken;
+  readonly rows: readonly InvocationsByDomainRow[];
+  readonly totalInvocations: number;
 }
 
 export interface PortfolioTrendSeries {
@@ -514,6 +615,9 @@ export interface PortfolioView {
   getComponentUtilization(query: AnalyticsQuery): Promise<ComponentUtilizationPage>;
   getModelHarnessCohorts(query: AnalyticsQuery): Promise<ModelHarnessCohortPage>;
   getProjectList(query: AnalyticsQuery): Promise<ProjectListPage>;
+  getSessionsByModel(query: AnalyticsQuery): Promise<SessionsByModelBar>;
+  getModelHarnessMatrix(query: AnalyticsQuery): Promise<ModelHarnessMatrix>;
+  getInvocationsByDomain(query: AnalyticsQuery): Promise<InvocationsByDomain>;
 }
 
 export interface ProjectBehaviorView {

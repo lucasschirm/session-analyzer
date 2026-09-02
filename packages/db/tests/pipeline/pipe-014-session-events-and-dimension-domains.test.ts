@@ -6,6 +6,7 @@ import {
 import { createDefaultRegistry } from '@lucasschirm/sal-transformer';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
+import { createPortfolioView } from '../../src/analytics-portfolio.js';
 import { createMetadataView, createSessionEvidenceView } from '../../src/analytics-session.js';
 import type { IngestionReceipt } from '../../src/ingestion.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';
@@ -137,6 +138,34 @@ describe('PIPE-014: session events + dimension domains (claude-code)', () => {
       const domains = await metadataView.getDimensionDomains({ portfolioId });
       expect(domains.harnesses).toContain('claude-code');
       expect(domains.projects.length).toBeGreaterThan(0);
+
+      // Portfolio KPI-band additions from issue #169 round 2 (token totals,
+      // cost coverage, clean-completion rate, sessions-by-model,
+      // model x harness matrix, invocations-by-domain). These read
+      // model_requests/model_usage/invocations, which
+      // DefaultIngestionOrchestrator does not populate yet (same documented
+      // gap as getSessionEvents above) — so every DTO here is honestly
+      // empty/unknown rather than a fabricated non-zero value. This
+      // assertion exercises the full read-contract wiring end-to-end and
+      // pins the "no data yet" contract so a future ingestion-population fix
+      // is caught by a real assertion change here, not a silent pass.
+      const portfolioView = createPortfolioView(executor);
+      const band = await portfolioView.getKpiBand({ portfolioId });
+      expect(band.tokens.in.current).toBe(0);
+      expect(band.tokens.in.currentN).toBe(0);
+      expect(band.cost.currentTotal).toBeNull();
+      expect(band.cost.currentReportedHarnesses).toBe(0);
+      expect(band.cleanCompletionRate.value).toBeNull();
+
+      const modelBar = await portfolioView.getSessionsByModel({ portfolioId });
+      expect(modelBar.rows).toEqual([{ model: 'unknown', sessionCount: 1 }]);
+
+      const matrix = await portfolioView.getModelHarnessMatrix({ portfolioId });
+      expect(matrix.cells).toEqual([]);
+
+      const invocationsByDomain = await portfolioView.getInvocationsByDomain({ portfolioId });
+      expect(invocationsByDomain.totalInvocations).toBe(0);
+      expect(invocationsByDomain.rows).toEqual([]);
     },
   );
 });

@@ -349,6 +349,13 @@ export const INVOCATIONS_BY_DOMAIN_METRIC_VERSION = 1;
  *   MCP subset filters `tool` invocations by component kind — it must
  *   never be added as a fifth chart series, and doing so would double-count
  *   against the `tool` total.
+ *
+ * Query surface: `PortfolioView.getInvocationsByDomain` /
+ * `getInvocationsByDomain` in `analytics-portfolio.ts`, backed by
+ * `PortfolioKpiStore.getInvocationsByDomainInWindow` (db-core). Covered by
+ * `packages/db/tests/unit/analytics-portfolio-169-round2.test.ts` including
+ * an explicit `sum(byKind) === totalInvocations` assertion with a
+ * `mcp_server`-classified `tool` invocation in the fixture.
  */
 export const INVOCATIONS_BY_DOMAIN_METRIC_DEFINITION: InsertMetricDefinitionInput = {
   metricId: INVOCATIONS_BY_DOMAIN_METRIC_ID,
@@ -364,13 +371,62 @@ export const INVOCATIONS_BY_DOMAIN_METRIC_DEFINITION: InsertMetricDefinitionInpu
   grain: 'invocation',
   dimensions: ['kind'],
   populationRule: 'true',
-  statusRule: 'planned',
+  statusRule: 'committed',
   aggregation: 'count',
   statisticalPolicyId: 'claude-default',
   comparabilityGroupInputs: [],
   missingDataBehavior: 'unknown',
   rootInclusion: 'both',
   provenanceRequirement: 'invocations.kind',
+};
+
+export const PORTFOLIO_CLEAN_COMPLETION_RATE_METRIC_ID = 'portfolio:clean_completion_rate';
+export const PORTFOLIO_CLEAN_COMPLETION_RATE_METRIC_VERSION = 1;
+
+/**
+ * Portfolio clean-completion rate (issue #169) — id
+ * `portfolio:clean_completion_rate`, version 1. Implemented:
+ * `PortfolioView.getKpiBand` (`cleanCompletionRate` field) in
+ * `analytics-portfolio.ts`, backed by
+ * `PortfolioKpiStore.getCleanCompletionInWindow` (db-core).
+ *
+ * - **Formula**: `cleanN / knownN`, where `cleanN` is sessions with
+ *   `outcome = 'clean'` and `knownN` is sessions with any non-null
+ *   `outcome` (reusing the `session:outcome` classification from
+ *   `classifyClaudeCodeOutcome` / `SESSION_OUTCOME_METRIC_DEFINITION` —
+ *   this metric does not reclassify outcomes, it only aggregates the
+ *   existing per-session signal).
+ * - **Population**: sessions with `finality = 'final'` and a non-null
+ *   `start_time` inside the query window (`eligibleN`).
+ * - **Denominator**: `knownN` (the classified subset of `eligibleN`), not
+ *   `eligibleN` — the unclassified "unreadable tail" bucket is excluded
+ *   from the rate rather than counted as a failure or a success.
+ * - **Missingness policy**: `value` is `null`, never `0`, when `knownN` is
+ *   0 (no classified outcome observed in the window) —
+ *   `.agents/rules/missing-is-never-zero.md`.
+ */
+export const PORTFOLIO_CLEAN_COMPLETION_RATE_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: PORTFOLIO_CLEAN_COMPLETION_RATE_METRIC_ID,
+  version: PORTFOLIO_CLEAN_COMPLETION_RATE_METRIC_VERSION,
+  label: 'Portfolio clean-completion rate',
+  description:
+    'Share of finalized sessions in the query window classified with a clean outcome, ' +
+    'among sessions with a known (classified) outcome.',
+  family: 'session_outcome',
+  measurementClass: 'derived',
+  unit: 'ratio',
+  valueType: 'real',
+  grain: 'portfolio',
+  dimensions: [],
+  populationRule:
+    "finality = 'final' AND start_time IS NOT NULL AND start_time IN [window.start, window.end)",
+  statusRule: 'committed',
+  aggregation: 'distribution',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'root_only',
+  provenanceRequirement: 'sessions.outcome',
 };
 
 /**

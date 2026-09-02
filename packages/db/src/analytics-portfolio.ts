@@ -17,17 +17,23 @@ import {
 } from '@lucasschirm/sal-db-core';
 import type {
   AnalyticsQuery,
+  CleanCompletionRate,
   ComponentUtilizationPage,
   ComponentUtilizationRow,
+  InvocationsByDomain,
   ModelHarnessCohort,
   ModelHarnessCohortPage,
+  ModelHarnessMatrix,
   PeriodDelta,
+  PortfolioCostSummary,
   PortfolioKpiBand,
   PortfolioOverview,
+  PortfolioTokenTotals,
   PortfolioTrendSeries,
   PortfolioView,
   ProjectListItem,
   ProjectListPage,
+  SessionsByModelBar,
   TimeRange,
   TimeSeriesPoint,
 } from './analytics.js';
@@ -1131,6 +1137,9 @@ export function createPortfolioView(queryable: Queryable): PortfolioView {
     getComponentUtilization: (query) => getComponentUtilization(queryable, query),
     getModelHarnessCohorts: (query) => getModelHarnessCohorts(queryable, query),
     getProjectList: (query) => getProjectList(queryable, query),
+    getSessionsByModel: (query) => getSessionsByModel(queryable, query),
+    getModelHarnessMatrix: (query) => getModelHarnessMatrix(queryable, query),
+    getInvocationsByDomain: (query) => getInvocationsByDomain(queryable, query),
   };
 }
 
@@ -1186,6 +1195,103 @@ async function sessionCountDelta(
   return { current, currentN: current, previous, previousN: previous };
 }
 
+/**
+ * Resolves the current KPI window in epoch-ms. The "All" time preset (no
+ * `query.timeRange`) has no bound, so it defaults to the widest possible
+ * window (epoch 0 through `MAX_SAFE_INTEGER`) — equivalent to "every
+ * session/request with a recorded `start_time`", the same population the
+ * `portfolio:sessions_delta` metric uses for its unbounded case.
+ */
+function currentWindowMs(query: AnalyticsQuery): { start: number; end: number } {
+  const range = query.timeRange;
+  if (!range) return { start: 0, end: Number.MAX_SAFE_INTEGER };
+  const start = Date.parse(range.start);
+  const end = Date.parse(range.end);
+  return {
+    start: Number.isNaN(start) ? 0 : start,
+    end: Number.isNaN(end) ? Number.MAX_SAFE_INTEGER : end,
+  };
+}
+
+async function tokenTotalsDelta(
+  queryable: Queryable,
+  portfolioId: string,
+  query: AnalyticsQuery,
+): Promise<PortfolioTokenTotals> {
+  const { start, end } = currentWindowMs(query);
+  const current = await PortfolioKpiStore.sumTokensInWindow(queryable, portfolioId, start, end);
+  const previousWindow = resolvePreviousWindow(query.timeRange);
+  const previous = previousWindow
+    ? await PortfolioKpiStore.sumTokensInWindow(
+        queryable,
+        portfolioId,
+        Date.parse(previousWindow.start),
+        Date.parse(previousWindow.end),
+      )
+    : null;
+  return {
+    in: {
+      current: current.inputTokensSum,
+      currentN: current.inputKnownN,
+      ...(previous ? { previous: previous.inputTokensSum, previousN: previous.inputKnownN } : {}),
+    },
+    out: {
+      current: current.outputTokensSum,
+      currentN: current.outputKnownN,
+      ...(previous ? { previous: previous.outputTokensSum, previousN: previous.outputKnownN } : {}),
+    },
+  };
+}
+
+async function costSummaryDelta(
+  queryable: Queryable,
+  portfolioId: string,
+  query: AnalyticsQuery,
+): Promise<PortfolioCostSummary> {
+  const { start, end } = currentWindowMs(query);
+  const current = await PortfolioKpiStore.sumCostInWindow(queryable, portfolioId, start, end);
+  const previousWindow = resolvePreviousWindow(query.timeRange);
+  const previous = previousWindow
+    ? await PortfolioKpiStore.sumCostInWindow(
+        queryable,
+        portfolioId,
+        Date.parse(previousWindow.start),
+        Date.parse(previousWindow.end),
+      )
+    : null;
+  return {
+    currentTotal: current.reportedHarnesses > 0 ? current.costSum : null,
+    currentReportedHarnesses: current.reportedHarnesses,
+    currentTotalHarnesses: current.totalHarnesses,
+    ...(previous
+      ? {
+          previousTotal: previous.reportedHarnesses > 0 ? previous.costSum : null,
+          previousReportedHarnesses: previous.reportedHarnesses,
+          previousTotalHarnesses: previous.totalHarnesses,
+        }
+      : {}),
+  };
+}
+
+async function cleanCompletionRate(
+  queryable: Queryable,
+  portfolioId: string,
+  query: AnalyticsQuery,
+): Promise<CleanCompletionRate> {
+  const { start, end } = currentWindowMs(query);
+  const totals = await PortfolioKpiStore.getCleanCompletionInWindow(
+    queryable,
+    portfolioId,
+    start,
+    end,
+  );
+  return {
+    value: totals.knownN > 0 ? totals.cleanN / totals.knownN : null,
+    eligibleN: totals.eligibleN,
+    knownN: totals.knownN,
+  };
+}
+
 export async function getKpiBand(
   queryable: Queryable,
   query: AnalyticsQuery,
@@ -1194,19 +1300,166 @@ export async function getKpiBand(
   const sessions = portfolioId
     ? await sessionCountDelta(queryable, portfolioId, query)
     : { current: 0, currentN: 0 };
+  const tokens: PortfolioTokenTotals = portfolioId
+    ? await tokenTotalsDelta(queryable, portfolioId, query)
+    : { in: { current: 0, currentN: 0 }, out: { current: 0, currentN: 0 } };
+  const cost: PortfolioCostSummary = portfolioId
+    ? await costSummaryDelta(queryable, portfolioId, query)
+    : { currentTotal: null, currentReportedHarnesses: 0, currentTotalHarnesses: 0 };
+  const cleanCompletion: CleanCompletionRate = portfolioId
+    ? await cleanCompletionRate(queryable, portfolioId, query)
+    : { value: null, eligibleN: 0, knownN: 0 };
 
-  const tokens = pageTokens(query, []);
+  const tokenz = pageTokens(query, []);
   const token = makeBaseToken(
-    tokens.analysisReleaseId,
-    tokens.generationId,
-    tokens.comparabilityGroupId,
+    tokenz.analysisReleaseId,
+    tokenz.generationId,
+    tokenz.comparabilityGroupId,
     sessions.currentN,
     sessions.currentN,
     0,
     'derived',
-    'portfolio-kpi-band-0.1.0',
+    'portfolio-kpi-band-0.2.0',
     [evidenceLink('portfolio', portfolioId ?? 'unknown', 'Portfolio KPI band')],
   );
 
-  return { token, sessions };
+  return { token, sessions, tokens, cost, cleanCompletionRate: cleanCompletion };
+}
+
+export async function getSessionsByModel(
+  queryable: Queryable,
+  query: AnalyticsQuery,
+): Promise<SessionsByModelBar> {
+  const portfolioId = await resolvePortfolioId(queryable, query);
+  const tokens = pageTokens(query, []);
+  if (!portfolioId) {
+    const token = makeBaseToken(
+      tokens.analysisReleaseId,
+      tokens.generationId,
+      tokens.comparabilityGroupId,
+      0,
+      0,
+      0,
+      'observed',
+      'sessions-by-model-0.1.0',
+      [evidenceLink('portfolio', 'unknown', 'Sessions by model')],
+    );
+    return { token, rows: [] };
+  }
+  const { start, end } = currentWindowMs(query);
+  const rows = await PortfolioKpiStore.getSessionsByModelInWindow(
+    queryable,
+    portfolioId,
+    start,
+    end,
+  );
+  const totalSessions = rows.reduce((sum, r) => sum + r.sessionCount, 0);
+  const token = makeBaseToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    totalSessions,
+    totalSessions,
+    0,
+    'observed',
+    'sessions-by-model-0.1.0',
+    [evidenceLink('portfolio', portfolioId, 'Sessions by model')],
+  );
+  return { token, rows };
+}
+
+export async function getModelHarnessMatrix(
+  queryable: Queryable,
+  query: AnalyticsQuery,
+): Promise<ModelHarnessMatrix> {
+  const portfolioId = await resolvePortfolioId(queryable, query);
+  const tokens = pageTokens(query, []);
+  if (!portfolioId) {
+    const token = makeBaseToken(
+      tokens.analysisReleaseId,
+      tokens.generationId,
+      tokens.comparabilityGroupId,
+      0,
+      0,
+      0,
+      'observed',
+      'model-harness-matrix-0.1.0',
+      [evidenceLink('portfolio', 'unknown', 'Model x harness matrix')],
+    );
+    return { token, models: [], harnesses: [], cells: [] };
+  }
+  const { start, end } = currentWindowMs(query);
+  const [everObserved, windowCounts] = await Promise.all([
+    PortfolioKpiStore.getModelHarnessPairsEverObserved(queryable, portfolioId),
+    PortfolioKpiStore.getModelHarnessCountsInWindow(queryable, portfolioId, start, end),
+  ]);
+  const models = [...new Set(everObserved.map((p) => p.model))].sort();
+  const harnesses = [...new Set(everObserved.map((p) => p.harness))].sort();
+  const everObservedKeys = new Set(everObserved.map((p) => `${p.model}|${p.harness}`));
+  const windowCountByKey = new Map(
+    windowCounts.map((r) => [`${r.model}|${r.harness}`, r.sessionCount]),
+  );
+  const cells = models.flatMap((model) =>
+    harnesses.map((harness) => {
+      const key = `${model}|${harness}`;
+      const sessionCount = everObservedKeys.has(key) ? (windowCountByKey.get(key) ?? 0) : null;
+      return { model, harness, sessionCount };
+    }),
+  );
+  const knownCells = cells.filter((c) => c.sessionCount !== null).length;
+  const token = makeBaseToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    cells.length,
+    knownCells,
+    cells.length - knownCells,
+    'observed',
+    'model-harness-matrix-0.1.0',
+    [evidenceLink('portfolio', portfolioId, 'Model x harness matrix')],
+  );
+  return { token, models, harnesses, cells };
+}
+
+export async function getInvocationsByDomain(
+  queryable: Queryable,
+  query: AnalyticsQuery,
+): Promise<InvocationsByDomain> {
+  const portfolioId = await resolvePortfolioId(queryable, query);
+  const tokens = pageTokens(query, []);
+  if (!portfolioId) {
+    const token = makeBaseToken(
+      tokens.analysisReleaseId,
+      tokens.generationId,
+      tokens.comparabilityGroupId,
+      0,
+      0,
+      0,
+      'observed',
+      'invocations-by-domain-0.1.0',
+      [evidenceLink('portfolio', 'unknown', 'Invocations by domain')],
+    );
+    return { token, rows: [], totalInvocations: 0 };
+  }
+  const { start, end } = currentWindowMs(query);
+  const [domainRows, totalInvocations] = await Promise.all([
+    PortfolioKpiStore.getInvocationsByDomainInWindow(queryable, portfolioId, start, end),
+    PortfolioKpiStore.countTotalInvocationsInWindow(queryable, portfolioId, start, end),
+  ]);
+  const rows = domainRows.map((r) => ({
+    kind: r.kind as InvocationsByDomain['rows'][number]['kind'],
+    count: r.count,
+  }));
+  const token = makeBaseToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    totalInvocations,
+    totalInvocations,
+    0,
+    'observed',
+    'invocations-by-domain-0.1.0',
+    [evidenceLink('portfolio', portfolioId, 'Invocations by domain')],
+  );
+  return { token, rows, totalInvocations };
 }
