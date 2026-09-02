@@ -1,4 +1,10 @@
-import { FRESH_SCHEMA_SQL, SessionOutcomeStore } from '@lucasschirm/sal-db-core';
+import {
+  deterministicId,
+  deterministicPortfolioId,
+  FRESH_SCHEMA_SQL,
+  SessionOutcomeStore,
+  SessionStore,
+} from '@lucasschirm/sal-db-core';
 import { createDefaultRegistry } from '@lucasschirm/sal-transformer';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
@@ -19,6 +25,19 @@ import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../s
 
 const ANALYSIS_RELEASE = 'ar-pipe013';
 const PROJECT = 'project-pipe013';
+
+/**
+ * Mirrors `DefaultIngestionOrchestrator.resolveManualCanonicalIdentity`'s
+ * `projectId` derivation exactly (same deterministic-id helpers, same
+ * inputs for a manual ingest with the default tenant/portfolio) so this
+ * test can address `SessionStore`/`SessionOutcomeStore` by the real
+ * canonical `project_id` without any raw SQL lookup
+ * (`.agents/rules/sql-only-in-db-core.md`).
+ */
+function canonicalProjectId(nativeProjectId: string): string {
+  const portfolioId = deterministicPortfolioId('ten-default', 'default');
+  return `prj-${deterministicId('project', portfolioId, nativeProjectId)}`;
+}
 
 function baseEntry(sessionId: string, uuid: string, parentUuid: string | null) {
   return { sessionId, timestamp: '2026-08-20T10:00:00.000Z', parentUuid, uuid, isSidechain: false };
@@ -148,13 +167,18 @@ async function ingestFixture(
   });
 }
 
-async function markFinal(executor: WasmSqliteExecutor, sessionId: string): Promise<void> {
+async function markFinal(
+  executor: WasmSqliteExecutor,
+  projectId: string,
+  sessionId: string,
+): Promise<void> {
   // The transformer does not yet emit finality='final' for any session (a
   // known, separately-tracked gap noted in the issue #178 signal audit) —
   // simulate the session-finalization step this metric's population rule
   // depends on (`finality = 'final'`) so the rollup query has a non-empty
-  // population to exercise.
-  await executor.exec(`UPDATE sessions SET finality = 'final' WHERE id = ?`, [sessionId]);
+  // population to exercise. Uses the typed db-core store, never raw SQL
+  // (`.agents/rules/sql-only-in-db-core.md`).
+  await SessionStore.update(executor, projectId, sessionId, { finality: 'final' });
 }
 
 describe('PIPE-013: session outcome rollup (claude-code)', () => {
@@ -170,38 +194,28 @@ describe('PIPE-013: session outcome rollup (claude-code)', () => {
       analysisReleaseId: ANALYSIS_RELEASE,
     });
 
+    const projectId = canonicalProjectId(PROJECT);
     const fixtures = [cleanFixture(), interruptedFixture(), errorFixture(), unreadableFixture()];
     const receipts: IngestionReceipt[] = [];
     for (const fixture of fixtures) {
       const receipt = await ingestFixture(orchestrator, hasher, fixture);
       expect(receipt.status).toBe('committed');
       receipts.push(receipt);
-      await markFinal(executor, receipt.sessionId);
+      await markFinal(executor, projectId, receipt.sessionId);
     }
 
-    const { rows } = await executor.exec(
-      'SELECT id, outcome FROM sessions WHERE id IN (?, ?, ?, ?)',
-      receipts.map((r) => r.sessionId),
-    );
     const outcomeByNative = new Map<string, unknown>();
     for (let i = 0; i < fixtures.length; i++) {
-      const row = rows.find((r) => String(r.id) === receipts[i].sessionId);
-      outcomeByNative.set(fixtures[i].sessionId, row?.outcome);
+      const session = await SessionStore.getById(executor, projectId, receipts[i].sessionId);
+      outcomeByNative.set(fixtures[i].sessionId, session?.outcome);
     }
     expect(outcomeByNative.get('sess-pipe013-clean')).toBe('clean');
     expect(outcomeByNative.get('sess-pipe013-interrupted')).toBe('interrupted_by_user');
     expect(outcomeByNative.get('sess-pipe013-error')).toBe('ended_on_error');
     expect(outcomeByNative.get('sess-pipe013-unreadable')).toBeNull();
 
-    const { rows: projectRows } = await executor.exec(
-      'SELECT project_id FROM sessions WHERE id = ?',
-      [receipts[0].sessionId],
-    );
-    const projectId = projectRows[0]?.project_id;
-    expect(projectId).toBeTruthy();
-
     // Rollup query — db-core store, the seam sub-issue #169's DTO will read.
-    const rollup = await SessionOutcomeStore.rollupByProject(executor, String(projectId));
+    const rollup = await SessionOutcomeStore.rollupByProject(executor, projectId);
     const byOutcome = new Map(rollup.map((r) => [r.outcome, r.count]));
     expect(byOutcome.get('clean')).toBe(1);
     expect(byOutcome.get('interrupted_by_user')).toBe(1);
@@ -211,7 +225,7 @@ describe('PIPE-013: session outcome rollup (claude-code)', () => {
     // Coverage-breakdown DTO — db layer, per missing-is-never-zero and
     // aggregates-expose-sample-size: n classified vs n missing, never a bare
     // number.
-    const distribution = await getSessionOutcomeDistribution(executor, String(projectId));
+    const distribution = await getSessionOutcomeDistribution(executor, projectId);
     expect(distribution.token.eligibleN).toBe(4);
     expect(distribution.token.knownN).toBe(3);
     expect(distribution.token.unknownCount).toBe(1);

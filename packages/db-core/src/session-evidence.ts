@@ -585,6 +585,13 @@ export const ALTER_SESSIONS_EVIDENCE_COLUMNS = buildAlterSessions(
 // Only the three real, positively-classified outcomes are enumerated in the
 // CHECK constraint; "unknown (unreadable tail)" is represented by the
 // absence of a row value, not a fourth enum member.
+//
+// Deliberately duplicated in `packages/transformer/src/session.ts`
+// (`SESSION_OUTCOMES`/`SessionOutcome`) rather than imported from here:
+// transformers never depend on `db-core`
+// (`.agents/rules/transformers-never-write-sqlite.md`). Keep the two
+// literal arrays in sync by hand — a drift-detection test asserts equality
+// in `packages/db/tests/unit/session-outcomes-in-sync.test.ts`.
 export const SESSION_OUTCOMES = ['clean', 'interrupted_by_user', 'ended_on_error'] as const;
 export type SessionOutcome = (typeof SESSION_OUTCOMES)[number];
 

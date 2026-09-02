@@ -292,4 +292,18 @@ describe('session outcome rollup query plan', () => {
     const eligibleN = rows.reduce((sum, r) => sum + r.count, 0);
     expect(eligibleN).toBe(4);
   });
+
+  it('a cross-project outcome lookup uses the single-column idx_sessions_outcome index', async () => {
+    // idx_sessions_project_finality_outcome only helps queries that filter
+    // on project_id first; a portfolio-wide "which sessions ended on error"
+    // query (no project_id predicate) instead needs the standalone
+    // idx_sessions_outcome index — proven here so that index isn't dead
+    // schema with no query ever exercising it.
+    const { executor } = await seededExecutor();
+    const details = await getPlanDetails(executor, `SELECT id FROM sessions WHERE outcome = ?`, [
+      'ended_on_error',
+    ]);
+    expect(hasScanForTable(details, 'sessions')).toBe(false);
+    expect(hasSearchForTable(details, 'sessions')).toBe(true);
+  });
 });
