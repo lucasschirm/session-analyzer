@@ -37,14 +37,34 @@ catalog), then foundation, building blocks, screens, and a final
 verification/rollout gate. Dependency order must be explicit and acyclic, and
 every intermediate `main` merge must leave the deployed app fully usable.
 
+Two planning artifacts come out of the grounding and travel through every
+later step (both learned from a 5-round review loop on feature #182, where
+their absence caused ~80% of the required findings):
+
+- **The producer/consumer ledger** — one row per data element any issue will
+  read (table/column, DTO field, metric ID, series, dimension value,
+  relationship edge): either "exists today" with the verified path/symbol, or
+  the ONE named issue that produces it before every consumer. A read with no
+  ledger row is not plannable; two producers for one row is a conflict to
+  resolve now, not at review. The ledger lives in the parent body (or a
+  planning file the parent links) and is the reviewer's first audit surface.
+- **The shared-decisions register** — every cross-cutting choice more than
+  one issue will restate: defaults, shared formulas/detection rules (named
+  and versioned so all issues cite "the X rule (v1)"), one owner per shared
+  artifact/view/route, vocabulary sources. Writers quote register entries
+  verbatim — paraphrase is how five sibling issues end up stating three
+  different defaults.
+
 ### 2. Write the bodies
 
 Dispatch the **`issue-writer`** agent with the feature context (design
-reference, plan outline, grounding notes) to produce the parent body and every
-sub-issue body as local markdown files (one file per issue, e.g. under a
-scratch directory). Large features: batch related issues per dispatch rather
-than one agent per issue. Review what comes back for scope-level sanity (the
-reviewer will do the deep audit).
+reference, plan outline, grounding notes, **and the ledger + decisions
+register from step 1**) to produce the parent body and every sub-issue body
+as local markdown files (one file per issue, e.g. under a scratch directory).
+Every read a body specifies must cite its ledger row; every shared decision
+is quoted from the register, never paraphrased. Large features: batch related
+issues per dispatch rather than one agent per issue. Review what comes back
+for scope-level sanity (the reviewer will do the deep audit).
 
 ### 3. Create the issues
 
@@ -87,15 +107,23 @@ all sub-issue numbers. Then:
 
 1. If the verdict is `CHANGES REQUIRED`: apply **every** finding — blockers,
    should-fixes, AND nice-to-haves (applying nice-to-haves is what lets the
-   next round terminate instead of re-listing them). Edit the local body
-   files, push with `gh issue edit <n> --body-file <file>` (and
-   `--title` where numbering changed); create any newly-scoped sub-issue via
-   step 3. For substantial rewrites, send the finding back through the
-   `issue-writer` agent rather than patching prose yourself.
+   next round terminate instead of re-listing them). For findings that touch
+   several issues, first translate the round into a **round directive file**:
+   the authoritative cross-issue decisions (appended to the decisions
+   register) plus a per-issue work order. Snapshot all current bodies, then
+   apply per issue — each fixer edits ONLY its own issue, quoting shared
+   wording verbatim from the directive. This is what keeps parallel fixes
+   from drifting apart. Edit the local body files, push with
+   `gh issue edit <n> --body-file <file>` (and `--title` where numbering
+   changed); create any newly-scoped sub-issue via step 3. For substantial
+   rewrites, send the finding back through the `issue-writer` agent rather
+   than patching prose yourself.
 2. Re-dispatch the reviewer on the updated set. Each round's prompt states it
-   is round k and that the text must be judged from scratch; carry forward
-   the standing decisions (documented deviations and interim states are
-   approved, not findings) so settled questions don't oscillate.
+   is round k, scopes the audit to the **changed text plus cross-issue
+   coherence**, and carries forward the prior round's "checked and clean"
+   list so verified claims are not re-derived; carry forward the standing
+   decisions (documented deviations and interim states are approved, not
+   findings) so settled questions don't oscillate.
 3. **Stop when a round returns `VERDICT: CLEAN` on the final text.** If the
    clean round still listed nice-to-haves and you apply them, run one short
    confirmation round on the exact final text. Two consecutive clean

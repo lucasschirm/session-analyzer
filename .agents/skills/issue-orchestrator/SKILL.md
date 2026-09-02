@@ -65,8 +65,8 @@ gates readiness.
 ### 2. Select the next issue
 
 1. Any issue already `In Progress` (resume it).
-2. The lowest-`k/N` ready open issue (older features without `k/N` titles,
-   e.g. #182's: the lowest-numbered ready issue).
+2. The lowest-`k/N` ready open issue (older features without `k/N` titles:
+   the lowest-numbered ready issue).
 3. Nothing ready → report the blocker chain and stop; never start an issue
    whose dependencies are open.
 
