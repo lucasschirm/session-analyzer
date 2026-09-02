@@ -24,26 +24,38 @@ function cssNameToCamelCase(cssName: string): string {
   return cssName.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 }
 
+/** index.html's --rd-* declarations, keyed by the same camelCase name tokens.ts uses. */
+function readIndexHtmlTokensByCamelCaseName(): Record<string, string> {
+  const cssTokens = readIndexHtmlRedesignTokens();
+  const out: Record<string, string> = {};
+  for (const [cssName, hex] of Object.entries(cssTokens)) {
+    out[cssNameToCamelCase(cssName)] = hex;
+  }
+  return out;
+}
+
 describe('tokens module completeness', () => {
   it('has a matching camelCase entry for every --rd-* custom property in index.html', () => {
-    const cssTokens = readIndexHtmlRedesignTokens();
-    expect(Object.keys(cssTokens).length).toBeGreaterThan(0);
+    const cssTokensByName = readIndexHtmlTokensByCamelCaseName();
+    expect(Object.keys(cssTokensByName).length).toBeGreaterThan(0);
 
-    for (const [cssName, hex] of Object.entries(cssTokens)) {
-      const camel = cssNameToCamelCase(cssName);
-      expect(tokens, `missing tokens.ts entry for --rd-${cssName}`).toHaveProperty(camel, hex);
+    for (const [name, hex] of Object.entries(cssTokensByName)) {
+      expect(tokens, `missing tokens.ts entry for --rd-* name "${name}"`).toHaveProperty(name, hex);
     }
   });
 
-  it('has no tokens.ts entries that are absent from index.html', () => {
-    const cssTokens = readIndexHtmlRedesignTokens();
-    const cssHexValues = new Set(Object.values(cssTokens));
+  it('has no tokens.ts entries that are absent, renamed, or mismatched relative to index.html', () => {
+    const cssTokensByName = readIndexHtmlTokensByCamelCaseName();
 
+    // Name-keyed comparison (not just hex-value membership) so a tokens.ts
+    // entry that duplicates another token's hex under a name index.html
+    // doesn't declare (an "orphan" with a coincidentally shared color) is
+    // still caught, rather than passing because *some* --rd-* value matches.
     for (const [name, hex] of Object.entries(tokens)) {
       expect(
-        cssHexValues,
-        `tokens.ts entry "${name}" (${hex}) has no matching --rd-* value in index.html`,
-      ).toContain(hex);
+        cssTokensByName,
+        `tokens.ts entry "${name}" (${hex}) has no matching --rd-* name in index.html`,
+      ).toHaveProperty(name, hex);
     }
   });
 });

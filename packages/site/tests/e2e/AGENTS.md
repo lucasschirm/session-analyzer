@@ -7,6 +7,7 @@ Playwright end-to-end tests and fixtures for the site package.
 - **app.spec.ts** — Core user journey covering project CRUD, manual import, session evidence, persistence, export, and routing.
 - **chart-content.spec.ts** — Smoke tests for the chart-content geometry and empty/error affordance helpers.
 - **portfolio-refresh.spec.ts** — UX-003: live refresh of portfolio metrics and chart geometry after a second session upload without page reload.
+- **redesign-tokens.spec.ts** — UX-022: self-hosted Space Grotesk woff2 loads from the same origin (no runtime Google Fonts dependency) and is usable via the Font Loading API.
 - **sessions-filter.spec.ts** — Sessions scope filter interactions on the Portfolio and Project Behavior pages.
 - **sync.spec.ts** — CAS sync pipeline, offline handling, retry, passkey, and large transcript flows.
 - **sync-fixtures.ts** — Mock S3 CAS payload and `FixtureBucket` builders for sync tests.

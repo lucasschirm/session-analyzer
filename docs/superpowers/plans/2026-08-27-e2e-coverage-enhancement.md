@@ -133,8 +133,9 @@ yet implemented — a merge blocker until it lands), `IMPLEMENTING`,
 | UX-019 | Sync-confirm modal | Syncing a saved connection opens a confirm-sync modal; a locked vault prompts for the passkey first, then proceeds to sync | none | 3 | 4 | 3 | 36 | `design-fixes.spec.ts` | GREEN |
 | UX-020 | Data-sources connection form | Opening the new-connection form (via click or direct route) updates the URL hash to `/settings/data-sources/new` | none | 2 | 2 | 2 | 8 | `design-fixes.spec.ts` | GREEN |
 | UX-021 | App boot loading state | The loading state is visible before the app is ready and disappears once it is | none | 2 | 2 | 2 | 8 | `design-fixes.spec.ts` | GREEN |
+| UX-022 | Self-hosted typography (redesign token/font foundation) | Space Grotesk's woff2 files load from the same origin (never `fonts.googleapis.com`/`fonts.gstatic.com`) and are usable via the Font Loading API, so the offline/GitHub-Pages build has no runtime Google Fonts dependency | none | 2 | 2 | 3 | 12 | `redesign-tokens.spec.ts` | GREEN |
 
-New redesign entries allocate **UX-022** and up. None are added by PR-A —
+New redesign entries allocate **UX-023** and up. None are added by PR-A —
 this PR is scaffolding only; entries land with the feature PRs that
 implement them, per `e2e-coverage-required.md`.
 
