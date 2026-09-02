@@ -539,6 +539,22 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
     expect(summary.headlineMetrics[0]?.metricId).toBe('headline-tokens');
   });
 
+  it('returns mode from the session record', async () => {
+    const summary = await ds.session.getSummary(sessionId);
+    expect(summary.mode).toBe('auto');
+  });
+
+  it('returns null (not undefined/0) for outcome when the session has not been classified (issue #172/#178)', async () => {
+    const summary = await ds.session.getSummary(sessionId);
+    expect(summary.outcome).toBeNull();
+  });
+
+  it('returns the classified session outcome when present', async () => {
+    await SessionStore.update(executor, PROJECT_ID, sessionId, { outcome: 'clean' });
+    const summary = await ds.session.getSummary(sessionId);
+    expect(summary.outcome).toBe('clean');
+  });
+
   it('returns context timing series from chart series', async () => {
     const series = await ds.session.getContextTimingSeries(sessionId);
     expect(series.points.length).toBe(1);

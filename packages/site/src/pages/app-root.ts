@@ -607,13 +607,14 @@ export class AppRoot extends LitElement {
   }
 
   /**
-   * The Portfolio route (`/`) renders a page-owned title row
-   * (`portfolio-view`'s `.title-row`, issue #170) in place of this global
-   * header — project selection moves into the filter bar's Project chip and
-   * Export moves into the page's own Export button, per the shell
-   * sub-issue's disposition table. Every other route keeps the global
-   * header. `sync-progress-bar`/`sync-status-bar` stay mounted below
-   * regardless of route — the page's sync chip only complements them.
+   * The Portfolio route (`/`, issue #170) and Session Evidence route
+   * (`/sessions/:id`, issue #172) each render a page-owned title row in
+   * place of this global header — project selection moves into the filter
+   * bar's Project chip and Export moves into the page's own Export button
+   * on `/`, per the shell sub-issue's disposition table. Every other route
+   * keeps the global header. `sync-progress-bar`/`sync-status-bar` stay
+   * mounted below regardless of route — a page's own sync chip only
+   * complements them, never replaces them.
    *
    * Known, deliberate trade-off: `header-project-selector`'s type-ahead
    * "jump straight to any project by name" search is not replicated on `/`.
@@ -624,8 +625,12 @@ export class AppRoot extends LitElement {
    * destination, which has its own full, searchable list. Every other
    * route keeps the fast type-ahead selector.
    */
+  private isGlobalHeaderHidden(): boolean {
+    return this.currentPath === '/' || /^\/sessions\//.test(this.currentPath);
+  }
+
   private get showGlobalHeader(): boolean {
-    return this.currentPath !== '/';
+    return !this.isGlobalHeaderHidden();
   }
 
   private renderGlobalHeader() {

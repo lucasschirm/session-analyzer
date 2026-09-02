@@ -71,8 +71,10 @@ src/
 │   │   └── project-behavior-params.ts
 │   ├── session-evidence/          # Session Evidence analytics view
 │   │   ├── session-evidence-chart-helpers.ts
-│   │   ├── session-evidence-evidence.ts
+│   │   ├── session-evidence-events-table.ts
+│   │   ├── session-evidence-header.ts
 │   │   ├── session-evidence-params.ts
+│   │   ├── session-evidence-timeline.ts
 │   │   ├── session-evidence-transcript.ts
 │   │   ├── session-evidence-tree.ts
 │   │   └── session-evidence-view.ts
