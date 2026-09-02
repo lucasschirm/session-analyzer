@@ -32,6 +32,54 @@ pnpm dev        # dashboard dev server on http://localhost:3000
 `pnpm build` runs before every commit via a husky pre-commit hook; the
 commit is blocked if any package's type-check or build fails.
 
+## Claude Setup
+
+The repo self-hosts a Claude Code plugin marketplace
+(`.claude-plugin/marketplace.json`) that serves the
+[`claude-session-sync`](packages/plugins/claude-session-sync) plugin. The
+checked-in [`.claude/settings.json`](.claude/settings.json) registers the
+marketplace and enables the plugin automatically for every session opened in
+this repo:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "session-analyzer": {
+      "source": {
+        "source": "directory",
+        "path": "."
+      }
+    }
+  },
+  "enabledPlugins": {
+    "claude-session-sync@session-analyzer": true
+  }
+}
+```
+
+Notes on why the configuration is shaped this way (verified against Claude
+Code 2.1.250):
+
+- The settings key must be `extraKnownMarketplaces` with a **nested**
+  `source` object. A top-level `marketplaces` key is silently ignored.
+- The marketplace source must be `directory` (`"path": "."` resolves to the
+  repo root). With a `github` source, a plugin enabled only via the project's
+  `enabledPlugins` fails to load with `plugin-cache-miss`: remote marketplaces
+  require a per-machine `claude plugin install … --scope project`, whereas
+  directory marketplaces load their plugins in place from the checkout with
+  no install step.
+- Marketplace registration happens in a reconcile pass at the end of a
+  session, so in a fresh clone the plugin becomes active from the **second**
+  Claude Code session onward.
+- In a git worktree, Claude Code resolves `"."` to the canonical repository
+  root, so the plugin runs from the main checkout rather than the worktree
+  copy.
+- `claude plugin list` only shows plugins with an install record; a
+  settings-enabled directory-marketplace plugin loads without appearing
+  there. To confirm it loaded, check a debug log
+  (`claude --debug-file /tmp/claude-debug.log -p 'ok'`) for
+  `Loading hooks from plugin: claude-session-sync`.
+
 ## Repository structure
 
 ```

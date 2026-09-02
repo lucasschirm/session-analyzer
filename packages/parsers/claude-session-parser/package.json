@@ -23,7 +23,7 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check src tests",
-    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage",
     "version:patch": "exit 0",
     "version:publish": "exit 0"
   },

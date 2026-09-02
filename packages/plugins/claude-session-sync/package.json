@@ -1,10 +1,15 @@
 {
   "name": "@lucasschirm/claude-session-sync",
-  "version": "0.2.27",
+  "version": "0.2.32",
   "private": false,
   "type": "module",
   "license": "ISC",
   "description": "Claude Code plugin adapter for the @lucasschirm/sal-sync session data sync engine.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lucasschirm/session-analyzer.git",
+    "directory": "packages/plugins/claude-session-sync"
+  },
   "bin": {
     "claude-sync": "bin/claude-sync",
     "claude-session-sync": "bin/claude-sync"
@@ -22,7 +27,7 @@
     "test:coverage": "vitest run --coverage --coverage.include='src/**/*.ts' --coverage.include='build.mjs' --coverage.exclude='src/hook.ts' --coverage.exclude='src/session-start.ts' --coverage.exclude='src/session-end.ts' --coverage.exclude='src/transcript-watcher.ts' --coverage.thresholds.statements=60 --coverage.thresholds.branches=60 --coverage.thresholds.functions=60 --coverage.thresholds.lines=60",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check src tests build.mjs",
-    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage",
     "sync": "node ./bin/claude-sync",
     "preversion": "pnpm run build",
     "version": "node scripts/bump-plugin-version.js",
