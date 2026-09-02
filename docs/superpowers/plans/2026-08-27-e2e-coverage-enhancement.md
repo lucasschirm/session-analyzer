@@ -146,7 +146,7 @@ New entries allocate **PIPE-013** and up.
 
 | ID | Surface | Journey | Helper(s) | L | U | D | Score | Owning test file | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| _(none added by PR-A)_ | | | | | | | | | |
+| PIPE-013 | Session outcome signal (issue #178) | One fixture per registered harness plugin (claude-code, the only one registered — see the issue #178 signal audit comment) through parse → transform → ingest → `sessions.outcome` column → `SessionOutcomeStore.rollupByProject` / `getSessionOutcomeDistribution` rollup query, covering clean / interrupted-by-user / ended-on-error / unreadable-tail (missing) outcomes in one project | none (inline synthetic transcripts, following `pipe-012`'s pattern) | 3 | 4 | 4 | 48 | `pipe-013-session-outcome-rollup.test.ts` | GREEN |
 
 ### 6.3 Tier C — Sync/harness lifecycle (`SYNC-###`)
 

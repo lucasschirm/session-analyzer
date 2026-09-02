@@ -219,9 +219,51 @@ function checkToolSkillAgentSubAgentDistinct<TBundle extends UnknownArtifactBund
 // 2. unknown is not zero
 // ---------------------------------------------------------------------------
 
+/**
+ * Issue #178: outcome coverage for `checkUnknownIsNotZero`. Verifies the
+ * final-native-event signal survives into the canonical `session` evidence
+ * record's `outcome` field for each classifiable outcome fixture, and that
+ * the unreadable-tail fixture reports outcome as genuinely absent
+ * (`undefined`) rather than coerced to `0`/`''`/a synthetic fourth value —
+ * the same missing-is-never-zero contract this invariant already checks for
+ * metric values.
+ */
+function checkOutcomeSurvivesIntoCanonicalRecords<TBundle extends UnknownArtifactBundle>(
+  results: FixtureResult<TBundle>[],
+): string[] {
+  const expectations: Record<string, string | undefined> = {
+    'outcome-clean': 'clean',
+    'outcome-interrupted': 'interrupted_by_user',
+    'outcome-error': 'ended_on_error',
+    'outcome-unreadable': undefined,
+  };
+  const details: string[] = [];
+  for (const [tag, expected] of Object.entries(expectations)) {
+    const target = findByTag(results, tag);
+    if (!target || !isSuccess(target.result)) {
+      details.push(`TODO: no successful ${tag} fixture to verify outcome classification.`);
+      continue;
+    }
+    const sessionRecord = target.result.evidence.find((r) => r.recordType === 'session');
+    assert.ok(sessionRecord, `${tag} fixture must produce a session evidence record`);
+    const payload = sessionRecord.payload as { outcome?: unknown };
+    assert.equal(
+      payload.outcome,
+      expected,
+      `${tag} fixture must classify session outcome as ${expected ?? 'not classifiable (undefined)'}, got ${JSON.stringify(payload.outcome)}`,
+    );
+    assert.notEqual(payload.outcome, 0, `${tag} outcome must never be coerced to 0`);
+    assert.notEqual(payload.outcome, '', `${tag} outcome must never be coerced to ''`);
+    details.push(`${tag}: session outcome classified as ${JSON.stringify(payload.outcome)}`);
+  }
+  return details;
+}
+
 function checkUnknownIsNotZero<TBundle extends UnknownArtifactBundle>(
   results: FixtureResult<TBundle>[],
 ): InvariantReport {
+  const outcomeDetails = checkOutcomeSurvivesIntoCanonicalRecords(results);
+
   const partialFixtures = results.filter(
     (r) =>
       (r.fixture.tags.includes('partial') || r.fixture.tags.includes('unavailable')) &&
@@ -229,10 +271,13 @@ function checkUnknownIsNotZero<TBundle extends UnknownArtifactBundle>(
   );
 
   if (partialFixtures.length === 0) {
-    return report('unknownIsNotZero', 'unverified', ['No partial/unavailable fixtures to test.']);
+    return report('unknownIsNotZero', 'partial', [
+      ...outcomeDetails,
+      'No partial/unavailable fixtures to test beyond outcome coverage.',
+    ]);
   }
 
-  const details: string[] = [];
+  const details: string[] = [...outcomeDetails];
   for (const { fixture, result } of partialFixtures) {
     for (const metric of result.metricValues) {
       if (metric.value === null && metric.unavailableReason) {

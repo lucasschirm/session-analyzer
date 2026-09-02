@@ -218,6 +218,31 @@ export interface SessionValidationSummary {
   readonly validations: readonly SessionValidation[];
 }
 
+/**
+ * One outcome bucket from `SessionOutcomeStore.rollupByProject` (db-core).
+ * `outcome: null` is the "unreadable tail / not classifiable" bucket — a
+ * distinct, always-present count, never folded into a real outcome or
+ * dropped (missing-is-never-zero).
+ */
+export interface SessionOutcomeBucket {
+  readonly outcome: 'clean' | 'interrupted_by_user' | 'ended_on_error' | null;
+  readonly count: number;
+}
+
+/**
+ * Project-scoped session outcome distribution backing the `session:outcome`
+ * metric (`packages/db/src/metric-registry.ts`). `token.eligibleN` is every
+ * `finality = 'final'` session in the project; `token.knownN` is the subset
+ * with a classified outcome; `token.unknownCount` is the `null` bucket's
+ * count — the coverage breakdown (n classified / n missing) sub-issue #169's
+ * DTO consumers need, exposed here without wiring it into
+ * {@link AnalyticsDataSource} (out of scope for issue #178).
+ */
+export interface SessionOutcomeDistribution {
+  readonly token: AnalyticsToken;
+  readonly buckets: readonly SessionOutcomeBucket[];
+}
+
 export interface EvidenceRow {
   readonly evidenceId: string;
   readonly entityType: string;
