@@ -593,6 +593,16 @@ export const PROJECT_MODEL_HARNESS_COHORT_METRIC_VERSION = 1;
  * `getProjectModelHarnessCohorts` in `project-behavior.ts`, backed by
  * `ProjectBehaviorStore.getModelHarnessCohortRows` (db-core).
  *
+ * This is a **distinct formula** from `portfolio:model_harness_matrix`, not
+ * a same-formula cut at a different grain: the matrix reports only
+ * `sessionCount` per (model, harness) cell for the whole portfolio, while
+ * this metric additionally computes median tokens, median cost, and clean
+ * rate per (model, harness) pair scoped to one project. Both are registered
+ * as separate rows because they differ in `dimensions`/`aggregation`, not
+ * merely in `grain` — do not treat this pair as the registry's
+ * one-row-per-grain precedent (see the leaderboard clean-rate entry below
+ * for that precedent instead).
+ *
  * - **Formula**: per (model, harness) pair scoped to one project — `n`
  *   (distinct sessions), median tokens, median cost, and clean rate
  *   (`cleanN / knownOutcomeN`, reusing the `session:outcome` signal).
@@ -623,6 +633,51 @@ export const PROJECT_MODEL_HARNESS_COHORT_METRIC_DEFINITION: InsertMetricDefinit
   provenanceRequirement: 'model_requests.model, sessions.harness, sessions.outcome',
 };
 
+export const PORTFOLIO_MODEL_HARNESS_MATRIX_METRIC_ID = 'portfolio:model_harness_matrix';
+export const PORTFOLIO_MODEL_HARNESS_MATRIX_METRIC_VERSION = 1;
+
+/**
+ * Portfolio-wide model×harness session-count matrix (issue #169) — id
+ * `portfolio:model_harness_matrix`, version 1. Implemented:
+ * `PortfolioView.getModelHarnessMatrix` / `getModelHarnessMatrix` in
+ * `analytics-portfolio.ts`, backed by
+ * `PortfolioKpiStore.getModelHarnessPairsEverObserved` /
+ * `getModelHarnessCountsInWindow` (db-core).
+ *
+ * - **Formula**: for every (model, harness) pair ever observed for the
+ *   portfolio, the count of distinct sessions in the query window.
+ * - **Missingness policy**: axes (`models`, `harnesses`) are each the
+ *   distinct set of values from every (model, harness) pair ever observed
+ *   for the portfolio, so a cell can combine a model and harness that were
+ *   never jointly observed. Such a cell's `sessionCount` is `null` (never
+ *   this specific pair), distinct from `0` (this pair has run before but
+ *   had no sessions in the current window) — `.agents/rules/missing-is-
+ *   never-zero.md`.
+ * - Distinct from `project:model_harness_cohort`: this metric reports only
+ *   `sessionCount` per cell (no median tokens/cost/clean-rate), so it is a
+ *   different formula, not the same formula at a different grain.
+ */
+export const PORTFOLIO_MODEL_HARNESS_MATRIX_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: PORTFOLIO_MODEL_HARNESS_MATRIX_METRIC_ID,
+  version: PORTFOLIO_MODEL_HARNESS_MATRIX_METRIC_VERSION,
+  label: 'Portfolio model x harness session-count matrix',
+  description: 'Session count per (model, harness) pair ever observed in the portfolio.',
+  family: 'session_shape',
+  measurementClass: 'observed',
+  unit: 'count',
+  valueType: 'integer',
+  grain: 'portfolio',
+  dimensions: ['model', 'harness'],
+  populationRule: 'start_time IS NOT NULL AND start_time IN [window.start, window.end)',
+  statusRule: 'committed',
+  aggregation: 'distribution',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'root_only',
+  provenanceRequirement: 'model_requests.model, sessions.harness',
+};
+
 export const PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_ID =
   'portfolio:project_leaderboard_clean_rate';
 export const PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_VERSION = 1;
@@ -638,9 +693,12 @@ export const PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_VERSION = 1;
  * (`cleanN / knownN`, reusing the `session:outcome` classification) cut to
  * project grain instead of portfolio grain — it gets its own registry row
  * rather than reusing the portfolio-grain id because this repo's convention
- * is one registry entry per distinct `grain`, not per distinct formula: see
- * `project:model_harness_cohort` (project-scoped cut of the portfolio-grain
- * model×harness matrix), which follows the same pattern.
+ * is one registry entry per distinct `grain` for a genuinely identical
+ * formula. `project:model_harness_cohort` is not this precedent — its
+ * formula differs from `portfolio:model_harness_matrix` (see that entry's
+ * doc comment) — so it does not license inventing a new registry row for a
+ * different formula merely by analogy; only a same-formula, different-grain
+ * cut like this one follows the convention.
  *
  * - **Population**: sessions with `finality = 'final'` and a non-null
  *   `start_time` inside the query window, grouped by `project_id`.
