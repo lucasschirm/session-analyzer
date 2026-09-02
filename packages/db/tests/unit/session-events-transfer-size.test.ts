@@ -3,7 +3,10 @@ import {
   EnvironmentStore,
   FRESH_SCHEMA_SQL,
   IngestionSourceStore,
+  InvocationPayloadStore,
   InvocationStore,
+  PAYLOAD_TRUNCATION_BYTES,
+  PayloadStore,
   PortfolioStore,
   ProjectStore,
   SessionStore,
@@ -20,9 +23,17 @@ import { createSessionEvidenceView } from '../../src/analytics-session.js';
  * bound. `node:v8`'s `serialize` uses the same structured-clone algorithm
  * the browser's postMessage boundary uses, so its output size is a faithful
  * stand-in for what actually crosses the worker boundary.
+ *
+ * A fifth of the fixture's invocations (`PAYLOAD_EVENT_STRIDE`) carry an
+ * over-cap result payload so the 16KB truncation cap
+ * (`PAYLOAD_TRUNCATION_BYTES`) is actually exercised — a fixture with no
+ * payload content at all (as originally written) passes this bound
+ * trivially and proves nothing about the truncation cap's contribution to
+ * total transfer size.
  */
 const FIXTURE_EVENT_COUNT = 5000;
 const TRANSFER_SIZE_LIMIT_BYTES = 20 * 1024 * 1024;
+const PAYLOAD_EVENT_STRIDE = 5;
 
 const PORTFOLIO_ID = 'portfolio-transfer';
 const SOURCE_ID = 'source-transfer';
@@ -30,7 +41,10 @@ const ENV_ID = 'env-transfer';
 const PROJECT_ID = 'project-transfer';
 const SESSION_ID = 'session-transfer';
 
-async function seedLargeSession(): Promise<WasmSqliteExecutor> {
+async function seedLargeSession(): Promise<{
+  executor: WasmSqliteExecutor;
+  payloadEventCount: number;
+}> {
   const executor = await WasmSqliteExecutor.create();
   await executor.exec(FRESH_SCHEMA_SQL);
   await TenantStore.insert(executor, { id: 'tenant-transfer', name: 'T' });
@@ -85,8 +99,10 @@ async function seedLargeSession(): Promise<WasmSqliteExecutor> {
   );
 
   const kinds = ['tool', 'skill', 'agent', 'sub_agent'] as const;
+  const overCapContent = 'x'.repeat(PAYLOAD_TRUNCATION_BYTES + 2000);
+  let payloadEventCount = 0;
   for (let i = 0; i < FIXTURE_EVENT_COUNT; i++) {
-    await InvocationStore.insert(executor, {
+    const invocationId = await InvocationStore.insert(executor, {
       sessionId: SESSION_ID,
       generationId,
       kind: kinds[i % kinds.length],
@@ -97,17 +113,54 @@ async function seedLargeSession(): Promise<WasmSqliteExecutor> {
       origin: 'root',
       createdAt: i,
     } as never);
+    if (i % PAYLOAD_EVENT_STRIDE === 0) {
+      const payloadId = await PayloadStore.insert(executor, {
+        id: `payload-${i}`,
+        sessionId: SESSION_ID,
+        generationId,
+        payloadType: 'result',
+        exactTokens: null,
+        estimatedTokens: 5000,
+        sizeBytes: overCapContent.length,
+        truncated: false,
+        mediaCount: 0,
+        structureCount: 1,
+        rawContent: new TextEncoder().encode(overCapContent),
+        retainRaw: true,
+      } as never);
+      await InvocationPayloadStore.insert(executor, {
+        invocationId,
+        payloadId,
+        sessionId: SESSION_ID,
+        generationId,
+        attributionType: 'exact',
+        isInput: false,
+        isResult: true,
+        isContext: false,
+      } as never);
+      payloadEventCount += 1;
+    }
   }
-  return executor;
+  return { executor, payloadEventCount };
 }
 
 describe('session-events transfer size (issue #169, CI-enforced)', () => {
-  it(`keeps the structured-clone size of a ${FIXTURE_EVENT_COUNT}-event session under ${TRANSFER_SIZE_LIMIT_BYTES} bytes`, async () => {
-    const executor = await seedLargeSession();
+  it(`keeps the structured-clone size of a ${FIXTURE_EVENT_COUNT}-event session (with 1-in-${PAYLOAD_EVENT_STRIDE} over-cap payloads) under ${TRANSFER_SIZE_LIMIT_BYTES} bytes`, async () => {
+    const { executor, payloadEventCount } = await seedLargeSession();
     const view = createSessionEvidenceView(executor);
     const detail = await view.getSessionEvents(SESSION_ID);
 
     expect(detail.events).toHaveLength(FIXTURE_EVENT_COUNT);
+    // The truncation cap must actually have engaged for this fixture,
+    // otherwise the size assertion below would be proving nothing about it.
+    const truncatedCount = detail.events.filter((e) => e.resultPayload?.truncated).length;
+    expect(truncatedCount).toBe(payloadEventCount);
+    for (const event of detail.events) {
+      if (event.resultPayload) {
+        expect(event.resultPayload.content?.length).toBeLessThanOrEqual(PAYLOAD_TRUNCATION_BYTES);
+      }
+    }
+
     const cloneSize = serialize(detail).length;
     expect(cloneSize).toBeLessThanOrEqual(TRANSFER_SIZE_LIMIT_BYTES);
   }, 30000);

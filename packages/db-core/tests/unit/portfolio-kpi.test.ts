@@ -420,3 +420,87 @@ describe('PortfolioKpiStore invocations by domain (MCP not double-counted)', () 
     expect(byDomain.map((r) => r.kind).sort()).toEqual(['agent', 'skill', 'sub_agent', 'tool']);
   });
 });
+
+describe('PortfolioKpiStore query plans (schema-change-tests.md: no full scans)', () => {
+  async function planDetails(
+    executor: WasmSqliteExecutor,
+    sql: string,
+    params: readonly (string | number)[],
+  ): Promise<string[]> {
+    const { rows } = await executor.exec(`EXPLAIN QUERY PLAN ${sql}`, params);
+    return rows.map((r) => String(r.detail));
+  }
+
+  it('sumTokensInWindow resolves via SEARCH on model_requests/sessions/projects, never SCAN', async () => {
+    const { executor, portfolioId } = await seed();
+    const details = await planDetails(
+      executor,
+      `SELECT COALESCE(SUM(mr.input_tokens), 0) AS input_sum
+       FROM model_requests mr
+       JOIN sessions s ON s.id = mr.session_id
+       JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ? AND s.start_time IS NOT NULL
+         AND s.start_time >= ? AND s.start_time < ?`,
+      [portfolioId, 0, 5000],
+    );
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+
+  it('sumCostInWindow resolves via SEARCH on model_usage/sessions/projects, never SCAN', async () => {
+    const { executor, portfolioId } = await seed();
+    const details = await planDetails(
+      executor,
+      `SELECT COALESCE(SUM(mu.cost), 0) AS cost_sum
+       FROM model_usage mu
+       JOIN sessions s ON s.id = mu.session_id
+       JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ? AND mu.cost IS NOT NULL
+         AND s.start_time IS NOT NULL AND s.start_time >= ? AND s.start_time < ?`,
+      [portfolioId, 0, 5000],
+    );
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+
+  it('getCleanCompletionInWindow resolves via SEARCH, never SCAN', async () => {
+    const { executor, portfolioId } = await seed();
+    const details = await planDetails(
+      executor,
+      `SELECT SUM(CASE WHEN s.outcome = 'clean' THEN 1 ELSE 0 END) AS clean_n
+       FROM sessions s JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ? AND s.finality = 'final'
+         AND s.start_time IS NOT NULL AND s.start_time >= ? AND s.start_time < ?`,
+      [portfolioId, 0, 5000],
+    );
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+
+  it('getModelHarnessCountsInWindow resolves via SEARCH, never SCAN', async () => {
+    const { executor, portfolioId } = await seed();
+    const details = await planDetails(
+      executor,
+      `SELECT mr.model AS model, s.harness AS harness, COUNT(DISTINCT s.id) AS session_count
+       FROM sessions s JOIN projects p ON p.id = s.project_id
+       JOIN model_requests mr ON mr.session_id = s.id
+       WHERE p.portfolio_id = ? AND mr.model IS NOT NULL
+         AND s.start_time IS NOT NULL AND s.start_time >= ? AND s.start_time < ?
+       GROUP BY mr.model, s.harness`,
+      [portfolioId, 0, 5000],
+    );
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+
+  it('getInvocationsByDomainInWindow / countTotalInvocationsInWindow resolve via SEARCH, never SCAN', async () => {
+    const { executor, portfolioId } = await seed();
+    const details = await planDetails(
+      executor,
+      `SELECT i.kind AS kind, COUNT(*) AS c
+       FROM invocations i
+       JOIN sessions s ON s.id = i.session_id
+       JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ? AND i.created_at >= ? AND i.created_at < ?
+       GROUP BY i.kind`,
+      [portfolioId, 0, 5000],
+    );
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+});

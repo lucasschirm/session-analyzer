@@ -255,6 +255,24 @@ describe('SessionEvidenceView.getSessionEvents / getEventPayload (issue #169)', 
       isResult: false,
       isContext: false,
     } as never);
+    const smallResultPayloadId = await PayloadStore.insert(executor, {
+      sessionId: SESSION_ID,
+      generationId,
+      payloadType: 'result',
+      exactTokens: 2,
+      rawContent: new TextEncoder().encode('ok'),
+      retainRaw: true,
+    } as never);
+    await InvocationPayloadStore.insert(executor, {
+      invocationId,
+      payloadId: smallResultPayloadId,
+      sessionId: SESSION_ID,
+      generationId,
+      attributionType: 'exact',
+      isInput: false,
+      isResult: true,
+      isContext: false,
+    } as never);
     const turnId = await TurnStore.insert(executor, {
       sessionId: SESSION_ID,
       generationId,
@@ -296,6 +314,22 @@ describe('SessionEvidenceView.getSessionEvents / getEventPayload (issue #169)', 
     const invocationRow = detail.events.find((e) => e.kind === 'tool');
     expect(invocationRow?.inputPayload?.truncated).toBe(true);
     expect(invocationRow?.inputPayload?.content?.length).toBeLessThan(20000);
+  });
+
+  it('does not mark a small payload truncated: true (regression: truncated must not be always-true)', async () => {
+    const executor = await createExecutor();
+    await seedSessionWithEvents(executor);
+    const view = createSessionEvidenceView(executor);
+    const detail = await view.getSessionEvents(SESSION_ID);
+    const messageRow = detail.events.find((e) => e.kind === 'user_message');
+    const invocationRow = detail.events.find((e) => e.kind === 'tool');
+    // The message row carries no payload at all; the invocation row's small
+    // result payload (set up by seedSessionWithEvents, distinct from the
+    // large input payload asserted truncated above) must not be flagged
+    // truncated just because *some* payload on the session was.
+    expect(messageRow?.inputPayload).toBeUndefined();
+    expect(invocationRow?.resultPayload?.truncated).toBe(false);
+    expect(invocationRow?.resultPayload?.content).toBe('ok');
   });
 
   it('fetches the full untruncated payload via getEventPayload', async () => {

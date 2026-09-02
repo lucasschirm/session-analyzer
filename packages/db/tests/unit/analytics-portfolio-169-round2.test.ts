@@ -1,4 +1,5 @@
 import {
+  ComponentIdentityStore,
   EnvironmentStore,
   FRESH_SCHEMA_SQL,
   IngestionSourceStore,
@@ -297,5 +298,49 @@ describe('PortfolioView.getInvocationsByDomain (issue #169 round 2, MCP not doub
     expect(byDomain.totalInvocations).toBe(2);
     expect(byDomain.rows.reduce((sum, r) => sum + r.count, 0)).toBe(2);
     expect(byDomain.rows.map((r) => r.kind).sort()).toEqual(['skill', 'tool']);
+  });
+
+  it('counts an MCP-server call inside the tool bucket, never as a fifth domain', async () => {
+    // Per .agents/rules/analytics-domain-distinctions.md: MCP is a
+    // sub-classification within the tool pool (component_identities.kind =
+    // 'mcp_server'), not a peer invocation kind. The invocation row itself
+    // is always stored with kind = 'tool'.
+    const executor = await createExecutor();
+    await seedPortfolio(executor);
+    await insertSession(executor, 's1', 1000);
+    await insertGeneration(executor, 's1', 'gen-1');
+    const mcpComponentId = await ComponentIdentityStore.insert(executor, {
+      portfolioId: PORTFOLIO_ID,
+      kind: 'mcp_server',
+      nativeId: 'mcp-server-1',
+      canonicalSourceIdentity: 'mcp_server:mcp-server-1',
+      displayName: 'My MCP Server',
+    });
+    await InvocationStore.insert(executor, {
+      sessionId: 's1',
+      generationId: 'gen-1',
+      kind: 'tool',
+      componentId: mcpComponentId,
+      startId: 'start-mcp-1',
+      rootSessionId: 's1',
+      status: 'completed',
+    } as never);
+    await InvocationStore.insert(executor, {
+      sessionId: 's1',
+      generationId: 'gen-1',
+      kind: 'skill',
+      startId: 'start-skill-2',
+      rootSessionId: 's1',
+      status: 'completed',
+    } as never);
+
+    const view = createPortfolioView(executor);
+    const byDomain = await view.getInvocationsByDomain({ portfolioId: PORTFOLIO_ID });
+    expect(byDomain.totalInvocations).toBe(2);
+    expect(byDomain.rows.reduce((sum, r) => sum + r.count, 0)).toBe(2);
+    // No fifth "mcp" bucket — the MCP call is folded into "tool".
+    expect(byDomain.rows.map((r) => r.kind).sort()).toEqual(['skill', 'tool']);
+    const toolRow = byDomain.rows.find((r) => r.kind === 'tool');
+    expect(toolRow?.count).toBe(1);
   });
 });

@@ -456,4 +456,128 @@ describe('ProjectBehaviorStore.getModelHarnessCohortRows', () => {
     // are excluded entirely rather than fabricating a 0 for their missing side.
     expect(row?.tokensSum).toBe(30);
   });
+
+  it('attributes each model its own tokens/cost, not the whole session total, when a session used multiple models', async () => {
+    // Regression: the tokens_sum/cost_sum correlated subqueries must scope to
+    // `mr.model`, not just `session_id` — otherwise every model row for a
+    // multi-model session gets credited the full session total, inflating
+    // every cohort's tokens/cost (and downstream medians).
+    const executor = await seed();
+    await insertSession(executor, 's-multi', 1000, null, 'clean');
+    await insertGeneration(executor, 's-multi', 'gen-1');
+    const sonnetReqId = await insertModelRequest(
+      executor,
+      's-multi',
+      'gen-1',
+      0,
+      'claude-sonnet',
+      100,
+      50,
+    );
+    await insertCost(executor, 's-multi', 'gen-1', sonnetReqId, 0.5);
+    const opusReqId = await insertModelRequest(
+      executor,
+      's-multi',
+      'gen-1',
+      1,
+      'claude-opus',
+      10,
+      10,
+    );
+    await insertCost(executor, 's-multi', 'gen-1', opusReqId, 0.2);
+
+    const rows = await ProjectBehaviorStore.getModelHarnessCohortRows(
+      executor,
+      PROJECT_ID,
+      0,
+      5000,
+    );
+    const sonnetRow = rows.find((r) => r.sessionId === 's-multi' && r.model === 'claude-sonnet');
+    const opusRow = rows.find((r) => r.sessionId === 's-multi' && r.model === 'claude-opus');
+    expect(sonnetRow?.tokensSum).toBe(150);
+    expect(sonnetRow?.costSum).toBe(0.5);
+    expect(opusRow?.tokensSum).toBe(20);
+    expect(opusRow?.costSum).toBe(0.2);
+  });
+});
+
+describe('ProjectBehaviorStore query plans (schema-change-tests.md: no full scans)', () => {
+  async function planDetails(
+    executor: WasmSqliteExecutor,
+    sql: string,
+    params: readonly (string | number)[],
+  ): Promise<string[]> {
+    const { rows } = await executor.exec(`EXPLAIN QUERY PLAN ${sql}`, params);
+    return rows.map((r) => String(r.detail));
+  }
+
+  it('getSessionTurnCountsInWindow resolves via SEARCH, never SCAN', async () => {
+    const executor = await seed();
+    const details = await planDetails(
+      executor,
+      `SELECT s.id AS session_id, COUNT(t.id) AS turn_count
+       FROM sessions s JOIN turns t ON t.session_id = s.id
+       WHERE s.project_id = ? AND s.start_time IS NOT NULL
+         AND s.start_time >= ? AND s.start_time < ? GROUP BY s.id`,
+      [PROJECT_ID, 0, 5000],
+    );
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+
+  it('getSessionTokensInWindow / getSessionCostInWindow resolve via SEARCH, never SCAN', async () => {
+    const executor = await seed();
+    const tokenDetails = await planDetails(
+      executor,
+      `SELECT s.id AS session_id, SUM(mr.input_tokens + mr.output_tokens) AS tokens_sum
+       FROM sessions s JOIN model_requests mr ON mr.session_id = s.id
+       WHERE s.project_id = ? AND s.start_time IS NOT NULL
+         AND s.start_time >= ? AND s.start_time < ? GROUP BY s.id`,
+      [PROJECT_ID, 0, 5000],
+    );
+    const costDetails = await planDetails(
+      executor,
+      `SELECT s.id AS session_id, SUM(mu.cost) AS cost_sum
+       FROM sessions s JOIN model_usage mu ON mu.session_id = s.id
+       WHERE s.project_id = ? AND s.start_time IS NOT NULL
+         AND s.start_time >= ? AND s.start_time < ? AND mu.cost IS NOT NULL GROUP BY s.id`,
+      [PROJECT_ID, 0, 5000],
+    );
+    expect(tokenDetails.some((d) => /^SCAN/.test(d))).toBe(false);
+    expect(costDetails.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+
+  it('getWeeklyToolInvocations / getTopToolsByInvocations resolve via SEARCH, never SCAN', async () => {
+    const executor = await seed();
+    const weeklyDetails = await planDetails(
+      executor,
+      `SELECT strftime('%Y-%W', i.created_at / 1000, 'unixepoch') AS week_bucket, COUNT(*) AS total
+       FROM invocations i JOIN sessions s ON s.id = i.session_id
+       WHERE s.project_id = ? AND i.kind = 'tool' GROUP BY week_bucket`,
+      [PROJECT_ID],
+    );
+    const topToolsDetails = await planDetails(
+      executor,
+      `SELECT ci.id AS component_id, COUNT(*) AS c
+       FROM invocations i JOIN sessions s ON s.id = i.session_id
+       JOIN component_identities ci ON ci.id = i.component_id
+       WHERE s.project_id = ? AND i.kind = 'tool' AND i.created_at >= ? AND i.created_at < ?
+       GROUP BY ci.id, ci.display_name`,
+      [PROJECT_ID, 0, 5000],
+    );
+    expect(weeklyDetails.some((d) => /^SCAN/.test(d))).toBe(false);
+    expect(topToolsDetails.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+
+  it('getModelHarnessCohortRows resolves via SEARCH, never SCAN', async () => {
+    const executor = await seed();
+    const details = await planDetails(
+      executor,
+      `SELECT mr.model AS model, s.harness AS harness, s.id AS session_id
+       FROM sessions s JOIN model_requests mr ON mr.session_id = s.id AND mr.model IS NOT NULL
+       WHERE s.project_id = ? AND s.start_time IS NOT NULL
+         AND s.start_time >= ? AND s.start_time < ? GROUP BY mr.model, s.harness, s.id`,
+      [PROJECT_ID, 0, 5000],
+    );
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
 });

@@ -167,11 +167,11 @@ export interface ModelHarnessCohortRawRow {
 const MODEL_HARNESS_COHORT_ROWS_SQL = `
   SELECT mr.model AS model, s.harness AS harness, s.id AS session_id, s.outcome AS outcome,
     (SELECT SUM(x.input_tokens + x.output_tokens)
-       FROM model_requests x WHERE x.session_id = s.id
+       FROM model_requests x WHERE x.session_id = s.id AND x.model = mr.model
          AND x.input_tokens IS NOT NULL AND x.output_tokens IS NOT NULL) AS tokens_sum,
     (SELECT SUM(mu.cost) FROM model_usage mu
        JOIN model_requests r ON r.id = mu.request_id
-       WHERE r.session_id = s.id AND mu.cost IS NOT NULL) AS cost_sum
+       WHERE r.session_id = s.id AND r.model = mr.model AND mu.cost IS NOT NULL) AS cost_sum
   FROM sessions s
   JOIN model_requests mr ON mr.session_id = s.id AND mr.model IS NOT NULL
   WHERE s.project_id = ? AND s.start_time IS NOT NULL

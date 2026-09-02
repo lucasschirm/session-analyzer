@@ -256,3 +256,63 @@ describe('ProjectLeaderboardStore.getSessionStartsByProjectInWindow', () => {
     );
   });
 });
+
+describe('ProjectLeaderboardStore remaining query plans (schema-change-tests.md: no full scans)', () => {
+  async function planDetails(
+    executor: Awaited<ReturnType<typeof seed>>['executor'],
+    sql: string,
+    params: readonly (string | number)[],
+  ): Promise<string[]> {
+    const { rows } = await executor.exec(`EXPLAIN QUERY PLAN ${sql}`, params);
+    return rows.map((r) => String(r.detail));
+  }
+
+  it('getTokenTotalsByProjectInWindow resolves via SEARCH, never SCAN', async () => {
+    const { executor } = await seed();
+    const details = await planDetails(
+      executor,
+      `SELECT s.project_id AS project_id, COALESCE(SUM(mr.input_tokens), 0) AS input_sum
+       FROM model_requests mr JOIN sessions s ON s.id = mr.session_id
+       JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ? AND s.start_time IS NOT NULL
+         AND s.start_time >= ? AND s.start_time < ? GROUP BY s.project_id`,
+      [PORTFOLIO_ID, 0, 5000],
+    );
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+
+  it('getCleanCompletionByProjectInWindow resolves via SEARCH, never SCAN', async () => {
+    const { executor } = await seed();
+    const details = await planDetails(
+      executor,
+      `SELECT s.project_id AS project_id, SUM(CASE WHEN s.outcome = 'clean' THEN 1 ELSE 0 END) AS clean_n
+       FROM sessions s JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ? AND s.finality = 'final'
+         AND s.start_time IS NOT NULL AND s.start_time >= ? AND s.start_time < ?
+       GROUP BY s.project_id`,
+      [PORTFOLIO_ID, 0, 5000],
+    );
+    expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+
+  it('getLastActiveByProject / getSessionStartsByProjectInWindow resolve via SEARCH, never SCAN', async () => {
+    const { executor } = await seed();
+    const lastActiveDetails = await planDetails(
+      executor,
+      `SELECT s.project_id AS project_id, MAX(s.start_time) AS last_start
+       FROM sessions s JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ? GROUP BY s.project_id`,
+      [PORTFOLIO_ID],
+    );
+    const startsDetails = await planDetails(
+      executor,
+      `SELECT s.project_id AS project_id, s.start_time AS start_time
+       FROM sessions s JOIN projects p ON p.id = s.project_id
+       WHERE p.portfolio_id = ? AND s.start_time IS NOT NULL
+         AND s.start_time >= ? AND s.start_time < ?`,
+      [PORTFOLIO_ID, 0, 5000],
+    );
+    expect(lastActiveDetails.some((d) => /^SCAN/.test(d))).toBe(false);
+    expect(startsDetails.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+});

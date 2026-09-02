@@ -1262,7 +1262,7 @@ function accumulateCohortRow(
     outcome: string | null;
   },
 ): void {
-  const key = `${row.model} ${row.harness}`;
+  const key = `${row.model}|${row.harness}`;
   const acc = map.get(key) ?? {
     model: row.model,
     harness: row.harness,
