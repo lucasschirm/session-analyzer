@@ -44,6 +44,8 @@ Corollaries, each learned from a real review round:
 
 Before writing any "How stored" or metric-derivation section, verify in the code — not from memory (each item below cost a real review round on feature #182):
 
+**Getting an item right once does not clear it for the rest of the issue.** These checks do not generalize from one instance to the next: a body that correctly verifies one table's write path, or correctly sources one enum from its producing layer, can still cite a second, different dead table or a second, different mismatched enum two paragraphs later without re-checking (observed in production: a feature that correctly avoided one dead table still cited two more further down the same issue, and correctly sourced one status enum from its producing layer while still copying a second, different status enum from the wrong layer). Run items 1, 2, and 5 independently for every distinct table, column, or enum you name — not once for the section.
+
 1. **Columns exist.** Every named table/column exists, or its migration is scoped (here or in a named owning issue).
 2. **The write path actually writes.** Check what ingestion hardcodes (e.g. entity fields written null) and which typed tables have stores but no production writer at all — "the existing pipeline picks it up" is a claim to verify, not assume.
 3. **Aggregation + fan-out eligibility.** Declare the definition's `aggregation` and confirm the rollup/derivation path that must pick it up actually selects it (e.g. sum-only filters on the additive fan-out).
