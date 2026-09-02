@@ -16,8 +16,14 @@ import { expect, type Page, test } from '@playwright/test';
  *   domain link row — now that `left-nav` (their only prior link) is gone.
  */
 
+/**
+ * `icon-rail` (not `header`) is the app-ready signal: issue #170 swaps the
+ * global header for a page-owned title row on the Portfolio route (`/`)
+ * only, so `header` is legitimately absent there while `icon-rail` stays
+ * mounted on every route once the app finishes booting.
+ */
 async function waitForAppReady(page: Page): Promise<void> {
-  await expect(page.locator('header')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('icon-rail')).toBeVisible({ timeout: 15000 });
   await expect(page.locator('.app-loading')).toBeHidden({ timeout: 15000 });
 }
 

@@ -16,17 +16,15 @@ import { captureAnalyticsWorker, seedSession } from './helpers/seeded-store';
  *
  * The seeded fixture is timestamped 2026-08-11 — inside the 30d/All window
  * as of "now", but outside the 7d window — so switching to the 7d preset
- * deterministically empties the "Session Metrics" trend chart (its daily
+ * deterministically empties the "Token usage trend" chart (its daily
  * rollups are time-bucketed) while 30d/All render real geometry, giving
  * each test a real, assertable change.
  *
- * The portfolio Overview metric cards (`getOverview`) are NOT range-scoped
- * by the current `packages/db` implementation — only the trend rollups are
- * — so this suite asserts against the trend chart, the URL hash, and the
- * segmented control's own selection state rather than the metric cards.
- * See the PR description for this documented pre-existing backend gap
- * (out of scope for this UI-mounting issue; the redesigned KPI band lands
- * with the range-scoped metric cards in the sub-issue-7 portfolio rebuild).
+ * This suite asserts against the trend chart, the URL hash, and the
+ * segmented control's own selection state. The portfolio KPI band became
+ * range-scoped in issue #170's rebuild (`PortfolioKpiBand`, wired through
+ * `AnalyticsQuery.timeRange`) — its own range-sensitivity is covered by
+ * `portfolio-redesign.spec.ts`'s UX-032, not duplicated here.
  */
 
 const FIXTURES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -46,9 +44,15 @@ async function seedFilterBarSession(page: Page, projectName: string): Promise<vo
   });
 }
 
+/**
+ * The Portfolio page's trend row (issue #170) renamed the combined
+ * "Session Metrics" chart to a token-only "Token usage trend" chart, still
+ * fed by the same time-bucketed rollups this suite narrows with the range
+ * presets — see `portfolio-chart-helpers.ts`'s `tokenTrendToChartSeries`.
+ */
 function trendChart(page: Page) {
   return page.locator('analytics-chart').filter({
-    has: page.locator('.chart-title', { hasText: 'Session Metrics' }),
+    has: page.locator('.chart-title', { hasText: 'Token usage trend' }),
   });
 }
 

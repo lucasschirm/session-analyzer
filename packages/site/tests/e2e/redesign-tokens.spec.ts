@@ -32,7 +32,9 @@ test.describe('Self-hosted typography (UX-022)', () => {
     });
 
     await page.goto('/#/');
-    await expect(page.locator('header')).toBeVisible({ timeout: 15000 });
+    // `/` has no global header as of issue #170 (a page-owned title row
+    // replaces it) — `icon-rail` is the route-independent app-ready signal.
+    await expect(page.locator('icon-rail')).toBeVisible({ timeout: 15000 });
 
     // Nothing in this PR's scope renders text with the new font yet (that
     // lands with each consumer's own sub-issue), so force the browser to

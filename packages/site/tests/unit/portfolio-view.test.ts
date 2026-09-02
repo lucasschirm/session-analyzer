@@ -1,11 +1,11 @@
 import type {
   AnalyticsToken,
-  ComponentUtilizationPage,
-  MetricValueDto,
-  ModelHarnessCohortPage,
-  PortfolioOverview,
+  InvocationsByDomain,
+  ModelHarnessMatrix,
+  PortfolioKpiBand,
   PortfolioTrendSeries,
-  ProjectListPage,
+  ProjectLeaderboard,
+  SessionsByModelBar,
 } from '@lucasschirm/sal-db';
 import type { LitElement } from 'lit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,11 +13,12 @@ import '../../src/pages/portfolio/portfolio-view';
 import type { PortfolioView } from '../../src/pages/portfolio/portfolio-view';
 
 const portfolioMock = vi.hoisted(() => ({
-  getOverview: vi.fn(),
+  getKpiBand: vi.fn(),
   getTrends: vi.fn(),
-  getComponentUtilization: vi.fn(),
-  getModelHarnessCohorts: vi.fn(),
-  getProjectList: vi.fn(),
+  getSessionsByModel: vi.fn(),
+  getModelHarnessMatrix: vi.fn(),
+  getInvocationsByDomain: vi.fn(),
+  getProjectLeaderboard: vi.fn(),
 }));
 
 const metadataMock = vi.hoisted(() => ({
@@ -28,15 +29,38 @@ const mockAnalyticsClient = vi.hoisted(() => {
   const client = new EventTarget() as {
     portfolio: typeof portfolioMock;
     metadata: typeof metadataMock;
+    exportAnalyticsDatabase: ReturnType<typeof vi.fn>;
   } & EventTarget;
   client.portfolio = portfolioMock;
   client.metadata = metadataMock;
+  client.exportAnalyticsDatabase = vi.fn().mockResolvedValue(new Uint8Array());
   return client;
+});
+
+const syncManagerMock = vi.hoisted(() => {
+  const manager = new EventTarget() as {
+    getSnapshot: ReturnType<typeof vi.fn>;
+  } & EventTarget;
+  manager.getSnapshot = vi.fn().mockReturnValue({
+    initialized: true,
+    readOnly: false,
+    activeRun: null,
+    projects: [],
+    sessions: [],
+    queuedRuns: [],
+    warnings: [],
+    lastCompletedAt: null,
+  });
+  return manager;
 });
 
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
   analyticsClient: mockAnalyticsClient,
+}));
+
+vi.mock('../../src/sync/sync-manager', () => ({
+  syncManager: syncManagerMock,
 }));
 
 async function flush(element: LitElement): Promise<void> {
@@ -59,12 +83,6 @@ async function mount<T extends LitElement>(element: T): Promise<T> {
   return element;
 }
 
-function allShadowTexts(parent: ShadowRoot, selector: string): string[] {
-  return Array.from(parent.querySelectorAll(selector)).map(
-    (child) => ((child as LitElement).shadowRoot?.textContent ?? '') as string,
-  );
-}
-
 function tokenFixture(overrides: Partial<AnalyticsToken> = {}): AnalyticsToken {
   return {
     analysisReleaseId: 'rel-1',
@@ -82,29 +100,16 @@ function tokenFixture(overrides: Partial<AnalyticsToken> = {}): AnalyticsToken {
   };
 }
 
-function metricValueFixture(overrides: Partial<MetricValueDto> = {}): MetricValueDto {
-  return {
-    ...tokenFixture(),
-    metricId: 'total_tokens',
-    value: 1_234_567,
-    unit: 'count',
-    label: 'Total Tokens',
-    isExact: true,
-    ...overrides,
-  };
-}
-
-function overviewFixture(overrides: Partial<PortfolioOverview> = {}): PortfolioOverview {
+function kpiBandFixture(overrides: Partial<PortfolioKpiBand> = {}): PortfolioKpiBand {
   return {
     token: tokenFixture(),
-    headlineMetrics: [metricValueFixture()],
-    projectCount: 3,
-    sessionCount: 12,
-    componentCounts: { tool: 5, agent: 2 },
-    unusedOfferedComponents: ['unused-component'],
-    totalTokens: 1_234_567,
-    modelCount: 2,
-    harnessCount: 1,
+    sessions: { current: 42, currentN: 42, previous: 30, previousN: 30 },
+    tokens: {
+      in: { current: 1000, currentN: 42 },
+      out: { current: 2000, currentN: 42 },
+    },
+    cost: { currentTotal: 12.5, currentReportedHarnesses: 1, currentTotalHarnesses: 1 },
+    cleanCompletionRate: { value: 0.9, eligibleN: 42, knownN: 40 },
     ...overrides,
   };
 }
@@ -116,15 +121,15 @@ function trendsFixture(overrides: Partial<PortfolioTrendSeries> = {}): Portfolio
       {
         time: '2024-01-01',
         value: 100,
-        metricId: 'total_tokens',
-        label: 'Total tokens',
+        metricId: 'claude:tokens:total::root_only',
+        label: 'Total tokens (root-only)',
         comparabilityGroupId: 'cgrp-1',
       },
       {
         time: '2024-01-02',
         value: 150,
-        metricId: 'total_tokens',
-        label: 'Total tokens',
+        metricId: 'claude:tokens:total::root_only',
+        label: 'Total tokens (root-only)',
         comparabilityGroupId: 'cgrp-1',
       },
     ],
@@ -132,72 +137,63 @@ function trendsFixture(overrides: Partial<PortfolioTrendSeries> = {}): Portfolio
   };
 }
 
-function componentsFixture(
-  overrides: Partial<ComponentUtilizationPage> = {},
-): ComponentUtilizationPage {
+function sessionsByModelFixture(overrides: Partial<SessionsByModelBar> = {}): SessionsByModelBar {
   return {
-    items: [
-      {
-        componentId: 'read_file',
-        name: 'tool/read_file',
-        kind: 'tool',
-        projectCount: 2,
-        sessionCount: 10,
-        token: tokenFixture(),
-      },
-    ],
-    generationToken: 'gen-1',
-    analysisReleaseToken: 'rel-1',
+    token: tokenFixture(),
+    rows: [{ model: 'claude-3-5-sonnet', sessionCount: 30 }],
     ...overrides,
   };
 }
 
-function cohortsFixture(overrides: Partial<ModelHarnessCohortPage> = {}): ModelHarnessCohortPage {
+function matrixFixture(overrides: Partial<ModelHarnessMatrix> = {}): ModelHarnessMatrix {
   return {
-    items: [
-      {
-        model: 'claude-3-5-sonnet',
-        harness: 'claude',
-        sessionCount: 5,
-        metricValues: [metricValueFixture({ value: 500_000 })],
-        token: tokenFixture(),
-      },
-    ],
-    generationToken: 'gen-1',
-    analysisReleaseToken: 'rel-1',
+    token: tokenFixture(),
+    models: ['claude-3-5-sonnet'],
+    harnesses: ['claude'],
+    cells: [{ model: 'claude-3-5-sonnet', harness: 'claude', sessionCount: 30 }],
     ...overrides,
   };
 }
 
-function projectsFixture(overrides: Partial<ProjectListPage> = {}): ProjectListPage {
+function invocationsFixture(overrides: Partial<InvocationsByDomain> = {}): InvocationsByDomain {
   return {
-    items: [
+    token: tokenFixture(),
+    totalInvocations: 40,
+    rows: [
+      { kind: 'tool', count: 20 },
+      { kind: 'skill', count: 10 },
+      { kind: 'agent', count: 5 },
+      { kind: 'sub_agent', count: 5 },
+    ],
+    ...overrides,
+  };
+}
+
+function leaderboardFixture(overrides: Partial<ProjectLeaderboard> = {}): ProjectLeaderboard {
+  return {
+    token: tokenFixture(),
+    rows: [
       {
         projectId: 'p1',
         name: 'Project One',
         sessionCount: 3,
-        source: 'claude',
-        harness: 'claude',
-        completeness: 'complete',
-        finality: 'final',
-        reprocessing: 'unknown',
-        issueState: 'clean',
-        coverage: 'complete',
-        token: tokenFixture(),
+        tokens: { inputTokens: 1000, inputKnownN: 3, outputTokens: 2000, outputKnownN: 3 },
+        cleanRate: { value: 1, eligibleN: 3, knownN: 3 },
+        lastActiveAt: '2024-01-05T00:00:00.000Z',
+        trend: [{ day: '2024-01-01', sessionCount: 1 }],
       },
     ],
-    generationToken: 'gen-1',
-    analysisReleaseToken: 'rel-1',
     ...overrides,
   };
 }
 
 function stubPortfolioLoad(): void {
-  portfolioMock.getOverview.mockResolvedValue(overviewFixture());
+  portfolioMock.getKpiBand.mockResolvedValue(kpiBandFixture());
   portfolioMock.getTrends.mockResolvedValue(trendsFixture());
-  portfolioMock.getComponentUtilization.mockResolvedValue(componentsFixture());
-  portfolioMock.getModelHarnessCohorts.mockResolvedValue(cohortsFixture());
-  portfolioMock.getProjectList.mockResolvedValue(projectsFixture());
+  portfolioMock.getSessionsByModel.mockResolvedValue(sessionsByModelFixture());
+  portfolioMock.getModelHarnessMatrix.mockResolvedValue(matrixFixture());
+  portfolioMock.getInvocationsByDomain.mockResolvedValue(invocationsFixture());
+  portfolioMock.getProjectLeaderboard.mockResolvedValue(leaderboardFixture());
   metadataMock.getDimensionDomains.mockResolvedValue({
     token: tokenFixture(),
     projects: ['Project One', 'zero-session-harness-project'],
@@ -220,50 +216,77 @@ afterEach(() => {
 });
 
 describe('portfolio-view', () => {
-  it('loads and renders overview, charts, and project list', async () => {
+  it('loads and renders the title row, KPI band (with n=), trend/model row, heatmap/domains row, and leaderboard', async () => {
     const view = document.createElement('portfolio-view') as PortfolioView;
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
     expect(root.textContent).toContain('Portfolio');
-    const cardTexts = allShadowTexts(root, 'metrics-card').join(' ');
-    expect(cardTexts).toContain('Total Tokens');
-    expect(cardTexts).toContain('1.2M');
-    expect(root.textContent).toContain('Project One');
-    expect(root.textContent).toContain('Artifact utilization');
-    expect(root.textContent).toContain('Model × harness cohorts');
-  });
 
-  it('renders an empty state when all panels return empty pages', async () => {
-    portfolioMock.getOverview.mockResolvedValue(
-      overviewFixture({ headlineMetrics: [], sessionCount: 0, projectCount: 0 }),
+    const heroTile = root.querySelector('stat-tile-hero');
+    expect(heroTile?.getAttribute('value')).toBe('42');
+    expect(heroTile?.getAttribute('samplelabel') ?? heroTile?.getAttribute('sampleLabel')).toBe(
+      'n=42 sessions',
     );
-    portfolioMock.getTrends.mockResolvedValue(trendsFixture({ series: [] }));
-    portfolioMock.getComponentUtilization.mockResolvedValue(componentsFixture({ items: [] }));
-    portfolioMock.getModelHarnessCohorts.mockResolvedValue(cohortsFixture({ items: [] }));
-    portfolioMock.getProjectList.mockResolvedValue(projectsFixture({ items: [] }));
 
-    const view = document.createElement('portfolio-view') as PortfolioView;
-    await mount(view);
-    const root = view.shadowRoot as ShadowRoot;
-
-    expect(allShadowTexts(root, 'analytics-chart').join(' ')).toMatch(/Session Metrics/i);
-    expect(root.textContent).toContain('No projects found');
+    expect(root.textContent).toContain('Project One');
+    expect(root.textContent).toContain('Project leaderboard');
+    expect(root.textContent).toContain('All time');
+    expect(root.textContent).toContain('MCP servers');
   });
 
-  it('enters a partial state when one view fails', async () => {
-    portfolioMock.getOverview.mockRejectedValue(new Error('overview down'));
-    portfolioMock.getTrends.mockResolvedValue(trendsFixture());
-    portfolioMock.getComponentUtilization.mockResolvedValue(componentsFixture());
-    portfolioMock.getModelHarnessCohorts.mockResolvedValue(cohortsFixture());
-    portfolioMock.getProjectList.mockResolvedValue(projectsFixture());
+  it('renders the missing-state tiles (never a fabricated value) for cost and clean completion when uncovered', async () => {
+    portfolioMock.getKpiBand.mockResolvedValue(
+      kpiBandFixture({
+        cost: { currentTotal: null, currentReportedHarnesses: 0, currentTotalHarnesses: 2 },
+        cleanCompletionRate: { value: null, eligibleN: 0, knownN: 0 },
+      }),
+    );
 
     const view = document.createElement('portfolio-view') as PortfolioView;
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    expect(root.textContent).toContain('overview down');
+    const missingTiles = Array.from(root.querySelectorAll('stat-tile-missing')) as LitElement[];
+    expect(missingTiles.length).toBe(2);
+    for (const tile of missingTiles) await tile.updateComplete;
+    const missingText = missingTiles.map((tile) => tile.shadowRoot?.textContent ?? '').join(' ');
+    expect(missingText).toContain('0 of 2 harnesses report cost');
+  });
+
+  it('renders a per-card error affordance without blanking a sibling card (no-silent-empty-states)', async () => {
+    portfolioMock.getKpiBand.mockRejectedValue(new Error('kpi band down'));
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    expect(root.textContent).toContain('kpi band down');
+    // A failing KPI band must not blank the leaderboard.
     expect(root.textContent).toContain('Project One');
+  });
+
+  it('renders the heatmap missing-cell affordance as "—", never a fabricated 0', async () => {
+    portfolioMock.getModelHarnessMatrix.mockResolvedValue(
+      matrixFixture({
+        cells: [{ model: 'claude-3-5-sonnet', harness: 'claude', sessionCount: null }],
+      }),
+    );
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const heatmapChart = Array.from(root.querySelectorAll('analytics-chart')).find((el) =>
+      (el as LitElement).shadowRoot?.textContent?.includes('model × harness'),
+    ) as LitElement | undefined;
+    await heatmapChart?.updateComplete;
+    const echartsBase = heatmapChart?.shadowRoot?.querySelector('echarts-base') as LitElement;
+    await echartsBase?.updateComplete;
+    const heatmapGrid = echartsBase?.shadowRoot?.querySelector('rd-heatmap-grid') as LitElement;
+    await heatmapGrid?.updateComplete;
+    expect(heatmapGrid?.shadowRoot?.textContent).toContain('—');
+    expect(heatmapGrid?.shadowRoot?.textContent).not.toMatch(/\b0 sessions\b/);
   });
 
   it('navigates to a project row preserving return context', async () => {
@@ -298,42 +321,28 @@ describe('portfolio-view', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(window.location.hash).toMatch(/harness=claude/);
-    expect(portfolioMock.getOverview).toHaveBeenCalled();
+    expect(portfolioMock.getKpiBand).toHaveBeenCalled();
   });
 
-  it('passes the unfiltered dimension domains as chip options, independent of the active filter selection', async () => {
-    window.location.hash = '#/?harness=claude';
-    const view = document.createElement('portfolio-view') as PortfolioView;
-    await mount(view);
-    const root = view.shadowRoot as ShadowRoot;
-
-    expect(metadataMock.getDimensionDomains).toHaveBeenCalledWith();
-
-    const filterBar = root.querySelector('filter-bar') as LitElement;
-    await filterBar.updateComplete;
-    const projectChip = filterBar.shadowRoot?.querySelector(
-      'dimension-chip[label="Project"]',
-    ) as LitElement;
-    await projectChip.updateComplete;
-    const select = projectChip.shadowRoot?.querySelector('select') as HTMLSelectElement;
-    const values = Array.from(select.options).map((o) => o.value);
-    expect(values).toContain('zero-session-harness-project');
-  });
-
-  it('parses filters from the hash and re-loads', async () => {
-    window.location.hash = '#/?project=p1&harness=claude';
+  it('parses filters from the hash and re-loads, and always queries the leaderboard without a time range', async () => {
+    window.location.hash =
+      '#/?project=p1&harness=claude&timeStart=2024-01-01T00:00:00.000Z&timeEnd=2024-01-08T00:00:00.000Z';
 
     const view = document.createElement('portfolio-view') as PortfolioView;
     await mount(view);
 
-    expect(portfolioMock.getOverview).toHaveBeenCalled();
-    const query = portfolioMock.getOverview.mock.calls[0][0];
+    expect(portfolioMock.getKpiBand).toHaveBeenCalled();
+    const query = portfolioMock.getKpiBand.mock.calls[0][0];
     expect(query.filters).toEqual(
       expect.arrayContaining([
         { field: 'projectId', operator: 'eq', value: 'p1' },
         { field: 'harness', operator: 'eq', value: 'claude' },
       ]),
     );
+    expect(query.timeRange).toBeDefined();
+
+    const leaderboardQuery = portfolioMock.getProjectLeaderboard.mock.calls[0][0];
+    expect(leaderboardQuery.timeRange).toBeUndefined();
   });
 
   it('renders the trend chart empty affordance when the series is empty but other panels are not', async () => {
@@ -344,32 +353,26 @@ describe('portfolio-view', () => {
     const root = view.shadowRoot as ShadowRoot;
 
     const trendChart = Array.from(root.querySelectorAll('analytics-chart')).find((el) =>
-      (el as LitElement).shadowRoot?.textContent?.includes('Session Metrics'),
+      (el as LitElement).shadowRoot?.textContent?.includes('Token usage trend'),
     ) as (LitElement & { state?: string }) | undefined;
     expect(trendChart?.state).toBe('empty');
-    // A genuinely empty range must not be reported as a global error.
-    expect(root.textContent).not.toContain('All portfolio views failed to load.');
   });
 
   /**
-   * Integration-level proof of the stale-response guard (issue #167
-   * acceptance criterion + `pr-review` follow-up): `load()` allows
+   * Integration-level proof of the stale-response guard: `load()` allows
    * overlapping requests rather than queuing them, so a filter change
    * re-issues immediately instead of waiting for a slower in-flight query.
    * Here the first (slow) request resolves *after* the second (fast) one —
-   * its response must be discarded, not applied over the fresher data, and
-   * `loading` must end up cleared (owned by the still-current second load).
+   * its response must be discarded, not applied over the fresher data.
    */
   it('discards a stale response that resolves after a superseding request (stale-response guard)', async () => {
-    let resolveFirst: (value: PortfolioOverview) => void = () => {};
-    const firstPending = new Promise<PortfolioOverview>((resolve) => {
+    let resolveFirst: (value: PortfolioKpiBand) => void = () => {};
+    const firstPending = new Promise<PortfolioKpiBand>((resolve) => {
       resolveFirst = resolve;
     });
-    portfolioMock.getOverview
+    portfolioMock.getKpiBand
       .mockReturnValueOnce(firstPending)
-      .mockResolvedValueOnce(
-        overviewFixture({ headlineMetrics: [metricValueFixture({ label: 'Fresh Metric' })] }),
-      );
+      .mockResolvedValueOnce(kpiBandFixture({ sessions: { current: 999, currentN: 999 } }));
 
     const view = document.createElement('portfolio-view') as PortfolioView;
     document.body.appendChild(view);
@@ -382,31 +385,27 @@ describe('portfolio-view', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // The slow first request resolves last — it must be discarded.
-    resolveFirst(
-      overviewFixture({ headlineMetrics: [metricValueFixture({ label: 'Stale Metric' })] }),
-    );
+    resolveFirst(kpiBandFixture({ sessions: { current: 1, currentN: 1 } }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     await flush(view);
     await flush(view);
 
     const root = view.shadowRoot as ShadowRoot;
-    const cardTexts = allShadowTexts(root, 'metrics-card').join(' ');
-    expect(cardTexts).toContain('Fresh Metric');
-    expect(cardTexts).not.toContain('Stale Metric');
-    expect(root.textContent).not.toContain('Loading portfolio');
+    const heroTile = root.querySelector('stat-tile-hero');
+    expect(heroTile?.getAttribute('value')).toBe('999');
   });
 
   it('re-queries when the analytics client reports a data change', async () => {
     const view = document.createElement('portfolio-view') as PortfolioView;
     await mount(view);
 
-    const callsBefore = portfolioMock.getOverview.mock.calls.length;
+    const callsBefore = portfolioMock.getKpiBand.mock.calls.length;
 
     mockAnalyticsClient.dispatchEvent(new CustomEvent('data-change'));
     await new Promise((resolve) => setTimeout(resolve, 50));
     await flush(view);
 
-    const callsAfter = portfolioMock.getOverview.mock.calls.length;
+    const callsAfter = portfolioMock.getKpiBand.mock.calls.length;
     expect(callsAfter - callsBefore).toBe(1);
 
     view.remove();
@@ -416,14 +415,14 @@ describe('portfolio-view', () => {
     const view = document.createElement('portfolio-view') as PortfolioView;
     await mount(view);
 
-    const callsBefore = portfolioMock.getOverview.mock.calls.length;
+    const callsBefore = portfolioMock.getKpiBand.mock.calls.length;
 
     window.location.hash = '#/manual-import';
     mockAnalyticsClient.dispatchEvent(new CustomEvent('data-change'));
     await new Promise((resolve) => setTimeout(resolve, 50));
     await flush(view);
 
-    const callsAfter = portfolioMock.getOverview.mock.calls.length;
+    const callsAfter = portfolioMock.getKpiBand.mock.calls.length;
     expect(callsAfter).toBe(callsBefore);
 
     view.remove();

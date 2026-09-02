@@ -108,7 +108,12 @@ beforeEach(() => {
 });
 
 describe('app-root', () => {
+  // The Portfolio route (`/`) swaps the global header for a page-owned
+  // title row (issue #170) — these tests exercise the global header itself,
+  // so they navigate to a non-Portfolio route first. `renders no global
+  // header on the Portfolio route` (below) covers the `/` disposition.
   it('renders the SAL logo and header navigation', async () => {
+    window.location.hash = '#/artifacts';
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
@@ -125,6 +130,7 @@ describe('app-root', () => {
   });
 
   it('renders the settings cog button', async () => {
+    window.location.hash = '#/artifacts';
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
@@ -139,6 +145,7 @@ describe('app-root', () => {
     // transitions, so it moved out of the header into app-root's global
     // chrome (beside sync-status-bar) where later per-route header
     // removals cannot unmount it or hide live sync progress.
+    window.location.hash = '#/artifacts';
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
@@ -152,6 +159,18 @@ describe('app-root', () => {
     expect(progress).not.toBeNull();
     expect(headerRight?.contains(progress)).toBe(false);
     expect(syncChrome?.contains(progress)).toBe(true);
+  });
+
+  it('renders no global header on the Portfolio route (`/`), swapped for the page-owned title row', async () => {
+    window.location.hash = '#/';
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    expect(root.querySelector('header')).toBeNull();
+    expect(root.querySelector('.logo')).toBeNull();
+    // The sync chrome (sync-progress-bar) stays mounted regardless of route.
+    expect(root.querySelector('sync-progress-bar')).not.toBeNull();
   });
 
   it('does not render the old storage badge or connect button', async () => {

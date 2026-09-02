@@ -158,11 +158,24 @@ export class AppRoot extends LitElement {
       min-height: calc(100vh - 56px);
     }
 
+    /* The Portfolio route has no global header (see showGlobalHeader in the
+     * TS class below) — its own title row supplies that vertical space
+     * instead, so the sticky/fixed offsets below collapse to 0 rather than
+     * leaving a 56px gap above the icon rail and sync chrome. */
+    .app-body.no-header {
+      min-height: 100vh;
+    }
+
     icon-rail {
       position: sticky;
       top: 56px;
       align-self: flex-start;
       height: calc(100vh - 56px);
+    }
+
+    .app-body.no-header icon-rail {
+      top: 0;
+      height: 100vh;
     }
 
     main {
@@ -178,12 +191,18 @@ export class AppRoot extends LitElement {
      * a route without unmounting this) and clear of it vertically at any
      * viewport width, so it can never overlap header-nav/
      * header-project-selector the way an overlapping right-offset would
-     * once the progress bar's content grows or the header narrows. */
+     * once the progress bar's content grows or the header narrows. On the
+     * header-less Portfolio route this collapses to the same 8px inset the
+     * header would otherwise leave beneath it. */
     .sync-chrome {
       position: fixed;
       top: 64px;
       right: 24px;
       z-index: 15;
+    }
+
+    .sync-chrome.no-header {
+      top: 8px;
     }
 
     .app-error {
@@ -587,7 +606,21 @@ export class AppRoot extends LitElement {
     navigateTo('/settings/data-sources');
   }
 
-  render() {
+  /**
+   * The Portfolio route (`/`) renders a page-owned title row
+   * (`portfolio-view`'s `.title-row`, issue #170) in place of this global
+   * header — project selection moves into the filter bar's Project chip and
+   * Export moves into the page's own Export button, per the shell
+   * sub-issue's disposition table. Every other route keeps the global
+   * header. `sync-progress-bar`/`sync-status-bar` stay mounted below
+   * regardless of route — the page's sync chip only complements them.
+   */
+  private get showGlobalHeader(): boolean {
+    return this.currentPath !== '/';
+  }
+
+  private renderGlobalHeader() {
+    if (!this.showGlobalHeader) return null;
     return html`
       <header>
         <a href="#/" class="logo">SAL</a>
@@ -615,8 +648,14 @@ export class AppRoot extends LitElement {
           </button>
         </div>
       </header>
+    `;
+  }
 
-      <div class="app-body">
+  render() {
+    return html`
+      ${this.renderGlobalHeader()}
+
+      <div class="app-body ${this.showGlobalHeader ? '' : 'no-header'}">
         ${this.appReady ? html`<icon-rail .path=${this.currentPath}></icon-rail>` : ''}
         <main>
           ${
@@ -666,7 +705,7 @@ export class AppRoot extends LitElement {
           : ''
       }
 
-      <div class="sync-chrome">
+      <div class="sync-chrome ${this.showGlobalHeader ? '' : 'no-header'}">
         <sync-progress-bar></sync-progress-bar>
       </div>
       <sync-status-bar></sync-status-bar>

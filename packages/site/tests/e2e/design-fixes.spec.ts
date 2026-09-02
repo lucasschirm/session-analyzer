@@ -21,8 +21,14 @@ const PASSKEY = 'e2e-passkey';
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * `icon-rail` (not `header`) is the app-ready signal: issue #170 swaps the
+ * global header for a page-owned title row on the Portfolio route (`/`)
+ * only, so `header` is legitimately absent there while `icon-rail` stays
+ * mounted on every route once the app finishes booting.
+ */
 async function waitForAppReady(page: Page): Promise<void> {
-  await expect(page.locator('header')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('icon-rail')).toBeVisible({ timeout: 15000 });
   await expect(page.locator('.app-loading')).toBeHidden({ timeout: 15000 });
 }
 
@@ -31,24 +37,28 @@ async function waitForAppReady(page: Page): Promise<void> {
 // ---------------------------------------------------------------------------
 
 test.describe('Header navigation active state (UX-017)', () => {
-  test('Dashboard link is active on /', async ({ page }) => {
+  // `/` (and its `/portfolio` legacy redirect) render no global header as of
+  // issue #170 — the page-owned Portfolio title row replaces it, and the
+  // active-route signal on that route is the icon rail's Portfolio item
+  // (`aria-current="page"`, see UX-024) rather than `nav.header-nav`.
+  test('icon rail Portfolio item is active on /', async ({ page }) => {
     await page.goto('/#/');
     await waitForAppReady(page);
-    const dashboardLink = page.locator('nav.header-nav a', { hasText: 'Dashboard' });
-    const artifactsLink = page.locator('nav.header-nav a', { hasText: 'Artifacts' });
-    await expect(dashboardLink).toHaveClass(/active/);
-    await expect(artifactsLink).not.toHaveClass(/active/);
+    await expect(page.locator('header')).toHaveCount(0);
+    const portfolioRailItem = page.locator('icon-rail a.rail-item[aria-label="Portfolio"]');
+    await expect(portfolioRailItem).toHaveAttribute('aria-current', 'page');
+  });
+
+  test('icon rail Portfolio item is active on /portfolio (legacy redirect)', async ({ page }) => {
+    await page.goto('/#/portfolio');
+    await waitForAppReady(page);
+    await expect(page).toHaveURL(/#\/(\?|$)/);
+    const portfolioRailItem = page.locator('icon-rail a.rail-item[aria-label="Portfolio"]');
+    await expect(portfolioRailItem).toHaveAttribute('aria-current', 'page');
   });
 
   test('Dashboard link is active on /projects', async ({ page }) => {
     await page.goto('/#/projects');
-    await waitForAppReady(page);
-    const dashboardLink = page.locator('nav.header-nav a', { hasText: 'Dashboard' });
-    await expect(dashboardLink).toHaveClass(/active/);
-  });
-
-  test('Dashboard link is active on /portfolio', async ({ page }) => {
-    await page.goto('/#/portfolio');
     await waitForAppReady(page);
     const dashboardLink = page.locator('nav.header-nav a', { hasText: 'Dashboard' });
     await expect(dashboardLink).toHaveClass(/active/);
@@ -270,8 +280,10 @@ test.describe('Data-sources edit URL (UX-020)', () => {
 test.describe('Loading state (UX-021)', () => {
   test('app eventually loads and loading state disappears', async ({ page }) => {
     await page.goto('/#/');
-    // Wait for the header to appear (app is ready)
-    await expect(page.locator('header')).toBeVisible({ timeout: 15000 });
+    // Wait for the icon rail to appear (app is ready) — `/` has no global
+    // header (issue #170's page-owned title row replaces it), but the rail
+    // stays mounted on every route.
+    await expect(page.locator('icon-rail')).toBeVisible({ timeout: 15000 });
     // The loading state should be gone
     await expect(page.locator('.app-loading')).not.toBeVisible();
   });
