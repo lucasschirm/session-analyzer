@@ -4,7 +4,7 @@
   "private": false,
   "type": "module",
   "license": "ISC",
-  "description": "Devin CLI plugin adapter for the @lucasschirm/sal-sync session data sync engine (SQLite->JSONL extractor; plugin manifest/hooks/CLI land in DS-F3).",
+  "description": "Devin CLI plugin adapter for the @lucasschirm/sal-sync session data sync engine (SQLite->JSONL extractor, devin-sync CLI, and sessions.db-watermark watcher).",
   "repository": {
     "type": "git",
     "url": "https://github.com/lucasschirm/session-analyzer.git",
@@ -13,23 +13,34 @@
   "engines": {
     "node": ">=22.13.0"
   },
+  "bin": {
+    "devin-sync": "bin/devin-sync",
+    "devin-session-sync": "bin/devin-sync"
+  },
   "files": [
+    ".devin-plugin",
+    ".claude-plugin",
+    "bin",
+    "hooks.json",
     "package.json"
   ],
   "scripts": {
     "build": "node build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage --coverage.include='src/**/*.ts' --coverage.thresholds.statements=80 --coverage.thresholds.branches=80 --coverage.thresholds.functions=80 --coverage.thresholds.lines=80",
+    "test:coverage": "vitest run --coverage --coverage.include='src/**/*.ts' --coverage.include='build.mjs' --coverage.exclude='src/hook.ts' --coverage.exclude='src/session-start.ts' --coverage.exclude='src/session-end.ts' --coverage.exclude='src/watcher.ts' --coverage.thresholds.statements=80 --coverage.thresholds.branches=80 --coverage.thresholds.functions=80 --coverage.thresholds.lines=80",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "biome check src tests build.mjs",
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test:coverage",
+    "sync": "node ./bin/devin-sync",
     "version:patch": "exit 0",
     "version:publish": "exit 0"
   },
   "devDependencies": {
+    "@lucasschirm/sal-sync": "workspace:*",
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "^4.1.10",
+    "esbuild": "^0.25.12",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

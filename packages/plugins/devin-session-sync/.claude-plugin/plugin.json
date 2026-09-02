@@ -1,0 +1,8 @@
+{
+  "name": "devin-session-sync",
+  "version": "0.1.0",
+  "description": "Sync Devin CLI session data to S3-compatible storage (Claude-format compat manifest; Devin reads .devin-plugin/plugin.json first per the documented precedence).",
+  "author": {
+    "name": "lucasschirm"
+  }
+}
