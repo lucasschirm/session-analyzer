@@ -130,6 +130,7 @@ The monorepo also contains the analytics data platform packages:
 - `packages/db/` (`@lucasschirm/sal-db`) — Application-facing ingestion, aggregation, reprocessing, and analytics data-source facade.
 - `packages/transformers/transformer-shared/` (`@lucasschirm/sal-transformer-shared`) — Harness-agnostic transformer contract layer, registry, and conformance suite (public `/conformance` subpath).
 - `packages/transformers/claude-transformer/` (`@lucasschirm/sal-claude-transformer`) — Claude Code transformer plugin: artifact classification and metric derivation.
+- `packages/transformers/devin-transformer/` (`@lucasschirm/sal-devin-transformer`) — Devin CLI transformer plugin: artifact classification, session spine, token usage, and Phase 1 metric derivation.
 - `packages/transformers/registry/` (`@lucasschirm/sal-transformer-registry`) — Default `TransformerRegistry` composition root wiring every transformer plugin package together.
 - `packages/sync-core/` (`@lucasschirm/sal-sync-core`) — Shared manifest and sync contract types.
 - `packages/parsers/claude-session-parser/` (`@lucasschirm/sal-claude-session-parser`) — Pure Claude Code session parser.

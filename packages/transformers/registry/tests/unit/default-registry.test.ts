@@ -14,8 +14,14 @@ describe('createDefaultRegistry', () => {
     expect(resolution.id).toBe('claude-code');
   });
 
-  it('registers exactly the claude transformer today', () => {
+  it('resolves the devin transformer for the devin harness', () => {
     const registry = createDefaultRegistry();
-    expect(registry.ids()).toEqual(['claude-code']);
+    const resolution = registry.resolve('devin');
+    expect(resolution.id).toBe('devin');
+  });
+
+  it('registers the claude and devin transformers', () => {
+    const registry = createDefaultRegistry();
+    expect([...registry.ids()].sort()).toEqual(['claude-code', 'devin']);
   });
 });
