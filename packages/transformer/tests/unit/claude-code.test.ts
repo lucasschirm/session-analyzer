@@ -332,4 +332,131 @@ describe('ClaudeCodeTransformer', () => {
       );
     });
   });
+
+  describe('session outcome classification (issue #178)', () => {
+    function transformOutcomeFixture(name: string) {
+      const b = bundle([artifact('transcript.jsonl', fixture(name), 'application/jsonl')]);
+      return ClaudeCodeTransformer.transform(b, defaultContext);
+    }
+
+    function rootOutcome(result: ReturnType<typeof transformOutcomeFixture>) {
+      const root = result.sessionSummaries.find((s) => s.sessionId === s.rootSessionId);
+      return root?.outcome;
+    }
+
+    function rootSessionRecordOutcome(result: ReturnType<typeof transformOutcomeFixture>) {
+      const record = result.evidence.find((r) => r.recordType === 'session');
+      return (record?.payload as { outcome?: unknown } | undefined)?.outcome;
+    }
+
+    it('classifies a normal assistant completion as clean', () => {
+      const result = transformOutcomeFixture('outcome-clean.jsonl');
+      expect(rootOutcome(result)).toBe('clean');
+      expect(rootSessionRecordOutcome(result)).toBe('clean');
+    });
+
+    it('classifies a shutdown-interrupted tail as interrupted_by_user', () => {
+      const result = transformOutcomeFixture('outcome-interrupted.jsonl');
+      expect(rootOutcome(result)).toBe('interrupted_by_user');
+      expect(rootSessionRecordOutcome(result)).toBe('interrupted_by_user');
+    });
+
+    it('classifies an API error tail as ended_on_error', () => {
+      const result = transformOutcomeFixture('outcome-error.jsonl');
+      expect(rootOutcome(result)).toBe('ended_on_error');
+      expect(rootSessionRecordOutcome(result)).toBe('ended_on_error');
+    });
+
+    it('leaves outcome undefined (not classifiable) when there is no user/assistant tail', () => {
+      const result = transformOutcomeFixture('outcome-unreadable.jsonl');
+      expect(rootOutcome(result)).toBeUndefined();
+      expect(rootSessionRecordOutcome(result)).toBeUndefined();
+      // Never coerced to a falsy stand-in for missing (missing-is-never-zero).
+      expect(rootOutcome(result)).not.toBe(0);
+      expect(rootOutcome(result)).not.toBe('');
+      expect(rootOutcome(result)).not.toBeNull();
+    });
+
+    it('classifies a mid-stream abort (isAbortedMidStream) as interrupted_by_user', () => {
+      // c1-optional-fields.jsonl's third user entry (of-3) carries
+      // isAbortedMidStream: true — build a standalone fixture ending there to
+      // exercise this specific real signal in isolation from the rest of that
+      // shared fixture's later, unrelated entries.
+      const fullContent = fixture('c1-optional-fields.jsonl');
+      const abortedLine = fullContent.split('\n').find((line) => line.includes('"uuid": "of-3"'));
+      expect(abortedLine).toBeDefined();
+      const content = `${abortedLine}\n`;
+      const b = bundle([artifact('transcript.jsonl', content, 'application/jsonl')]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      const root = result.sessionSummaries.find((s) => s.sessionId === s.rootSessionId);
+      expect(root?.outcome).toBe('interrupted_by_user');
+    });
+
+    it('leaves outcome undefined when the tail user entry carries no error/interrupt signal', () => {
+      // c1-optional-fields.jsonl's real final entry (of-11) is a plain
+      // tool_result user turn with no interrupt/error marker at all — the
+      // transcript tail is genuinely not classifiable, not a fourth outcome
+      // value.
+      const result = transformOutcomeFixture('c1-optional-fields.jsonl');
+      expect(rootOutcome(result)).toBeUndefined();
+    });
+
+    function inlineTranscript(entry: Record<string, unknown>): string {
+      return `${JSON.stringify({
+        parentUuid: null,
+        isSidechain: false,
+        sessionId: 'sess-outcome-inline',
+        uuid: 'inline-1',
+        timestamp: '2026-08-15T09:30:00.000Z',
+        ...entry,
+      })}\n`;
+    }
+
+    it('prioritizes ended_on_error over a simultaneous mid-stream abort', () => {
+      // An assistant entry can carry both isAbortedMidStream and an API
+      // error signal at once (the API failed while the turn was aborting).
+      // Per the doc comment's priority order, ended_on_error wins.
+      const content = inlineTranscript({
+        type: 'assistant',
+        isAbortedMidStream: true,
+        isApiErrorMessage: true,
+        apiErrorStatus: 529,
+        error: { type: 'overloaded_error', message: 'overloaded' },
+        message: { role: 'assistant', content: [{ type: 'text', text: 'overloaded' }] },
+      });
+      const b = bundle([artifact('transcript.jsonl', content, 'application/jsonl')]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      const root = result.sessionSummaries.find((s) => s.sessionId === s.rootSessionId);
+      expect(root?.outcome).toBe('ended_on_error');
+    });
+
+    it.each(['tool_use', 'max_tokens'])(
+      'leaves outcome undefined for a truncated assistant tail (stop_reason=%s)',
+      (stopReason) => {
+        const content = inlineTranscript({
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'partial' }],
+            stop_reason: stopReason,
+          },
+        });
+        const b = bundle([artifact('transcript.jsonl', content, 'application/jsonl')]);
+        const result = ClaudeCodeTransformer.transform(b, defaultContext);
+        const root = result.sessionSummaries.find((s) => s.sessionId === s.rootSessionId);
+        expect(root?.outcome).toBeUndefined();
+      },
+    );
+
+    it('classifies clean when stop_reason is absent entirely (not itself an incompleteness signal)', () => {
+      const content = inlineTranscript({
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+      });
+      const b = bundle([artifact('transcript.jsonl', content, 'application/jsonl')]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      const root = result.sessionSummaries.find((s) => s.sessionId === s.rootSessionId);
+      expect(root?.outcome).toBe('clean');
+    });
+  });
 });

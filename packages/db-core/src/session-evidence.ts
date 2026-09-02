@@ -576,6 +576,47 @@ export const ALTER_SESSIONS_EVIDENCE_COLUMNS = buildAlterSessions(
   SESSION_EVIDENCE_EXTENSION_INDEXES,
 );
 
+// Session outcome column (issue #178)
+//
+// `outcome` is nullable-with-meaning: SQL `NULL` is the sentinel for
+// "unreadable tail / not classifiable" (a session that is not final yet, or
+// whose final native event(s) could not be read), and is never conflated
+// with a real classified outcome (`.agents/rules/missing-is-never-zero.md`).
+// Only the three real, positively-classified outcomes are enumerated in the
+// CHECK constraint; "unknown (unreadable tail)" is represented by the
+// absence of a row value, not a fourth enum member.
+//
+// Deliberately duplicated in `packages/transformer/src/session.ts`
+// (`SESSION_OUTCOMES`/`SessionOutcome`) rather than imported from here:
+// transformers never depend on `db-core`
+// (`.agents/rules/transformers-never-write-sqlite.md`). Keep the two
+// literal arrays in sync by hand — a drift-detection test asserts equality
+// in `packages/db/tests/unit/session-outcomes-in-sync.test.ts`.
+export const SESSION_OUTCOMES = ['clean', 'interrupted_by_user', 'ended_on_error'] as const;
+export type SessionOutcome = (typeof SESSION_OUTCOMES)[number];
+
+const SESSION_OUTCOME_EXTENSION_COLUMNS: readonly Column[] = [
+  {
+    name: 'outcome',
+    field: 'outcome',
+    type: 'TEXT',
+    check: `outcome IS NULL OR outcome IN (${SESSION_OUTCOMES.map((o) => `'${o}'`).join(', ')})`,
+  },
+];
+
+const SESSION_OUTCOME_EXTENSION_INDEXES: readonly IndexSpec[] = [
+  { name: 'idx_sessions_outcome', columns: ['outcome'] },
+  {
+    name: 'idx_sessions_project_finality_outcome',
+    columns: ['project_id', 'finality', 'outcome'],
+  },
+];
+
+export const ALTER_SESSIONS_OUTCOME_COLUMN = buildAlterSessions(
+  SESSION_OUTCOME_EXTENSION_COLUMNS,
+  SESSION_OUTCOME_EXTENSION_INDEXES,
+);
+
 // Session columns for the store
 
 const SESSION_COLUMNS: readonly Column[] = [
@@ -603,6 +644,7 @@ const SESSION_COLUMNS: readonly Column[] = [
   { name: 'mode', field: 'mode', type: 'TEXT' },
   { name: 'task_cohort', field: 'taskCohort', type: 'TEXT' },
   ...SESSION_EVIDENCE_EXTENSION_COLUMNS,
+  ...SESSION_OUTCOME_EXTENSION_COLUMNS,
   { name: 'created_at', field: 'createdAt', type: 'INTEGER', notNull: true },
   { name: 'updated_at', field: 'updatedAt', type: 'INTEGER', notNull: true },
 ];
@@ -629,6 +671,8 @@ export interface Session {
   readonly cliVersions: string | null;
   readonly isSidechain: boolean;
   readonly agentId: string | null;
+  /** `null` = unreadable tail / not classifiable, never a real outcome. */
+  readonly outcome: SessionOutcome | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -705,6 +749,46 @@ export class SessionStore {
 
   static async delete(queryable: Queryable, projectId: string, id: string): Promise<void> {
     await queryable.exec('DELETE FROM sessions WHERE id = ? AND project_id = ?', [id, projectId]);
+  }
+}
+
+/**
+ * Per-project outcome rollup used by the `session:outcome` metric (see
+ * `packages/db/src/metric-registry.ts`). One row per distinct outcome value
+ * observed among `finality = 'final'` sessions, plus a `null`-outcome row
+ * for the "unreadable tail / not classifiable" count — never folded into
+ * any real outcome bucket or dropped (missing-is-never-zero). Consumers
+ * derive `eligibleN` as the sum of every row's `count`, and `knownN` as the
+ * sum of every row whose `outcome` is not `null`.
+ */
+export interface SessionOutcomeRollupRow {
+  readonly outcome: SessionOutcome | null;
+  readonly count: number;
+}
+
+// biome-ignore lint/complexity/noStaticOnlyClass: typed rollup query, mirrors SessionStore
+export class SessionOutcomeStore {
+  /**
+   * Groups final sessions in a project by outcome. Reads through
+   * `idx_sessions_project_finality_outcome` (project_id, finality, outcome)
+   * so the query plans as an index SEARCH, never a full table SCAN.
+   */
+  static async rollupByProject(
+    queryable: Queryable,
+    projectId: string,
+  ): Promise<readonly SessionOutcomeRollupRow[]> {
+    const { rows } = await queryable.exec(
+      `SELECT outcome, COUNT(*) as count FROM sessions
+       WHERE project_id = ? AND finality = 'final'
+       GROUP BY outcome`,
+      [projectId],
+    );
+    return rows.map((row) => ({
+      outcome: (row.outcome === null || row.outcome === undefined
+        ? null
+        : (String(row.outcome) as SessionOutcome)) as SessionOutcome | null,
+      count: Number(row.count),
+    }));
   }
 }
 
@@ -2598,6 +2682,7 @@ export const ComponentEvidenceLinkStore: ComponentEvidenceLinkStoreType = {
 
 export const SESSION_EVIDENCE_DDL = `
 ${ALTER_SESSIONS_EVIDENCE_COLUMNS}
+${ALTER_SESSIONS_OUTCOME_COLUMN}
 ${CREATE_TURNS_TABLE}
 ${CREATE_MESSAGES_TABLE}
 ${CREATE_MODEL_CAPABILITIES_TABLE}
@@ -2746,5 +2831,11 @@ export const SESSION_EVIDENCE_MIGRATIONS_FRAGMENT: readonly Migration[] = [
     name: 'create-component-evidence-links',
     sql: CREATE_COMPONENT_EVIDENCE_LINKS_TABLE,
     checksum: checksumOf(CREATE_COMPONENT_EVIDENCE_LINKS_TABLE),
+  },
+  {
+    id: 81,
+    name: 'alter-sessions-outcome-column',
+    sql: ALTER_SESSIONS_OUTCOME_COLUMN,
+    checksum: checksumOf(ALTER_SESSIONS_OUTCOME_COLUMN),
   },
 ];

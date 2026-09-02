@@ -42,7 +42,7 @@ import type { NormalizedEvidenceRecord } from '../evidence.js';
 import type { Issue } from '../issue.js';
 import type { MetricCapability } from '../metric.js';
 import type { Provenance, SourcePointer } from '../provenance.js';
-import type { SessionSummary } from '../session.js';
+import type { SessionOutcome, SessionSummary } from '../session.js';
 import {
   deriveClaudeCodeAttributionMetrics,
   getClaudeCodeAttributionMetricCapabilities,
@@ -698,15 +698,14 @@ function hasManifestHarness(bundle: UnknownArtifactBundle): 'claude-code' | unde
   return withHarness.harness;
 }
 
-function isAssistantEntry(
-  entry: ClaudeCodeEntry,
-): entry is import('@lucasschirm/sal-claude-session-parser').AssistantEntry {
+type ClaudeAssistantEntry = import('@lucasschirm/sal-claude-session-parser').AssistantEntry;
+type ClaudeUserEntry = import('@lucasschirm/sal-claude-session-parser').UserEntry;
+
+function isAssistantEntry(entry: ClaudeCodeEntry): entry is ClaudeAssistantEntry {
   return entry.type === 'assistant';
 }
 
-function isUserEntry(
-  entry: ClaudeCodeEntry,
-): entry is import('@lucasschirm/sal-claude-session-parser').UserEntry {
+function isUserEntry(entry: ClaudeCodeEntry): entry is ClaudeUserEntry {
   return entry.type === 'user';
 }
 
@@ -726,6 +725,95 @@ function sessionStartAndEnd(session: ClaudeCodeSession): { start?: string; end?:
   if (timestamps.length === 0) return {};
   timestamps.sort();
   return { start: timestamps[0], end: timestamps[timestamps.length - 1] };
+}
+
+/** Recognized Claude Code CLI marker for a user-initiated interrupt, injected
+ *  into the tail user turn's text content. Confirmed real string, not
+ *  inferred. */
+const USER_INTERRUPT_MARKER = '[Request interrupted by user]';
+
+function userEntryTextContent(entry: ClaudeUserEntry): string {
+  const content = entry.message.content;
+  if (typeof content === 'string') return content;
+  return content
+    .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n');
+}
+
+/** `stop_reason` values on the tail assistant entry that mean the turn was
+ *  cut off rather than genuinely completed — a tool call issued with no
+ *  result appended (transcript stops mid-flight), or output truncated at
+ *  the token cap. Neither is a graceful stop, so neither is `clean`; both
+ *  are not-classifiable (the same "pending/incomplete tail" bucket as a
+ *  trailing user turn with no signal), not silently folded into `clean`. */
+const INCOMPLETE_ASSISTANT_STOP_REASONS = new Set(['tool_use', 'max_tokens']);
+
+/**
+ * Claude Code outcome classification — Session outcome signal audit
+ * (issue #178): the final native event(s) in `session.entries` (the last
+ * chronological `user`/`assistant` entry in the transcript) survive
+ * unmodified into the parser's `ClaudeCodeEntry` union and are read here
+ * directly; no upstream normalization step discards them. Criteria, in
+ * priority order against the last user/assistant entry:
+ *
+ * 1. `ended_on_error` — the last entry is an assistant turn carrying
+ *    `isApiErrorMessage: true`, a numeric `apiErrorStatus`, or a populated
+ *    `error` field (a provider/API-level failure ended the turn). Checked
+ *    first, before mid-stream-abort, so an assistant entry carrying both an
+ *    error signal and `isAbortedMidStream: true` (the API failed while the
+ *    turn was aborting) still classifies as the error, matching this
+ *    priority order exactly.
+ * 2. `interrupted_by_user` — the last entry (user or assistant) is aborted
+ *    mid-stream (`isAbortedMidStream: true`) with no higher-priority error
+ *    signal, a user entry flagged `interruptedByShutdown: true`, a user
+ *    entry whose `toolUseResult` reports `interrupted: true`, or a user
+ *    entry whose text content contains the CLI's
+ *    `[Request interrupted by user]` marker.
+ * 3. `clean` — the last entry is a normal assistant turn with none of the
+ *    above signals and a `stop_reason` indicating genuine completion (not
+ *    in {@link INCOMPLETE_ASSISTANT_STOP_REASONS}; an entry with no
+ *    `stop_reason` at all — some real transcripts omit it — is still
+ *    treated as complete, since its absence isn't itself an incompleteness
+ *    signal).
+ * 4. Not classifiable (`undefined`, mapped to `NULL` downstream) — no
+ *    user/assistant entries exist at all (empty or config-only bundle), the
+ *    last one is a user entry with no error/interrupt signal (a pending
+ *    user turn, not a session-ending native event), or the last one is an
+ *    assistant turn whose `stop_reason` is in
+ *    {@link INCOMPLETE_ASSISTANT_STOP_REASONS} (a truncated/cut-off tail).
+ *    This is a genuinely missing signal, not a fourth outcome value; see
+ *    `.agents/rules/missing-is-never-zero.md`.
+ */
+function classifyClaudeCodeOutcome(session: ClaudeCodeSession): SessionOutcome | undefined {
+  let last: ClaudeAssistantEntry | ClaudeUserEntry | undefined;
+  for (const entry of session.entries) {
+    if (isUserEntry(entry) || isAssistantEntry(entry)) last = entry;
+  }
+  if (!last) return undefined;
+
+  if (isAssistantEntry(last)) {
+    if (last.isApiErrorMessage || typeof last.apiErrorStatus === 'number' || last.error) {
+      return 'ended_on_error';
+    }
+    if (last.isAbortedMidStream) return 'interrupted_by_user';
+    const stopReason = last.message.stop_reason;
+    if (stopReason && INCOMPLETE_ASSISTANT_STOP_REASONS.has(stopReason)) return undefined;
+    return 'clean';
+  }
+
+  // isUserEntry(last)
+  if (last.isAbortedMidStream) return 'interrupted_by_user';
+  if (last.interruptedByShutdown) return 'interrupted_by_user';
+  if (
+    last.toolUseResult &&
+    typeof last.toolUseResult === 'object' &&
+    last.toolUseResult.interrupted
+  ) {
+    return 'interrupted_by_user';
+  }
+  if (userEntryTextContent(last).includes(USER_INTERRUPT_MARKER)) return 'interrupted_by_user';
+  return undefined;
 }
 
 function normalizeSessionSpine(
@@ -758,6 +846,7 @@ function normalizeSessionSpine(
   const summaries: SessionSummary[] = [];
 
   const { start, end } = sessionStartAndEnd(session);
+  const outcome: SessionOutcome | undefined = classifyClaudeCodeOutcome(session);
 
   records.push({
     recordId: stableId('session', { session: sessionId }),
@@ -779,6 +868,7 @@ function normalizeSessionSpine(
       startTime: start,
       endTime: end,
       finality: 'partial',
+      outcome,
     },
   });
 
@@ -928,6 +1018,7 @@ function normalizeSessionSpine(
     startTime: start,
     endTime: end,
     finality: 'partial',
+    outcome,
   };
   summaries.push(summary);
 

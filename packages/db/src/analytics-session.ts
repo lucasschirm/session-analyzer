@@ -2,6 +2,7 @@ import type { SqliteExecutor, SqliteRow, SqliteTransaction } from '@lucasschirm/
 import {
   ComponentIdentityStore,
   SessionComponentStatStore,
+  SessionOutcomeStore,
   SourceTombstoneStore,
   ValidationStore,
 } from '@lucasschirm/sal-db-core';
@@ -41,6 +42,7 @@ import type {
   RootChildEntry,
   SessionEvidenceSummary,
   SessionEvidenceView,
+  SessionOutcomeDistribution,
   SessionTree,
   SessionTreeNode,
   SessionValidation,
@@ -788,6 +790,50 @@ async function getValidationSummary(
   }
 
   return { token, validations };
+}
+
+/**
+ * Project-scoped session outcome distribution for the `session:outcome`
+ * metric. Exposes the db-core rollup (finality='final' sessions grouped by
+ * outcome, including the `null`/unclassifiable bucket) as an
+ * `AnalyticsToken`-wrapped DTO with sample size, per
+ * `.agents/rules/aggregates-expose-sample-size.md`. Not wired into
+ * {@link AnalyticsDataSource} — that is sub-issue #169's scope; this
+ * function is what it will call.
+ */
+export async function getSessionOutcomeDistribution(
+  queryable: Queryable,
+  projectId: string,
+  query?: AnalyticsQuery,
+): Promise<SessionOutcomeDistribution> {
+  const rows = await SessionOutcomeStore.rollupByProject(queryable, projectId);
+  const eligibleN = rows.reduce((sum, row) => sum + row.count, 0);
+  const knownN = rows
+    .filter((row) => row.outcome !== null)
+    .reduce((sum, row) => sum + row.count, 0);
+  const unknownCount = eligibleN - knownN;
+
+  const tokens = pageTokens(query, {
+    analysisReleaseId: 'unknown',
+    generationId: 'unknown',
+    comparabilityGroupId: 'project-session-outcome',
+  });
+  const token = makeToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    eligibleN,
+    knownN,
+    unknownCount,
+    'observed',
+    ANALYTICS_DTO_VERSION,
+    [evidenceLink('project', projectId, `Project ${projectId}`)],
+  );
+
+  return {
+    token,
+    buckets: rows.map((row) => ({ outcome: row.outcome, count: row.count })),
+  };
 }
 
 async function getEvidencePages(

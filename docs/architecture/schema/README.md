@@ -167,7 +167,7 @@ Every replaceable row carries `generation_id` for atomic replacement visibility.
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `sessions` | Root and child logical sessions, harness, timing, finality, current generation | `id` (PK), `project_id` (FK), `current_generation_id` (FK) |
+| `sessions` | Root and child logical sessions, harness, timing, finality, current generation, outcome | `id` (PK), `project_id` (FK), `current_generation_id` (FK) |
 | `session_relations` | Parent/root relation, spawn invocation, depth, inclusion semantics | `id` (PK), `session_id` (FK) |
 | `turns` | Human/assistant logical turns and ordering | `id` (PK), `session_id` (FK) |
 | `messages` | Role/type, source identity, parent relationship, timestamp | `id` (PK), `turn_id` (FK) |
@@ -227,6 +227,11 @@ patterns:
 - **Session evidence**: indexes on `session_id` for all evidence tables;
   `parent_uuid` for message tree traversal; `(session_id, turn_order)` for
   turn-ordered queries.
+- **Session outcome**: `sessions(outcome)` and
+  `sessions(project_id, finality, outcome)` back the `session:outcome`
+  metric's per-project rollup query (`SessionOutcomeStore.rollupByProject`);
+  `outcome` is nullable-with-meaning (`NULL` = unreadable tail / not
+  classifiable, distinct from a real classified value).
 - **Rollup lookups**: indexes on `(project_id, bucket_date)` for daily rollups;
   `(comparability_group_id, analysis_release_id)` for dimension rollups.
 - **Metric values**: indexes on `(metric_definition_id, generation_id,

@@ -53,6 +53,10 @@ const mcpJson = loadParserFixture('e2e-mcp.json');
 const settingsJson = loadParserFixture('e2e-settings-project.json');
 const happyJsonl = loadParserFixture('t2-happy-path.jsonl');
 const replayedJsonl = loadConformanceData('replayed.jsonl');
+const outcomeCleanJsonl = loadParserFixture('outcome-clean.jsonl');
+const outcomeInterruptedJsonl = loadParserFixture('outcome-interrupted.jsonl');
+const outcomeErrorJsonl = loadParserFixture('outcome-error.jsonl');
+const outcomeUnreadableJsonl = loadParserFixture('outcome-unreadable.jsonl');
 
 const commonConfigArtifacts: Artifact<string>[] = [
   artifact('.claude/skills/csv-wrangler/SKILL.md', skillMd, 'text/markdown'),
@@ -168,6 +172,45 @@ export const claudeConformanceFixtures: TransformerFixtures<UnknownArtifactBundl
       bundle: bundle([]),
       context: testContext,
       tags: ['capabilities', 'unavailable'],
+    },
+    {
+      name: 'outcome-clean',
+      description:
+        'Issue #178 outcome fixture: a normal assistant completion with no error or ' +
+        'interrupt signal, so the session classifies as outcome=clean.',
+      bundle: bundle([artifact('transcript.jsonl', outcomeCleanJsonl, 'application/jsonl')]),
+      context: testContext,
+      tags: ['root', 'outcome-clean'],
+    },
+    {
+      name: 'outcome-interrupted',
+      description:
+        'Issue #178 outcome fixture: the final entry is a user turn flagged ' +
+        'interruptedByShutdown with the CLI interrupt marker, so the session ' +
+        'classifies as outcome=interrupted_by_user.',
+      bundle: bundle([artifact('transcript.jsonl', outcomeInterruptedJsonl, 'application/jsonl')]),
+      context: testContext,
+      tags: ['root', 'outcome-interrupted'],
+    },
+    {
+      name: 'outcome-error',
+      description:
+        'Issue #178 outcome fixture: the final entry is an assistant turn carrying ' +
+        'isApiErrorMessage/apiErrorStatus, so the session classifies as ' +
+        'outcome=ended_on_error.',
+      bundle: bundle([artifact('transcript.jsonl', outcomeErrorJsonl, 'application/jsonl')]),
+      context: testContext,
+      tags: ['root', 'outcome-error'],
+    },
+    {
+      name: 'outcome-unreadable',
+      description:
+        'Issue #178 outcome fixture: no user/assistant entries at all (only ' +
+        'bookkeeping entries), so the final native event signal is unreadable and ' +
+        'outcome is not classifiable (undefined, never coerced to a real value).',
+      bundle: bundle([artifact('transcript.jsonl', outcomeUnreadableJsonl, 'application/jsonl')]),
+      context: testContext,
+      tags: ['root', 'outcome-unreadable'],
     },
   ],
 };

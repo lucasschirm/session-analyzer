@@ -1,6 +1,7 @@
 import type {
   InsertManifestArtifactInput,
   InsertSessionInput,
+  SessionOutcome,
   SqliteExecutor,
   SqliteTransaction,
   UpdateSessionInput,
@@ -23,6 +24,7 @@ import {
   NormalizedEventStore,
   PortfolioStore,
   ProjectStore,
+  SESSION_OUTCOMES,
   SessionStore,
   SessionSummaryStore,
   SourceManifestStore,
@@ -949,12 +951,14 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       const startTime = summary.startTime ? new Date(summary.startTime).getTime() : null;
       const endTime = summary.endTime ? new Date(summary.endTime).getTime() : null;
       const finality = this.mapFinality(summary.finality);
+      const outcome = this.mapOutcome(summary.outcome);
       const nativeSessionId =
         summary.sessionId === rootSessionId ? canonical.nativeSessionId : summary.sessionId;
 
       const baseInput = {
         environmentId: canonical.environmentId,
         finality,
+        outcome,
         occurrenceTime: occurrence,
         startTime,
         endTime,
@@ -1461,6 +1465,19 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     if (finality === 'final') return 'final';
     if (finality === 'censored') return 'censored';
     return 'open';
+  }
+
+  /**
+   * Maps the transformer's `SessionSummary.outcome` (absent = not
+   * classifiable) onto the canonical `sessions.outcome` sentinel: any value
+   * outside the known enum is also treated as not classifiable rather than
+   * silently persisted, since `sessions.outcome` has a CHECK constraint on
+   * the enum (missing-is-never-zero: unreadable is `null`, never coerced).
+   */
+  private mapOutcome(outcome?: string): SessionOutcome | null {
+    return (SESSION_OUTCOMES as readonly string[]).includes(outcome ?? '')
+      ? (outcome as SessionOutcome)
+      : null;
   }
 
   private committedReceipt(input: {

@@ -36,6 +36,7 @@ const PHASE1_FAMILIES = new Set([
   'file_activity',
   'command_activity',
   'validation',
+  'session_outcome',
 ]);
 
 const PHASE2_FAMILIES = new Set([
@@ -67,6 +68,7 @@ const FAMILY_EVIDENCE: Readonly<Record<string, readonly string[]>> = {
   file_activity: ['file operation events'],
   command_activity: ['command execution events'],
   validation: ['validation events'],
+  session_outcome: ['final native event(s) per harness', 'sessions.finality'],
 };
 
 interface PlannedMetricRecipe {
@@ -208,6 +210,81 @@ const PLANNED_INSIGHT_RECIPE_CATALOG: readonly PlannedMetricRecipe[] = [
     releaseReadiness: 'blocked',
   },
 ];
+
+export const SESSION_OUTCOME_METRIC_ID = 'session:outcome';
+export const SESSION_OUTCOME_METRIC_VERSION = 1;
+
+/**
+ * Session outcome metric (issue #178) — id `session:outcome`, version 1.
+ *
+ * - **Population**: sessions with `finality = 'final'` only. Open and
+ *   censored sessions are excluded from the population entirely (they are
+ *   not "missing outcome", they are not yet in scope — a session cannot
+ *   have ended cleanly, on error, or by interruption while still open).
+ *   `populationRule` records this exactly so a comparability check can
+ *   detect a mismatched population without re-deriving it.
+ * - **Missingness policy**: within the final-session population,
+ *   `sessions.outcome IS NULL` (unreadable tail / not classifiable) is
+ *   `missingDataBehavior: 'unknown'` — counted in the sample size, never
+ *   folded into any of the three real outcome buckets or dropped
+ *   (`.agents/rules/missing-is-never-zero.md`). Consumers read
+ *   `SessionOutcomeStore.rollupByProject` (db-core) and report
+ *   `eligibleN` = sum of all rows' counts, `knownN` = sum of rows whose
+ *   `outcome` is not `null`, `unknownCount` = the `null` row's count —
+ *   the exact `AnalyticsToken` shape (`packages/db/src/dto.ts`) so the
+ *   coverage breakdown (n classified / n missing) required by sub-issue
+ *   #169's DTO consumers is available without re-deriving it there.
+ * - **Reprocessing / backfill policy**: sessions ingested before this
+ *   column existed have `outcome = NULL` until they are reprocessed
+ *   through the standard replacement-generation path
+ *   (`packages/db/src/reprocessing.ts`), which re-runs the transformer and
+ *   overwrites `sessions.outcome` with a freshly classified value (or
+ *   leaves it `NULL` if still not classifiable). No separate backfill job
+ *   exists or is required: outcome is derived fresh on every generation,
+ *   so the standard reprocessing sweep is sufficient. Until a given
+ *   session is reprocessed, its outcome is honestly reported missing, not
+ *   guessed or defaulted.
+ * - **Storage, deliberately not `metric_values`**: unlike the transformer's
+ *   other metrics (`TransformResult.metricValues[]`, auto-registered by
+ *   `DefaultIngestionOrchestrator.upsertMetricDefinitions`), `outcome` is a
+ *   categorical session fact stored directly on the `sessions.outcome`
+ *   column (`packages/db-core` migration v81) and read through
+ *   `SessionOutcomeStore.rollupByProject` / `getSessionOutcomeDistribution`
+ *   — not through `MetricDefinitionStore`/`metric_values`. This constant is
+ *   therefore registry *documentation* of that column's meaning, version,
+ *   and policy (what this issue asked for), not a row that
+ *   `upsertMetricDefinitions` inserts automatically. `statisticalPolicyId:
+ *   'claude-default'` is the same **symbolic policy id** convention
+ *   `TransformResult.metricValues[].definition.statisticalPolicyId` and
+ *   `DefaultIngestionOrchestrator.ensureStatisticalPolicyFor` use — not a
+ *   resolved `StatisticalPolicyStore` row id. To register this definition
+ *   through the strict `addMetricDefinition` registry path (as opposed to
+ *   `upsertMetricDefinitions`'s auto-create-on-first-value path), resolve
+ *   the symbolic id to a real policy id first, exactly as
+ *   `packages/db/tests/unit/metric-registry-session-outcome.test.ts` does.
+ */
+export const SESSION_OUTCOME_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: SESSION_OUTCOME_METRIC_ID,
+  version: SESSION_OUTCOME_METRIC_VERSION,
+  label: 'Session outcome',
+  description:
+    'Per-session classification of the final native event(s) into clean, ' +
+    'interrupted-by-user, or ended-on-error, scoped to finalized sessions.',
+  family: 'session_outcome',
+  measurementClass: 'observed',
+  unit: 'count',
+  valueType: 'text',
+  grain: 'session',
+  dimensions: ['outcome'],
+  populationRule: "finality = 'final'",
+  statusRule: 'committed',
+  aggregation: 'distribution',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'root_only',
+  provenanceRequirement: 'final native event(s) per harness',
+};
 
 function buildPlannedMetricDefinitionInput(
   recipe: PlannedMetricRecipe,
