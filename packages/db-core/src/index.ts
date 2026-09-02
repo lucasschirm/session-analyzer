@@ -7,6 +7,7 @@ export * from './manifest.js';
 export * from './metrics.js';
 export * from './migrations.js';
 export * from './portfolio-kpi.js';
+export * from './project-behavior-store.js';
 export * from './rollups.js';
 export * from './schema.js';
 export * from './session-events-detail.js';
