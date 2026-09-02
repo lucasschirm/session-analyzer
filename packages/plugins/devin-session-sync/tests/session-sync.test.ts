@@ -22,6 +22,7 @@ import {
   readAtifTranscriptCandidate,
   runDevinSessionSync,
 } from '../src/session-sync.js';
+import { devinModelsCaptureOptions } from './models/fixture.js';
 
 class RecordingStorageAdapter implements StorageAdapter {
   readonly calls: PutObjectInput[] = [];
@@ -321,6 +322,7 @@ describe('runDevinSessionSync', () => {
     const events: string[] = [];
 
     const outcome = await runDevinSessionSync({
+      models: devinModelsCaptureOptions,
       tables: sessionTables,
       schemaDescriptor: SCHEMA_DESCRIPTOR,
       sessionId: 'sess-1',
@@ -357,12 +359,17 @@ describe('runDevinSessionSync', () => {
 
     const scopes = manifest.artifacts.map((a: { scope: string }) => a.scope);
     expect(scopes).toContain('session'); // transcript.jsonl
-    expect(scopes).toContain('runtime'); // native/schema-descriptor.json
+    expect(scopes).toContain('runtime'); // native/schema-descriptor.json + models
+
+    const artifactPaths = manifest.artifacts.map((a: { relativePath: string }) => a.relativePath);
+    expect(artifactPaths).toContain('native/models.json');
+    expect(artifactPaths).toContain('native/models-list.raw.json');
   });
 
   it('resolves dataRoot from home/cwd/env when not explicitly supplied', async () => {
     const storage = new RecordingStorageAdapter();
     const outcome = await runDevinSessionSync({
+      models: devinModelsCaptureOptions,
       tables: sessionTables,
       schemaDescriptor: SCHEMA_DESCRIPTOR,
       sessionId: 'sess-1',
@@ -383,6 +390,7 @@ describe('runDevinSessionSync', () => {
     const storage = new RecordingStorageAdapter();
     const runOnce = () =>
       runDevinSessionSync({
+        models: devinModelsCaptureOptions,
         tables: sessionTables,
         schemaDescriptor: SCHEMA_DESCRIPTOR,
         sessionId: 'sess-1',
@@ -411,6 +419,7 @@ describe('runDevinSessionSync', () => {
 
     const storage = new RecordingStorageAdapter();
     await runDevinSessionSync({
+      models: devinModelsCaptureOptions,
       tables: sessionTables,
       schemaDescriptor: SCHEMA_DESCRIPTOR,
       sessionId: 'sess-1',
@@ -443,6 +452,7 @@ describe('runDevinSessionSync', () => {
 
     const storage = new RecordingStorageAdapter();
     await runDevinSessionSync({
+      models: devinModelsCaptureOptions,
       tables: sessionTables,
       schemaDescriptor: SCHEMA_DESCRIPTOR,
       sessionId: 'sess-1',
@@ -474,6 +484,7 @@ describe('runDevinSessionSync', () => {
     const events: string[] = [];
 
     const outcome = await runDevinSessionSync({
+      models: devinModelsCaptureOptions,
       tables: sessionTables,
       schemaDescriptor: SCHEMA_DESCRIPTOR,
       sessionId: 'sess-1',

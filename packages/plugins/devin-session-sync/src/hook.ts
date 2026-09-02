@@ -1,13 +1,18 @@
 import process from 'node:process';
 
+import { getDataDir } from '@lucasschirm/sal-sync';
+import { validateCliConfig } from './cli/config.js';
+import { resolveCliEnv } from './cli/env.js';
 import {
   devinEventToSyncTrigger,
   parseDevinHookInput,
   readStdin,
   toHarnessSession,
 } from './devin.js';
+import { DevinHarnessProfile } from './devin-profile.js';
 import { type RunDevinHookSyncOptions, runDevinHookSync } from './hook-common.js';
 import { isMainModule } from './is-main-module.js';
+import { captureDevinModels } from './models/capture.js';
 
 export type RunHookOptions = Partial<
   Omit<RunDevinHookSyncOptions, 'sessionId' | 'cwd' | 'trigger'>
@@ -28,11 +33,25 @@ export async function runHook(raw: unknown, options: RunHookOptions = {}): Promi
   }
 
   const cwd = options.cwd ?? process.cwd();
+  const env = options.env ?? (await resolveCliEnv(cwd));
   const session = toHarnessSession(parsed.input, cwd);
   const trigger = devinEventToSyncTrigger(parsed.input.hook_event_name);
 
+  const validation = validateCliConfig(env, cwd);
+  if (validation.ok) {
+    const dataDir = getDataDir(env);
+    const profile = options.harnessProfile ?? DevinHarnessProfile;
+    const models = await captureDevinModels({ dataDir, devinCliVersion: profile.harnessVersion });
+    if (models.error) {
+      (options.stderr ?? process.stderr).write(
+        `devin-session-sync hook: models capture warning: ${models.error}\n`,
+      );
+    }
+  }
+
   await runDevinHookSync('hook', {
     ...options,
+    env,
     sessionId: session.sessionId,
     cwd: session.cwd,
     trigger,

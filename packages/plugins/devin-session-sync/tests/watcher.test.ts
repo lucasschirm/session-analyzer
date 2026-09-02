@@ -10,10 +10,12 @@ import {
 } from '@lucasschirm/sal-sync';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { DevinHarnessProfile } from '../src/devin-profile.js';
+import { createDevinHarnessProfile } from '../src/devin-profile.js';
 import type { DevinExtractedTables } from '../src/extractor/types.js';
+import { captureDevinModels } from '../src/models/capture.js';
 import { computeSessionWatermarkSignature, runDevinWatcher } from '../src/watcher.js';
 import { buildFixtureDb, type FixtureDbHandle } from './extractor/fixtures/build-fixture-db.js';
+import { devinModelsListFixture } from './models/fixture.js';
 
 class RecordingStorageAdapter implements StorageAdapter {
   readonly calls: PutObjectInput[] = [];
@@ -86,9 +88,16 @@ describe('runDevinWatcher', () => {
   let dataDir: string;
   let homeDir: string;
 
+  const harnessProfile = createDevinHarnessProfile('v1');
+
   beforeEach(async () => {
     dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'devin-watcher-data-'));
     homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'devin-watcher-home-'));
+    await captureDevinModels({
+      dataDir,
+      devinCliVersion: harnessProfile.harnessVersion,
+      runModelsList: async () => devinModelsListFixture,
+    });
     fixture = buildFixtureDb({
       sessions: [
         {
@@ -143,7 +152,7 @@ describe('runDevinWatcher', () => {
       homeDir,
       sessionsDbPath: fixture.path,
       storageAdapter: storage,
-      profile: DevinHarnessProfile,
+      profile: harnessProfile,
       maxPolls: 1,
       pollIntervalMs: 1,
       stdout,
@@ -156,6 +165,8 @@ describe('runDevinWatcher', () => {
     );
     expect(stdoutLines.some((l) => l.includes('stopped'))).toBe(true);
     expect(storage.calls.some((c) => c.scope === 'manifest')).toBe(true);
+    expect(storage.calls.some((c) => c.relativePath === 'native/models.json')).toBe(true);
+    expect(storage.calls.some((c) => c.relativePath === 'native/models-list.raw.json')).toBe(true);
   });
 
   it('does not re-sync an unchanged session on a second poll', async () => {
@@ -168,7 +179,7 @@ describe('runDevinWatcher', () => {
       homeDir,
       sessionsDbPath: fixture.path,
       storageAdapter: storage,
-      profile: DevinHarnessProfile,
+      profile: harnessProfile,
       maxPolls: 2,
       pollIntervalMs: 1,
       stdout,

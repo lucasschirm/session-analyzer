@@ -46,11 +46,11 @@ import {
   type SyncConfig,
   type SyncTrigger,
 } from '@lucasschirm/sal-sync';
-
 import { DEVIN_HARD_BLOCKLIST_PATTERNS, DevinHarnessProfile } from './devin-profile.js';
 import { buildDevinJsonl } from './extractor/jsonl-writer.js';
 import { resolveDevinPaths } from './extractor/paths.js';
 import type { DevinExtractedTables, DevinSchemaDescriptor } from './extractor/types.js';
+import { buildDevinModelCandidates, type CaptureDevinModelsOptions } from './models/capture.js';
 
 export interface DevinSyncProgressEvent {
   type: 'progress' | 'success' | 'failure';
@@ -75,6 +75,8 @@ export interface DevinSessionSyncOptions {
   /** Devin CLI's own XDG data root (holds `transcripts/<id>.json`); resolved automatically if omitted. */
   dataRoot?: string;
   onProgress?: (event: DevinSyncProgressEvent) => void;
+  /** Optional overrides for the Devin models-list capture (e.g. test fixtures). */
+  models?: Partial<CaptureDevinModelsOptions>;
 }
 
 export interface DevinSessionSyncOutcome {
@@ -283,9 +285,9 @@ export async function readAtifTranscriptCandidate(
  * descriptor, attached to every session synced under the schema it was
  * observed against.
  *
- * `native/models.json` / `native/models-list.raw.json` are reserved runtime
- * manifest slots (Part B3) populated by DS-F4 (#153) — deliberately not
- * emitted here so DS-F4 does not require another manifest-shape revision.
+ * `native/models.json` / `native/models-list.raw.json` are runtime-scoped
+ * artifacts populated by `models/capture.ts` (DS-F4, #153) and merged into
+ * the candidate list by `buildAllCandidateResults`.
  */
 export function buildSchemaDescriptorCandidate(
   descriptor: DevinSchemaDescriptor,
@@ -339,6 +341,7 @@ async function buildAllCandidateResults(
   discovery: DiscoveryResult,
   homeDir: string,
   dataRoot: string,
+  modelCandidates: CandidateResult[],
 ): Promise<CandidateResult[]> {
   const projectId = options.config.projectId;
   const fileBased = await buildCandidates(discovery, options.config, { projectRoot: options.cwd });
@@ -349,7 +352,27 @@ async function buildAllCandidateResults(
     projectId,
     options.sessionId,
   );
-  return [...fileBased, ...plans, ...(atif ? [atif] : []), schema];
+  return [...fileBased, ...plans, ...(atif ? [atif] : []), schema, ...modelCandidates];
+}
+
+async function resolveModelCandidates(
+  options: DevinSessionSyncOptions,
+  profile: HarnessProfile,
+): Promise<{ candidates: CandidateResult[]; error?: string }> {
+  const result = await buildDevinModelCandidates({
+    dataDir: options.dataDir,
+    projectId: options.config.projectId,
+    sessionId: options.sessionId,
+    devinCliVersion: options.models?.devinCliVersion ?? profile.harnessVersion,
+    resolveVersion: options.models?.resolveVersion,
+    runModelsList: options.models?.runModelsList,
+    ttlMs: options.models?.ttlMs,
+    now: options.models?.now,
+  });
+  if (result.error) {
+    emitProgress(options, 'failure', `devin models capture failed: ${result.error}`);
+  }
+  return { candidates: result.candidates, error: result.error };
 }
 
 async function resolveSessionData(
@@ -459,10 +482,25 @@ export async function runDevinSessionSync(
 
   emitProgress(options, 'progress', `discovering artifacts for session ${options.sessionId}`);
   const discovery = await runDiscovery(options, profile, transcriptPath);
-  const candidateResults = await buildAllCandidateResults(options, discovery, homeDir, dataRoot);
+
+  const { candidates: modelCandidates, error: modelsError } = await resolveModelCandidates(
+    options,
+    profile,
+  );
+
+  const candidateResults = await buildAllCandidateResults(
+    options,
+    discovery,
+    homeDir,
+    dataRoot,
+    modelCandidates,
+  );
 
   emitProgress(options, 'progress', `uploading ${candidateResults.length} artifact(s)`);
   const outcome = await uploadSessionArtifacts(options, candidateResults, profile);
+  if (modelsError && !outcome.errors.includes(modelsError)) {
+    outcome.errors.push(modelsError);
+  }
 
   const hasFailure = outcome.failed > 0 || outcome.errors.length > 0;
   emitProgress(options, hasFailure ? 'failure' : 'success', summarizeOutcome(outcome));
