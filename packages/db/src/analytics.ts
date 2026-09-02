@@ -249,6 +249,121 @@ export interface ProjectBehaviorSummary {
   readonly trendToken: AnalyticsToken;
 }
 
+/**
+ * One aggregate stat-strip value (issue #169): `value` is `null` when
+ * `knownN` is 0 — a missing signal, never a fabricated 0
+ * (`.agents/rules/missing-is-never-zero.md`). `eligibleN` is the population
+ * this stat was computed over; `knownN` is the subset with a usable
+ * observation (e.g. sessions with both `start_time` and `end_time`).
+ * `previousValue`/`previousKnownN` are omitted when no comparable prior
+ * window exists.
+ */
+export interface AggregateStat {
+  readonly value: number | null;
+  readonly eligibleN: number;
+  readonly knownN: number;
+  readonly previousValue?: number | null;
+  readonly previousEligibleN?: number;
+  readonly previousKnownN?: number;
+}
+
+/**
+ * Project Behavior stat strip (issue #169): sessions delta, session-duration
+ * and turn-count percentiles, and tokens/cost per session, all for the query
+ * window. Percentiles on small samples (n=1, n=2) are still reported — never
+ * suppressed — with their `knownN` alongside so consumers can judge
+ * reliability (`.agents/rules/aggregates-expose-sample-size.md`).
+ */
+export interface ProjectStatStrip {
+  readonly token: AnalyticsToken;
+  readonly sessions: PeriodDelta;
+  readonly durationMedianMs: AggregateStat;
+  readonly durationP90Ms: AggregateStat;
+  readonly turnsMedian: AggregateStat;
+  readonly turnsP90: AggregateStat;
+  readonly tokensPerSession: AggregateStat;
+  readonly costPerSession: AggregateStat;
+}
+
+/** One session-duration histogram bin (issue #169). `endMs: null` marks the
+ * open-ended final bin (">= last edge"). Bin edges come from
+ * `SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS` (`metric-registry.ts`). */
+export interface DurationHistogramBin {
+  readonly startMs: number;
+  readonly endMs: number | null;
+  readonly count: number;
+}
+
+/** Session-duration histogram for a project window (issue #169). `knownN` is
+ * the subset of `eligibleN` sessions with both `start_time`/`end_time`
+ * recorded; the difference is never folded into bin 0. */
+export interface SessionDurationHistogram {
+  readonly token: AnalyticsToken;
+  readonly bins: readonly DurationHistogramBin[];
+  readonly eligibleN: number;
+  readonly knownN: number;
+}
+
+/** One week's tool error rate (issue #169). `rate` is `null` — not `0` —
+ * when `toolCallsN` is 0 for that week (no tool calls observed, not a 0%
+ * error rate). */
+export interface WeeklyToolErrorRatePoint {
+  readonly weekBucket: string;
+  readonly rate: number | null;
+  readonly toolCallsN: number;
+  readonly failedN: number;
+}
+
+/** Weekly tool error rate series for a project (issue #169). `currentValue`
+ * mirrors the latest week's `rate` (also `null` when that week had 0 tool
+ * calls). */
+export interface WeeklyToolErrorRateSeries {
+  readonly token: AnalyticsToken;
+  readonly series: readonly WeeklyToolErrorRatePoint[];
+  readonly currentValue: number | null;
+  readonly currentWeekN: number;
+}
+
+/** One tool's invocation count in the top-tools ranking (issue #169), scoped
+ * to `kind = 'tool'` invocations only — Skill/Agent/Sub Agent invocations
+ * have their own metrics and are never folded into this list
+ * (`.agents/rules/analytics-domain-distinctions.md`). */
+export interface TopToolRow {
+  readonly componentId: string;
+  readonly displayName: string | null;
+  readonly invocationCount: number;
+}
+
+export interface TopToolsList {
+  readonly token: AnalyticsToken;
+  readonly rows: readonly TopToolRow[];
+  readonly totalInvocations: number;
+}
+
+/**
+ * One (model, harness) cohort row scoped to a single project (issue #169).
+ * `medianTokens`/`medianCost` are `null` when no session in the cohort has a
+ * known value (a coverage gap, never a fabricated 0). `lowN` flags cohorts
+ * with `n < MODEL_HARNESS_COHORT_LOW_N_THRESHOLD` (`metric-registry.ts`) so
+ * consumers can visually de-emphasize statistically unreliable rows without
+ * suppressing them.
+ */
+export interface ProjectModelHarnessCohortRow {
+  readonly model: string;
+  readonly harness: string;
+  readonly n: number;
+  readonly medianTokens: number | null;
+  readonly medianCost: number | null;
+  readonly cleanRate: number | null;
+  readonly cleanRateKnownN: number;
+  readonly lowN: boolean;
+}
+
+export interface ProjectModelHarnessCohorts {
+  readonly token: AnalyticsToken;
+  readonly rows: readonly ProjectModelHarnessCohortRow[];
+}
+
 export interface SessionTrendSeries {
   readonly token: AnalyticsToken;
   readonly series: readonly TimeSeriesPoint[];
@@ -638,6 +753,22 @@ export interface ProjectBehaviorView {
    * into the read contract, it does not reclassify anything.
    */
   getOutcomeMix(projectId: string, query?: AnalyticsQuery): Promise<SessionOutcomeDistribution>;
+  /** Stat strip: sessions delta, duration/turns percentiles, tokens/cost per session (issue #169). */
+  getStatStrip(projectId: string, query: AnalyticsQuery): Promise<ProjectStatStrip>;
+  /** Session-duration histogram binned by `SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS` (issue #169). */
+  getDurationHistogram(projectId: string, query: AnalyticsQuery): Promise<SessionDurationHistogram>;
+  /** Weekly tool error rate series, gap-filled for weeks with 0 tool calls (issue #169). */
+  getWeeklyToolErrorRate(
+    projectId: string,
+    query?: AnalyticsQuery,
+  ): Promise<WeeklyToolErrorRateSeries>;
+  /** Top tools by invocation count, `kind = 'tool'` only (issue #169). */
+  getTopTools(projectId: string, query: AnalyticsQuery): Promise<TopToolsList>;
+  /** Model×harness cohort rows scoped to this project (issue #169). */
+  getModelHarnessCohorts(
+    projectId: string,
+    query: AnalyticsQuery,
+  ): Promise<ProjectModelHarnessCohorts>;
 }
 
 /**
