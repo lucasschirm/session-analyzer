@@ -3,10 +3,13 @@ import type {
   ContextTimingSeries,
   EvidencePage,
   RootChildBreakdown,
+  SessionEventPayloadDetail,
+  SessionEventsDetail,
   SessionEvidenceSummary,
   SessionEvidenceView as SessionEvidenceViewApi,
   SessionTree,
   SessionValidationSummary,
+  TurnTimeline,
 } from '@lucasschirm/sal-db';
 import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
@@ -19,6 +22,7 @@ import {
   componentFactsToChartSeries,
   componentFactsToRows,
   contextTimingToChartSeries,
+  firstUserMessageExcerpt,
   summaryToMetricCards,
 } from './session-evidence-chart-helpers';
 import {
@@ -26,7 +30,9 @@ import {
   parseSessionEvidenceHash,
   sessionEvidenceParamsToQuery,
 } from './session-evidence-params';
-import './session-evidence-evidence';
+import './session-evidence-header';
+import './session-evidence-timeline';
+import './session-evidence-events-table';
 import './session-evidence-transcript';
 import './session-evidence-tree';
 
@@ -47,55 +53,6 @@ export class SessionEvidenceView extends PageLitElement {
       display: flex;
       flex-direction: column;
       gap: 24px;
-    }
-
-    .back-link {
-      color: var(--md-sys-color-primary, #4f8cff);
-      text-decoration: none;
-      font-size: 14px;
-    }
-
-    .back-link:hover {
-      text-decoration: underline;
-    }
-
-    .title-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
-    h1 {
-      margin: 0;
-      font-size: 24px;
-      color: var(--md-sys-color-on-surface, #e6e9ef);
-      word-break: break-word;
-    }
-
-    .session-subtitle {
-      margin: 4px 0 0;
-      font-size: 13px;
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-    }
-
-    .transcript-link {
-      background: var(--md-sys-color-primary, #4f8cff);
-      color: #fff;
-      border: none;
-      padding: 10px 18px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      flex-shrink: 0;
-      text-decoration: none;
-      display: inline-block;
-    }
-
-    .transcript-link:hover {
-      filter: brightness(1.1);
     }
 
     .error {
@@ -237,31 +194,6 @@ export class SessionEvidenceView extends PageLitElement {
       font-weight: 600;
     }
 
-    .view-tabs {
-      display: flex;
-      gap: 8px;
-    }
-
-    .view-tab {
-      padding: 8px 14px;
-      font-size: 14px;
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 8px;
-      background: var(--md-sys-color-surface, #171a21);
-      color: var(--md-sys-color-on-surface, #e6e9ef);
-      cursor: pointer;
-      text-decoration: none;
-    }
-
-    .view-tab:hover {
-      background: var(--md-sys-color-surface-container-hover, #262d3a);
-    }
-
-    .view-tab.active {
-      background: var(--md-sys-color-primary, #4f8cff);
-      color: var(--md-sys-color-on-primary, #fff);
-      border-color: var(--md-sys-color-primary, #4f8cff);
-    }
   `,
   ];
 
@@ -287,11 +219,19 @@ export class SessionEvidenceView extends PageLitElement {
 
   @state() private validation: PanelState<SessionValidationSummary> = { data: null, state: 'idle' };
 
-  @state() private evidence: PanelState<EvidencePage> = { data: null, state: 'idle' };
-
   @state() private transcript: PanelState<EvidencePage> = { data: null, state: 'idle' };
 
   @state() private sessionTree: PanelState<SessionTree> = { data: null, state: 'idle' };
+
+  @state() private sessionEvents: PanelState<SessionEventsDetail> = { data: null, state: 'idle' };
+
+  @state() private turnTimeline: PanelState<TurnTimeline> = { data: null, state: 'idle' };
+
+  @state() private activeTurn: number | null = null;
+
+  @state() private fullPayloads: Map<string, SessionEventPayloadDetail> = new Map();
+
+  @state() private loadingPayloadIds: Set<string> = new Set();
 
   private hashListener = () => this.handleHashChange();
 
@@ -332,6 +272,9 @@ export class SessionEvidenceView extends PageLitElement {
     this.globalState = 'loading';
     this.globalError = null;
     this.isTombstone = false;
+    this.activeTurn = null;
+    this.fullPayloads = new Map();
+    this.loadingPayloadIds = new Set();
 
     const params = parseSessionEvidenceHash(window.location.hash, this.sessionId);
     this.params = params;
@@ -346,18 +289,20 @@ export class SessionEvidenceView extends PageLitElement {
       rootChild,
       componentFacts,
       validation,
-      evidence,
       transcript,
       sessionTree,
+      sessionEvents,
+      turnTimeline,
     ] = await Promise.allSettled([
       sessionApi.getSummary(this.sessionId, query),
       sessionApi.getContextTimingSeries(this.sessionId, query),
       sessionApi.getRootChildBreakdown(this.sessionId, query),
       sessionApi.getComponentFacts(this.sessionId, query),
       sessionApi.getValidationSummary(this.sessionId, query),
-      sessionApi.getEvidencePages(this.sessionId, query),
       sessionApi.getTranscriptPages(this.sessionId, query),
       searchApi.getRootSessionTree(this.sessionId),
+      sessionApi.getSessionEvents(this.sessionId, query),
+      sessionApi.getTurnTimeline(this.sessionId, query),
     ]);
 
     this.summary = panelStateFromResult(summary);
@@ -365,14 +310,12 @@ export class SessionEvidenceView extends PageLitElement {
     this.rootChild = panelStateFromResult(rootChild);
     this.componentFacts = panelStateFromResult(componentFacts);
     this.validation = panelStateFromResult(validation);
-    this.evidence = panelStateFromResult(evidence);
     this.transcript = panelStateFromResult(transcript);
     this.sessionTree = panelStateFromResult(sessionTree);
+    this.sessionEvents = panelStateFromResult(sessionEvents);
+    this.turnTimeline = panelStateFromResult(turnTimeline);
 
-    this.isTombstone =
-      hasTombstone(this.evidence) ||
-      hasTombstone(this.transcript) ||
-      this.summary.data?.token.knownN === 0;
+    this.isTombstone = hasTombstone(this.transcript) || this.summary.data?.token.knownN === 0;
 
     const states = [
       this.summary.state,
@@ -380,9 +323,10 @@ export class SessionEvidenceView extends PageLitElement {
       this.rootChild.state,
       this.componentFacts.state,
       this.validation.state,
-      this.evidence.state,
       this.transcript.state,
       this.sessionTree.state,
+      this.sessionEvents.state,
+      this.turnTimeline.state,
     ];
 
     if (states.every((s) => s === 'ok' || s === 'empty')) {
@@ -424,38 +368,88 @@ export class SessionEvidenceView extends PageLitElement {
     navigateTo(`/sessions/${this.sessionId}${hash}`);
   }
 
-  private handlePageChange(
-    detail: { cursor?: string; direction: 'next' | 'previous' },
-    view: 'evidence' | 'transcript',
-  ): void {
+  private handlePageChange(detail: { cursor?: string; direction: 'next' | 'previous' }): void {
     this.updateParams({
-      view,
+      view: 'transcript',
       cursor: detail.cursor,
     });
   }
 
-  private renderBackLink(): unknown {
-    const returnContext = this.params.returnContext;
-    if (returnContext) {
-      return html`<a class="back-link" href="${returnContext}">← Back</a>`;
+  private handleTimelineSegmentClick(event: CustomEvent<{ turn: number }>): void {
+    this.activeTurn = this.activeTurn === event.detail.turn ? null : event.detail.turn;
+  }
+
+  private handleTurnFilterChanged(): void {
+    this.activeTurn = null;
+  }
+
+  private async handleLoadFullPayload(event: CustomEvent<{ payloadId: string }>): Promise<void> {
+    const { payloadId } = event.detail;
+    if (this.fullPayloads.has(payloadId) || this.loadingPayloadIds.has(payloadId)) return;
+    this.loadingPayloadIds = new Set(this.loadingPayloadIds).add(payloadId);
+    try {
+      const detail = await analyticsClient.session.getEventPayload(
+        this.sessionId,
+        payloadId,
+        sessionEvidenceParamsToQuery(this.params),
+      );
+      if (detail) {
+        this.fullPayloads = new Map(this.fullPayloads).set(payloadId, detail);
+      }
+    } finally {
+      const next = new Set(this.loadingPayloadIds);
+      next.delete(payloadId);
+      this.loadingPayloadIds = next;
     }
-    return html`<a class="back-link" href="#/">← Back to Projects</a>`;
   }
 
   private renderHeader() {
     const summary = this.summary.data;
+    const facts = summary ? summaryToMetricCards(summary, this.params) : [];
+    const excerpt = firstUserMessageExcerpt(this.transcript.data);
+    const returnContext = this.params.returnContext;
     return html`
-      <div class="title-row">
-        <div>
-          <h1>Session Evidence — ${this.sessionId}</h1>
-          <p class="session-subtitle">
-            ${summary ? html`Harness: ${summary.harness}` : ''}
-            ${summary?.parentSessionId ? html` • Parent: ${summary.parentSessionId}` : ''}
-          </p>
-        </div>
-        <a class="transcript-link" href="#/sessions/${this.sessionId}/transcript">
-          View Full Transcript
-        </a>
+      <session-evidence-header
+        .sessionId=${this.sessionId}
+        .summary=${summary}
+        .titleExcerpt=${excerpt}
+        .facts=${facts}
+        .projectHref=${returnContext}
+        .subAgentCount=${this.rootChild.data ? this.rootChild.data.children.length : null}
+        subAgentHref="#/sessions/${this.sessionId}?view=transcript"
+      ></session-evidence-header>
+    `;
+  }
+
+  private renderTimeline() {
+    if (this.turnTimeline.state === 'error') {
+      return html`<div class="error" role="alert">${this.turnTimeline.error}</div>`;
+    }
+    return html`
+      <session-evidence-timeline
+        .timeline=${this.turnTimeline.data}
+        .events=${this.sessionEvents.data?.events ?? []}
+        .activeTurn=${this.activeTurn}
+        @timeline-segment-click=${this.handleTimelineSegmentClick}
+      ></session-evidence-timeline>
+    `;
+  }
+
+  private renderEventsTable() {
+    if (this.sessionEvents.state === 'error') {
+      return html`<div class="error" role="alert">${this.sessionEvents.error}</div>`;
+    }
+    return html`
+      <div class="section">
+        <h2>Events</h2>
+        <session-evidence-events-table
+          .events=${this.sessionEvents.data?.events ?? []}
+          .turnFilter=${this.activeTurn}
+          .fullPayloads=${this.fullPayloads}
+          .loadingPayloadIds=${this.loadingPayloadIds}
+          @turn-filter-changed=${this.handleTurnFilterChanged}
+          @load-full-payload=${this.handleLoadFullPayload}
+        ></session-evidence-events-table>
       </div>
     `;
   }
@@ -604,75 +598,24 @@ export class SessionEvidenceView extends PageLitElement {
     `;
   }
 
-  private renderEvidenceTabs() {
-    const currentView = this.params.view ?? 'evidence';
-    return html`
-      <div class="view-tabs" role="tablist" aria-label="Evidence view">
-        <a
-          class="view-tab ${currentView === 'evidence' ? 'active' : ''}"
-          href="#/sessions/${this.sessionId}?view=evidence"
-          @click=${(e: Event) => {
-            e.preventDefault();
-            this.updateParams({ view: 'evidence' });
-          }}
-        >
-          Evidence
-        </a>
-        <a
-          class="view-tab ${currentView === 'transcript' ? 'active' : ''}"
-          href="#/sessions/${this.sessionId}?view=transcript"
-          @click=${(e: Event) => {
-            e.preventDefault();
-            this.updateParams({ view: 'transcript' });
-          }}
-        >
-          Transcript
-        </a>
-      </div>
-    `;
-  }
-
-  private renderEvidenceSection() {
-    const currentView = this.params.view ?? 'evidence';
+  private renderSubAgentTranscript() {
     return html`
       <div class="section">
-        <h2>Evidence</h2>
-        ${this.renderEvidenceTabs()}
-        ${
-          currentView === 'transcript'
-            ? html`
-              <session-evidence-transcript
-                .page=${this.transcript.data}
-                .loading=${this.transcript.state === 'loading'}
-                .state=${
-                  this.transcript.state === 'error'
-                    ? 'error'
-                    : hasTombstone(this.transcript)
-                      ? 'tombstone'
-                      : this.transcript.data?.items.length === 0
-                        ? 'empty'
-                        : 'ok'
-                }
-                @page-change=${(e: CustomEvent) => this.handlePageChange(e.detail, 'transcript')}
-              ></session-evidence-transcript>
-            `
-            : html`
-              <session-evidence-evidence
-                .page=${this.evidence.data}
-                .loading=${this.evidence.state === 'loading'}
-                .state=${
-                  this.evidence.state === 'error'
-                    ? 'error'
-                    : hasTombstone(this.evidence)
-                      ? 'tombstone'
-                      : this.evidence.data?.items.length === 0
-                        ? 'empty'
-                        : 'ok'
-                }
-                @page-change=${(e: CustomEvent) => this.handlePageChange(e.detail, 'evidence')}
-              ></session-evidence-evidence>
-            `
-        }
+        <h2>Sub agent transcript</h2>
+        <session-evidence-transcript
+          .page=${this.transcript.data}
+          .loading=${this.transcript.state === 'loading'}
+          .state=${
+            this.transcript.state === 'error'
+              ? 'error'
+              : hasTombstone(this.transcript)
+                ? 'tombstone'
+                : this.transcript.data?.items.length === 0
+                  ? 'empty'
+                  : 'ok'
+          }
+          @page-change=${(e: CustomEvent) => this.handlePageChange(e.detail)}
+        ></session-evidence-transcript>
       </div>
     `;
   }
@@ -680,7 +623,6 @@ export class SessionEvidenceView extends PageLitElement {
   render() {
     return html`
       <div class="session-evidence">
-        ${this.renderBackLink()}
         ${this.renderHeader()}
 
         ${
@@ -697,24 +639,34 @@ export class SessionEvidenceView extends PageLitElement {
         }
         ${this.loading ? html`<p class="notice">Loading session evidence…</p>` : ''}
 
+        ${this.renderTimeline()}
+        ${this.renderEventsTable()}
         ${this.renderOverview()}
         ${this.renderContextTiming()}
         ${this.renderRootChild()}
         ${this.renderComponentFacts()}
         ${this.renderValidation()}
-        ${this.renderEvidenceSection()}
+        ${this.renderSubAgentTranscript()}
       </div>
     `;
   }
 }
 
+/** Array-bearing fields that mark a fulfilled DTO as legitimately empty (no rows), never confused with a query failure. */
+const EMPTY_CHECK_FIELDS = ['items', 'events', 'segments'] as const;
+
 function panelStateFromResult<T>(result: PromiseSettledResult<T>): PanelState<T> {
   if (result.status === 'fulfilled') {
     const data = result.value;
-    const isEmpty =
-      data && typeof data === 'object' && 'items' in data
-        ? (data as { items: unknown[] }).items.length === 0
-        : false;
+    const emptyField =
+      data && typeof data === 'object'
+        ? EMPTY_CHECK_FIELDS.find((field) =>
+            Array.isArray((data as Record<string, unknown>)[field]),
+          )
+        : undefined;
+    const isEmpty = emptyField
+      ? ((data as Record<string, unknown[]>)[emptyField]?.length ?? 0) === 0
+      : false;
     return { data, state: isEmpty ? 'empty' : 'ok' };
   }
   return {

@@ -80,8 +80,8 @@ test.describe('UX-011: Transcript XSS sanitization', () => {
     // evidence load renders the transcript panel.
     await page.goto(`/#/sessions/${encodeURIComponent(sessionId)}?view=transcript`);
 
-    // The session evidence view should render with the session ID in the heading.
-    await expect(page.getByText(/Session Evidence/)).toBeVisible({ timeout: 15000 });
+    // The session evidence view should render with the session ID in the breadcrumb.
+    await expect(page.locator('session-evidence-header')).toBeVisible({ timeout: 15000 });
 
     // Wait for the transcript panel to load.
     await page.waitForFunction(

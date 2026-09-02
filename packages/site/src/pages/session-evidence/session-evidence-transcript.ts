@@ -28,8 +28,8 @@ export class SessionEvidenceTranscript extends LitElement {
       max-width: 90%;
       padding: 10px 14px;
       border-radius: 12px;
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      background: var(--md-sys-color-surface, #171a21);
+      border: 1px solid var(--rd-border-2, #232936);
+      background: var(--rd-surface-card, #171b24);
     }
 
     .message.user {
@@ -44,13 +44,13 @@ export class SessionEvidenceTranscript extends LitElement {
 
     .message.system {
       align-self: flex-start;
-      background: var(--md-sys-color-surface-container, #1f242e);
+      background: var(--rd-surface-inset, #12151c);
     }
 
     .message.tombstone {
       align-self: center;
-      border-color: var(--md-sys-color-tertiary, #ffb86c);
-      background: var(--md-sys-color-surface-container, #1f242e);
+      border-color: var(--rd-status-warning, #fab219);
+      background: var(--rd-surface-inset, #12151c);
     }
 
     .message-header {
@@ -59,7 +59,7 @@ export class SessionEvidenceTranscript extends LitElement {
       align-items: center;
       flex-wrap: wrap;
       font-size: 12px;
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      color: var(--rd-ink-muted, #9aa4b2);
     }
 
     .message-role {
@@ -73,7 +73,7 @@ export class SessionEvidenceTranscript extends LitElement {
 
     .message-body {
       font-size: 14px;
-      color: var(--md-sys-color-on-surface, #e6e9ef);
+      color: var(--rd-ink-primary, #e6e9ef);
       line-height: 1.5;
       word-break: break-word;
     }
@@ -97,15 +97,15 @@ export class SessionEvidenceTranscript extends LitElement {
     .pagination-button {
       padding: 8px 14px;
       font-size: 13px;
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border: 1px solid var(--rd-border-2, #232936);
       border-radius: 8px;
-      background: var(--md-sys-color-surface, #171a21);
-      color: var(--md-sys-color-on-surface, #e6e9ef);
+      background: var(--rd-surface-card, #171b24);
+      color: var(--rd-ink-primary, #e6e9ef);
       cursor: pointer;
     }
 
     .pagination-button:hover:not(:disabled) {
-      background: var(--md-sys-color-surface-container-hover, #262d3a);
+      background: var(--rd-surface-row-hover, #1f2531);
     }
 
     .pagination-button:disabled {
@@ -114,7 +114,7 @@ export class SessionEvidenceTranscript extends LitElement {
     }
 
     .empty {
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      color: var(--rd-ink-muted, #9aa4b2);
       font-size: 13px;
       padding: 12px 0;
     }
