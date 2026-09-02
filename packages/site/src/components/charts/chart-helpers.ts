@@ -366,17 +366,29 @@ function horizontalBarOption(series: ChartSeries): EChartsCoreOption {
   const sorted = [...present].sort((a, b) => (b.y as number) - (a.y as number));
   const rows = [...sorted, ...missing];
   const categories = rows.map((b) => b.label || String(b.x));
-  const data = rows.map((b) =>
-    b.y === null
-      ? { value: 0, itemStyle: { color: 'transparent' }, label: { formatter: () => '—' } }
-      : {
-          value: b.y,
-          itemStyle: {
-            color: colorForEntity(b.series ?? b.label ?? String(b.x)),
-            borderRadius: [0, 5, 5, 0],
-          },
-        },
-  );
+  const data = rows.map((b) => {
+    const rowLabel = b.label || String(b.x);
+    if (b.y === null) {
+      return {
+        value: 0,
+        itemStyle: { color: 'transparent' },
+        label: { formatter: () => '—' },
+        // Item-trigger tooltips default to the raw numeric `value` (0) — a
+        // full per-datum formatter override (not just `valueFormatter`,
+        // which item-level tooltip config does not reliably honor) so
+        // hovering a missing row never reads "0", matching the "—" bar
+        // label. See .agents/rules/missing-is-never-zero.md.
+        tooltip: { formatter: () => `${rowLabel}: —` },
+      };
+    }
+    return {
+      value: b.y,
+      itemStyle: {
+        color: colorForEntity(b.series ?? b.label ?? String(b.x)),
+        borderRadius: [0, 5, 5, 0],
+      },
+    };
+  });
 
   return {
     aria: { enabled: true },

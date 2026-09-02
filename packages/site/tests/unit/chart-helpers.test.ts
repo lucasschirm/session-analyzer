@@ -11,7 +11,7 @@ import {
   textualSummary,
   toTableRows,
 } from '../../src/components/charts/chart-types';
-import { statusTokens } from '../../src/styles/tokens';
+import { inkTokens, statusTokens } from '../../src/styles/tokens';
 
 function makeBucket(overrides: Partial<ChartBucket> = {}): ChartBucket {
   return { x: 'a', y: 1, label: 'A', ...overrides };
@@ -330,6 +330,19 @@ describe('horizontal_bar option builder', () => {
     expect(missingDatum?.label?.formatter()).toBe('—');
   });
 
+  it('never shows the raw 0 value in the tooltip for a missing bar row', () => {
+    const series = makeSeries({
+      chartType: 'horizontal_bar',
+      buckets: [makeBucket({ x: 'x', y: null, label: 'Missing' })],
+    });
+    const option = toEChartsOption(series) as {
+      series: Array<{ data: Array<{ tooltip?: { formatter: () => string } }> }>;
+    };
+    const missingDatum = option.series[0]?.data[0];
+    expect(missingDatum?.tooltip?.formatter()).toBe('Missing: —');
+    expect(missingDatum?.tooltip?.formatter()).not.toContain('0');
+  });
+
   it('formats value labels via a plain-ink label formatter, not series color', () => {
     const series = makeSeries({
       chartType: 'horizontal_bar',
@@ -338,7 +351,7 @@ describe('horizontal_bar option builder', () => {
     const option = toEChartsOption(series) as {
       series: Array<{ label: { color: string } }>;
     };
-    expect(option.series[0]?.label.color).toBe('#e6e9ef');
+    expect(option.series[0]?.label.color).toBe(inkTokens.inkPrimary);
   });
 });
 

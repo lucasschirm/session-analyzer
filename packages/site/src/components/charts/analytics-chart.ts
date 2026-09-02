@@ -95,12 +95,18 @@ export class AnalyticsChart extends LitElement {
    * Object})`'s default `hasChanged`); a fresh object on every render would
    * trigger a full `setOption`/`resize` even when nothing chart-relevant
    * changed.
+   *
+   * Skipped for `heatmap` series: `echarts-base` renders those via
+   * `rd-heatmap-grid` instead of ECharts (see its `isHeatmap` gate), so
+   * building an ECharts option for one would be pure waste — no consumer
+   * ever reads it.
    */
   @state() private computedOption: EChartsCoreOption | null = null;
 
   willUpdate(changed: PropertyValues<this>): void {
     if (changed.has('series')) {
-      this.computedOption = this.series ? toEChartsOption(this.series) : null;
+      this.computedOption =
+        this.series && this.series.chartType !== 'heatmap' ? toEChartsOption(this.series) : null;
     }
   }
 

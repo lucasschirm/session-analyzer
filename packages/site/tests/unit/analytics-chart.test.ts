@@ -66,6 +66,16 @@ describe('analytics-chart', () => {
     expect(base.option).toBe(firstOption);
   });
 
+  it('skips building an ECharts option for a heatmap series (rendered by rd-heatmap-grid instead)', async () => {
+    const el = document.createElement('analytics-chart') as AnalyticsChart;
+    el.series = makeSeries({ chartType: 'heatmap' });
+    await mount(el);
+    const base = shadow(el).querySelector('echarts-base') as HTMLElement & {
+      option: unknown;
+    };
+    expect(base.option).toBeNull();
+  });
+
   it('recomputes the option when series changes', async () => {
     const el = document.createElement('analytics-chart') as AnalyticsChart;
     el.series = makeSeries();
