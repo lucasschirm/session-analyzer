@@ -59,6 +59,12 @@ export interface SeedSessionOptions {
   importBatchIdPrefix?: string;
 }
 
+interface WorkerReply {
+  ok: boolean;
+  result?: { harness?: string; status?: string; sessionId?: string };
+  error?: string;
+}
+
 /**
  * Ingest a fixture into the analytics worker captured by
  * `captureAnalyticsWorker`, exercising the same detect + ingest worker
@@ -88,74 +94,80 @@ export async function seedSession(options: SeedSessionOptions): Promise<void> {
       mediaType: mt,
       importBatchIdPrefix: prefix,
     }) => {
-      const worker = await new Promise<Worker>((resolve, reject) => {
-        if (window.__analyticsWorker) {
-          resolve(window.__analyticsWorker);
-          return;
-        }
-        window.__onAnalyticsWorkerReady = (w) => resolve(w);
-        setTimeout(() => reject(new Error('analytics worker was not created within 30s')), 30000);
-      });
-
-      function sendMessage<T>(type: string, payload: Record<string, unknown>): Promise<T> {
-        const id = 1_000_000 + Math.floor(Math.random() * 1_000_000_000);
+      // Declared as nested functions rather than module-scope helpers:
+      // Playwright's `page.evaluate` stringifies only this outer callback's
+      // own literal source and re-parses it in the browser context, so any
+      // helper it calls must be part of that same function body.
+      function waitForWorkerAndSend(
+        type: string,
+        payload: Record<string, unknown>,
+      ): Promise<WorkerReply> {
         return new Promise((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error(`worker ${type} message timed out`)),
-            30000,
-          );
-          const listener = (event: MessageEvent) => {
-            if (event.data?.id === id) {
-              clearTimeout(timeout);
-              worker.removeEventListener('message', listener);
-              resolve(event.data as T);
-            }
+          const send = (worker: Worker) => {
+            const id = 1_000_000 + Math.floor(Math.random() * 1_000_000_000);
+            const timeout = setTimeout(
+              () => reject(new Error(`worker ${type} message timed out`)),
+              30000,
+            );
+            const listener = (event: MessageEvent) => {
+              if (event.data?.id === id) {
+                clearTimeout(timeout);
+                worker.removeEventListener('message', listener);
+                resolve(event.data as WorkerReply);
+              }
+            };
+            worker.addEventListener('message', listener);
+            worker.postMessage({ id, type, ...payload });
           };
-          worker.addEventListener('message', listener);
-          worker.postMessage({ id, type, ...payload });
+
+          if (window.__analyticsWorker) {
+            send(window.__analyticsWorker);
+            return;
+          }
+          window.__onAnalyticsWorkerReady = send;
+          setTimeout(() => reject(new Error('analytics worker was not created within 30s')), 30000);
         });
       }
 
+      async function detectAndIngestArtifact(artifact: {
+        relativePath: string;
+        mediaType: string;
+        content: string;
+      }): Promise<void> {
+        const detectResponse = await waitForWorkerAndSend('detectManualHarness', {
+          artifacts: [artifact],
+        });
+        if (!detectResponse.ok || !detectResponse.result?.harness) {
+          throw new Error(
+            `Harness detection failed: ${detectResponse.error ?? 'no harness matched'}`,
+          );
+        }
+
+        const bundle = {
+          artifacts: [artifact],
+          source: { sourceId: 'manual' },
+          harness: detectResponse.result.harness,
+          projectId: pid,
+          sessionId: sid,
+          importBatchId: `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        };
+
+        const ingestResponse = await waitForWorkerAndSend('ingestManualBundle', { bundle });
+        if (!ingestResponse.ok) {
+          throw new Error(`Ingestion failed: ${ingestResponse.error ?? 'unknown'}`);
+        }
+        if (
+          ingestResponse.result?.status !== 'committed' &&
+          ingestResponse.result?.status !== 'superseded'
+        ) {
+          throw new Error(
+            `Ingestion was not committed: ${ingestResponse.result?.status ?? 'unknown'}`,
+          );
+        }
+      }
+
       const artifact = { relativePath: rp, mediaType: mt, content: fixtureContent };
-
-      const detectResponse = await sendMessage<{
-        ok: boolean;
-        result?: { harness?: string };
-        error?: string;
-      }>('detectManualHarness', { artifacts: [artifact] });
-
-      if (!detectResponse.ok || !detectResponse.result?.harness) {
-        throw new Error(
-          `Harness detection failed: ${detectResponse.error ?? 'no harness matched'}`,
-        );
-      }
-
-      const bundle = {
-        artifacts: [artifact],
-        source: { sourceId: 'manual' },
-        harness: detectResponse.result.harness,
-        projectId: pid,
-        sessionId: sid,
-        importBatchId: `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      };
-
-      const ingestResponse = await sendMessage<{
-        ok: boolean;
-        result?: { status: string; sessionId: string };
-        error?: string;
-      }>('ingestManualBundle', { bundle });
-
-      if (!ingestResponse.ok) {
-        throw new Error(`Ingestion failed: ${ingestResponse.error ?? 'unknown'}`);
-      }
-      if (
-        ingestResponse.result?.status !== 'committed' &&
-        ingestResponse.result?.status !== 'superseded'
-      ) {
-        throw new Error(
-          `Ingestion was not committed: ${ingestResponse.result?.status ?? 'unknown'}`,
-        );
-      }
+      await detectAndIngestArtifact(artifact);
     },
     {
       projectId,
