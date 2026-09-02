@@ -4,8 +4,9 @@ import type {
   MetadataChange,
   SideBySideDiff,
 } from '@lucasschirm/sal-db';
-import { css, html, LitElement } from 'lit';
+import { css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
 import type { ChartState } from '../../components/charts/chart-types';
@@ -37,11 +38,11 @@ interface PanelState<T> {
 }
 
 @customElement('artifact-diff-view')
-export class ArtifactDiffView extends LitElement {
-  static styles = css`
+export class ArtifactDiffView extends PageLitElement {
+  static styles = [
+    pageHostStyles,
+    css`
     :host {
-      display: block;
-      padding: 24px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
@@ -277,7 +278,8 @@ export class ArtifactDiffView extends LitElement {
     .no-select {
       user-select: text;
     }
-  `;
+  `,
+  ];
 
   @state() private params: ArtifactDiffParams = parseArtifactDiffHash(
     typeof window !== 'undefined' ? window.location.hash : '',

@@ -81,23 +81,38 @@ describe('left-nav', () => {
     expect(root.querySelector('nav')).toBeNull();
   });
 
-  it('expands the Projects section on /projects routes', async () => {
+  it('does not auto-expand the Projects section on the /projects list route', async () => {
     const el = await mount('/projects');
+    const root = el.shadowRoot as ShadowRoot;
+    const projectsItem = root.querySelector('a.nav-item');
+    expect(projectsItem?.classList.contains('expanded')).toBe(false);
+  });
+
+  it('auto-expands the Projects section on a specific project route', async () => {
+    const el = await mount('/projects/p1');
     const root = el.shadowRoot as ShadowRoot;
     const projectsItem = root.querySelector('a.nav-item');
     expect(projectsItem?.classList.contains('expanded')).toBe(true);
   });
 
-  it('lists real projects when expanded', async () => {
+  it('lists real projects with stats when expanded', async () => {
     mockDbClient.getProjects.mockResolvedValue([
-      { id: 'p1', name: 'Project A', readable_id: 'p1' },
-      { id: 'p2', name: 'Project B', readable_id: 'p2' },
+      { id: 'p1', name: 'Project A', readable_id: 'p1', session_count: 3, updated_at: Date.now() },
+      { id: 'p2', name: 'Project B', readable_id: 'p2', session_count: 1, updated_at: Date.now() },
     ]);
-    const el = await mount('/projects');
+    const el = await mount('/projects/p1');
     const root = el.shadowRoot as ShadowRoot;
-    const childLinks = Array.from(root.querySelectorAll('.nav-child')).map((a) => a.textContent);
-    expect(childLinks).toContain('Project A');
-    expect(childLinks).toContain('Project B');
+    const childNames = Array.from(root.querySelectorAll('.nav-child-name')).map(
+      (s) => s.textContent,
+    );
+    expect(childNames).toContain('Project A');
+    expect(childNames).toContain('Project B');
+    // Stats line should include session count
+    const childStats = Array.from(root.querySelectorAll('.nav-child-stats')).map(
+      (s) => s.textContent,
+    );
+    expect(childStats.some((s) => s?.includes('3 sessions'))).toBe(true);
+    expect(childStats.some((s) => s?.includes('1 session'))).toBe(true);
   });
 
   it('highlights the active settings item', async () => {

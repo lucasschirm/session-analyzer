@@ -153,6 +153,17 @@ describe('app-root', () => {
     expect(root.querySelector('connect-modal')).toBeNull();
   });
 
+  it('renders a passkey modal for sync-triggered vault unlocks', async () => {
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    const modal = root.querySelector('passkey-modal');
+    expect(modal).not.toBeNull();
+    // The modal must start closed so it doesn't block the UI on load.
+    expect((modal as HTMLElement & { open: boolean }).open).toBe(false);
+  });
+
   it('renders the left nav on the dashboard route', async () => {
     window.location.hash = '#/';
     const app = await mount(document.createElement('app-root') as AppRoot);

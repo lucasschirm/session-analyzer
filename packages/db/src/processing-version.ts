@@ -173,6 +173,7 @@ export async function rebuildAnalyticsDerivedData(
       first.projectId,
       first.portfolioId,
       first.analysisReleaseId,
+      first.currentGenerationId,
     );
     groupsCompleted += 1;
     onProgress?.({

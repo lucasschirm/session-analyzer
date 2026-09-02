@@ -8,8 +8,9 @@ import type {
   SessionTree,
   SessionValidationSummary,
 } from '@lucasschirm/sal-db';
-import { css, html, LitElement, type PropertyValues } from 'lit';
+import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
 import { analyticsClient } from '../../db/analytics-client';
@@ -38,12 +39,10 @@ interface PanelState<T> {
 }
 
 @customElement('session-evidence-view')
-export class SessionEvidenceView extends LitElement {
-  static styles = css`
-    :host {
-      display: block;
-    }
-
+export class SessionEvidenceView extends PageLitElement {
+  static styles = [
+    pageHostStyles,
+    css`
     .session-evidence {
       display: flex;
       flex-direction: column;
@@ -263,7 +262,8 @@ export class SessionEvidenceView extends LitElement {
       color: var(--md-sys-color-on-primary, #fff);
       border-color: var(--md-sys-color-primary, #4f8cff);
     }
-  `;
+  `,
+  ];
 
   @property({ type: String, attribute: 'session-id' }) sessionId = '';
 

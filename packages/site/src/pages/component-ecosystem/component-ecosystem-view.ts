@@ -8,8 +8,9 @@ import type {
   ComponentVersionPage,
   LifecycleComparisonPage,
 } from '@lucasschirm/sal-db';
-import { css, html, LitElement } from 'lit';
+import { css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
 import type {
@@ -51,11 +52,11 @@ interface PanelState<T> {
 }
 
 @customElement('component-ecosystem-view')
-export class ComponentEcosystemView extends LitElement {
-  static styles = css`
+export class ComponentEcosystemView extends PageLitElement {
+  static styles = [
+    pageHostStyles,
+    css`
     :host {
-      display: block;
-      padding: 24px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
@@ -278,7 +279,8 @@ export class ComponentEcosystemView extends LitElement {
       gap: 8px;
       margin-bottom: 12px;
     }
-  `;
+  `,
+  ];
 
   @property({ type: String }) componentId = '';
 

@@ -5,9 +5,11 @@ import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import './delete-confirmation-modal';
 import './passkey-modal';
+import './sync-confirm-modal';
 import { dbClient } from '../db/db-client';
 import { generateId } from '../lib/id';
 import { hintForS3Error } from '../lib/s3-errors';
+import { navigateTo } from '../router';
 import { encryptField, isUnlocked } from '../sync/credential-crypto';
 import { syncManager } from '../sync/sync-manager';
 import type { Connection, StoredS3Credentials } from '../types';
@@ -427,6 +429,14 @@ export class ConnectModal extends LitElement {
    */
   @property({ type: Boolean, reflect: true }) inline = false;
 
+  /**
+   * Connection id from the data-sources route. When set (and `inline` is
+   * true), the modal auto-opens the edit form for that connection. The
+   * special value `new` opens the blank "new connection" form. An empty
+   * value returns the modal to the connection list.
+   */
+  @property({ type: String }) connectionId = '';
+
   @state() private view: ModalView = 'list';
 
   @state() private items: ListItem[] = [];
@@ -465,7 +475,20 @@ export class ConnectModal extends LitElement {
 
   private deleteTrigger?: HTMLElement;
 
+  @state() private syncConfirmConnectionId = '';
+
+  @state() private syncConfirmConnectionName = '';
+
   private inMemoryConnections = new Map<string, InMemoryEntry>();
+
+  /**
+   * Guard that suppresses the `connectionId` reaction in `willUpdate` when the
+   * connectionId change originated from an explicit user action inside this
+   * component (edit/new/cancel). Without it, calling `navigateTo` here would
+   * update the URL, which updates `connectionId`, which re-triggers the same
+   * handler and loops.
+   */
+  private suppressConnectionIdSync = false;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -492,6 +515,21 @@ export class ConnectModal extends LitElement {
       this.resetToList();
       this.loadConnections().catch(() => undefined);
       this.handleSyncChange();
+    }
+    // React to route-driven connectionId changes (inline mode only). When the
+    // change originated from an explicit user action here, the guard is set and
+    // we simply clear it so the subsequent property update is a no-op.
+    if (changed.has('connectionId') && this.inline) {
+      if (this.suppressConnectionIdSync) {
+        this.suppressConnectionIdSync = false;
+      } else if (this.connectionId && this.connectionId !== 'new') {
+        this.handleEditConnection(this.connectionId);
+      } else if (this.connectionId === 'new') {
+        this.handleNewConnection();
+      } else if (this.connectionId === '' && changed.get('connectionId')) {
+        // Navigated back to the bare data-sources route — return to the list.
+        this.resetToList();
+      }
     }
   }
 
@@ -567,6 +605,8 @@ export class ConnectModal extends LitElement {
     this.deleteDialogOpen = false;
     this.deleteItem = undefined;
     this.deleteTrigger = undefined;
+    this.syncConfirmConnectionId = '';
+    this.syncConfirmConnectionName = '';
   }
 
   private handleOverlayClick(event: MouseEvent): void {
@@ -646,6 +686,10 @@ export class ConnectModal extends LitElement {
   }
 
   private handleNewConnection(): void {
+    if (this.inline) {
+      this.suppressConnectionIdSync = true;
+      navigateTo('/settings/data-sources/new');
+    }
     this.form = blankForm();
     this.editingId = '';
     this.editingInMemory = false;
@@ -656,6 +700,10 @@ export class ConnectModal extends LitElement {
   }
 
   private handleEditConnection(id: string): void {
+    if (this.inline) {
+      this.suppressConnectionIdSync = true;
+      navigateTo(`/settings/data-sources/${id}`);
+    }
     const inMemory = this.inMemoryConnections.get(id);
     if (inMemory) {
       this.populateFormFromInMemory(id, inMemory);
@@ -719,6 +767,10 @@ export class ConnectModal extends LitElement {
   }
 
   private handleCancelForm(): void {
+    if (this.inline) {
+      this.suppressConnectionIdSync = true;
+      navigateTo('/settings/data-sources');
+    }
     this.view = 'list';
     this.form = blankForm();
     this.editingId = '';
@@ -965,9 +1017,19 @@ export class ConnectModal extends LitElement {
   }
 
   private startSync(connectionId: string): void {
-    this.registerEphemeralIfNeeded(connectionId);
-    syncManager.requestRun(connectionId);
-    this.close();
+    // In-memory connections haven't been saved yet, so there is no
+    // localStorage preference to pre-select; use the form value directly.
+    if (this.editingInMemory) {
+      this.registerEphemeralIfNeeded(connectionId);
+      syncManager.requestRun(connectionId, { syncOnlyNew: this.form.syncOnlyNew });
+      this.close();
+      return;
+    }
+    // Saved connections go through the per-sync confirmation modal so the
+    // user can confirm/change the "sync only new" choice each time.
+    const item = this.items.find((i) => i.id === connectionId);
+    this.syncConfirmConnectionId = connectionId;
+    this.syncConfirmConnectionName = item?.name ?? (this.form.name.trim() || connectionId);
   }
 
   private handleDelete(event: Event, id: string): void {
@@ -1008,9 +1070,25 @@ export class ConnectModal extends LitElement {
 
   private handleRowSync(id: string): void {
     if (this.isRowSyncDisabled(id)) return;
-    this.registerEphemeralIfNeeded(id);
-    syncManager.requestRun(id);
+    const item = this.items.find((i) => i.id === id);
+    this.syncConfirmConnectionId = id;
+    this.syncConfirmConnectionName = item?.name ?? id;
+  }
+
+  private handleSyncConfirmed(
+    event: CustomEvent<{ connectionId: string; syncOnlyNew: boolean }>,
+  ): void {
+    const { connectionId, syncOnlyNew } = event.detail;
+    this.syncConfirmConnectionId = '';
+    this.syncConfirmConnectionName = '';
+    this.registerEphemeralIfNeeded(connectionId);
+    syncManager.requestRun(connectionId, { syncOnlyNew });
     this.close();
+  }
+
+  private handleSyncConfirmClose(): void {
+    this.syncConfirmConnectionId = '';
+    this.syncConfirmConnectionName = '';
   }
 
   /**
@@ -1078,6 +1156,14 @@ export class ConnectModal extends LitElement {
             @delete-confirmed=${this.handleDeleteConfirm}
             @modal-close=${this.handleDeleteCancel}
           ></delete-confirmation-modal>
+
+          <sync-confirm-modal
+            ?open=${this.syncConfirmConnectionId !== ''}
+            .connectionId=${this.syncConfirmConnectionId}
+            .connectionName=${this.syncConfirmConnectionName}
+            @sync-confirmed=${this.handleSyncConfirmed}
+            @modal-close=${this.handleSyncConfirmClose}
+          ></sync-confirm-modal>
         </div>
       `;
     }
@@ -1104,6 +1190,14 @@ export class ConnectModal extends LitElement {
           @delete-confirmed=${this.handleDeleteConfirm}
           @modal-close=${this.handleDeleteCancel}
         ></delete-confirmation-modal>
+
+        <sync-confirm-modal
+          ?open=${this.syncConfirmConnectionId !== ''}
+          .connectionId=${this.syncConfirmConnectionId}
+          .connectionName=${this.syncConfirmConnectionName}
+          @sync-confirmed=${this.handleSyncConfirmed}
+          @modal-close=${this.handleSyncConfirmClose}
+        ></sync-confirm-modal>
       </div>
     `;
   }

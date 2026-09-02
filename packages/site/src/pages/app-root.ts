@@ -2,11 +2,14 @@ import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '../components/header-project-selector';
 import '../components/left-nav';
+import '../components/passkey-modal';
 import '../components/sync-progress-bar';
 import '../components/sync-status-bar';
 import '../components/toast-container';
+import { analyticsClient } from '../db/analytics-client';
 import { dbClient } from '../db/db-client';
 import { currentHashPath, HashRouter, navigateTo } from '../router';
+import { setPasskeyPrompt } from '../sync/passkey-prompt';
 import { syncManager } from '../sync/sync-manager';
 import type { Project } from '../types';
 import './projects-page';
@@ -49,6 +52,14 @@ function decodeRouteParam(value: string | undefined): string {
     return value;
   }
 }
+
+/**
+ * Module-level resolver for the passkey prompt promise. Set when the sync
+ * manager requests a passkey unlock (via `setPasskeyPrompt`); cleared once
+ * the passkey modal emits `passkey-unlocked`, `passkey-forgotten`, or
+ * `modal-close`.
+ */
+let passkeyResolve: ((unlocked: boolean) => void) | null = null;
 
 @customElement('app-root')
 export class AppRoot extends LitElement {
@@ -106,6 +117,12 @@ export class AppRoot extends LitElement {
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
+    nav.header-nav a.active {
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      border-bottom: 2px solid white;
+      border-radius: 0;
+    }
+
     .header-right {
       display: flex;
       align-items: center;
@@ -154,6 +171,113 @@ export class AppRoot extends LitElement {
       padding: 16px;
       border-radius: 8px;
       margin-bottom: 16px;
+    }
+
+    .app-loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 60vh;
+      gap: 16px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      font-size: 16px;
+    }
+
+    .app-loading .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--md-sys-color-outline, #2a303c);
+      border-top-color: var(--md-sys-color-primary, #4f8cff);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .reprocess-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .reprocess-panel {
+      background: var(--md-sys-color-surface, #171a21);
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-radius: 12px;
+      padding: 32px;
+      width: min(440px, 90vw);
+      text-align: center;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    }
+
+    .reprocess-panel h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+    }
+
+    .reprocess-panel .reprocess-reason {
+      margin: 0 0 20px;
+      font-size: 14px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+    }
+
+    .reprocess-panel .reprocess-step {
+      font-size: 14px;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      margin-bottom: 12px;
+    }
+
+    .reprocess-panel .reprocess-bar {
+      width: 100%;
+      height: 6px;
+      background: var(--md-sys-color-outline, #2a303c);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .reprocess-panel .reprocess-bar-fill {
+      height: 100%;
+      background: var(--md-sys-color-primary, #4f8cff);
+      border-radius: 3px;
+      transition: width 0.3s ease;
+    }
+
+    .reprocess-panel .reprocess-percent {
+      font-size: 13px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+    }
+
+    .reprocess-panel .reprocess-error {
+      background: var(--md-sys-color-error-container, #5c2626);
+      color: var(--md-sys-color-on-error-container, #ffb4ab);
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      text-align: left;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .reprocess-panel button {
+      background: var(--md-sys-color-primary, #4f8cff);
+      color: #fff;
+      border: none;
+      padding: 8px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
     }
   `;
 
@@ -226,6 +350,13 @@ export class AppRoot extends LitElement {
         render: () => html`<data-sources-page></data-sources-page>`,
       },
       {
+        path: '/settings/data-sources/:connectionId',
+        render: (params) =>
+          html`<data-sources-page
+            connection-id=${decodeRouteParam(params.connectionId)}
+          ></data-sources-page>`,
+      },
+      {
         path: '/settings/storage',
         render: () => html`<storage-page></storage-page>`,
       },
@@ -239,11 +370,25 @@ export class AppRoot extends LitElement {
 
   @state() private dbError: string | null = null;
 
+  @state() private appReady = false;
+
   @state() private currentPath = '/';
 
   @state() private selectedProjectSlug = '';
 
   @state() private projects: Project[] = [];
+
+  @state() private reprocessing = false;
+
+  @state() private reprocessReason = '';
+
+  @state() private reprocessStep = '';
+
+  @state() private reprocessPercent = 0;
+
+  @state() private reprocessError: string | null = null;
+
+  @state() private passkeyOpen = false;
 
   private hashChangeHandler = (): void => {
     this.currentPath = currentHashPath();
@@ -257,19 +402,111 @@ export class AppRoot extends LitElement {
       this.currentPath = currentHashPath();
       await this.loadProjects();
       void this.syncProjectSelector();
+      this.appReady = true;
     } catch (error) {
       this.dbError = `Failed to initialize database: ${(error as Error).message}`;
+      this.appReady = true;
     }
   }
 
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('hashchange', this.hashChangeHandler);
+    analyticsClient.addEventListener('reprocess-started', this.handleReprocessStarted);
+    analyticsClient.addEventListener('reprocess-progress', this.handleReprocessProgress);
+    analyticsClient.addEventListener('reprocess-completed', this.handleReprocessCompleted);
+    // Register the passkey prompt so the sync manager can request a
+    // vault unlock when a sync run needs S3 credentials. The prompt opens
+    // the passkey modal in unlock mode; the modal calls `unlock()`
+    // internally and emits `passkey-unlocked` on success.
+    setPasskeyPrompt(
+      () =>
+        new Promise<boolean>((resolve) => {
+          passkeyResolve = resolve;
+          this.passkeyOpen = true;
+        }),
+    );
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this.hashChangeHandler);
+    analyticsClient.removeEventListener('reprocess-started', this.handleReprocessStarted);
+    analyticsClient.removeEventListener('reprocess-progress', this.handleReprocessProgress);
+    analyticsClient.removeEventListener('reprocess-completed', this.handleReprocessCompleted);
+  }
+
+  private handleReprocessStarted = (event: Event): void => {
+    const detail = (event as CustomEvent).detail as { reason: string };
+    this.reprocessing = true;
+    this.reprocessReason = detail.reason ?? 'Updating analytics data…';
+    this.reprocessStep = '';
+    this.reprocessPercent = 0;
+    this.reprocessError = null;
+  };
+
+  private handleReprocessProgress = (event: Event): void => {
+    const detail = (event as CustomEvent).detail as {
+      step: string;
+      completed: number;
+      total: number;
+    };
+    this.reprocessStep = detail.step;
+    this.reprocessPercent =
+      detail.total > 0 ? Math.round((detail.completed / detail.total) * 100) : 0;
+  };
+
+  private handleReprocessCompleted = (event: Event): void => {
+    const detail = (event as CustomEvent).detail as { ok: boolean; error?: string };
+    this.reprocessPercent = 100;
+    if (detail.ok) {
+      this.reprocessing = false;
+      this.reprocessError = null;
+    } else {
+      this.reprocessError = detail.error ?? 'An unknown error occurred during reprocessing.';
+    }
+  };
+
+  private dismissReprocessError(): void {
+    this.reprocessing = false;
+    this.reprocessError = null;
+  }
+
+  /**
+   * Called when the passkey modal successfully unlocks the vault. The
+   * modal calls `unlock()` internally before emitting this event, so the
+   * vault is already unlocked — we just need to resolve the pending
+   * prompt promise.
+   */
+  private handlePasskeyUnlocked(): void {
+    this.passkeyOpen = false;
+    const resolve = passkeyResolve;
+    passkeyResolve = null;
+    resolve?.(true);
+  }
+
+  /**
+   * Called when the passkey modal is dismissed (cancel, overlay click, or
+   * Escape) without unlocking. Resolves the prompt promise to `false` so
+   * the sync manager aborts the run gracefully.
+   */
+  private handlePasskeyCancel(event: Event): void {
+    event.stopPropagation();
+    this.passkeyOpen = false;
+    const resolve = passkeyResolve;
+    passkeyResolve = null;
+    resolve?.(false);
+  }
+
+  /**
+   * Called when the user forgets the passkey from inside the unlock modal.
+   * All credentials are wiped, so the pending sync run cannot proceed.
+   */
+  private handlePasskeyForgotten(): void {
+    this.passkeyOpen = false;
+    const resolve = passkeyResolve;
+    passkeyResolve = null;
+    resolve?.(false);
   }
 
   private async loadProjects(): Promise<void> {
@@ -278,6 +515,21 @@ export class AppRoot extends LitElement {
     } catch {
       // Non-fatal — selector stays hidden.
     }
+  }
+
+  private isDashboardActive(): boolean {
+    return (
+      this.currentPath === '/' ||
+      this.currentPath.startsWith('/projects') ||
+      this.currentPath.startsWith('/sessions') ||
+      this.currentPath.startsWith('/manual-import')
+    );
+  }
+
+  private isArtifactsActive(): boolean {
+    return (
+      this.currentPath.startsWith('/artifacts') || this.currentPath.startsWith('/artifact-diff')
+    );
   }
 
   private async syncProjectSelector(): Promise<void> {
@@ -327,8 +579,8 @@ export class AppRoot extends LitElement {
           .value=${this.selectedProjectSlug}
         ></header-project-selector>
         <nav class="header-nav">
-          <a href="#/">Dashboard</a>
-          <a href="#/artifacts">Artifacts</a>
+          <a href="#/" class=${this.isDashboardActive() ? 'active' : ''}>Dashboard</a>
+          <a href="#/artifacts" class=${this.isArtifactsActive() ? 'active' : ''}>Artifacts</a>
         </nav>
         <div class="header-right">
           <sync-progress-bar></sync-progress-bar>
@@ -350,14 +602,64 @@ export class AppRoot extends LitElement {
       </header>
 
       <div class="app-body">
-        ${showLeftNav ? html`<left-nav .path=${this.currentPath}></left-nav>` : ''}
+        ${showLeftNav && this.appReady ? html`<left-nav .path=${this.currentPath}></left-nav>` : ''}
         <main>
-          ${this.dbError ? html`<div class="app-error">${this.dbError}</div>` : ''}
-          ${this.router.outlet()}
+          ${
+            this.dbError
+              ? html`<div class="app-error">${this.dbError}</div>`
+              : !this.appReady
+                ? html`
+                  <div class="app-loading">
+                    <div class="spinner"></div>
+                    <span>Loading…</span>
+                  </div>
+                `
+                : this.router.outlet()
+          }
         </main>
       </div>
 
+      ${
+        this.reprocessing
+          ? html`
+          <div class="reprocess-overlay">
+            <div class="reprocess-panel">
+              <h2>Updating analytics data</h2>
+              <p class="reprocess-reason">${this.reprocessReason}</p>
+              ${
+                this.reprocessError
+                  ? html`
+                    <div class="reprocess-error">${this.reprocessError}</div>
+                    <button @click=${this.dismissReprocessError}>Close</button>
+                  `
+                  : html`
+                    <div class="reprocess-step">
+                      ${this.reprocessStep || 'Preparing…'}
+                    </div>
+                    <div class="reprocess-bar">
+                      <div
+                        class="reprocess-bar-fill"
+                        style="width: ${this.reprocessPercent}%"
+                      ></div>
+                    </div>
+                    <div class="reprocess-percent">${this.reprocessPercent}%</div>
+                  `
+              }
+            </div>
+          </div>
+        `
+          : ''
+      }
+
       <sync-status-bar></sync-status-bar>
+
+      <passkey-modal
+        .open=${this.passkeyOpen}
+        .mode=${'unlock'}
+        @passkey-unlocked=${this.handlePasskeyUnlocked}
+        @passkey-forgotten=${this.handlePasskeyForgotten}
+        @modal-close=${this.handlePasskeyCancel}
+      ></passkey-modal>
 
       <toast-container></toast-container>
     `;
