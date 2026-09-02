@@ -331,6 +331,29 @@ function makeBaseToken(
   );
 }
 
+/**
+ * Shared "no portfolio resolved" token for the #169 portfolio-grain views
+ * below — each returns an empty-but-honest payload (never fabricated data)
+ * paired with this zero-evidence token, tagged 'unknown' evidence.
+ */
+function emptyPortfolioToken(
+  tokens: ReturnType<typeof pageTokens>,
+  metricVersion: string,
+  label: string,
+): AnalyticsToken {
+  return makeBaseToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    0,
+    0,
+    0,
+    'observed',
+    metricVersion,
+    [evidenceLink('portfolio', 'unknown', label)],
+  );
+}
+
 function makeMetricValue(
   metricId: string,
   value: number | null,
@@ -1300,23 +1323,33 @@ async function cleanCompletionRate(
   };
 }
 
+/** The KPI band's zero-evidence defaults when no portfolio resolves — every
+ * field stays honestly empty/null, never fabricated (issue #169). */
+const EMPTY_KPI_BAND_PARTS = {
+  sessions: { current: 0, currentN: 0 },
+  tokens: { in: { current: 0, currentN: 0 }, out: { current: 0, currentN: 0 } },
+  cost: { currentTotal: null, currentReportedHarnesses: 0, currentTotalHarnesses: 0 },
+  cleanCompletion: { value: null, eligibleN: 0, knownN: 0 },
+} as const;
+
+async function kpiBandParts(queryable: Queryable, portfolioId: string, query: AnalyticsQuery) {
+  const [sessions, tokens, cost, cleanCompletion] = await Promise.all([
+    sessionCountDelta(queryable, portfolioId, query),
+    tokenTotalsDelta(queryable, portfolioId, query),
+    costSummaryDelta(queryable, portfolioId, query),
+    cleanCompletionRate(queryable, portfolioId, query),
+  ]);
+  return { sessions, tokens, cost, cleanCompletion };
+}
+
 export async function getKpiBand(
   queryable: Queryable,
   query: AnalyticsQuery,
 ): Promise<PortfolioKpiBand> {
   const portfolioId = await resolvePortfolioId(queryable, query);
-  const sessions = portfolioId
-    ? await sessionCountDelta(queryable, portfolioId, query)
-    : { current: 0, currentN: 0 };
-  const tokens: PortfolioTokenTotals = portfolioId
-    ? await tokenTotalsDelta(queryable, portfolioId, query)
-    : { in: { current: 0, currentN: 0 }, out: { current: 0, currentN: 0 } };
-  const cost: PortfolioCostSummary = portfolioId
-    ? await costSummaryDelta(queryable, portfolioId, query)
-    : { currentTotal: null, currentReportedHarnesses: 0, currentTotalHarnesses: 0 };
-  const cleanCompletion: CleanCompletionRate = portfolioId
-    ? await cleanCompletionRate(queryable, portfolioId, query)
-    : { value: null, eligibleN: 0, knownN: 0 };
+  const { sessions, tokens, cost, cleanCompletion } = portfolioId
+    ? await kpiBandParts(queryable, portfolioId, query)
+    : EMPTY_KPI_BAND_PARTS;
 
   const tokenz = pageTokens(query, []);
   const token = makeBaseToken(
@@ -1341,17 +1374,7 @@ export async function getSessionsByModel(
   const portfolioId = await resolvePortfolioId(queryable, query);
   const tokens = pageTokens(query, []);
   if (!portfolioId) {
-    const token = makeBaseToken(
-      tokens.analysisReleaseId,
-      tokens.generationId,
-      tokens.comparabilityGroupId,
-      0,
-      0,
-      0,
-      'observed',
-      'sessions-by-model-0.1.0',
-      [evidenceLink('portfolio', 'unknown', 'Sessions by model')],
-    );
+    const token = emptyPortfolioToken(tokens, 'sessions-by-model-0.1.0', 'Sessions by model');
     return { token, rows: [] };
   }
   const { start, end } = currentWindowMs(query);
@@ -1383,16 +1406,10 @@ export async function getModelHarnessMatrix(
   const portfolioId = await resolvePortfolioId(queryable, query);
   const tokens = pageTokens(query, []);
   if (!portfolioId) {
-    const token = makeBaseToken(
-      tokens.analysisReleaseId,
-      tokens.generationId,
-      tokens.comparabilityGroupId,
-      0,
-      0,
-      0,
-      'observed',
+    const token = emptyPortfolioToken(
+      tokens,
       'model-harness-matrix-0.1.0',
-      [evidenceLink('portfolio', 'unknown', 'Model x harness matrix')],
+      'Model x harness matrix',
     );
     return { token, models: [], harnesses: [], cells: [] };
   }
@@ -1401,19 +1418,7 @@ export async function getModelHarnessMatrix(
     PortfolioKpiStore.getModelHarnessPairsEverObserved(queryable, portfolioId),
     PortfolioKpiStore.getModelHarnessCountsInWindow(queryable, portfolioId, start, end),
   ]);
-  const models = [...new Set(everObserved.map((p) => p.model))].sort();
-  const harnesses = [...new Set(everObserved.map((p) => p.harness))].sort();
-  const everObservedKeys = new Set(everObserved.map((p) => `${p.model}|${p.harness}`));
-  const windowCountByKey = new Map(
-    windowCounts.map((r) => [`${r.model}|${r.harness}`, r.sessionCount]),
-  );
-  const cells = models.flatMap((model) =>
-    harnesses.map((harness) => {
-      const key = `${model}|${harness}`;
-      const sessionCount = everObservedKeys.has(key) ? (windowCountByKey.get(key) ?? 0) : null;
-      return { model, harness, sessionCount };
-    }),
-  );
+  const { models, harnesses, cells } = buildModelHarnessCells(everObserved, windowCounts);
   const knownCells = cells.filter((c) => c.sessionCount !== null).length;
   const token = makeBaseToken(
     tokens.analysisReleaseId,
@@ -1429,6 +1434,30 @@ export async function getModelHarnessMatrix(
   return { token, models, harnesses, cells };
 }
 
+/** Builds the sorted model×harness axes and cells for {@link getModelHarnessMatrix}
+ * (issue #169). A cell is `null` when the pair was never jointly observed
+ * (missing), or a measured session count (possibly `0`) otherwise — never
+ * coerces "never observed" into `0` (`.agents/rules/missing-is-never-zero.md`). */
+function buildModelHarnessCells(
+  everObserved: readonly { model: string; harness: string }[],
+  windowCounts: readonly { model: string; harness: string; sessionCount: number }[],
+): { models: string[]; harnesses: string[]; cells: ModelHarnessMatrix['cells'] } {
+  const models = [...new Set(everObserved.map((p) => p.model))].sort();
+  const harnesses = [...new Set(everObserved.map((p) => p.harness))].sort();
+  const everObservedKeys = new Set(everObserved.map((p) => `${p.model}|${p.harness}`));
+  const windowCountByKey = new Map(
+    windowCounts.map((r) => [`${r.model}|${r.harness}`, r.sessionCount]),
+  );
+  const cells = models.flatMap((model) =>
+    harnesses.map((harness) => {
+      const key = `${model}|${harness}`;
+      const sessionCount = everObservedKeys.has(key) ? (windowCountByKey.get(key) ?? 0) : null;
+      return { model, harness, sessionCount };
+    }),
+  );
+  return { models, harnesses, cells };
+}
+
 export async function getInvocationsByDomain(
   queryable: Queryable,
   query: AnalyticsQuery,
@@ -1436,16 +1465,10 @@ export async function getInvocationsByDomain(
   const portfolioId = await resolvePortfolioId(queryable, query);
   const tokens = pageTokens(query, []);
   if (!portfolioId) {
-    const token = makeBaseToken(
-      tokens.analysisReleaseId,
-      tokens.generationId,
-      tokens.comparabilityGroupId,
-      0,
-      0,
-      0,
-      'observed',
+    const token = emptyPortfolioToken(
+      tokens,
       'invocations-by-domain-0.1.0',
-      [evidenceLink('portfolio', 'unknown', 'Invocations by domain')],
+      'Invocations by domain',
     );
     return { token, rows: [], totalInvocations: 0 };
   }

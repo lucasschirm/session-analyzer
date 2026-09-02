@@ -1152,6 +1152,30 @@ function sortEventRows(events: readonly SessionEventRow[]): SessionEventRow[] {
   return [...events].sort((a, b) => (a.timestamp ?? '').localeCompare(b.timestamp ?? ''));
 }
 
+function sessionEventsToken(
+  sessionId: string,
+  events: readonly SessionEventRow[],
+  query: AnalyticsQuery | undefined,
+): AnalyticsToken {
+  const knownN = events.filter((event) => event.timestamp !== undefined).length;
+  const tokens = pageTokens(query, {
+    analysisReleaseId: query?.analysisReleaseId ?? 'unknown',
+    generationId: query?.generationId ?? 'unknown',
+    comparabilityGroupId: query?.comparabilityGroupId ?? 'session-events',
+  });
+  return makeToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    events.length,
+    knownN,
+    events.length - knownN,
+    'observed',
+    'session-events-0.1.0',
+    [evidenceLink('session', sessionId, 'Session events')],
+  );
+}
+
 async function getSessionEvents(
   queryable: Queryable,
   sessionId: string,
@@ -1167,26 +1191,7 @@ async function getSessionEvents(
       .filter((row) => row.role === 'user' || row.role === 'assistant')
       .map(messageToEventRow),
   ]);
-
-  const knownN = events.filter((event) => event.timestamp !== undefined).length;
-  const tokens = pageTokens(query, {
-    analysisReleaseId: query?.analysisReleaseId ?? 'unknown',
-    generationId: query?.generationId ?? 'unknown',
-    comparabilityGroupId: query?.comparabilityGroupId ?? 'session-events',
-  });
-  const token = makeToken(
-    tokens.analysisReleaseId,
-    tokens.generationId,
-    tokens.comparabilityGroupId,
-    events.length,
-    knownN,
-    events.length - knownN,
-    'observed',
-    'session-events-0.1.0',
-    [evidenceLink('session', sessionId, 'Session events')],
-  );
-
-  return { token, sessionId, events };
+  return { token: sessionEventsToken(sessionId, events, query), sessionId, events };
 }
 
 async function getEventPayload(
@@ -2179,6 +2184,29 @@ export function createMetadataView(queryable: Queryable): MetadataView {
   };
 }
 
+function dimensionDomainsToken(
+  portfolioId: string | null,
+  total: number,
+  query: AnalyticsQuery | undefined,
+): AnalyticsToken {
+  const tokens = pageTokens(query, {
+    analysisReleaseId: query?.analysisReleaseId ?? 'unknown',
+    generationId: query?.generationId ?? 'unknown',
+    comparabilityGroupId: query?.comparabilityGroupId ?? 'dimension-domains',
+  });
+  return makeToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    total,
+    total,
+    0,
+    'observed',
+    'dimension-domains-0.1.0',
+    [evidenceLink('portfolio', portfolioId ?? 'unknown', 'Dimension domains')],
+  );
+}
+
 async function getDimensionDomains(
   queryable: Queryable,
   query: AnalyticsQuery | undefined,
@@ -2191,25 +2219,8 @@ async function getDimensionDomains(
         DimensionDomainStore.getModelDomain(queryable, portfolioId),
       ])
     : [[], [], []];
-
   const total = projects.length + harnesses.length + models.length;
-  const tokens = pageTokens(query, {
-    analysisReleaseId: query?.analysisReleaseId ?? 'unknown',
-    generationId: query?.generationId ?? 'unknown',
-    comparabilityGroupId: query?.comparabilityGroupId ?? 'dimension-domains',
-  });
-  const token = makeToken(
-    tokens.analysisReleaseId,
-    tokens.generationId,
-    tokens.comparabilityGroupId,
-    total,
-    total,
-    0,
-    'observed',
-    'dimension-domains-0.1.0',
-    [evidenceLink('portfolio', portfolioId ?? 'unknown', 'Dimension domains')],
-  );
-
+  const token = dimensionDomainsToken(portfolioId, total, query);
   return { token, projects, harnesses, models };
 }
 
