@@ -590,13 +590,19 @@ function buildEvidenceContext(
 ): EvidenceContext {
   const rootSessionId = deriveRootSessionId(bundle, context, session.sessionId ?? 'unknown');
   const childSessionIds = new Set<string>();
-  for (const launch of session.subagentLaunches) {
-    const agentId = launch.agentId;
-    if (!agentId) continue;
-    const sub = session.subagentSessions?.[agentId];
-    if (!sub) continue;
+  // Iterate subagentSessions directly (matching visitSessions and
+  // normalizeSessionSpine) so childSessionIds includes every subagent
+  // session, not just those whose launch has agentId.
+  const subagentSessions = session.subagentSessions ?? {};
+  for (const [, sub] of Object.entries(subagentSessions)) {
     childSessionIds.add(
-      deriveChildSessionId(bundle, context, rootSessionId, agentId, sub.sessionId ?? 'unknown'),
+      deriveChildSessionId(
+        bundle,
+        context,
+        rootSessionId,
+        sub.agentId ?? 'unknown',
+        sub.sessionId ?? 'unknown',
+      ),
     );
   }
   return { rootSessionId, childSessionIds };
@@ -612,11 +618,8 @@ function inSessionTree(record: NormalizedEvidenceRecord, ctx: EvidenceContext): 
 
 function* visitAllSessions(session: ClaudeCodeSession): Generator<ClaudeCodeSession> {
   yield session;
-  for (const launch of session.subagentLaunches) {
-    const agentId = launch.agentId;
-    if (!agentId) continue;
-    const sub = session.subagentSessions?.[agentId];
-    if (sub) yield* visitAllSessions(sub);
+  for (const [, sub] of Object.entries(session.subagentSessions ?? {})) {
+    yield* visitAllSessions(sub);
   }
 }
 
@@ -631,16 +634,14 @@ function buildSubagentContexts(
     readonly session: ClaudeCodeSession;
     readonly context: ClaudeCodeEvidenceContext;
   }[] = [];
-  for (const launch of session.subagentLaunches) {
-    const agentId = launch.agentId;
-    if (!agentId) continue;
-    const sub = session.subagentSessions?.[agentId];
-    if (!sub) continue;
+  // Iterate subagentSessions directly (matching visitSessions) so all
+  // subagent sessions are included, not just those whose launch has agentId.
+  for (const [, sub] of Object.entries(session.subagentSessions ?? {})) {
     const childSessionId = deriveChildSessionId(
       bundle,
       context,
       ctx.rootSessionId,
-      agentId,
+      sub.agentId ?? 'unknown',
       sub.sessionId ?? 'unknown',
     );
     contexts.push({

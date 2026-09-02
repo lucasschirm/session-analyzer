@@ -1,24 +1,23 @@
 ---
-globs: "src/pages/**/*.ts,src/components/**/*.ts"
+name: filterable-table-pattern
+description: Use when building or extending a client-side list/table view over rows already loaded in memory (a session's tool_executions, events, or messages) that needs interactive filtering, row expand-to-detail, or both. Covers filter controls, in-memory .filter() state, expand-on-click, and flagging error rows.
 ---
 
 # Filterable Table Pattern (client-side filters + row expand)
 
-**When to use this rule:**
+## When to use
 
 - When building or extending a list/table view that renders an array of
   rows the component already holds in memory (e.g. a session's
   `tool_executions`, `events`, or `messages`), and the view needs
   interactive filtering, a row-level expand-to-detail interaction, or both.
-- Typical candidates in this codebase: any `EventTableRow`-shaped view on
-  the Indicator Details page (`src/pages/indicator-details.ts`), or a future
+- Typical candidates in this codebase: event/evidence tables on the Session
+  Evidence pages (`packages/site/src/pages/session-evidence/`), or a future
   drill-down/list page with more than a handful of rows.
 
-**Reference implementation:** the `tools` indicator on
-`src/pages/indicator-details.ts` (`renderToolsSection`,
-`filteredToolExecutions`, `distinctToolNames`, `toggleToolExpanded`,
-`renderToolDetail`). Read it before building a new filtered table - reuse
-its shape rather than inventing a new one.
+**Closest live precedent:** `packages/site/src/pages/session-evidence/session-evidence-evidence.ts`
+(the metadata-cell preview/full split). Read it before building a new
+filtered table — reuse its shape rather than inventing a new one.
 
 ## Filtering: plain in-memory `.filter()`, not a query
 
@@ -63,12 +62,12 @@ its shape rather than inventing a new one.
   renders as an extra row (`colspan` across all columns) or an inline block
   directly under/in the clicked row, showing whatever full detail doesn't
   fit in the collapsed view (raw inputs, full result text, full JSON, ...).
-  `events-table.ts`'s `.metadata-cell` / `.metadata-preview` /
-  `.metadata-full` split (truncated one-line preview vs. a scrollable `<pre>`
-  with the full pretty-printed content, plus a `title` attribute carrying the
-  full content for a native hover tooltip) is the baseline version of this;
-  the tools table extends it to a whole expandable row when there's more
-  than one field of detail to show (inputs *and* result).
+  The `.metadata-cell` / `.metadata-preview` / `.metadata-full` split
+  (truncated one-line preview vs. a scrollable `<pre>` with the full
+  pretty-printed content, plus a `title` attribute carrying the full content
+  for a native hover tooltip) is the baseline version of this; extend it to
+  a whole expandable row when there's more than one field of detail to show
+  (inputs *and* result).
 - Pretty-print structured detail with `JSON.stringify(value, null, 2)` inside
   a `<pre>` with `white-space: pre-wrap; word-break: break-word` and a
   `max-height` + `overflow-y: auto`, so one huge value can't blow out page

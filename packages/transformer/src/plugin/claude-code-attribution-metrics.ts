@@ -193,11 +193,8 @@ function hasMissingSubagentTranscript(
 
 function* visitAllSessions(session: ClaudeCodeSession): Generator<ClaudeCodeSession> {
   yield session;
-  for (const launch of session.subagentLaunches) {
-    const agentId = launch.agentId;
-    if (!agentId) continue;
-    const sub = session.subagentSessions?.[agentId];
-    if (sub) yield* visitAllSessions(sub);
+  for (const [, sub] of Object.entries(session.subagentSessions ?? {})) {
+    yield* visitAllSessions(sub);
   }
 }
 

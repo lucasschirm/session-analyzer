@@ -331,5 +331,45 @@ describe('ClaudeCodeTransformer', () => {
         reversedResult.sessionSummaries.map((s) => s.sessionId),
       );
     });
+
+    // Regression: when a subagent transcript is supplied but the Agent
+    // tool_use_result omits agentId (so the launch has no agentId), the
+    // spine previously skipped the subagent session — no session summary
+    // was created. But visitSessions (in claude-code-usage.ts) still
+    // visited it and emitted evidence records referencing the child
+    // session ID. During ingestion, upsertSessions only creates sessions
+    // rows from sessionSummaries, so the FK on normalized_events.session_id
+    // failed with SQLITE_CONSTRAINT_FOREIGNKEY. The fix makes the spine
+    // iterate subagentSessions directly (matching visitSessions).
+    it('emits a session summary for every supplied subagent transcript even when the launch lacks agentId', () => {
+      // Main session with an Agent tool_use whose tool_result has NO
+      // agentId — the launch will have no agentId to match.
+      const mainNoAgentId = fixture('e2e-main-session.jsonl').replace(
+        '"agentId":"e2e-agent-0001","resolvedModel":"test-model-transcript","totalTokens":4200,"status":"completed"',
+        '"resolvedModel":"test-model-transcript","totalTokens":4200,"status":"completed"',
+      );
+      const b = bundle([
+        artifact('transcript.jsonl', mainNoAgentId, 'application/jsonl'),
+        // Subagent transcript supplied under a path whose agentId is
+        // derived from the subagent's own agentId field.
+        artifact(
+          'subagents/agent-e2e-agent-0001.jsonl',
+          fixture('e2e-subagent-transcript.jsonl'),
+          'application/jsonl',
+        ),
+      ]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+
+      // Every evidence record's sessionId must have a matching session
+      // summary — otherwise ingestion fails with an FK violation on
+      // normalized_events.session_id.
+      const summarySessionIds = new Set(result.sessionSummaries.map((s) => s.sessionId));
+      const evidenceSessionIds = new Set(result.evidence.map((r) => r.sessionId));
+      for (const sid of evidenceSessionIds) {
+        expect(summarySessionIds.has(sid)).toBe(true);
+      }
+      // There must be a root + at least one child session summary.
+      expect(result.sessionSummaries.length).toBeGreaterThanOrEqual(2);
+    });
   });
 });

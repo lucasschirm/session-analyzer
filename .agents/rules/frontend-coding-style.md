@@ -1,5 +1,5 @@
 ---
-globs: "frontend/src/**/*.ts"
+globs: "packages/site/src/**/*.ts"
 ---
 
 # Coding Style
@@ -10,7 +10,7 @@ globs: "frontend/src/**/*.ts"
 
 ## Mandatory performance review (`lit-performance-optimizer` agent)
 
-Whenever you **create or change** any frontend file under `frontend/src/`
+Whenever you **create or change** any frontend file under `packages/site/src/`
 (components, controllers, stores, services, or other `.ts` code), dispatch
 the `lit-performance-optimizer` agent to validate the change once the edit is
 complete:
@@ -37,12 +37,8 @@ Guidelines:
   intermediate `Edit`. Reviewing half-written code wastes the pass.
 - **Act on the findings** — apply the agent's recommendations (or note why a
   finding is intentionally not addressed) before considering the task complete.
-- This complements, and does not replace, the mandatory `pnpm lint`
-  (`tsc` + Biome) gate in `.claude/rules/frontend-workspace.md`.
-
-> Automation note: a Stop hook that auto-dispatches this agent on frontend
-> changes is tracked in issue #1292. Until it lands, invoke the agent manually
-> per the rule above.
+- This complements, and does not replace, the mandatory `pnpm verify`
+  (typecheck + Biome + tests) gate in `.agents/rules/workspace-rules.md`.
 
 ## Lit component conventions (Priority A/B)
 
@@ -93,9 +89,9 @@ Guidelines:
 - Styles applied to the root of the component must utilize the `:host` selector within the `static styles` block.
 - If an internal wrapper `<div>` or `<section>` is required inside the shadow DOM, it must include a CSS class identical to the custom element's tag name in `kebab-case`.
 - Example:
-  - Component class: `AbacoFormSection`
-  - Tag name: `abaco-form-section`
-  - Internal wrapper (if used): `<div class="abaco-form-section">...</div>`
+  - Component class: `MetricsCard`
+  - Tag name: `metrics-card`
+  - Internal wrapper (if used): `<div class="metrics-card">...</div>`
 
 ---
 
@@ -111,22 +107,3 @@ Guidelines:
 - Components that receive an object as input should bind that object to a dedicated property and dispatch the entire updated object in the event payload.
 - Components that receive an array as input should emit the updated array or specific selected object(s) as the value on the event detail.
 - If a component receives an array of objects as input, and allows multiple selection, it should always emit an array of the selected objects via the custom event.
-
-## Autocomplete / Search Components
-
-- **Never render a raw base `autocomplete` or `<select>` directly for complex searches.** Use the shared
-  `<abaco-autocomplete>` wrapper (`frontend/src/components/shared/abaco-autocomplete.ts`)
-  for every autocomplete/select-with-search field instead.
-- The wrapper already applies the rules a hand-rolled autocomplete would otherwise need:
-  - `item-title` / `item-value` map the displayed label and emitted value
-    (string key or `(item) => unknown` accessor) — pass them straight through
-    as properties.
-  - Search text state is maintained as an **internal** `@state()` inside the wrapper, so
-    typed text is not prematurely emitted as a value change; consumers never wire
-    this themselves.
-- For **server-driven search** (debounced remote search, pagination), pair
-  `<abaco-autocomplete>` with the `AutocompleteSearchController` (a Lit Reactive Controller located at
-  `frontend/src/controllers/autocomplete-search-controller.ts`). Do not hand-roll
-  a debounce timer, a stale-response token guard, or an `updated()` watcher in the
-  consumer — that logic is centralized once in the Reactive Controller so every
-  consumer inherits the same correct behavior.

@@ -892,10 +892,41 @@ function normalizeSessionSpine(
     }
   }
 
+  // Iterate subagentSessions directly (the source of truth for which
+  // subagent transcripts exist), matching visitSessions in claude-code-usage.ts.
+  // The previous implementation iterated subagentLaunches and looked up
+  // subagentSessions by launch.agentId — but launches can lack agentId when
+  // the tool_use_result omits it, causing the spine to skip subagent sessions
+  // that visitSessions still visits. That mismatch produced evidence records
+  // referencing session IDs with no corresponding session summary, which
+  // triggered SQLITE_CONSTRAINT_FOREIGNKEY on normalized_events.session_id
+  // during ingestion. Launch info is still looked up for the session_relation
+  // record when available.
+  const subagentSessions = session.subagentSessions ?? {};
+  const launchByAgentId = new Map<string, { toolUseId?: string; spawnDepth?: number }>();
+  for (const launch of session.subagentLaunches) {
+    if (launch.agentId) launchByAgentId.set(launch.agentId, launch);
+  }
+  for (const [agentId, child] of Object.entries(subagentSessions)) {
+    const launch = launchByAgentId.get(agentId);
+    const childResult = normalizeSessionSpine(
+      child,
+      bundle,
+      context,
+      artifactId,
+      sessionId,
+      resolvedRootSessionId,
+      launch ? { toolUseId: launch.toolUseId, spawnDepth: 1 } : undefined,
+    );
+    records.push(...childResult.records);
+    warnings.push(...childResult.warnings);
+    summaries.push(...childResult.summaries);
+  }
+  // Warn about launches that reference a subagent transcript that was not
+  // supplied (no matching subagentSessions entry).
   for (const launch of session.subagentLaunches) {
     if (!launch.agentId) continue;
-    const child = session.subagentSessions?.[launch.agentId];
-    if (!child) {
+    if (!subagentSessions[launch.agentId]) {
       warnings.push(
         makeIssue(
           'missing_subagent_transcript',
@@ -904,20 +935,7 @@ function normalizeSessionSpine(
           artifactId,
         ),
       );
-      continue;
     }
-    const childResult = normalizeSessionSpine(
-      child,
-      bundle,
-      context,
-      artifactId,
-      sessionId,
-      resolvedRootSessionId,
-      { toolUseId: launch.toolUseId, spawnDepth: 1 },
-    );
-    records.push(...childResult.records);
-    warnings.push(...childResult.warnings);
-    summaries.push(...childResult.summaries);
   }
 
   const summary: SessionSummary = {
