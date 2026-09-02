@@ -4,15 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
 import { type ChartGeometry, getRenderedGeometry } from './helpers/chart-content';
-
-declare global {
-  interface Window {
-    /** Captured analytics worker instance, set by the test init script. */
-    __analyticsWorker?: Worker;
-    /** Optional callback for tests waiting on the analytics worker. */
-    __onAnalyticsWorkerReady?: (worker: Worker) => void;
-  }
-}
+import { captureAnalyticsWorker, seedSession } from './helpers/seeded-store';
 
 const FIXTURES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -57,13 +49,8 @@ async function getChartGeometryByTitle(page: Page, title: string): Promise<Chart
 
 /**
  * Ingest a fixture into the analytics worker that is already running for the
- * current page, without leaving the Portfolio route.
- *
- * This exercises the same ingestion pipeline as the Manual Import page, but it
- * avoids creating a second `AnalyticsClient`/Web Worker, which can hit an OPFS
- * lock fallback in Chromium and make the second upload invisible. The portfolio
- * re-query defect is about the UI refreshing when the data in the *same* worker
- * changes, so this is the cleanest way to test it.
+ * current page, without leaving the Portfolio route. See
+ * `helpers/seeded-store.ts` for why this avoids a second `AnalyticsClient`.
  */
 async function ingestSessionFromPortfolio(
   page: Page,
@@ -72,105 +59,20 @@ async function ingestSessionFromPortfolio(
   fixtureName: string,
 ): Promise<void> {
   const content = fs.readFileSync(fixture(fixtureName), 'utf8');
-
-  await page.evaluate(
-    async ({ projectId, sessionId: sid, content: fixtureContent }) => {
-      const worker = await new Promise<Worker>((resolve, reject) => {
-        if (window.__analyticsWorker) {
-          resolve(window.__analyticsWorker);
-          return;
-        }
-        window.__onAnalyticsWorkerReady = (worker) => resolve(worker);
-        setTimeout(() => reject(new Error('analytics worker was not created within 30s')), 30000);
-      });
-
-      function sendMessage<T>(type: string, payload: Record<string, unknown>): Promise<T> {
-        const id = 1_000_000 + Math.floor(Math.random() * 1_000_000_000);
-        return new Promise((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error(`worker ${type} message timed out`)),
-            30000,
-          );
-          const listener = (event: MessageEvent) => {
-            if (event.data?.id === id) {
-              clearTimeout(timeout);
-              worker.removeEventListener('message', listener);
-              resolve(event.data as T);
-            }
-          };
-          worker.addEventListener('message', listener);
-          worker.postMessage({ id, type, ...payload });
-        });
-      }
-
-      const artifact = {
-        relativePath: `${sid}.jsonl`,
-        mediaType: 'application/jsonl',
-        content: fixtureContent,
-      };
-
-      const detectResponse = await sendMessage<{
-        ok: boolean;
-        result?: { harness?: string };
-        error?: string;
-      }>('detectManualHarness', { artifacts: [artifact] });
-
-      if (!detectResponse.ok || !detectResponse.result?.harness) {
-        throw new Error(
-          `Harness detection failed: ${detectResponse.error ?? 'no harness matched'}`,
-        );
-      }
-
-      const bundle = {
-        artifacts: [artifact],
-        source: { sourceId: 'manual' },
-        harness: detectResponse.result.harness,
-        projectId,
-        sessionId: sid,
-        importBatchId: `ux003-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      };
-
-      const ingestResponse = await sendMessage<{
-        ok: boolean;
-        result?: { status: string; sessionId: string };
-        error?: string;
-      }>('ingestManualBundle', { bundle });
-
-      if (!ingestResponse.ok) {
-        throw new Error(`Ingestion failed: ${ingestResponse.error ?? 'unknown'}`);
-      }
-      if (
-        ingestResponse.result?.status !== 'committed' &&
-        ingestResponse.result?.status !== 'superseded'
-      ) {
-        throw new Error(
-          `Ingestion was not committed: ${ingestResponse.result?.status ?? 'unknown'}`,
-        );
-      }
-    },
-    { projectId: projectName, sessionId, content },
-  );
+  await seedSession({
+    page,
+    projectId: projectName,
+    sessionId,
+    content,
+    importBatchIdPrefix: 'ux003',
+  });
 }
 
 test.describe('Portfolio refresh liveness', () => {
   test.beforeEach(async ({ page }) => {
     // Capture the page's Analytics Web Worker so the test can push manual
     // ingestion messages through the same worker that the Portfolio view uses.
-    await page.addInitScript(() => {
-      const OrigWorker = window.Worker;
-      window.Worker = class extends OrigWorker {
-        constructor(scriptURL: string | URL, options?: WorkerOptions) {
-          super(scriptURL, options);
-          const href = typeof scriptURL === 'string' ? scriptURL : scriptURL.href;
-          if (href.includes('analytics-worker')) {
-            window.__analyticsWorker = this;
-            if (typeof window.__onAnalyticsWorkerReady === 'function') {
-              window.__onAnalyticsWorkerReady(this);
-            }
-          }
-        }
-      };
-    });
+    await captureAnalyticsWorker(page);
   });
 
   test('UX-003: portfolio metrics and chart geometry refresh live after a second upload', async ({

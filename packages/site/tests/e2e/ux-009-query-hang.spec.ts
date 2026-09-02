@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
+import { installFailingWorker } from './helpers/worker-failure';
 
 const HANGING_PROJECT = 'UX009Hang';
 
@@ -78,27 +79,10 @@ self.onmessage = (event) => {
 `;
 
 async function installHangingAnalyticsWorker(page: Page): Promise<void> {
-  await page.addInitScript((workerScript: string) => {
-    const OriginalWorker = window.Worker;
-
-    class PatchedWorker extends OriginalWorker {
-      constructor(scriptURL: string | URL, options?: WorkerOptions) {
-        const href =
-          typeof scriptURL === 'string'
-            ? new URL(scriptURL, window.location.href).href
-            : scriptURL.href;
-
-        if (href.includes('analytics-worker')) {
-          const blob = new Blob([workerScript], { type: 'application/javascript' });
-          super(URL.createObjectURL(blob), { type: 'module' });
-        } else {
-          super(scriptURL, options);
-        }
-      }
-    }
-
-    window.Worker = PatchedWorker as unknown as typeof Worker;
-  }, HANGING_ANALYTICS_WORKER);
+  await installFailingWorker(page, {
+    match: 'analytics-worker',
+    workerScript: HANGING_ANALYTICS_WORKER,
+  });
 }
 
 test.describe('UX-009: query hang bounded', () => {

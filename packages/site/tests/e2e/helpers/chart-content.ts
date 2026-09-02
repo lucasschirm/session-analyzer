@@ -1,5 +1,12 @@
 import { expect, type Locator } from '@playwright/test';
 
+/** Selectors shared by the chart-specific and generic empty-vs-error affordance
+ * assertions below, per `.agents/rules/no-silent-empty-states.md`: a query
+ * failure and a zero-row result must render structurally distinct markers. */
+const ERROR_SELECTORS =
+  '.chart-error, .state-error, .state-integrity-error, .state-unsupported, [role="alert"]';
+const EMPTY_SELECTORS = '.state-empty, .state-unavailable';
+
 export interface ChartGeometry {
   /** Rendering back-end used by ECharts. */
   renderer: 'svg' | 'canvas';
@@ -198,6 +205,78 @@ export async function assertEmptyAffordance(locator: Locator): Promise<void> {
   expect(
     content.emptyCount,
     'Expected an empty or unavailable affordance to be present',
+  ).toBeGreaterThan(0);
+  expect(
+    content.errorCount,
+    'Empty affordance must not also be satisfied by an error-boundary selector',
+  ).toBe(0);
+}
+
+export interface ComponentAffordance {
+  errorCount: number;
+  errorTexts: string[];
+  emptyCount: number;
+  emptyText: string | null;
+}
+
+/**
+ * Reads empty/error affordance markers directly from `locator`'s own shadow
+ * root (not an `analytics-chart`/`echarts-base` ancestor search). This is the
+ * generic counterpart to `queryChartContent` for non-chart data components
+ * (metric cards, tables, lists) that follow the same `.state-empty` /
+ * `.state-error` convention required by `.agents/rules/no-silent-empty-states.md`.
+ */
+async function queryComponentAffordance(locator: Locator): Promise<ComponentAffordance> {
+  return locator.first().evaluate<ComponentAffordance, { error: string; empty: string }>(
+    (el, selectors) => {
+      const root = (el as HTMLElement).shadowRoot;
+      if (!root) {
+        return { errorCount: 0, errorTexts: [], emptyCount: 0, emptyText: null };
+      }
+      const errorEls = Array.from(root.querySelectorAll(selectors.error));
+      const emptyEls = Array.from(root.querySelectorAll(selectors.empty));
+      return {
+        errorCount: errorEls.length,
+        errorTexts: errorEls.map((e) => (e.textContent ?? '').trim()).filter(Boolean),
+        emptyCount: emptyEls.length,
+        emptyText: (emptyEls[0]?.textContent ?? '').trim() || null,
+      };
+    },
+    { error: ERROR_SELECTORS, empty: EMPTY_SELECTORS },
+  );
+}
+
+/**
+ * Generic empty-vs-error affordance pair, for any data-rendering component
+ * (metric card, table, list — not just `analytics-chart`) that renders
+ * `.state-error`/`.state-empty` markers in its own shadow root.
+ *
+ * Asserts a distinguishable error affordance is present and no empty-state
+ * marker is also present, so a failure can never be read as "no data" per
+ * `.agents/rules/no-silent-empty-states.md`.
+ */
+export async function assertComponentErrorAffordance(locator: Locator): Promise<void> {
+  const content = await queryComponentAffordance(locator);
+  expect(content.errorCount, 'Expected a component error affordance to be present').toBeGreaterThan(
+    0,
+  );
+  expect(
+    content.emptyCount,
+    'Error affordance must not also be satisfied by an empty-state selector',
+  ).toBe(0);
+}
+
+/**
+ * The empty-state counterpart to `assertComponentErrorAffordance`: asserts a
+ * distinguishable empty/unavailable affordance is present with no error
+ * marker, proving a genuine zero-row result never renders identically to a
+ * query failure.
+ */
+export async function assertComponentEmptyAffordance(locator: Locator): Promise<void> {
+  const content = await queryComponentAffordance(locator);
+  expect(
+    content.emptyCount,
+    'Expected a component empty or unavailable affordance to be present',
   ).toBeGreaterThan(0);
   expect(
     content.errorCount,

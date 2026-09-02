@@ -56,7 +56,11 @@ playwright-report
 
 # Custom
 tmp
-docs/superpowers
+docs/superpowers/*
+# The E2E coverage catalog (.agents/rules/e2e-coverage-required.md) lives
+# under docs/superpowers/plans and must be tracked: it is the merge-blocking
+# reference every user-facing PR cites catalog IDs against.
+!docs/superpowers/plans
 .superpowers
 .worktrees
 .claude/scheduled_tasks.lock
