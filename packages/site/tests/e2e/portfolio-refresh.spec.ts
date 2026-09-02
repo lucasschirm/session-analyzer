@@ -83,7 +83,10 @@ test.describe('Portfolio refresh liveness', () => {
     // 1. Land on the Portfolio (Dashboard) view once and never reload or navigate away.
     await page.goto('/#/');
     await expect(page.locator('portfolio-view')).toBeVisible({ timeout: 30000 });
-    await expect(page.getByText('Loading portfolio…')).not.toBeVisible({ timeout: 30000 });
+    // Issue #170 replaced the old "Loading portfolio…" placeholder with a
+    // per-card `PanelState`; the Sessions KPI tile (`stat-tile-hero`)
+    // rendering is the real "load finished" signal now.
+    await expect(page.locator('stat-tile-hero')).toBeVisible({ timeout: 30000 });
 
     // 2. Ingest session A through the same analytics worker that the Portfolio
     //    view uses (simulating a session upload while on the page).

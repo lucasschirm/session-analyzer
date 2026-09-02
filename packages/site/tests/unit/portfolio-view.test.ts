@@ -266,6 +266,34 @@ describe('portfolio-view', () => {
     expect(root.textContent).toContain('Project One');
   });
 
+  it('renders the KPI band normally when the heatmap query fails (no-silent-empty-states)', async () => {
+    portfolioMock.getModelHarnessMatrix.mockRejectedValue(new Error('heatmap down'));
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    // A failing heatmap query must not blank the KPI band — the hero tile
+    // still renders with its real value and n= sample label.
+    const heroTile = root.querySelector('stat-tile-hero');
+    expect(heroTile?.getAttribute('value')).toBe('42');
+    expect(heroTile?.getAttribute('samplelabel') ?? heroTile?.getAttribute('sampleLabel')).toBe(
+      'n=42 sessions',
+    );
+
+    // The heatmap's own `analytics-chart` reflects the error, distinct from
+    // its loading/empty states (`.agents/rules/no-silent-empty-states.md`) —
+    // it is `analytics-chart` (issue #168), not the KPI band, that owns
+    // rendering the actual error affordance for chart-backed cards.
+    const heatmapChart = Array.from(root.querySelectorAll('analytics-chart')).find((el) =>
+      (el as LitElement).shadowRoot?.textContent?.includes('model × harness'),
+    ) as (LitElement & { state: string | null }) | undefined;
+    expect(heatmapChart?.state).toBe('error');
+
+    // The leaderboard, unaffected, still renders too.
+    expect(root.textContent).toContain('Project One');
+  });
+
   it('renders the heatmap missing-cell affordance as "—", never a fabricated 0', async () => {
     portfolioMock.getModelHarnessMatrix.mockResolvedValue(
       matrixFixture({
