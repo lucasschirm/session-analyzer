@@ -87,6 +87,133 @@ export interface PortfolioOverview {
   readonly harnessCount: number;
 }
 
+/**
+ * A period-over-period comparison for one KPI (issue #169). `previous`/
+ * `previousN` are omitted — not `0` — when no comparable previous window
+ * exists (the "All" time preset has no start bound, so there is no
+ * equal-length prior window to compare against). Consumers render "—" in
+ * that case rather than fabricating a 0% delta
+ * (`.agents/rules/missing-is-never-zero.md`).
+ */
+export interface PeriodDelta {
+  readonly current: number;
+  readonly currentN: number;
+  readonly previous?: number;
+  readonly previousN?: number;
+}
+
+/**
+ * Token totals for a portfolio KPI window (issue #169). `in`/`out` are each
+ * an independent {@link PeriodDelta} because a `model_requests` row can have
+ * a known `input_tokens` and a missing `output_tokens` (or vice versa) —
+ * `currentN` on each side is the count of requests whose respective token
+ * field was non-null, never inflated by the other side's coverage
+ * (`.agents/rules/missing-is-never-zero.md`).
+ */
+export interface PortfolioTokenTotals {
+  readonly in: PeriodDelta;
+  readonly out: PeriodDelta;
+}
+
+/**
+ * Cost coverage for a portfolio KPI window (issue #169). `currentReportedHarnesses`
+ * of `currentTotalHarnesses` distinct harnesses observed in the window have
+ * at least one non-null `model_usage.cost` row; `currentTotal` sums only
+ * those known rows. When zero harnesses report cost, `currentTotal` is
+ * `null` — a coverage gap, never a fabricated `$0`
+ * (`.agents/rules/missing-is-never-zero.md`). `previousTotal`/
+ * `previousReportedHarnesses` are omitted for the "All" time preset, same as
+ * {@link PeriodDelta}.
+ */
+export interface PortfolioCostSummary {
+  readonly currentTotal: number | null;
+  readonly currentReportedHarnesses: number;
+  readonly currentTotalHarnesses: number;
+  readonly previousTotal?: number | null;
+  readonly previousReportedHarnesses?: number;
+  readonly previousTotalHarnesses?: number;
+}
+
+/**
+ * Clean-completion rate for a portfolio KPI window (issue #169), built on
+ * the `session:outcome` signal (issue #178). `value` is `cleanN / knownN`
+ * and is `null` when `knownN` is 0 (no classified outcome in the window) —
+ * never a fabricated 0%. `eligibleN` is every `finality = 'final'` session
+ * in the window; `knownN` is the classified subset.
+ */
+export interface CleanCompletionRate {
+  readonly value: number | null;
+  readonly eligibleN: number;
+  readonly knownN: number;
+}
+
+/**
+ * Portfolio KPI band (issue #169): sessions delta, token totals, cost
+ * coverage, and clean-completion rate for the query window.
+ */
+export interface PortfolioKpiBand {
+  readonly token: AnalyticsToken;
+  readonly sessions: PeriodDelta;
+  readonly tokens: PortfolioTokenTotals;
+  readonly cost: PortfolioCostSummary;
+  readonly cleanCompletionRate: CleanCompletionRate;
+}
+
+/** One bar of the sessions-by-model bar list (issue #169). Sessions with no
+ * `model_requests` row are grouped under `model: 'unknown'` — a real
+ * observed bucket, not a dropped one. */
+export interface SessionsByModelBarRow {
+  readonly model: string;
+  readonly sessionCount: number;
+}
+
+export interface SessionsByModelBar {
+  readonly token: AnalyticsToken;
+  readonly rows: readonly SessionsByModelBarRow[];
+}
+
+/**
+ * One cell of the model×harness session-count matrix (issue #169).
+ * `sessionCount: null` means this (model, harness) combination has never
+ * been observed in the portfolio (the harness never runs this model) — a
+ * distinct sentinel from a measured `0` (the combination has run before but
+ * had no sessions in this window). See
+ * `.agents/rules/missing-is-never-zero.md`.
+ */
+export interface ModelHarnessMatrixCell {
+  readonly model: string;
+  readonly harness: string;
+  readonly sessionCount: number | null;
+}
+
+export interface ModelHarnessMatrix {
+  readonly token: AnalyticsToken;
+  readonly models: readonly string[];
+  readonly harnesses: readonly string[];
+  readonly cells: readonly ModelHarnessMatrixCell[];
+}
+
+/**
+ * Invocation counts by canonical domain (issue #169) — implements
+ * `portfolio:invocations_by_domain` (`metric-registry.ts`). Exactly the four
+ * canonical `kind` values are present; MCP-server calls are counted inside
+ * `tool`, never as a fifth bucket
+ * (`.agents/rules/analytics-domain-distinctions.md`). `totalInvocations` is
+ * the raw count of every invocation in the window, independent of the
+ * per-kind breakdown, so consumers can assert
+ * `sum(byKind) === totalInvocations` (no double counting).
+ */
+export interface InvocationsByDomainRow {
+  readonly kind: 'tool' | 'skill' | 'agent' | 'sub_agent';
+  readonly count: number;
+}
+
+export interface InvocationsByDomain {
+  readonly token: AnalyticsToken;
+  readonly rows: readonly InvocationsByDomainRow[];
+  readonly totalInvocations: number;
+}
+
 export interface PortfolioTrendSeries {
   readonly token: AnalyticsToken;
   readonly series: readonly TimeSeriesPoint[];
@@ -116,10 +243,191 @@ export interface ModelHarnessCohortPage extends CursorPage<ModelHarnessCohort> {
 
 export interface ProjectListPage extends CursorPage<ProjectListItem> {}
 
+/**
+ * Per-project token totals for a project-leaderboard row (issue #169). Same
+ * missingness policy as {@link PortfolioTokenTotals}: `inputKnownN`/
+ * `outputKnownN` are each the count of requests with a known value on that
+ * side, never inflated by the other side's coverage
+ * (`.agents/rules/missing-is-never-zero.md`).
+ */
+export interface ProjectTokenTotals {
+  readonly inputTokens: number;
+  readonly inputKnownN: number;
+  readonly outputTokens: number;
+  readonly outputKnownN: number;
+}
+
+/**
+ * Per-project clean-completion rate for a leaderboard row (issue #169),
+ * reusing the `portfolio:clean_completion_rate` formula (`cleanN / knownN`)
+ * at project grain — see `PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION`
+ * in `metric-registry.ts`. `value` is `null`, never `0`, when `knownN` is 0.
+ */
+export interface ProjectCleanRate {
+  readonly value: number | null;
+  readonly eligibleN: number;
+  readonly knownN: number;
+}
+
+/**
+ * One day's session count in a project's 30-day trend sparkline (issue
+ * #169). Every day inside the trend window is present in `series`, even
+ * when a project had 0 sessions that day — a real observed zero, distinct
+ * from the *window itself* being unavailable (which is instead an empty
+ * `series` array on {@link ProjectLeaderboardRow}, only when the project's
+ * window bounds could not be resolved at all).
+ */
+export interface ProjectTrendPoint {
+  readonly day: string;
+  readonly sessionCount: number;
+}
+
+/**
+ * One row of the portfolio project leaderboard (issue #169): sessions,
+ * tokens, clean rate, last-active, and a 30-day session-count trend per
+ * project. `lastActiveAt` is omitted (never a fabricated timestamp) for a
+ * project with no session start time recorded yet.
+ */
+export interface ProjectLeaderboardRow {
+  readonly projectId: string;
+  readonly name: string;
+  readonly sessionCount: number;
+  readonly tokens: ProjectTokenTotals;
+  readonly cleanRate: ProjectCleanRate;
+  readonly lastActiveAt?: string;
+  readonly trend: readonly ProjectTrendPoint[];
+}
+
+/**
+ * Full project-leaderboard DTO (issue #169). `rows` includes every project
+ * in the portfolio — a project with zero sessions in the query window still
+ * gets a row with `sessionCount: 0` (a real measured zero), never an
+ * omitted row (`.agents/rules/missing-is-never-zero.md`).
+ */
+export interface ProjectLeaderboard {
+  readonly token: AnalyticsToken;
+  readonly rows: readonly ProjectLeaderboardRow[];
+}
+
 export interface ProjectBehaviorSummary {
   readonly token: AnalyticsToken;
   readonly headlineMetrics: readonly MetricValueDto[];
   readonly trendToken: AnalyticsToken;
+}
+
+/**
+ * One aggregate stat-strip value (issue #169): `value` is `null` when
+ * `knownN` is 0 — a missing signal, never a fabricated 0
+ * (`.agents/rules/missing-is-never-zero.md`). `eligibleN` is the population
+ * this stat was computed over; `knownN` is the subset with a usable
+ * observation (e.g. sessions with both `start_time` and `end_time`).
+ * `previousValue`/`previousKnownN` are omitted when no comparable prior
+ * window exists.
+ */
+export interface AggregateStat {
+  readonly value: number | null;
+  readonly eligibleN: number;
+  readonly knownN: number;
+  readonly previousValue?: number | null;
+  readonly previousEligibleN?: number;
+  readonly previousKnownN?: number;
+}
+
+/**
+ * Project Behavior stat strip (issue #169): sessions delta, session-duration
+ * and turn-count percentiles, and tokens/cost per session, all for the query
+ * window. Percentiles on small samples (n=1, n=2) are still reported — never
+ * suppressed — with their `knownN` alongside so consumers can judge
+ * reliability (`.agents/rules/aggregates-expose-sample-size.md`).
+ */
+export interface ProjectStatStrip {
+  readonly token: AnalyticsToken;
+  readonly sessions: PeriodDelta;
+  readonly durationMedianMs: AggregateStat;
+  readonly durationP90Ms: AggregateStat;
+  readonly turnsMedian: AggregateStat;
+  readonly turnsP90: AggregateStat;
+  readonly tokensPerSession: AggregateStat;
+  readonly costPerSession: AggregateStat;
+}
+
+/** One session-duration histogram bin (issue #169). `endMs: null` marks the
+ * open-ended final bin (">= last edge"). Bin edges come from
+ * `SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS` (`metric-registry.ts`). */
+export interface DurationHistogramBin {
+  readonly startMs: number;
+  readonly endMs: number | null;
+  readonly count: number;
+}
+
+/** Session-duration histogram for a project window (issue #169). `knownN` is
+ * the subset of `eligibleN` sessions with both `start_time`/`end_time`
+ * recorded; the difference is never folded into bin 0. */
+export interface SessionDurationHistogram {
+  readonly token: AnalyticsToken;
+  readonly bins: readonly DurationHistogramBin[];
+  readonly eligibleN: number;
+  readonly knownN: number;
+}
+
+/** One week's tool error rate (issue #169). `rate` is `null` — not `0` —
+ * when `toolCallsN` is 0 for that week (no tool calls observed, not a 0%
+ * error rate). */
+export interface WeeklyToolErrorRatePoint {
+  readonly weekBucket: string;
+  readonly rate: number | null;
+  readonly toolCallsN: number;
+  readonly failedN: number;
+}
+
+/** Weekly tool error rate series for a project (issue #169). `currentValue`
+ * mirrors the latest week's `rate` (also `null` when that week had 0 tool
+ * calls). */
+export interface WeeklyToolErrorRateSeries {
+  readonly token: AnalyticsToken;
+  readonly series: readonly WeeklyToolErrorRatePoint[];
+  readonly currentValue: number | null;
+  readonly currentWeekN: number;
+}
+
+/** One tool's invocation count in the top-tools ranking (issue #169), scoped
+ * to `kind = 'tool'` invocations only — Skill/Agent/Sub Agent invocations
+ * have their own metrics and are never folded into this list
+ * (`.agents/rules/analytics-domain-distinctions.md`). */
+export interface TopToolRow {
+  readonly componentId: string;
+  readonly displayName: string | null;
+  readonly invocationCount: number;
+}
+
+export interface TopToolsList {
+  readonly token: AnalyticsToken;
+  readonly rows: readonly TopToolRow[];
+  readonly totalInvocations: number;
+}
+
+/**
+ * One (model, harness) cohort row scoped to a single project (issue #169).
+ * `medianTokens`/`medianCost` are `null` when no session in the cohort has a
+ * known value (a coverage gap, never a fabricated 0). `lowN` flags cohorts
+ * with `n < MODEL_HARNESS_COHORT_LOW_N_THRESHOLD` (`metric-registry.ts`) so
+ * consumers can visually de-emphasize statistically unreliable rows without
+ * suppressing them.
+ */
+export interface ProjectModelHarnessCohortRow {
+  readonly model: string;
+  readonly harness: string;
+  readonly n: number;
+  readonly medianTokens: number | null;
+  readonly medianCost: number | null;
+  readonly cleanRate: number | null;
+  readonly cleanRateKnownN: number;
+  readonly lowN: boolean;
+}
+
+export interface ProjectModelHarnessCohorts {
+  readonly token: AnalyticsToken;
+  readonly rows: readonly ProjectModelHarnessCohortRow[];
 }
 
 export interface SessionTrendSeries {
@@ -387,6 +695,138 @@ export interface FilterMetadata {
   readonly analysisReleaseToken: string;
 }
 
+/**
+ * `kind` vocabulary for a full-detail session-events row (issue #169): the
+ * four canonical invocation kinds (`INVOCATION_KINDS` in
+ * `packages/db-core/src/session-evidence.ts`) plus the two message kinds.
+ * Nothing else — MCP is a sub-classification within `tool`, never a
+ * separate kind (`.agents/rules/analytics-domain-distinctions.md`).
+ */
+export type SessionEventKind =
+  | 'tool'
+  | 'skill'
+  | 'agent'
+  | 'sub_agent'
+  | 'user_message'
+  | 'assistant_message';
+
+/**
+ * A payload attached to a session-events row, capped at
+ * `PAYLOAD_TRUNCATION_BYTES` (db-core) for the bulk transfer. When
+ * `truncated` is true, the full body is available via
+ * `SessionEvidenceView.getEventPayload`. `tokens` is omitted (never `0`)
+ * when neither exact nor estimated token counts were recorded.
+ */
+export interface SessionEventPayloadSummary {
+  readonly payloadId: string;
+  readonly content: string | null;
+  readonly truncated: boolean;
+  readonly sizeBytes?: number;
+  readonly tokens?: number;
+}
+
+/**
+ * One row of the full-detail, non-paginated session-events DTO. `timestamp`,
+ * `turnNumber`, `tokens`, and `durationMs` are all optional-missing (never
+ * coerced to `0`) — see the documented invocation/turn-linkage limitation in
+ * `packages/db-core/src/session-events-detail.ts`.
+ */
+export interface SessionEventRow {
+  readonly id: string;
+  readonly timestamp?: string;
+  readonly turnNumber?: number;
+  readonly kind: SessionEventKind;
+  readonly name: string;
+  readonly target?: string;
+  readonly tokens?: number;
+  readonly durationMs?: number;
+  readonly status: string;
+  readonly inputPayload?: SessionEventPayloadSummary;
+  readonly resultPayload?: SessionEventPayloadSummary;
+}
+
+/**
+ * Full (non-paginated) session-events DTO. `token.eligibleN`/`knownN` are
+ * the total event count and the count with a fully-populated `timestamp`
+ * respectively, per `.agents/rules/aggregates-expose-sample-size.md`. This
+ * exists alongside `getEvidencePages` (still the paginated path for
+ * existing consumers) — see the docstring on `SessionEvidenceView`.
+ */
+export interface SessionEventsDetail {
+  readonly token: AnalyticsToken;
+  readonly sessionId: string;
+  readonly events: readonly SessionEventRow[];
+}
+
+/** The full, untruncated body of one payload — the "fetch full payload" affordance. */
+export interface SessionEventPayloadDetail {
+  readonly payloadId: string;
+  readonly content: string | null;
+  readonly sizeBytes?: number;
+  readonly tokens?: number;
+}
+
+/**
+ * `kind` vocabulary for a turn-timeline segment (issue #169). Tool/Skill/
+ * Agent wall-clock time is combined into a single `invocation` band — the
+ * band is never labelled with the specific domain name, which would
+ * conflate Tool/Skill/Agent (`.agents/rules/analytics-domain-distinctions.md`).
+ * The specific underlying kind is carried on `TurnTimelineSegment.invocationKind`
+ * so a tooltip can show it without the band label doing so. `sub_agent` is
+ * always its own band — sub-session time is never folded into `invocation`.
+ */
+export type TurnTimelineSegmentKind = 'user' | 'assistant' | 'invocation' | 'sub_agent';
+
+/**
+ * One ordered, non-overlapping segment of the turn timeline (issue #169).
+ * Segments are laid out on a single track in start-time order and are built
+ * to exactly partition `[bounds.start, bounds.end]` — see the gap-filling
+ * policy documented on `buildTurnTimelineSegments`
+ * (`packages/db/src/analytics-session.ts`). `durationMs` is therefore a
+ * *layout width*, not the underlying event's own measured latency (which
+ * remains separately nullable on `SessionEventRow.durationMs`); concurrent
+ * invocations are laid out sequentially by start time on this single track,
+ * a documented simplification.
+ */
+export interface TurnTimelineSegment {
+  readonly kind: TurnTimelineSegmentKind;
+  readonly startMs: number;
+  readonly durationMs: number;
+  /** Only set on `kind: 'invocation'` segments. */
+  readonly invocationKind?: 'tool' | 'skill' | 'agent';
+  /** The underlying invocation/message id this segment was built from. */
+  readonly sourceId: string;
+}
+
+/**
+ * Full turn-timeline DTO (issue #169). `token.eligibleN` is every
+ * turns/messages/invocations row considered; `token.knownN` is the subset
+ * with a resolvable start time and therefore placed into a segment. An
+ * empty `segments` array is a legitimate "no timestamped evidence yet"
+ * state, distinguishable from a query failure via the token/coverage
+ * machinery (`.agents/rules/no-silent-empty-states.md`). `totalDurationMs`
+ * is `null` only when neither the session's recorded start/end nor any
+ * timestamped event exists to bound the timeline.
+ */
+export interface TurnTimeline {
+  readonly token: AnalyticsToken;
+  readonly sessionId: string;
+  readonly segments: readonly TurnTimelineSegment[];
+  readonly totalDurationMs: number | null;
+}
+
+/**
+ * Distinct dimension-value lists observed over the *unfiltered* store for a
+ * portfolio (issue #169) — backs the filter-bar chips. An empty list is a
+ * legitimate "nothing observed yet", not an error.
+ */
+export interface DimensionDomains {
+  readonly token: AnalyticsToken;
+  readonly projects: readonly string[];
+  readonly harnesses: readonly string[];
+  readonly models: readonly string[];
+}
+
 export interface CoverageExplanation {
   readonly metricId: string;
   readonly coverage: Coverage;
@@ -400,10 +840,16 @@ export interface CoverageExplanation {
 
 export interface PortfolioView {
   getOverview(query: AnalyticsQuery): Promise<PortfolioOverview>;
+  getKpiBand(query: AnalyticsQuery): Promise<PortfolioKpiBand>;
   getTrends(query: AnalyticsQuery): Promise<PortfolioTrendSeries>;
   getComponentUtilization(query: AnalyticsQuery): Promise<ComponentUtilizationPage>;
   getModelHarnessCohorts(query: AnalyticsQuery): Promise<ModelHarnessCohortPage>;
   getProjectList(query: AnalyticsQuery): Promise<ProjectListPage>;
+  getSessionsByModel(query: AnalyticsQuery): Promise<SessionsByModelBar>;
+  getModelHarnessMatrix(query: AnalyticsQuery): Promise<ModelHarnessMatrix>;
+  getInvocationsByDomain(query: AnalyticsQuery): Promise<InvocationsByDomain>;
+  /** Project leaderboard rows: sessions, tokens, clean rate, last-active, 30d trend (issue #169). */
+  getProjectLeaderboard(query: AnalyticsQuery): Promise<ProjectLeaderboard>;
 }
 
 export interface ProjectBehaviorView {
@@ -415,8 +861,39 @@ export interface ProjectBehaviorView {
   ): Promise<ConfigurationTimeline>;
   getOutliers(projectId: string, query: AnalyticsQuery): Promise<OutlierPage>;
   getComparisons(projectId: string, query: AnalyticsQuery): Promise<ComparisonPage>;
+  /**
+   * Session outcome mix (clean / interrupted-by-user / ended-on-error, plus
+   * the unreadable-tail bucket) for the project-behavior drill-down. Built
+   * on the `session:outcome` signal from issue #178
+   * (`SessionOutcomeStore.rollupByProject` / `getSessionOutcomeDistribution`
+   * in `analytics-session.ts`) — this method only wires that existing DTO
+   * into the read contract, it does not reclassify anything.
+   */
+  getOutcomeMix(projectId: string, query?: AnalyticsQuery): Promise<SessionOutcomeDistribution>;
+  /** Stat strip: sessions delta, duration/turns percentiles, tokens/cost per session (issue #169). */
+  getStatStrip(projectId: string, query: AnalyticsQuery): Promise<ProjectStatStrip>;
+  /** Session-duration histogram binned by `SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS` (issue #169). */
+  getDurationHistogram(projectId: string, query: AnalyticsQuery): Promise<SessionDurationHistogram>;
+  /** Weekly tool error rate series, gap-filled for weeks with 0 tool calls (issue #169). */
+  getWeeklyToolErrorRate(
+    projectId: string,
+    query?: AnalyticsQuery,
+  ): Promise<WeeklyToolErrorRateSeries>;
+  /** Top tools by invocation count, `kind = 'tool'` only (issue #169). */
+  getTopTools(projectId: string, query: AnalyticsQuery): Promise<TopToolsList>;
+  /** Model×harness cohort rows scoped to this project (issue #169). */
+  getModelHarnessCohorts(
+    projectId: string,
+    query: AnalyticsQuery,
+  ): Promise<ProjectModelHarnessCohorts>;
 }
 
+/**
+ * `getSessionEvents`/`getEventPayload` are the new full-detail,
+ * non-paginated read path for the redesigned evidence table (issue #169).
+ * `getEvidencePages`/`getTranscriptPages` remain the cursor-paginated path
+ * for existing consumers until that page migrates.
+ */
 export interface SessionEvidenceView {
   getSummary(sessionId: string, query?: AnalyticsQuery): Promise<SessionEvidenceSummary>;
   getContextTimingSeries(sessionId: string, query?: AnalyticsQuery): Promise<ContextTimingSeries>;
@@ -428,6 +905,14 @@ export interface SessionEvidenceView {
   ): Promise<SessionValidationSummary>;
   getEvidencePages(sessionId: string, query?: AnalyticsQuery): Promise<EvidencePage>;
   getTranscriptPages(sessionId: string, query?: AnalyticsQuery): Promise<EvidencePage>;
+  getSessionEvents(sessionId: string, query?: AnalyticsQuery): Promise<SessionEventsDetail>;
+  getEventPayload(
+    sessionId: string,
+    payloadId: string,
+    query?: AnalyticsQuery,
+  ): Promise<SessionEventPayloadDetail | null>;
+  /** Ordered turn-timeline segments (issue #169) — see `TurnTimeline`. */
+  getTurnTimeline(sessionId: string, query?: AnalyticsQuery): Promise<TurnTimeline>;
 }
 
 export interface ComponentEcosystemView {
@@ -464,6 +949,7 @@ export interface ProjectSessionSearchView {
 export interface MetadataView {
   getFilterMetadata(query?: AnalyticsQuery): Promise<FilterMetadata>;
   getCoverageExplanation(metricId: string, query?: AnalyticsQuery): Promise<CoverageExplanation>;
+  getDimensionDomains(query?: AnalyticsQuery): Promise<DimensionDomains>;
 }
 
 export interface AnalyticsDataSource {

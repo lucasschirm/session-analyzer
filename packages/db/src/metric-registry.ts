@@ -286,6 +286,451 @@ export const SESSION_OUTCOME_METRIC_DEFINITION: InsertMetricDefinitionInput = {
   provenanceRequirement: 'final native event(s) per harness',
 };
 
+export const PORTFOLIO_SESSIONS_DELTA_METRIC_ID = 'portfolio:sessions_delta';
+export const PORTFOLIO_SESSIONS_DELTA_METRIC_VERSION = 1;
+
+/**
+ * Portfolio KPI-band sessions period-over-period delta (issue #169) — id
+ * `portfolio:sessions_delta`, version 1. Implemented:
+ * `PortfolioView.getKpiBand` / `getKpiBand` in `analytics-portfolio.ts`.
+ *
+ * - **Population**: sessions with a non-null `start_time` inside the query
+ *   window (`AnalyticsQuery.timeRange`). Sessions with no `start_time` are
+ *   excluded from both windows' counts, never coerced into either bucket.
+ * - **Missingness policy**: the "All" time preset has no `start` bound, so
+ *   there is no equal-length previous window to compare against —
+ *   `resolvePreviousWindow` returns `undefined` and the delta fields
+ *   (`PeriodDelta.previous`/`previousN`) are omitted entirely, never a
+ *   fabricated `0`/`0%` (`.agents/rules/missing-is-never-zero.md`). Covered
+ *   by `packages/db/tests/unit/analytics-datasource-169.test.ts`.
+ * - **Comparability**: both windows are equal-length (millisecond-epoch
+ *   arithmetic, DST/short-month safe) and read the same metric version.
+ */
+export const PORTFOLIO_SESSIONS_DELTA_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: PORTFOLIO_SESSIONS_DELTA_METRIC_ID,
+  version: PORTFOLIO_SESSIONS_DELTA_METRIC_VERSION,
+  label: 'Portfolio sessions period-over-period delta',
+  description: 'Session count in the query window compared to the equal-length prior window.',
+  family: 'session_shape',
+  measurementClass: 'derived',
+  unit: 'count',
+  valueType: 'integer',
+  grain: 'portfolio',
+  dimensions: [],
+  populationRule: 'start_time IS NOT NULL AND start_time IN [window.start, window.end)',
+  statusRule: 'committed',
+  aggregation: 'count',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'both',
+  provenanceRequirement: 'sessions.start_time',
+};
+
+export const INVOCATIONS_BY_DOMAIN_METRIC_ID = 'portfolio:invocations_by_domain';
+export const INVOCATIONS_BY_DOMAIN_METRIC_VERSION = 1;
+
+/**
+ * Portfolio invocations-by-domain metric (issue #169) — id
+ * `portfolio:invocations_by_domain`, version 1. Backed by
+ * `PortfolioKpiStore.getInvocationsByDomainInWindow` and wired into
+ * `PortfolioView.getInvocationsByDomain` (`packages/db/src/analytics-portfolio.ts`).
+ *
+ * - **Population**: every row in `invocations` (`INVOCATION_KINDS` =
+ *   `tool | skill | agent | sub_agent` in
+ *   `packages/db-core/src/session-evidence.ts`) — exactly four canonical
+ *   domains, never five.
+ * - **MCP sub-classification rule** (`.agents/rules/analytics-domain-
+ *   distinctions.md`): an MCP-server invocation is stored as `kind =
+ *   'tool'` with a `component_identities.kind = 'mcp_server'` component. It
+ *   is counted once, inside the `tool` bucket. A consumer that wants the
+ *   MCP subset filters `tool` invocations by component kind — it must
+ *   never be added as a fifth chart series, and doing so would double-count
+ *   against the `tool` total.
+ *
+ * Query surface: `PortfolioView.getInvocationsByDomain` /
+ * `getInvocationsByDomain` in `analytics-portfolio.ts`, backed by
+ * `PortfolioKpiStore.getInvocationsByDomainInWindow` (db-core). Covered by
+ * `packages/db/tests/unit/analytics-portfolio-169-round2.test.ts` including
+ * an explicit `sum(byKind) === totalInvocations` assertion with a
+ * `mcp_server`-classified `tool` invocation in the fixture.
+ */
+export const INVOCATIONS_BY_DOMAIN_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: INVOCATIONS_BY_DOMAIN_METRIC_ID,
+  version: INVOCATIONS_BY_DOMAIN_METRIC_VERSION,
+  label: 'Invocations by component domain',
+  description:
+    'Count of invocations grouped by the four canonical kinds (tool, skill, agent, ' +
+    'sub_agent); MCP-server calls are a sub-classification within tool, not a fifth domain.',
+  family: 'invocations',
+  measurementClass: 'observed',
+  unit: 'count',
+  valueType: 'integer',
+  grain: 'invocation',
+  dimensions: ['kind'],
+  populationRule: 'true',
+  statusRule: 'committed',
+  aggregation: 'count',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'both',
+  provenanceRequirement: 'invocations.kind',
+};
+
+export const PORTFOLIO_CLEAN_COMPLETION_RATE_METRIC_ID = 'portfolio:clean_completion_rate';
+export const PORTFOLIO_CLEAN_COMPLETION_RATE_METRIC_VERSION = 1;
+
+/**
+ * Portfolio clean-completion rate (issue #169) — id
+ * `portfolio:clean_completion_rate`, version 1. Implemented:
+ * `PortfolioView.getKpiBand` (`cleanCompletionRate` field) in
+ * `analytics-portfolio.ts`, backed by
+ * `PortfolioKpiStore.getCleanCompletionInWindow` (db-core).
+ *
+ * - **Formula**: `cleanN / knownN`, where `cleanN` is sessions with
+ *   `outcome = 'clean'` and `knownN` is sessions with any non-null
+ *   `outcome` (reusing the `session:outcome` classification from
+ *   `classifyClaudeCodeOutcome` / `SESSION_OUTCOME_METRIC_DEFINITION` —
+ *   this metric does not reclassify outcomes, it only aggregates the
+ *   existing per-session signal).
+ * - **Population**: sessions with `finality = 'final'` and a non-null
+ *   `start_time` inside the query window (`eligibleN`).
+ * - **Denominator**: `knownN` (the classified subset of `eligibleN`), not
+ *   `eligibleN` — the unclassified "unreadable tail" bucket is excluded
+ *   from the rate rather than counted as a failure or a success.
+ * - **Missingness policy**: `value` is `null`, never `0`, when `knownN` is
+ *   0 (no classified outcome observed in the window) —
+ *   `.agents/rules/missing-is-never-zero.md`.
+ */
+export const PORTFOLIO_CLEAN_COMPLETION_RATE_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: PORTFOLIO_CLEAN_COMPLETION_RATE_METRIC_ID,
+  version: PORTFOLIO_CLEAN_COMPLETION_RATE_METRIC_VERSION,
+  label: 'Portfolio clean-completion rate',
+  description:
+    'Share of finalized sessions in the query window classified with a clean outcome, ' +
+    'among sessions with a known (classified) outcome.',
+  family: 'session_outcome',
+  measurementClass: 'derived',
+  unit: 'ratio',
+  valueType: 'real',
+  grain: 'portfolio',
+  dimensions: [],
+  populationRule:
+    "finality = 'final' AND start_time IS NOT NULL AND start_time IN [window.start, window.end)",
+  statusRule: 'committed',
+  aggregation: 'distribution',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'root_only',
+  provenanceRequirement: 'sessions.outcome',
+};
+
+/**
+ * Low-sample-size flag threshold for model×harness cohort rows (issue
+ * #169): a cohort with fewer than this many sessions is flagged low-n by
+ * consumers rather than treated as a statistically reliable comparison
+ * point. Centralized here (not in the UI) per
+ * `.agents/rules/aggregates-expose-sample-size.md`.
+ */
+export const MODEL_HARNESS_COHORT_LOW_N_THRESHOLD = 5;
+
+/**
+ * Session-duration histogram bin edges, in milliseconds (issue #169).
+ * Defined in the registry, not the UI, so the binning policy is versioned
+ * alongside the metric it backs. `SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS`
+ * has `n` edges producing `n - 1` bins; the last bin is open-ended (">= last
+ * edge"). Implemented: `ProjectBehaviorView.getDurationHistogram` /
+ * `getDurationHistogram` in `project-behavior.ts`, backed by
+ * `ProjectBehaviorStore.getSessionDurationsInWindow` (db-core). A duration
+ * exactly on an edge falls into the upper (`>=`) bin.
+ */
+export const SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS = [
+  0,
+  60_000,
+  5 * 60_000,
+  15 * 60_000,
+  30 * 60_000,
+  60 * 60_000,
+  2 * 60 * 60_000,
+] as const;
+
+export const PROJECT_DURATION_TURNS_PERCENTILES_METRIC_ID = 'project:duration_turns_percentiles';
+export const PROJECT_DURATION_TURNS_PERCENTILES_METRIC_VERSION = 1;
+
+/**
+ * Project Behavior stat-strip session-duration and turn-count percentiles
+ * (issue #169) — id `project:duration_turns_percentiles`, version 1.
+ * Implemented: `ProjectBehaviorView.getStatStrip` / `getStatStrip` in
+ * `project-behavior.ts`, backed by
+ * `ProjectBehaviorStore.getSessionDurationsInWindow` /
+ * `getSessionTurnCountsInWindow` (db-core).
+ *
+ * - **Formula**: linear-interpolation median (p50) and p90 over the sorted
+ *   per-session value array. n=1 reports that single value for both
+ *   percentiles (not suppressed); n=0 reports `value: null`.
+ * - **Population (duration)**: sessions in the query window with both
+ *   `start_time` and `end_time` recorded. A session missing either bound is
+ *   excluded, never coerced to a 0ms duration.
+ * - **Population (turns)**: sessions in the query window with at least one
+ *   `turns` row. A session with zero turn rows is treated as "not
+ *   captured" (missing), not a measured 0 turn count — a harness that never
+ *   emits turn boundaries cannot be distinguished from a genuinely
+ *   turn-less session (`.agents/rules/missing-is-never-zero.md`).
+ * - **Missingness policy**: `value` is `null` when `knownN` is 0; `knownN`
+ *   is always reported alongside so small-n percentiles are never presented
+ *   as equivalent to large-n ones (`.agents/rules/aggregates-expose-sample-size.md`).
+ */
+export const PROJECT_DURATION_TURNS_PERCENTILES_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: PROJECT_DURATION_TURNS_PERCENTILES_METRIC_ID,
+  version: PROJECT_DURATION_TURNS_PERCENTILES_METRIC_VERSION,
+  label: 'Project session duration and turn-count percentiles',
+  description: 'Median/p90 session duration (ms) and turn count for the query window.',
+  family: 'time',
+  measurementClass: 'derived',
+  unit: 'ms',
+  valueType: 'real',
+  grain: 'project',
+  dimensions: ['stat'],
+  populationRule: 'start_time IS NOT NULL AND start_time IN [window.start, window.end)',
+  statusRule: 'committed',
+  aggregation: 'distribution',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'root_only',
+  provenanceRequirement: 'sessions.start_time/end_time, turns.id',
+};
+
+export const PROJECT_TOOL_ERROR_RATE_METRIC_ID = 'project:weekly_tool_error_rate';
+export const PROJECT_TOOL_ERROR_RATE_METRIC_VERSION = 1;
+
+/**
+ * Weekly tool-invocation error rate for a project (issue #169) — id
+ * `project:weekly_tool_error_rate`, version 1. Implemented:
+ * `ProjectBehaviorView.getWeeklyToolErrorRate` /
+ * `getWeeklyToolErrorRate` in `project-behavior.ts`, backed by
+ * `ProjectBehaviorStore.getWeeklyToolInvocations` (db-core).
+ *
+ * - **Formula**: `failedToolCalls / totalToolCalls` per ISO year-week
+ *   bucket (`strftime('%Y-%W', ...)`), scoped to `invocations.kind = 'tool'`
+ *   only — Skill/Agent/Sub Agent invocations are a different domain
+ *   (`.agents/rules/analytics-domain-distinctions.md`).
+ * - **Missingness policy**: a week with 0 tool calls is reported as
+ *   `rate: null, toolCallsN: 0`, never a fabricated 0% error rate
+ *   (`.agents/rules/missing-is-never-zero.md`). `currentValue` mirrors the
+ *   latest week's `rate` (also `null` in that case).
+ */
+export const PROJECT_TOOL_ERROR_RATE_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: PROJECT_TOOL_ERROR_RATE_METRIC_ID,
+  version: PROJECT_TOOL_ERROR_RATE_METRIC_VERSION,
+  label: 'Weekly tool error rate',
+  description: 'Share of tool-kind invocations with status = failed, per ISO week.',
+  family: 'invocations',
+  measurementClass: 'derived',
+  unit: 'ratio',
+  valueType: 'real',
+  grain: 'project',
+  dimensions: ['week'],
+  populationRule: "kind = 'tool'",
+  statusRule: 'committed',
+  aggregation: 'distribution',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'both',
+  provenanceRequirement: 'invocations.kind, invocations.status',
+};
+
+export const PROJECT_TOKENS_COST_PER_SESSION_METRIC_ID = 'project:tokens_cost_per_session';
+export const PROJECT_TOKENS_COST_PER_SESSION_METRIC_VERSION = 1;
+
+/**
+ * Project Behavior stat-strip average tokens and cost per session (issue
+ * #169) — id `project:tokens_cost_per_session`, version 1. Implemented:
+ * `ProjectBehaviorView.getStatStrip` / `getStatStrip` in
+ * `project-behavior.ts`, backed by `ProjectBehaviorStore.getSessionTokensInWindow`
+ * / `getSessionCostInWindow` (db-core).
+ *
+ * - **Formula**: mean of per-session totals, averaged only over sessions
+ *   with a known (non-null) total — a session with no known
+ *   `model_requests` token data or no known `model_usage` cost row is
+ *   excluded from both numerator and denominator, never treated as a 0
+ *   contribution (`.agents/rules/missing-is-never-zero.md`).
+ * - **Population**: sessions in the query window with a non-null `start_time`.
+ */
+export const PROJECT_TOKENS_COST_PER_SESSION_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: PROJECT_TOKENS_COST_PER_SESSION_METRIC_ID,
+  version: PROJECT_TOKENS_COST_PER_SESSION_METRIC_VERSION,
+  label: 'Average tokens and cost per session',
+  description: 'Mean per-session token total and cost, averaged over sessions with known data.',
+  family: 'tokens',
+  measurementClass: 'derived',
+  unit: 'count',
+  valueType: 'real',
+  grain: 'project',
+  dimensions: ['stat'],
+  populationRule: 'start_time IS NOT NULL AND start_time IN [window.start, window.end)',
+  statusRule: 'committed',
+  aggregation: 'distribution',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'root_only',
+  provenanceRequirement: 'model_requests.input_tokens/output_tokens, model_usage.cost',
+};
+
+export const PROJECT_MODEL_HARNESS_COHORT_METRIC_ID = 'project:model_harness_cohort';
+export const PROJECT_MODEL_HARNESS_COHORT_METRIC_VERSION = 1;
+
+/**
+ * Project-scoped model×harness cohort rows (issue #169) — id
+ * `project:model_harness_cohort`, version 1. Implemented:
+ * `ProjectBehaviorView.getModelHarnessCohorts` /
+ * `getProjectModelHarnessCohorts` in `project-behavior.ts`, backed by
+ * `ProjectBehaviorStore.getModelHarnessCohortRows` (db-core).
+ *
+ * This is a **distinct formula** from `portfolio:model_harness_matrix`, not
+ * a same-formula cut at a different grain: the matrix reports only
+ * `sessionCount` per (model, harness) cell for the whole portfolio, while
+ * this metric additionally computes median tokens, median cost, and clean
+ * rate per (model, harness) pair scoped to one project. Both are registered
+ * as separate rows because they differ in `dimensions`/`aggregation`, not
+ * merely in `grain` — do not treat this pair as the registry's
+ * one-row-per-grain precedent (see the leaderboard clean-rate entry below
+ * for that precedent instead).
+ *
+ * - **Formula**: per (model, harness) pair scoped to one project — `n`
+ *   (distinct sessions), median tokens, median cost, and clean rate
+ *   (`cleanN / knownOutcomeN`, reusing the `session:outcome` signal).
+ * - **Missingness policy**: `medianTokens`/`medianCost` are `null` when no
+ *   session in the cohort has a known value; `cleanRate` is `null` when
+ *   `cleanRateKnownN` is 0.
+ * - **Low-n flag**: `lowN` is `true` when `n < MODEL_HARNESS_COHORT_LOW_N_THRESHOLD`
+ *   (reuses the same threshold as the portfolio-scoped cohort metric).
+ */
+export const PROJECT_MODEL_HARNESS_COHORT_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: PROJECT_MODEL_HARNESS_COHORT_METRIC_ID,
+  version: PROJECT_MODEL_HARNESS_COHORT_METRIC_VERSION,
+  label: 'Project model x harness cohort',
+  description: 'Per (model, harness) session count, median tokens/cost, and clean rate.',
+  family: 'session_outcome',
+  measurementClass: 'derived',
+  unit: 'count',
+  valueType: 'real',
+  grain: 'project',
+  dimensions: ['model', 'harness'],
+  populationRule: 'start_time IS NOT NULL AND start_time IN [window.start, window.end)',
+  statusRule: 'committed',
+  aggregation: 'distribution',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'root_only',
+  provenanceRequirement: 'model_requests.model, sessions.harness, sessions.outcome',
+};
+
+export const PORTFOLIO_MODEL_HARNESS_MATRIX_METRIC_ID = 'portfolio:model_harness_matrix';
+export const PORTFOLIO_MODEL_HARNESS_MATRIX_METRIC_VERSION = 1;
+
+/**
+ * Portfolio-wide model×harness session-count matrix (issue #169) — id
+ * `portfolio:model_harness_matrix`, version 1. Implemented:
+ * `PortfolioView.getModelHarnessMatrix` / `getModelHarnessMatrix` in
+ * `analytics-portfolio.ts`, backed by
+ * `PortfolioKpiStore.getModelHarnessPairsEverObserved` /
+ * `getModelHarnessCountsInWindow` (db-core).
+ *
+ * - **Formula**: for every (model, harness) pair ever observed for the
+ *   portfolio, the count of distinct sessions in the query window.
+ * - **Missingness policy**: axes (`models`, `harnesses`) are each the
+ *   distinct set of values from every (model, harness) pair ever observed
+ *   for the portfolio, so a cell can combine a model and harness that were
+ *   never jointly observed. Such a cell's `sessionCount` is `null` (never
+ *   this specific pair), distinct from `0` (this pair has run before but
+ *   had no sessions in the current window) — `.agents/rules/missing-is-
+ *   never-zero.md`.
+ * - Distinct from `project:model_harness_cohort`: this metric reports only
+ *   `sessionCount` per cell (no median tokens/cost/clean-rate), so it is a
+ *   different formula, not the same formula at a different grain.
+ */
+export const PORTFOLIO_MODEL_HARNESS_MATRIX_METRIC_DEFINITION: InsertMetricDefinitionInput = {
+  metricId: PORTFOLIO_MODEL_HARNESS_MATRIX_METRIC_ID,
+  version: PORTFOLIO_MODEL_HARNESS_MATRIX_METRIC_VERSION,
+  label: 'Portfolio model x harness session-count matrix',
+  description: 'Session count per (model, harness) pair ever observed in the portfolio.',
+  family: 'session_shape',
+  measurementClass: 'observed',
+  unit: 'count',
+  valueType: 'integer',
+  grain: 'portfolio',
+  dimensions: ['model', 'harness'],
+  populationRule: 'start_time IS NOT NULL AND start_time IN [window.start, window.end)',
+  statusRule: 'committed',
+  aggregation: 'distribution',
+  statisticalPolicyId: 'claude-default',
+  comparabilityGroupInputs: [],
+  missingDataBehavior: 'unknown',
+  rootInclusion: 'root_only',
+  provenanceRequirement: 'model_requests.model, sessions.harness',
+};
+
+export const PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_ID =
+  'portfolio:project_leaderboard_clean_rate';
+export const PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_VERSION = 1;
+
+/**
+ * Per-project clean-completion rate for the portfolio project-leaderboard
+ * (issue #169) — id `portfolio:project_leaderboard_clean_rate`, version 1.
+ * Implemented: `PortfolioView.getProjectLeaderboard` / `getProjectLeaderboard`
+ * in `analytics-portfolio.ts`, backed by
+ * `ProjectLeaderboardStore.getCleanCompletionByProjectInWindow` (db-core).
+ *
+ * This is the **same formula** as `portfolio:clean_completion_rate`
+ * (`cleanN / knownN`, reusing the `session:outcome` classification) cut to
+ * project grain instead of portfolio grain — it gets its own registry row
+ * rather than reusing the portfolio-grain id because this repo's convention
+ * is one registry entry per distinct `grain` for a genuinely identical
+ * formula. `project:model_harness_cohort` is not this precedent — its
+ * formula differs from `portfolio:model_harness_matrix` (see that entry's
+ * doc comment) — so it does not license inventing a new registry row for a
+ * different formula merely by analogy; only a same-formula, different-grain
+ * cut like this one follows the convention.
+ *
+ * - **Population**: sessions with `finality = 'final'` and a non-null
+ *   `start_time` inside the query window, grouped by `project_id`.
+ * - **Denominator**: `knownN` (the classified subset of `eligibleN`) per
+ *   project — an unclassified session is excluded from the rate, never
+ *   counted as "not clean".
+ * - **Missingness policy**: `value` is `null`, never `0`, when a project's
+ *   `knownN` is 0 in the window (`.agents/rules/missing-is-never-zero.md`).
+ */
+export const PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_DEFINITION: InsertMetricDefinitionInput =
+  {
+    metricId: PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_ID,
+    version: PORTFOLIO_PROJECT_LEADERBOARD_CLEAN_RATE_METRIC_VERSION,
+    label: 'Project leaderboard clean-completion rate',
+    description:
+      'Share of finalized sessions in the query window classified with a clean outcome, ' +
+      'among sessions with a known (classified) outcome, per project.',
+    family: 'session_outcome',
+    measurementClass: 'derived',
+    unit: 'ratio',
+    valueType: 'real',
+    grain: 'project',
+    dimensions: [],
+    populationRule:
+      "finality = 'final' AND start_time IS NOT NULL AND start_time IN [window.start, window.end)",
+    statusRule: 'committed',
+    aggregation: 'distribution',
+    statisticalPolicyId: 'claude-default',
+    comparabilityGroupInputs: [],
+    missingDataBehavior: 'unknown',
+    rootInclusion: 'root_only',
+    provenanceRequirement: 'sessions.outcome',
+  };
+
 function buildPlannedMetricDefinitionInput(
   recipe: PlannedMetricRecipe,
 ): InsertMetricDefinitionInput {

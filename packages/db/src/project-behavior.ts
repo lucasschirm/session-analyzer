@@ -10,24 +10,37 @@ import type {
 } from '@lucasschirm/sal-db-core';
 import {
   MetricDefinitionStore,
+  ProjectBehaviorStore,
   ProjectDailyRollupStore,
   ProjectDistributionStore,
   SessionStore,
 } from '@lucasschirm/sal-db-core';
 import type {
+  AggregateStat,
   AnalyticsQuery,
   CohortSummary,
   ComparisonPage,
   ComparisonRow,
   ConfigurationTimeline,
   ConfigurationTimelineEvent,
+  DurationHistogramBin,
   OutlierPage,
   OutlierRow,
+  PeriodDelta,
   ProjectBehaviorSummary,
   ProjectBehaviorView,
+  ProjectModelHarnessCohortRow,
+  ProjectModelHarnessCohorts,
+  ProjectStatStrip,
+  SessionDurationHistogram,
+  SessionOutcomeDistribution,
   SessionTrendSeries,
   TimeSeriesPoint,
+  TopToolsList,
+  WeeklyToolErrorRateSeries,
 } from './analytics.js';
+import { resolvePreviousWindow } from './analytics-portfolio.js';
+import { getSessionOutcomeDistribution } from './analytics-session.js';
 import {
   type BuildCohortInput,
   buildMatchedCohort,
@@ -48,6 +61,10 @@ import {
   type MetricValueDto,
   makeMetricValueDto,
 } from './dto.js';
+import {
+  MODEL_HARNESS_COHORT_LOW_N_THRESHOLD,
+  SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS,
+} from './metric-registry.js';
 
 type Queryable = SqliteExecutor | SqliteTransaction;
 
@@ -898,5 +915,423 @@ export function createProjectBehaviorView(queryable: Queryable): ProjectBehavior
       getConfigurationTimeline(queryable, projectId, query),
     getOutliers: (projectId, query) => getOutliers(queryable, projectId, query),
     getComparisons: (projectId, query) => getComparisons(queryable, projectId, query),
+    getOutcomeMix: (projectId, query) => getOutcomeMix(queryable, projectId, query),
+    getStatStrip: (projectId, query) => getStatStrip(queryable, projectId, query),
+    getDurationHistogram: (projectId, query) => getDurationHistogram(queryable, projectId, query),
+    getWeeklyToolErrorRate: (projectId, query) =>
+      getWeeklyToolErrorRate(queryable, projectId, query),
+    getTopTools: (projectId, query) => getTopTools(queryable, projectId, query),
+    getModelHarnessCohorts: (projectId, query) =>
+      getProjectModelHarnessCohorts(queryable, projectId, query),
   };
+}
+
+/**
+ * Linear-interpolation percentile over a pre-sorted ascending array (issue
+ * #169). `null` for an empty array; the exact single value for n=1 (no
+ * fabrication, no suppression) — callers report the resulting `knownN`
+ * alongside so a small-n percentile is never presented as statistically
+ * equivalent to a large-n one (`.agents/rules/aggregates-expose-sample-size.md`).
+ */
+function percentile(sortedAsc: readonly number[], p: number): number | null {
+  if (sortedAsc.length === 0) return null;
+  if (sortedAsc.length === 1) return sortedAsc[0];
+  const idx = (p / 100) * (sortedAsc.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sortedAsc[lo];
+  const frac = idx - lo;
+  return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * frac;
+}
+
+function statStripWindow(query: AnalyticsQuery): { start: number; end: number } {
+  const range = query.timeRange;
+  if (!range) return { start: 0, end: Number.MAX_SAFE_INTEGER };
+  const start = Date.parse(range.start);
+  const end = Date.parse(range.end);
+  return {
+    start: Number.isNaN(start) ? 0 : start,
+    end: Number.isNaN(end) ? Number.MAX_SAFE_INTEGER : end,
+  };
+}
+
+async function sessionsDeltaStat(
+  queryable: Queryable,
+  projectId: string,
+  query: AnalyticsQuery,
+): Promise<PeriodDelta> {
+  const { start, end } = statStripWindow(query);
+  const current = await ProjectBehaviorStore.countSessionsInWindow(
+    queryable,
+    projectId,
+    start,
+    end,
+  );
+  const previousWindow = resolvePreviousWindow(query.timeRange);
+  if (!previousWindow) return { current, currentN: current };
+  const previous = await ProjectBehaviorStore.countSessionsInWindow(
+    queryable,
+    projectId,
+    Date.parse(previousWindow.start),
+    Date.parse(previousWindow.end),
+  );
+  return { current, currentN: current, previous, previousN: previous };
+}
+
+async function durationPercentileStats(
+  queryable: Queryable,
+  projectId: string,
+  eligibleN: number,
+  start: number,
+  end: number,
+): Promise<{ median: AggregateStat; p90: AggregateStat }> {
+  const rows = await ProjectBehaviorStore.getSessionDurationsInWindow(
+    queryable,
+    projectId,
+    start,
+    end,
+  );
+  const values = rows.map((r) => r.durationMs).sort((a, b) => a - b);
+  return {
+    median: { value: percentile(values, 50), eligibleN, knownN: values.length },
+    p90: { value: percentile(values, 90), eligibleN, knownN: values.length },
+  };
+}
+
+async function turnsPercentileStats(
+  queryable: Queryable,
+  projectId: string,
+  eligibleN: number,
+  start: number,
+  end: number,
+): Promise<{ median: AggregateStat; p90: AggregateStat }> {
+  const rows = await ProjectBehaviorStore.getSessionTurnCountsInWindow(
+    queryable,
+    projectId,
+    start,
+    end,
+  );
+  const values = rows.map((r) => r.turnCount).sort((a, b) => a - b);
+  return {
+    median: { value: percentile(values, 50), eligibleN, knownN: values.length },
+    p90: { value: percentile(values, 90), eligibleN, knownN: values.length },
+  };
+}
+
+async function tokensPerSessionStat(
+  queryable: Queryable,
+  projectId: string,
+  eligibleN: number,
+  start: number,
+  end: number,
+): Promise<AggregateStat> {
+  const rows = await ProjectBehaviorStore.getSessionTokensInWindow(
+    queryable,
+    projectId,
+    start,
+    end,
+  );
+  const known = rows.filter((r) => r.tokensSum !== null).map((r) => r.tokensSum as number);
+  const value = known.length > 0 ? known.reduce((sum, v) => sum + v, 0) / known.length : null;
+  return { value, eligibleN, knownN: known.length };
+}
+
+async function costPerSessionStat(
+  queryable: Queryable,
+  projectId: string,
+  eligibleN: number,
+  start: number,
+  end: number,
+): Promise<AggregateStat> {
+  const rows = await ProjectBehaviorStore.getSessionCostInWindow(queryable, projectId, start, end);
+  const known = rows.filter((r) => r.costSum !== null).map((r) => r.costSum as number);
+  const value = known.length > 0 ? known.reduce((sum, v) => sum + v, 0) / known.length : null;
+  return { value, eligibleN, knownN: known.length };
+}
+
+function projectToken(
+  query: AnalyticsQuery | undefined,
+  projectId: string,
+  eligibleN: number,
+  knownN: number,
+  measurementClass: MeasurementClass,
+  metricVersion: string,
+  label: string,
+): AnalyticsToken {
+  return makeToken(
+    query?.analysisReleaseId ?? 'unknown',
+    query?.generationId ?? 'unknown',
+    query?.comparabilityGroupId ?? 'unknown',
+    eligibleN,
+    knownN,
+    Math.max(0, eligibleN - knownN),
+    measurementClass,
+    metricVersion,
+    [evidenceLink('project', projectId, label)],
+  );
+}
+
+async function statStripMetrics(
+  queryable: Queryable,
+  projectId: string,
+  eligibleN: number,
+  start: number,
+  end: number,
+) {
+  const [duration, turns, tokensPerSession, costPerSession] = await Promise.all([
+    durationPercentileStats(queryable, projectId, eligibleN, start, end),
+    turnsPercentileStats(queryable, projectId, eligibleN, start, end),
+    tokensPerSessionStat(queryable, projectId, eligibleN, start, end),
+    costPerSessionStat(queryable, projectId, eligibleN, start, end),
+  ]);
+  return { duration, turns, tokensPerSession, costPerSession };
+}
+
+function assembleStatStrip(
+  token: AnalyticsToken,
+  sessions: PeriodDelta,
+  metrics: Awaited<ReturnType<typeof statStripMetrics>>,
+): ProjectStatStrip {
+  const { duration, turns, tokensPerSession, costPerSession } = metrics;
+  return {
+    token,
+    sessions,
+    durationMedianMs: duration.median,
+    durationP90Ms: duration.p90,
+    turnsMedian: turns.median,
+    turnsP90: turns.p90,
+    tokensPerSession,
+    costPerSession,
+  };
+}
+
+export async function getStatStrip(
+  queryable: Queryable,
+  projectId: string,
+  query: AnalyticsQuery,
+): Promise<ProjectStatStrip> {
+  const { start, end } = statStripWindow(query);
+  const sessions = await sessionsDeltaStat(queryable, projectId, query);
+  const eligibleN = sessions.currentN;
+  const metrics = await statStripMetrics(queryable, projectId, eligibleN, start, end);
+  const token = projectToken(
+    query,
+    projectId,
+    eligibleN,
+    eligibleN,
+    'derived',
+    'stat-strip-0.1.0',
+    'Project stat strip',
+  );
+  return assembleStatStrip(token, sessions, metrics);
+}
+
+/**
+ * Bins session durations per `SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS`
+ * (issue #169). A duration exactly on an edge falls into the upper bin
+ * (`>= edge`), matching a standard half-open `[edge, nextEdge)` binning
+ * convention; the final bin is open-ended (`endMs: null`).
+ */
+function binDurations(values: readonly number[]): DurationHistogramBin[] {
+  const edges = SESSION_DURATION_HISTOGRAM_BIN_EDGES_MS;
+  const bins = edges.map((edge, i) => ({
+    startMs: edge,
+    endMs: i + 1 < edges.length ? edges[i + 1] : null,
+    count: 0,
+  }));
+  for (const value of values) {
+    for (let i = bins.length - 1; i >= 0; i--) {
+      if (value >= bins[i].startMs) {
+        bins[i] = { ...bins[i], count: bins[i].count + 1 };
+        break;
+      }
+    }
+  }
+  return bins;
+}
+
+export async function getDurationHistogram(
+  queryable: Queryable,
+  projectId: string,
+  query: AnalyticsQuery,
+): Promise<SessionDurationHistogram> {
+  const { start, end } = statStripWindow(query);
+  const eligibleN = await ProjectBehaviorStore.countSessionsInWindow(
+    queryable,
+    projectId,
+    start,
+    end,
+  );
+  const rows = await ProjectBehaviorStore.getSessionDurationsInWindow(
+    queryable,
+    projectId,
+    start,
+    end,
+  );
+  const values = rows.map((r) => r.durationMs);
+  const token = projectToken(
+    query,
+    projectId,
+    eligibleN,
+    values.length,
+    'derived',
+    'duration-histogram-0.1.0',
+    'Session duration histogram',
+  );
+  return { token, bins: binDurations(values), eligibleN, knownN: values.length };
+}
+
+export async function getWeeklyToolErrorRate(
+  queryable: Queryable,
+  projectId: string,
+  query: AnalyticsQuery | undefined,
+): Promise<WeeklyToolErrorRateSeries> {
+  const rows = await ProjectBehaviorStore.getWeeklyToolInvocations(queryable, projectId);
+  const series = rows.map((r) => ({
+    weekBucket: r.weekBucket,
+    rate: r.totalToolCalls > 0 ? r.failedToolCalls / r.totalToolCalls : null,
+    toolCallsN: r.totalToolCalls,
+    failedN: r.failedToolCalls,
+  }));
+  const last = series[series.length - 1];
+  const token = projectToken(
+    query,
+    projectId,
+    series.length,
+    series.filter((s) => s.rate !== null).length,
+    'derived',
+    'weekly-tool-error-rate-0.1.0',
+    'Weekly tool error rate',
+  );
+  return {
+    token,
+    series,
+    currentValue: last?.rate ?? null,
+    currentWeekN: last?.toolCallsN ?? 0,
+  };
+}
+
+const TOP_TOOLS_LIMIT = 10;
+
+export async function getTopTools(
+  queryable: Queryable,
+  projectId: string,
+  query: AnalyticsQuery,
+): Promise<TopToolsList> {
+  const { start, end } = statStripWindow(query);
+  const rows = await ProjectBehaviorStore.getTopToolsByInvocations(
+    queryable,
+    projectId,
+    start,
+    end,
+    TOP_TOOLS_LIMIT,
+  );
+  const totalInvocations = rows.reduce((sum, r) => sum + r.invocationCount, 0);
+  const token = makeToken(
+    query.analysisReleaseId ?? 'unknown',
+    query.generationId ?? 'unknown',
+    query.comparabilityGroupId ?? 'unknown',
+    totalInvocations,
+    totalInvocations,
+    0,
+    'observed',
+    'top-tools-0.1.0',
+    [evidenceLink('project', projectId, 'Top tools by invocations')],
+  );
+  return { token, rows, totalInvocations };
+}
+
+interface CohortAccumulator {
+  model: string;
+  harness: string;
+  sessionIds: Set<string>;
+  tokens: number[];
+  costs: number[];
+  cleanN: number;
+  knownOutcomeN: number;
+}
+
+function accumulateCohortRow(
+  map: Map<string, CohortAccumulator>,
+  row: {
+    model: string;
+    harness: string;
+    sessionId: string;
+    tokensSum: number | null;
+    costSum: number | null;
+    outcome: string | null;
+  },
+): void {
+  const key = `${row.model}|${row.harness}`;
+  const acc = map.get(key) ?? {
+    model: row.model,
+    harness: row.harness,
+    sessionIds: new Set<string>(),
+    tokens: [],
+    costs: [],
+    cleanN: 0,
+    knownOutcomeN: 0,
+  };
+  acc.sessionIds.add(row.sessionId);
+  if (row.tokensSum !== null) acc.tokens.push(row.tokensSum);
+  if (row.costSum !== null) acc.costs.push(row.costSum);
+  if (row.outcome !== null) {
+    acc.knownOutcomeN += 1;
+    if (row.outcome === 'clean') acc.cleanN += 1;
+  }
+  map.set(key, acc);
+}
+
+function cohortRowFromAccumulator(acc: CohortAccumulator): ProjectModelHarnessCohortRow {
+  const n = acc.sessionIds.size;
+  const sortedTokens = [...acc.tokens].sort((a, b) => a - b);
+  const sortedCosts = [...acc.costs].sort((a, b) => a - b);
+  return {
+    model: acc.model,
+    harness: acc.harness,
+    n,
+    medianTokens: percentile(sortedTokens, 50),
+    medianCost: percentile(sortedCosts, 50),
+    cleanRate: acc.knownOutcomeN > 0 ? acc.cleanN / acc.knownOutcomeN : null,
+    cleanRateKnownN: acc.knownOutcomeN,
+    lowN: n < MODEL_HARNESS_COHORT_LOW_N_THRESHOLD,
+  };
+}
+
+export async function getProjectModelHarnessCohorts(
+  queryable: Queryable,
+  projectId: string,
+  query: AnalyticsQuery,
+): Promise<ProjectModelHarnessCohorts> {
+  const { start, end } = statStripWindow(query);
+  const rawRows = await ProjectBehaviorStore.getModelHarnessCohortRows(
+    queryable,
+    projectId,
+    start,
+    end,
+  );
+  const map = new Map<string, CohortAccumulator>();
+  for (const row of rawRows) accumulateCohortRow(map, row);
+  const rows = [...map.values()].map(cohortRowFromAccumulator);
+  const totalSessions = rows.reduce((sum, r) => sum + r.n, 0);
+  const token = makeToken(
+    query.analysisReleaseId ?? 'unknown',
+    query.generationId ?? 'unknown',
+    query.comparabilityGroupId ?? 'unknown',
+    totalSessions,
+    totalSessions,
+    0,
+    'derived',
+    'model-harness-cohorts-0.1.0',
+    [evidenceLink('project', projectId, 'Model x harness cohorts')],
+  );
+  return { token, rows };
+}
+
+function getOutcomeMix(
+  queryable: Queryable,
+  projectId: string,
+  query: AnalyticsQuery | undefined,
+): Promise<SessionOutcomeDistribution> {
+  return getSessionOutcomeDistribution(queryable, projectId, query);
 }

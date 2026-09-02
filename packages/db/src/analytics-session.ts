@@ -1,9 +1,16 @@
 import type { SqliteExecutor, SqliteRow, SqliteTransaction } from '@lucasschirm/sal-db-core';
 import {
   ComponentIdentityStore,
+  DimensionDomainStore,
+  PAYLOAD_TRUNCATION_BYTES,
+  type RawInvocationEventRow,
+  type RawMessageEventRow,
+  type RawPayloadRef,
   SessionComponentStatStore,
+  SessionEventsDetailStore,
   SessionOutcomeStore,
   SourceTombstoneStore,
+  TurnTimelineStore,
   ValidationStore,
 } from '@lucasschirm/sal-db-core';
 import type {
@@ -27,6 +34,7 @@ import type {
   ContextTimingPoint,
   ContextTimingSeries,
   CoverageExplanation,
+  DimensionDomains,
   EvidencePage,
   EvidenceRow,
   FilterField,
@@ -40,6 +48,11 @@ import type {
   ProjectSessionSearchView,
   RootChildBreakdown,
   RootChildEntry,
+  SessionEventKind,
+  SessionEventPayloadDetail,
+  SessionEventPayloadSummary,
+  SessionEventRow,
+  SessionEventsDetail,
   SessionEvidenceSummary,
   SessionEvidenceView,
   SessionOutcomeDistribution,
@@ -47,6 +60,9 @@ import type {
   SessionTreeNode,
   SessionValidation,
   SessionValidationSummary,
+  TurnTimeline,
+  TurnTimelineSegment,
+  TurnTimelineSegmentKind,
 } from './analytics.js';
 import { ArtifactDiffRepository } from './artifact-diff.js';
 import type {
@@ -445,6 +461,10 @@ export function createSessionEvidenceView(queryable: Queryable): SessionEvidence
     getValidationSummary: (sessionId, query) => getValidationSummary(queryable, sessionId, query),
     getEvidencePages: (sessionId, query) => getEvidencePages(queryable, sessionId, query),
     getTranscriptPages: (sessionId, query) => getTranscriptPages(queryable, sessionId, query),
+    getSessionEvents: (sessionId, query) => getSessionEvents(queryable, sessionId, query),
+    getEventPayload: (sessionId, payloadId, query) =>
+      getEventPayload(queryable, sessionId, payloadId, query),
+    getTurnTimeline: (sessionId, query) => getTurnTimeline(queryable, sessionId, query),
   };
 }
 
@@ -1062,6 +1082,298 @@ async function getTranscriptPages(
     previousCursor: offset > 0 ? String(Math.max(0, offset - limit)) : undefined,
     generationToken: tokens.generationId,
     analysisReleaseToken: tokens.analysisReleaseId,
+  };
+}
+
+// Full-detail session events (issue #169)
+
+/** MCP-server calls are a `tool` sub-classification, never a distinct kind. */
+function invocationEventName(row: RawInvocationEventRow): string {
+  return row.displayName || row.nativeId || 'unknown';
+}
+
+function invocationEventTarget(row: RawInvocationEventRow): string | undefined {
+  return row.componentKind ?? undefined;
+}
+
+function summedKnownTokens(...refs: readonly (RawPayloadRef | null)[]): number | undefined {
+  let total: number | undefined;
+  for (const ref of refs) {
+    const known = ref?.exactTokens ?? ref?.estimatedTokens ?? undefined;
+    if (known !== undefined) total = (total ?? 0) + known;
+  }
+  return total;
+}
+
+function payloadSummaryFrom(ref: RawPayloadRef | null): SessionEventPayloadSummary | undefined {
+  if (!ref) return undefined;
+  const overCap = (ref.content?.length ?? 0) > PAYLOAD_TRUNCATION_BYTES;
+  const content = overCap
+    ? (ref.content as string).slice(0, PAYLOAD_TRUNCATION_BYTES)
+    : ref.content;
+  return {
+    payloadId: ref.payloadId,
+    content,
+    truncated: overCap || ref.storedTruncated,
+    sizeBytes: ref.sizeBytes ?? undefined,
+    tokens: ref.exactTokens ?? ref.estimatedTokens ?? undefined,
+  };
+}
+
+function invocationToEventRow(row: RawInvocationEventRow): SessionEventRow {
+  return {
+    id: row.id,
+    timestamp: formatTimestamp(row.createdAt),
+    turnNumber: row.turnOrdering ?? undefined,
+    kind: row.kind as SessionEventKind,
+    name: invocationEventName(row),
+    target: invocationEventTarget(row),
+    tokens: summedKnownTokens(row.inputPayload, row.resultPayload),
+    durationMs: row.latencyMs ?? undefined,
+    status: row.status,
+    inputPayload: payloadSummaryFrom(row.inputPayload),
+    resultPayload: payloadSummaryFrom(row.resultPayload),
+  };
+}
+
+function messageToEventRow(row: RawMessageEventRow): SessionEventRow {
+  const kind: SessionEventKind = row.role === 'user' ? 'user_message' : 'assistant_message';
+  return {
+    id: row.id,
+    timestamp: formatTimestamp(row.timestamp),
+    turnNumber: row.turnOrdering ?? undefined,
+    kind,
+    name: row.role,
+    status: 'completed',
+  };
+}
+
+function sortEventRows(events: readonly SessionEventRow[]): SessionEventRow[] {
+  return [...events].sort((a, b) => (a.timestamp ?? '').localeCompare(b.timestamp ?? ''));
+}
+
+function sessionEventsToken(
+  sessionId: string,
+  events: readonly SessionEventRow[],
+  query: AnalyticsQuery | undefined,
+): AnalyticsToken {
+  const knownN = events.filter((event) => event.timestamp !== undefined).length;
+  const tokens = pageTokens(query, {
+    analysisReleaseId: query?.analysisReleaseId ?? 'unknown',
+    generationId: query?.generationId ?? 'unknown',
+    comparabilityGroupId: query?.comparabilityGroupId ?? 'session-events',
+  });
+  return makeToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    events.length,
+    knownN,
+    events.length - knownN,
+    'observed',
+    'session-events-0.1.0',
+    [evidenceLink('session', sessionId, 'Session events')],
+  );
+}
+
+async function getSessionEvents(
+  queryable: Queryable,
+  sessionId: string,
+  query: AnalyticsQuery | undefined,
+): Promise<SessionEventsDetail> {
+  const [invocationRows, messageRows] = await Promise.all([
+    SessionEventsDetailStore.listInvocationEvents(queryable, sessionId),
+    SessionEventsDetailStore.listMessageEvents(queryable, sessionId),
+  ]);
+  const events = sortEventRows([
+    ...invocationRows.map(invocationToEventRow),
+    ...messageRows
+      .filter((row) => row.role === 'user' || row.role === 'assistant')
+      .map(messageToEventRow),
+  ]);
+  return { token: sessionEventsToken(sessionId, events, query), sessionId, events };
+}
+
+async function getEventPayload(
+  queryable: Queryable,
+  _sessionId: string,
+  payloadId: string,
+  _query: AnalyticsQuery | undefined,
+): Promise<SessionEventPayloadDetail | null> {
+  const ref = await SessionEventsDetailStore.getPayloadContent(queryable, payloadId);
+  if (!ref) return null;
+  return {
+    payloadId: ref.payloadId,
+    content: ref.content,
+    sizeBytes: ref.sizeBytes ?? undefined,
+    tokens: ref.exactTokens ?? ref.estimatedTokens ?? undefined,
+  };
+}
+
+// Turn timeline (issue #169)
+
+/** An event placed on the timeline track, reduced to a single instant in time. */
+interface TimelineInstant {
+  readonly kind: TurnTimelineSegmentKind;
+  readonly startMs: number;
+  readonly invocationKind?: 'tool' | 'skill' | 'agent';
+  readonly sourceId: string;
+}
+
+function invocationTimelineKind(kind: string): TurnTimelineSegmentKind {
+  return kind === 'sub_agent' ? 'sub_agent' : 'invocation';
+}
+
+function invocationTimelineSubKind(kind: string): 'tool' | 'skill' | 'agent' | undefined {
+  return kind === 'tool' || kind === 'skill' || kind === 'agent' ? kind : undefined;
+}
+
+function instantsFromInvocations(rows: readonly RawInvocationEventRow[]): TimelineInstant[] {
+  return rows.map((row) => ({
+    kind: invocationTimelineKind(row.kind),
+    startMs: row.createdAt,
+    invocationKind: invocationTimelineSubKind(row.kind),
+    sourceId: row.id,
+  }));
+}
+
+function instantsFromMessages(rows: readonly RawMessageEventRow[]): TimelineInstant[] {
+  const instants: TimelineInstant[] = [];
+  for (const row of rows) {
+    if (row.role !== 'user' && row.role !== 'assistant') continue;
+    if (row.timestamp === null) continue;
+    instants.push({ kind: row.role, startMs: row.timestamp, sourceId: row.id });
+  }
+  return instants;
+}
+
+/**
+ * Resolves the timeline's outer bounds (issue #169). Prefers the session's
+ * own recorded `start_time`/`end_time`; when either is missing, falls back
+ * to the min/max instant timestamp so the timeline can still be built from
+ * whatever evidence exists. Returns `null` only when there is neither a
+ * session bound nor a single timestamped instant to anchor the timeline.
+ */
+function resolveTimelineBounds(
+  instants: readonly TimelineInstant[],
+  sessionStart: number | null,
+  sessionEnd: number | null,
+): { start: number; end: number } | null {
+  if (instants.length === 0) {
+    if (sessionStart === null || sessionEnd === null) return null;
+    return { start: sessionStart, end: sessionEnd };
+  }
+  const starts = instants.map((i) => i.startMs);
+  const instantMin = Math.min(...starts);
+  const instantMax = Math.max(...starts);
+  const start = sessionStart === null ? instantMin : Math.min(sessionStart, instantMin);
+  const end = sessionEnd === null ? instantMax : Math.max(sessionEnd, instantMax);
+  return { start, end };
+}
+
+/**
+ * Builds the ordered, non-overlapping turn-timeline segments (issue #169)
+ * from the sorted instants and the resolved outer bounds.
+ *
+ * **Gap-filling policy (consecutive-boundary attribution, folded forward):**
+ * segment `i` starts where instant `i` starts and ends where instant `i+1`
+ * starts (the last segment ends at `bounds.end`); any lead-in gap before the
+ * first instant is folded backward into the first segment by starting it at
+ * `bounds.start`. This guarantees `sum(durationMs) === bounds.end -
+ * bounds.start` by construction *whenever at least one instant exists* — see
+ * the invariant unit test in `packages/db/tests/unit/turn-timeline-169.test.ts`.
+ * A session with valid bounds but zero timestamped instants has nothing to
+ * anchor a segment to and returns an empty segment list (`sum === 0`, not
+ * `bounds.end - bounds.start`) — a consumer must not assume this function's
+ * output always spans the full session duration; see "returns an empty
+ * segment list for a session with no timestamped evidence" in
+ * `turn-timeline-169.test.ts`.
+ *
+ * A silent gap between two recorded events (e.g. the interval after a tool
+ * call ends and before the next assistant turn begins) is real elapsed idle
+ * time with no recorded activity — nothing failed to be captured, there was
+ * simply nothing to capture. That is a *layout* choice, not an instance of
+ * `.agents/rules/missing-is-never-zero.md` (which governs metric *values*,
+ * not this derived timeline's segment widths). A 5th "idle" band was
+ * considered and rejected: the segment `kind` vocabulary is fixed to the
+ * four domains named in the issue, and
+ * `.agents/rules/analytics-domain-distinctions.md` forbids inventing a
+ * fifth domain — folding the gap into the preceding segment keeps the
+ * vocabulary closed while still covering the full session duration.
+ *
+ * Concurrent invocations (e.g. two tool calls overlapping in wall-clock
+ * time) are laid out sequentially by start time on this single track — a
+ * documented simplification; this DTO does not model concurrency lanes.
+ */
+function buildTurnTimelineSegments(
+  instants: readonly TimelineInstant[],
+  bounds: { start: number; end: number },
+): TurnTimelineSegment[] {
+  const sorted = [...instants].sort((a, b) => a.startMs - b.startMs);
+  return sorted.map((instant, i) => {
+    const segmentStart = i === 0 ? bounds.start : instant.startMs;
+    const segmentEnd = i === sorted.length - 1 ? bounds.end : sorted[i + 1].startMs;
+    return {
+      kind: instant.kind,
+      startMs: segmentStart,
+      durationMs: Math.max(0, segmentEnd - segmentStart),
+      invocationKind: instant.invocationKind,
+      sourceId: instant.sourceId,
+    };
+  });
+}
+
+function turnTimelineToken(
+  query: AnalyticsQuery | undefined,
+  sessionId: string,
+  eligibleN: number,
+  knownN: number,
+): AnalyticsToken {
+  const tokens = pageTokens(query, {
+    analysisReleaseId: query?.analysisReleaseId ?? 'unknown',
+    generationId: query?.generationId ?? 'unknown',
+    comparabilityGroupId: query?.comparabilityGroupId ?? 'turn-timeline',
+  });
+  return makeToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    eligibleN,
+    knownN,
+    eligibleN - knownN,
+    'derived',
+    'turn-timeline-0.1.0',
+    [evidenceLink('session', sessionId, 'Turn timeline')],
+  );
+}
+
+async function getTurnTimeline(
+  queryable: Queryable,
+  sessionId: string,
+  query: AnalyticsQuery | undefined,
+): Promise<TurnTimeline> {
+  const [invocationRows, messageRows, window] = await Promise.all([
+    SessionEventsDetailStore.listInvocationEvents(queryable, sessionId),
+    SessionEventsDetailStore.listMessageEvents(queryable, sessionId),
+    TurnTimelineStore.getSessionWindow(queryable, sessionId),
+  ]);
+  const instants = [
+    ...instantsFromInvocations(invocationRows),
+    ...instantsFromMessages(messageRows),
+  ];
+  const bounds = resolveTimelineBounds(
+    instants,
+    window?.startTime ?? null,
+    window?.endTime ?? null,
+  );
+  const segments = bounds ? buildTurnTimelineSegments(instants, bounds) : [];
+  const eligibleN = invocationRows.length + messageRows.length;
+  const token = turnTimelineToken(query, sessionId, eligibleN, instants.length);
+  return {
+    token,
+    sessionId,
+    segments,
+    totalDurationMs: bounds ? bounds.end - bounds.start : null,
   };
 }
 
@@ -1874,7 +2186,48 @@ export function createMetadataView(queryable: Queryable): MetadataView {
   return {
     getFilterMetadata: (query) => getFilterMetadata(queryable, query),
     getCoverageExplanation: (metricId, query) => getCoverageExplanation(queryable, metricId, query),
+    getDimensionDomains: (query) => getDimensionDomains(queryable, query),
   };
+}
+
+function dimensionDomainsToken(
+  portfolioId: string | null,
+  total: number,
+  query: AnalyticsQuery | undefined,
+): AnalyticsToken {
+  const tokens = pageTokens(query, {
+    analysisReleaseId: query?.analysisReleaseId ?? 'unknown',
+    generationId: query?.generationId ?? 'unknown',
+    comparabilityGroupId: query?.comparabilityGroupId ?? 'dimension-domains',
+  });
+  return makeToken(
+    tokens.analysisReleaseId,
+    tokens.generationId,
+    tokens.comparabilityGroupId,
+    total,
+    total,
+    0,
+    'observed',
+    'dimension-domains-0.1.0',
+    [evidenceLink('portfolio', portfolioId ?? 'unknown', 'Dimension domains')],
+  );
+}
+
+async function getDimensionDomains(
+  queryable: Queryable,
+  query: AnalyticsQuery | undefined,
+): Promise<DimensionDomains> {
+  const portfolioId = await resolvePortfolioId(queryable, query);
+  const [projects, harnesses, models] = portfolioId
+    ? await Promise.all([
+        DimensionDomainStore.getProjectDomain(queryable, portfolioId),
+        DimensionDomainStore.getHarnessDomain(queryable, portfolioId),
+        DimensionDomainStore.getModelDomain(queryable, portfolioId),
+      ])
+    : [[], [], []];
+  const total = projects.length + harnesses.length + models.length;
+  const token = dimensionDomainsToken(portfolioId, total, query);
+  return { token, projects, harnesses, models };
 }
 
 async function getFilterMetadata(
