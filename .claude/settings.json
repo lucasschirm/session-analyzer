@@ -13,10 +13,12 @@
       }
     ]
   },
-  "marketplaces": {
+  "extraKnownMarketplaces": {
     "session-analyzer": {
-      "source": "github",
-      "repo": "lucasschirm/session-analyzer"
+      "source": {
+        "source": "directory",
+        "path": "."
+      }
     }
   },
   "enabledPlugins": {
