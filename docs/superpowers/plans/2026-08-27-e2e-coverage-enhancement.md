@@ -143,11 +143,12 @@ implement them, per `e2e-coverage-required.md`.
 
 Existing coverage (`PIPE-001`–`PIPE-012`, `packages/db/tests/pipeline/`)
 predates this catalog and is not retroactively seeded by PR-A — see §9.
-New entries allocate **PIPE-013** and up.
+New entries allocate **PIPE-015** and up.
 
 | ID | Surface | Journey | Helper(s) | L | U | D | Score | Owning test file | Status |
 |---|---|---|---|---|---|---|---|---|---|
 | PIPE-013 | Session outcome signal (issue #178) | One fixture per registered harness plugin (claude-code, the only one registered — see the issue #178 signal audit comment) through parse → transform → ingest → `sessions.outcome` column → `SessionOutcomeStore.rollupByProject` / `getSessionOutcomeDistribution` rollup query, covering clean / interrupted-by-user / ended-on-error / unreadable-tail (missing) outcomes in one project | none (inline synthetic transcripts, following `pipe-012`'s pattern) | 3 | 4 | 4 | 48 | `pipe-013-session-outcome-rollup.test.ts` | GREEN |
+| PIPE-014 | AnalyticsDataSource read-contract additions (issue #169): session events + dimension domains | claude-code fixture through parse → transform → ingest → `MetadataView.getDimensionDomains` (real project/harness values from ingested `sessions`/`projects`) and `SessionEvidenceView.getSessionEvents` (documents the known gap that ingestion does not yet populate `messages`/`turns`/`invocations`/`payloads`, so the DTO is correctly empty rather than fabricated — the store is separately unit-tested against those tables directly) | none (inline synthetic transcript, following `pipe-013`'s pattern) | 3 | 3 | 4 | 36 | `pipe-014-session-events-and-dimension-domains.test.ts` | GREEN |
 
 ### 6.3 Tier C — Sync/harness lifecycle (`SYNC-###`)
 
