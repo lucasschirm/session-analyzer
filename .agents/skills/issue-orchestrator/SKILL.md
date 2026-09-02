@@ -1,5 +1,5 @@
 ---
-name: implement-issue
+name: issue-orchestrator
 description: Use when implementing GitHub issues - "work on issue #N", "work on the next issue", "continue the feature", or resuming an in-flight feature. Orchestrates the backlog of a Feature issue's task sub-issues (or standalone issues) - pick the next ready issue, mark it in progress, link a branch, delegate to the right specialized agent, verify, open the PR against the right base, and record discoveries.
 ---
 
