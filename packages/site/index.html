@@ -8,6 +8,36 @@
   <title>Session Analyzer - Agentic Coding Sessions Dashboard</title>
   <meta name="description" content="Offline dashboard for visualizing and managing AI coding sessions from Claude, Agentic Pi, Antigravity, and more." />
   <style>
+    /* Space Grotesk, self-hosted (packages/site/public/fonts) so the
+       offline/GitHub-Pages build has no runtime Google Fonts dependency.
+       The service worker (coi-sw.js) runtime-caches every same-origin GET,
+       so these files are cached for offline use the first time they load —
+       no separate precache list to maintain. Fallback stack keeps close
+       metrics to Space Grotesk while the woff2 loads. */
+    @font-face {
+      font-family: 'Space Grotesk';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url('./fonts/space-grotesk-400.woff2') format('woff2');
+    }
+
+    @font-face {
+      font-family: 'Space Grotesk';
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: url('./fonts/space-grotesk-500.woff2') format('woff2');
+    }
+
+    @font-face {
+      font-family: 'Space Grotesk';
+      font-style: normal;
+      font-weight: 700;
+      font-display: swap;
+      src: url('./fonts/space-grotesk-700.woff2') format('woff2');
+    }
+
     :root {
       --md-sys-color-background: #0f1115;
       --md-sys-color-on-background: #e6e9ef;
@@ -27,6 +57,68 @@
       --md-sys-color-error-container: #5c2626;
       --md-sys-color-on-error-container: #ffb4ab;
       --md-sys-color-success: #3ecf8e;
+
+      /* --- Redesign token set (new names only — the --md-sys-color-* set
+         above is untouched and stays pixel-identical until each consumer
+         migrates on its own sub-issue). Values must stay in sync with
+         packages/site/src/styles/tokens.ts (unit-tested). --- */
+
+      /* Surfaces */
+      --rd-surface-page: #0c0e13;
+      --rd-surface-rail: #10131a;
+      --rd-surface-card: #171b24;
+      --rd-surface-inset: #12151c;
+      --rd-surface-row-hover: #1f2531;
+
+      /* Hairlines / borders */
+      --rd-border-1: #20242e;
+      --rd-border-2: #232936;
+      --rd-border-3: #2a303c;
+      --rd-border-emphasis: #313947;
+      --rd-border-emphasis-2: #3a4150;
+
+      /* Ink */
+      --rd-ink-primary: #e6e9ef;
+      --rd-ink-secondary: #c9d4e3;
+      --rd-ink-muted: #9aa4b2;
+      --rd-ink-faint: #7d8794;
+
+      /* Accent */
+      --rd-accent: #4f8cff;
+      --rd-accent-container: #1c2b4a;
+      --rd-accent-on-container: #cfe0ff;
+      --rd-accent-success: #3ecf8e;
+      --rd-accent-error: #ff6b6b;
+
+      /* Status (chart/outcome semantics only — never used as series colors) */
+      --rd-status-good: #3ecf8e;
+      --rd-status-warning: #fab219;
+      --rd-status-critical: #d03b3b;
+
+      /* Categorical series slots 1-5 (validated order — do not reorder;
+         a 6th series folds into "Other") */
+      --rd-series-1: #4f8cff;
+      --rd-series-2: #d95926;
+      --rd-series-3: #199e70;
+      --rd-series-4: #c98500;
+      --rd-series-5: #d55181;
+
+      /* Sequential heatmap ramp, low -> high */
+      --rd-ramp-0: #161d2c;
+      --rd-ramp-1: #1a2c4d;
+      --rd-ramp-2: #1c4382;
+      --rd-ramp-3: #1c5cab;
+      --rd-ramp-4: #2a78d6;
+      --rd-ramp-5: #4f8cff;
+      --rd-ramp-6: #86b6ef;
+
+      /* Typography */
+      --font-display: 'Space Grotesk', 'Segoe UI', Arial, sans-serif;
+      --font-body: 'Space Grotesk', 'Segoe UI', Arial, sans-serif;
+      /* Numeric columns (token counts, durations, costs, timestamps) use
+         `font-variant-numeric: tabular-nums` wherever --font-display or
+         --font-body renders them, so digits stay fixed-width in tables and
+         don't jitter as values change. */
     }
 
     * {
