@@ -419,5 +419,11 @@ test.describe('UX-035: Session Evidence events table empty vs error', () => {
     // "no data" (`.agents/rules/no-silent-empty-states.md`).
     await expect(page.locator('session-evidence-events-table')).toHaveCount(0);
     await expect(page.getByText('Simulated events query failure').first()).toBeVisible();
+
+    // Same distinction for the turn timeline: a getTurnTimeline failure
+    // must never render identically to the legitimate "no timestamped
+    // evidence yet" empty state.
+    await expect(page.locator('session-evidence-timeline')).toHaveCount(0);
+    await expect(page.getByText('No timestamped turn evidence')).toHaveCount(0);
   });
 });

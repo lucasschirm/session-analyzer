@@ -422,6 +422,9 @@ export class SessionEvidenceView extends PageLitElement {
   }
 
   private renderTimeline() {
+    if (this.turnTimeline.state === 'error') {
+      return html`<div class="error" role="alert">${this.turnTimeline.error}</div>`;
+    }
     return html`
       <session-evidence-timeline
         .timeline=${this.turnTimeline.data}

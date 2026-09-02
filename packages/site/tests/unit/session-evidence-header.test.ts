@@ -62,6 +62,17 @@ describe('session-evidence-header', () => {
     expect(root.textContent).toContain('Mode: plan');
   });
 
+  it('renders Dashboard/Artifacts/Settings nav links (this route hides the global header)', async () => {
+    const el = document.createElement('session-evidence-header') as SessionEvidenceHeader;
+    el.sessionId = 's1';
+    await mount(el);
+    const root = shadow(el);
+    const navHrefs = Array.from(root.querySelectorAll('.page-nav a')).map((a) =>
+      a.getAttribute('href'),
+    );
+    expect(navHrefs).toEqual(['#/', '#/artifacts', '#/settings/data-sources']);
+  });
+
   it('renders a sub agent link when subAgentCount is > 0', async () => {
     const el = document.createElement('session-evidence-header') as SessionEvidenceHeader;
     el.sessionId = 's1';

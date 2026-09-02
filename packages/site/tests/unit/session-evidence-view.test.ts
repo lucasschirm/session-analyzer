@@ -525,5 +525,11 @@ describe('session-evidence-view', () => {
     expect(root.textContent).toContain('summary failed');
     expect(root.textContent).toContain('Session evidence failed to load');
     expect(root.textContent).not.toContain('No events match');
+
+    // The turn timeline surfaces its own error affordance too — a
+    // getTurnTimeline failure must never render identically to the
+    // legitimate "no timestamped evidence yet" empty state.
+    expect(root.textContent).toContain('timeline failed');
+    expect(root.querySelector('session-evidence-timeline')).toBeNull();
   });
 });

@@ -23,13 +23,21 @@ export class SessionEvidenceHeader extends LitElement {
       display: block;
     }
 
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
     .breadcrumb {
       display: flex;
       align-items: center;
       gap: 6px;
       font-size: 13px;
       color: var(--rd-ink-muted, #9aa4b2);
-      margin-bottom: 12px;
     }
 
     .breadcrumb a {
@@ -45,6 +53,30 @@ export class SessionEvidenceHeader extends LitElement {
     .breadcrumb .crumb-session {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       color: var(--rd-ink-primary, #e6e9ef);
+    }
+
+    /*
+     * This route replaces the global header (app-root.ts), which is the
+     * only path to Dashboard/Artifacts/Settings elsewhere in the app — so
+     * this page-owned nav keeps those destinations reachable here too.
+     */
+    .page-nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 13px;
+    }
+
+    .page-nav a {
+      color: var(--rd-ink-muted, #9aa4b2);
+      text-decoration: none;
+      padding: 5px 10px;
+      border-radius: 6px;
+    }
+
+    .page-nav a:hover {
+      color: var(--rd-ink-primary, #e6e9ef);
+      background: var(--rd-surface-inset, #12151c);
     }
 
     .session-evidence-header {
@@ -185,6 +217,21 @@ export class SessionEvidenceHeader extends LitElement {
     `;
   }
 
+  /**
+   * This route hides the global header (`app-root.ts`), so this nav is the
+   * only remaining path to Dashboard/Artifacts/Settings — never drop it
+   * without replacing it with an equivalent.
+   */
+  private renderPageNav() {
+    return html`
+      <nav class="page-nav" aria-label="Primary">
+        <a href="#/">Dashboard</a>
+        <a href="#/artifacts">Artifacts</a>
+        <a href="#/settings/data-sources">Settings</a>
+      </nav>
+    `;
+  }
+
   private renderOutcomeChip() {
     const view = outcomeBadgeView(this.summary?.outcome);
     if (!view) return '';
@@ -250,7 +297,10 @@ export class SessionEvidenceHeader extends LitElement {
   render() {
     const title = this.titleExcerpt || `Session ${this.sessionId}`;
     return html`
-      ${this.renderBreadcrumb()}
+      <div class="top-bar">
+        ${this.renderBreadcrumb()}
+        ${this.renderPageNav()}
+      </div>
       <div class="card-surface session-evidence-header">
         <div class="title-row">
           <h1>${title}</h1>
