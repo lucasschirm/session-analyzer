@@ -22,6 +22,8 @@ Corollaries, each learned from a real review round:
 1. **Never write "verify X" as scope.** Check X now. If X exists, cite it (path + symbol). If it doesn't, scope its creation as new work — in this issue or a named owning issue.
 2. **Read the enums, don't remember them.** UI vocabularies (badges, chart categories, timeline kinds) are copied from the canonical source (e.g. `INVOCATION_KINDS` in `packages/db-core/src/session-evidence.ts`) — exact members, exact spelling. Never add a member the schema doesn't have (no fifth domain like "MCP"; that's a sub-classification, and the issue must say of what and keyed how). When kinds are combined into one visual band, the label must not claim just one of them.
 3. **Check current routing/redirect reality before prescribing route changes.** A route may already be a legacy redirect in the opposite direction.
+4. **Every read cites its ledger row.** The feature's producer/consumer ledger (built in `feature-planning` step 1) names, for each data element, either the verified existing source or the one issue that produces it. Never write a read whose ledger row is missing — add the row (with a named owner) first, or the reviewer will find a consume-without-producer hole.
+5. **Quote the shared-decisions register verbatim.** Defaults, shared formulas/detection rules, and ownership calls are stated once in the register; your body quotes them, never paraphrases. Paraphrase is how sibling issues acquire three different defaults and two versions of the same formula.
 
 ## Structural obligations per issue
 
@@ -36,6 +38,19 @@ Corollaries, each learned from a real review round:
 - **Rules threading.** Restate each `.agents/rules/` invariant the issue triggers, as it binds this task (metric registry + version for new metrics; three test classes for any schema change; SQL only in db-core; transformer purity + conformance for transformer work; n= on every aggregate; empty vs error affordances; filterable-table pattern only over fully-loaded row sets — if rows are paginated server-side, either scope a full-load DTO or don't use the pattern).
 - **Site data-layer reality.** New reads ride the existing generic `query` proxy (`AnalyticsDataSource` view methods) — don't prescribe parallel protocol message types.
 - **Cross-issue consistency.** Numbering ("k/N") matches the real sub-issue count; kind vocabularies, color/token names, and file paths agree across sibling issues; every named dependency exists.
+- **Single-PR sizing test.** Count the deliverables: pages + new routes + migrations (each ×3 test classes) + new data-source views + E2E suites. More than one page plus more than one new route, or any two of {a migration, a new view, a multi-page surface}, means the issue splits — name the split now with an owner per half; don't leave sizing for the reviewer.
+
+## Storage-mechanics preflight (metric/schema-bearing issues)
+
+Before writing any "How stored" or metric-derivation section, verify in the code — not from memory (each item below cost a real review round on feature #182):
+
+1. **Columns exist.** Every named table/column exists, or its migration is scoped (here or in a named owning issue).
+2. **The write path actually writes.** Check what ingestion hardcodes (e.g. entity fields written null) and which typed tables have stores but no production writer at all — "the existing pipeline picks it up" is a claim to verify, not assume.
+3. **Aggregation + fan-out eligibility.** Declare the definition's `aggregation` and confirm the rollup/derivation path that must pick it up actually selects it (e.g. sum-only filters on the additive fan-out).
+4. **Policy interactions.** Cardinality caps, top-N folding, dimension domains — a leaderboard over a capped dimension silently loses rows in every real project; state who bypasses or raises the cap.
+5. **Vocabulary from the producing layer.** A db-core enum and a transformer union can share a concept and differ in members; copy status/kind vocabularies from the layer that emits the value this issue stores.
+6. **Comparability/version wiring.** Registry entry, version, comparability inputs, and estimator/revision recording where applicable.
+7. **Sequencing.** Where in the ingestion transaction the write lands relative to rollup contributions and distribution rebuilds — writes landing after the fan-out has already run never reach it.
 
 ## Working procedure
 
