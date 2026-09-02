@@ -31,7 +31,14 @@ const SYNTHETIC_ALLOWLIST: CaptureAllowlist = {
   version: 1,
   session: [],
   workspace: [{ scope: 'workspace', pattern: 'AGENT.md' }],
-  global: [{ scope: 'global', pattern: '~/.agent/settings.json' }],
+  // `{configDir}/...` is config-dir-relative (resolved via the profile's own
+  // `configDir(env)`); a bare `~/...` pattern is always home-relative,
+  // regardless of the profile's config directory (see `expandAllowlistPattern`
+  // in `discovery/glob.ts`). Both prefixes are exercised below.
+  global: [
+    { scope: 'global', pattern: '{configDir}/settings.json' },
+    { scope: 'global', pattern: '~/.agent-home.json' },
+  ],
 };
 
 const SYNTHETIC_SESSION_LAYOUT: SessionLayoutDescriptor = {
@@ -96,7 +103,7 @@ describe('discovery is genuinely parameterized by HarnessProfile', () => {
     expect(paths).not.toContain('CLAUDE.md');
   });
 
-  it('resolves the global config directory from the injected profile, not a Claude default', async () => {
+  it('resolves {configDir}/... global patterns from the injected profile, not a Claude default', async () => {
     const claudeConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-profile-claude-cfg-'));
     const syntheticConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-profile-synth-cfg-'));
     try {
@@ -118,13 +125,38 @@ describe('discovery is genuinely parameterized by HarnessProfile', () => {
       );
 
       expect(claudeResult.artifacts.some((a) => a.relativePath === 'settings.json')).toBe(true);
-      // The synthetic profile's allowlist has no `settings.json` global pattern
-      // (its own global pattern is `~/.agent/settings.json`), so nothing from
-      // the Claude-shaped global scope leaks through when a different profile
-      // is injected.
-      expect(syntheticResult.artifacts.some((a) => a.relativePath === 'settings.json')).toBe(false);
+      // The synthetic profile's own `{configDir}/settings.json` global pattern
+      // resolves against ITS configDir, not Claude's — proving `{configDir}/...`
+      // is genuinely profile-driven, not still hardcoded to `~/.claude/...`.
+      expect(syntheticResult.artifacts.some((a) => a.relativePath === 'settings.json')).toBe(true);
+      const syntheticSettings = syntheticResult.artifacts.find(
+        (a) => a.relativePath === 'settings.json',
+      );
+      expect(syntheticSettings?.absolutePath).toBe(path.join(syntheticConfigDir, 'settings.json'));
     } finally {
       fs.rmSync(claudeConfigDir, { recursive: true, force: true });
+      fs.rmSync(syntheticConfigDir, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves a bare ~/... global pattern against homeDir, not configDir, for any profile', async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-profile-home-'));
+    const syntheticConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-profile-synth-cfg2-'));
+    try {
+      await writeFile(path.join(homeDir, '.agent-home.json'), '{"home":true}');
+      // A same-named file under configDir must NOT be the one discovered.
+      await writeFile(path.join(syntheticConfigDir, '.agent-home.json'), '{"wrong":true}');
+
+      const result = await discover(
+        { projectId: 'proj-1', sessionId: 'sess-1', workspaceRoot: workspace, homeDir },
+        makeSyntheticProfile(syntheticConfigDir),
+      );
+
+      const found = result.artifacts.find((a) => a.relativePath === '.agent-home.json');
+      expect(found).toBeDefined();
+      expect(found?.absolutePath).toBe(path.join(homeDir, '.agent-home.json'));
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
       fs.rmSync(syntheticConfigDir, { recursive: true, force: true });
     }
   });

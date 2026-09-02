@@ -24,10 +24,17 @@ export const WORKSPACE_ALLOWLIST_PATTERNS: readonly string[] = [
   '.claude/rules/**',
 ];
 
+/**
+ * `{configDir}/...` patterns are resolved against `HarnessProfile.configDir(env)`
+ * (Claude's default: `~/.claude`, overridable via `CLAUDE_CONFIG_DIR`); a plain
+ * `~/...` pattern is always resolved against the home directory regardless of
+ * the harness's config directory. See `expandAllowlistPattern` in
+ * `packages/sync/src/discovery/glob.ts`.
+ */
 export const GLOBAL_ALLOWLIST_PATTERNS: readonly string[] = [
-  '~/.claude/settings.json',
-  '~/.claude/CLAUDE.md',
-  '~/.claude/agents/**',
+  '{configDir}/settings.json',
+  '{configDir}/CLAUDE.md',
+  '{configDir}/agents/**',
   '~/.claude.json',
 ];
 
