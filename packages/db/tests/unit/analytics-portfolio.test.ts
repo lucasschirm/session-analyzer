@@ -374,6 +374,11 @@ describe('analytics-portfolio', () => {
     expect(overview.componentCounts.tool).toBe(1);
     expect(overview.componentCounts.skill).toBe(1);
     expect(overview.unusedOfferedComponents.length).toBe(1);
+    // The unused-offered list must surface human-friendly labels, never raw
+    // component ids (see the `never-display-raw-ids` rule). The unused
+    // component has kind `skill` and displayName `UnusedSkill` with no
+    // nativeId, so the label is `skill/UnusedSkill`.
+    expect(overview.unusedOfferedComponents[0]).toBe('skill/UnusedSkill');
 
     const durationMetric = overview.headlineMetrics.find((m) => m.metricId === 'm-duration');
     expect(durationMetric).toBeDefined();

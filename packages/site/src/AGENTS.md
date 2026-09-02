@@ -105,3 +105,32 @@ Routes are hash-based (`#/...`) for GitHub Pages compatibility:
 - Database access goes through `db/db-client.ts` (main thread) or `db/database.ts` (inside the worker) — never touch SQL elsewhere.
 - SQL must stay parameterized; never interpolate values into query strings.
 - Lit components follow one-component-per-file with kebab-case filenames matching the tag name.
+
+## Display labeling policy (non-negotiable)
+
+Internal ids (component ids like `comp-7b749f662cc27c79`, session uuids,
+project ids, generation ids, store primary keys, hash-derived deterministic
+ids) must **never** be shown to end users as the primary label for the thing
+they refer to. This is enforced by the `never-display-raw-ids` rule in
+`.agents/rules/`.
+
+- Always resolve the best available human-friendly label before rendering:
+  - **Components**: use the `componentDisplayName(kind, nativeId, displayName, id)`
+    helper from `packages/db/src/analytics-portfolio.ts` (prefer `kind/nativeId`
+    e.g. `skill/multi-issue-agent`, then `kind/displayName`, then `kind/id`
+    only as a last-resort data-quality signal). DTO fields that surface
+    component references to the UI must carry resolved labels, not raw ids —
+    e.g. `PortfolioOverview.unusedOfferedComponents` returns labels, not ids.
+  - **Sessions**: render the session title / ai-title when available, falling
+    back to a short timestamped summary — never the raw session uuid.
+  - **Projects**: render the project `name`, never the project id.
+  - **Other entities**: prefer the dedicated `name`/`label`/`title` field,
+    falling back to a derived summary, never the primary key.
+- DTO fields named `*Id` are for routing, correlation, and evidence links —
+  not for direct display. If a field is rendered to the user, it must be a
+  resolved label field (`name`, `label`, `displayName`, or a composed label).
+- A raw id may appear in a tooltip, copy-to-clipboard affordance, or developer
+  diagnostics surface only when the primary visible label is already shown
+  alongside it — never as the sole representation.
+- Tests that assert on rendered entity references must assert on the resolved
+  label, not the raw id, so a regression to id-as-label is caught.

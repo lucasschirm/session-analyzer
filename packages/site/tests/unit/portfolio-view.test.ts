@@ -99,7 +99,7 @@ function overviewFixture(overrides: Partial<PortfolioOverview> = {}): PortfolioO
     projectCount: 3,
     sessionCount: 12,
     componentCounts: { tool: 5, agent: 2 },
-    unusedOfferedComponents: ['unused-component'],
+    unusedOfferedComponents: ['skill/unused-component'],
     totalTokens: 1_234_567,
     modelCount: 2,
     harnessCount: 1,
