@@ -45,7 +45,7 @@ export class DataSourcesPage extends PageLitElement {
         Manage remote S3 connections for syncing session data. Connections can be saved to local
         storage (encrypted with a passkey) or kept in-memory for the current session.
       </p>
-      <connect-modal inline .connection-id=${this.connectionId}></connect-modal>
+      <connect-modal inline .connectionId=${this.connectionId}></connect-modal>
     `;
   }
 }

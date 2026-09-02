@@ -9,7 +9,6 @@ import './sync-confirm-modal';
 import { dbClient } from '../db/db-client';
 import { generateId } from '../lib/id';
 import { hintForS3Error } from '../lib/s3-errors';
-import { navigateTo } from '../router';
 import { encryptField, isUnlocked } from '../sync/credential-crypto';
 import { syncManager } from '../sync/sync-manager';
 import type { Connection, StoredS3Credentials } from '../types';
@@ -484,9 +483,8 @@ export class ConnectModal extends LitElement {
   /**
    * Guard that suppresses the `connectionId` reaction in `willUpdate` when the
    * connectionId change originated from an explicit user action inside this
-   * component (edit/new/cancel). Without it, calling `navigateTo` here would
-   * update the URL, which updates `connectionId`, which re-triggers the same
-   * handler and loops.
+   * component (edit/new/cancel). Without it, updating the hash here would
+   * update `connectionId`, which re-triggers the same handler and loops.
    */
   private suppressConnectionIdSync = false;
 
@@ -688,7 +686,7 @@ export class ConnectModal extends LitElement {
   private handleNewConnection(): void {
     if (this.inline) {
       this.suppressConnectionIdSync = true;
-      navigateTo('/settings/data-sources/new');
+      this.updateDataSourcesHash('new');
     }
     this.form = blankForm();
     this.editingId = '';
@@ -702,7 +700,7 @@ export class ConnectModal extends LitElement {
   private handleEditConnection(id: string): void {
     if (this.inline) {
       this.suppressConnectionIdSync = true;
-      navigateTo(`/settings/data-sources/${id}`);
+      this.updateDataSourcesHash(id);
     }
     const inMemory = this.inMemoryConnections.get(id);
     if (inMemory) {
@@ -766,10 +764,25 @@ export class ConnectModal extends LitElement {
     }
   }
 
+  /**
+   * Updates the URL hash to reflect the current data-sources view without
+   * triggering a hashchange event. Uses `history.replaceState` so the
+   * router does not re-render the page (which would detach the form).
+   * The `connectionId` property is NOT updated here — it only flows from
+   * the parent (route) to this component. Internal state is tracked by
+   * `this.view`.
+   */
+  private updateDataSourcesHash(connectionId: string): void {
+    const hash =
+      connectionId === '' ? '#/settings/data-sources' : `#/settings/data-sources/${connectionId}`;
+    const url = `${window.location.pathname}${window.location.search}${hash}`;
+    window.history.replaceState(null, '', url);
+  }
+
   private handleCancelForm(): void {
     if (this.inline) {
       this.suppressConnectionIdSync = true;
-      navigateTo('/settings/data-sources');
+      this.updateDataSourcesHash('');
     }
     this.view = 'list';
     this.form = blankForm();

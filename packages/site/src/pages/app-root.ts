@@ -353,7 +353,7 @@ export class AppRoot extends LitElement {
         path: '/settings/data-sources/:connectionId',
         render: (params) =>
           html`<data-sources-page
-            connection-id=${decodeRouteParam(params.connectionId)}
+            .connectionId=${decodeRouteParam(params.connectionId)}
           ></data-sources-page>`,
       },
       {

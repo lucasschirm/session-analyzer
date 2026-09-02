@@ -1,4 +1,4 @@
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { dbClient } from '../db/db-client';
@@ -159,6 +159,14 @@ export class LeftNav extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     syncManager.removeEventListener('change', this.handleSyncChange);
+  }
+
+  protected willUpdate(changed: PropertyValues<this>): void {
+    // Keep expansion in sync when navigating between dashboard/projects routes.
+    // Only auto-expand when viewing a specific project, not the projects list.
+    if (changed.has('path')) {
+      this.projectsExpanded = /^\/projects\/[^/]+/.test(this.path);
+    }
   }
 
   private handleSyncChange = (event: Event): void => {
