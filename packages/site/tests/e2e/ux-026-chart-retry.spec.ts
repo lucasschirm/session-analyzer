@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { assertErrorBoundary } from './helpers/chart-content';
 
 /**
- * UX-023: Chart error affordance carries a working retry control.
+ * UX-026: Chart error affordance carries a working retry control.
  *
  * Part of issue #168 (chart layer upgrade). `echarts-base`'s error-state
  * panel (`.chart-affordance.state-error`) now includes a "Retry" button that
@@ -12,7 +12,7 @@ import { assertErrorBoundary } from './helpers/chart-content';
  * would listen for — not just that the button is present in markup.
  */
 
-test.describe('UX-023: chart error retry affordance', () => {
+test.describe('UX-026: chart error retry affordance', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('app-root')).toBeVisible({ timeout: 30000 });
@@ -23,23 +23,23 @@ test.describe('UX-023: chart error retry affordance', () => {
       await customElements.whenDefined('analytics-chart');
 
       const chart = document.createElement('analytics-chart');
-      chart.id = 'ux023-error-chart';
+      chart.id = 'ux026-error-chart';
       chart.style.display = 'block';
       chart.style.width = '800px';
       chart.style.height = '500px';
-      chart.title = 'UX-023 retry smoke';
+      chart.title = 'UX-026 retry smoke';
       chart.setAttribute('state', 'error');
       document.body.appendChild(chart);
 
-      (window as unknown as { __ux023RetryCount: number }).__ux023RetryCount = 0;
+      (window as unknown as { __ux026RetryCount: number }).__ux026RetryCount = 0;
       chart.addEventListener('chart-retry', () => {
-        (window as unknown as { __ux023RetryCount: number }).__ux023RetryCount += 1;
+        (window as unknown as { __ux026RetryCount: number }).__ux026RetryCount += 1;
       });
 
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
-    const chart = page.locator('analytics-chart#ux023-error-chart');
+    const chart = page.locator('analytics-chart#ux026-error-chart');
     await expect(chart).toBeVisible();
 
     // Confirm the error affordance itself is present and structurally
@@ -52,7 +52,7 @@ test.describe('UX-023: chart error retry affordance', () => {
 
     await expect
       .poll(async () =>
-        page.evaluate(() => (window as unknown as { __ux023RetryCount: number }).__ux023RetryCount),
+        page.evaluate(() => (window as unknown as { __ux026RetryCount: number }).__ux026RetryCount),
       )
       .toBe(1);
   });

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 /**
- * UX-024: Heatmap missing cells are DOM-distinct from measured-zero cells.
+ * UX-027: Heatmap missing cells are DOM-distinct from measured-zero cells.
  *
  * Part of issue #168 (chart layer upgrade). Per
  * `.agents/rules/missing-is-never-zero.md`, a `heatmap`-type `analytics-chart`
@@ -13,7 +13,7 @@ import { expect, test } from '@playwright/test';
  * DOM-assertable attribute, in the real rendered shadow tree.
  */
 
-test.describe('UX-024: heatmap missing-vs-zero cell distinction', () => {
+test.describe('UX-027: heatmap missing-vs-zero cell distinction', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('app-root')).toBeVisible({ timeout: 30000 });
@@ -26,13 +26,13 @@ test.describe('UX-024: heatmap missing-vs-zero cell distinction', () => {
       await customElements.whenDefined('analytics-chart');
 
       const chart = document.createElement('analytics-chart');
-      chart.id = 'ux024-heatmap';
+      chart.id = 'ux027-heatmap';
       chart.style.display = 'block';
       chart.style.width = '800px';
       chart.style.height = '500px';
-      chart.title = 'UX-024 heatmap smoke';
+      chart.title = 'UX-027 heatmap smoke';
       (chart as unknown as { series: unknown }).series = {
-        seriesId: 'ux024-heatmap',
+        seriesId: 'ux027-heatmap',
         label: 'Component activity',
         chartType: 'heatmap',
         xLabel: 'Day',
@@ -49,7 +49,7 @@ test.describe('UX-024: heatmap missing-vs-zero cell distinction', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
-    const chart = page.locator('analytics-chart#ux024-heatmap');
+    const chart = page.locator('analytics-chart#ux027-heatmap');
     await expect(chart).toBeVisible();
 
     const missingCell = chart.locator('[data-missing="true"]');
