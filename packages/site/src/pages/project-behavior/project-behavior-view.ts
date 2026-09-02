@@ -512,7 +512,12 @@ export class ProjectBehaviorPage extends LitElement {
 
   private renderOverview() {
     if (this.summary.state === 'error') {
-      return html`<div class="error">${this.summary.error}</div>`;
+      return html`
+        <div class="section">
+          <h2>Overview</h2>
+          <div class="error">${this.summary.error}</div>
+        </div>
+      `;
     }
     if (!this.summary.data) {
       return html`

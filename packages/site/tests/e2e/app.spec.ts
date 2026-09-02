@@ -421,12 +421,12 @@ test.describe('Analytics chart geometry (UX-001)', () => {
     await page.goto(`/#/projects/${projectName}/behavior`);
     await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 15000 });
 
-    // Pick the distribution chart by its title. The test must prove real SVG
-    // marks are rendered, not just a title, legend, or empty-state badge.
+    // Pick the token usage trends chart by its title. The test must prove real
+    // SVG marks are rendered, not just a title, legend, or empty-state badge.
     // getByRole pierces the open shadow DOM and matches the chart's title.
     const chart = page
       .locator('analytics-chart')
-      .filter({ has: page.getByRole('heading', { name: 'Cost / time / outcome distributions' }) });
+      .filter({ has: page.getByRole('heading', { name: 'Token usage trends' }) });
     await expect(chart).toBeVisible({ timeout: 15000 });
 
     // This assertion queries the chart's shadow DOM and checks for non-zero
