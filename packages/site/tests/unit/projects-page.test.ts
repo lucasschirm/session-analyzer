@@ -29,6 +29,7 @@ function emptySnapshot(): SyncManagerSnapshot {
     warnings: [],
     activeRun: null,
     queuedRuns: [],
+    lastCompletedAt: null,
   } as unknown as SyncManagerSnapshot;
 }
 
@@ -44,6 +45,7 @@ function snapshotWithRun(
     warnings: [],
     activeRun: { state },
     queuedRuns: [],
+    lastCompletedAt: null,
   } as unknown as SyncManagerSnapshot;
 }
 

@@ -2,6 +2,7 @@ import { css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/connect-modal';
+import '../../components/settings-tabs';
 
 /**
  * Settings > Data Sources page.
@@ -40,6 +41,7 @@ export class DataSourcesPage extends PageLitElement {
 
   render() {
     return html`
+      <settings-tabs></settings-tabs>
       <h1>Data Sources</h1>
       <p class="description">
         Manage remote S3 connections for syncing session data. Connections can be saved to local

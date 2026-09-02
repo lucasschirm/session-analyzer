@@ -20,6 +20,7 @@ const mockSyncManager = vi.hoisted(() => ({
     warnings: [],
     activeRun: null,
     queuedRuns: [],
+    lastCompletedAt: null,
   })),
 }));
 

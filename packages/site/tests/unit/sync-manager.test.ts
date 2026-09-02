@@ -11,6 +11,7 @@ import {
   syncManager,
 } from '../../src/sync/sync-manager';
 import type { SessionSyncCompleteMessage } from '../../src/sync/sync-protocol';
+import type { Connection } from '../../src/types';
 
 /**
  * Regression tests for the sync-to-analytics bridge.
@@ -251,5 +252,109 @@ describe('syncManager singleton passkey prompt wiring', () => {
     setPasskeyPrompt(async () => false);
     const result = await requestPasskey();
     expect(result).toBe(false);
+  });
+});
+
+/**
+ * Regression: `SyncManagerSnapshot.lastCompletedAt` must reflect the most
+ * recent successfully-completed sync — from persisted connection
+ * bookkeeping on `init()`, or from a run that just finished — and must
+ * never be coerced to a fabricated value when no completion has happened
+ * (`.agents/rules/missing-is-never-zero.md`).
+ */
+describe('SyncManager lastCompletedAt', () => {
+  function fakeRun(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'run-1',
+      connectionId: 'c1',
+      state: 'running',
+      startedAt: Date.now(),
+      s3Client: null,
+      connection: null,
+      projects: new Map(),
+      projectQueue: [],
+      activeWorkers: new Set(),
+      warnings: [],
+      syncOnlyNew: false,
+      cancelled: false,
+      ...overrides,
+    };
+  }
+
+  function endRun(manager: SyncManager, state: 'done' | 'failed' | 'cancelled'): void {
+    (manager as unknown as { endRun: (run: ReturnType<typeof fakeRun>, s: string) => void }).endRun(
+      fakeRun(),
+      state,
+    );
+  }
+
+  it('starts null when there is no prior completion history', () => {
+    const manager = new SyncManager();
+    expect(manager.getSnapshot().lastCompletedAt).toBeNull();
+  });
+
+  it('is populated from persisted last_sync_at across connections on init()', async () => {
+    const connections: Connection[] = [
+      {
+        id: 'c1',
+        name: 'a',
+        storage_type: 's3',
+        sync_only_new: false,
+        last_sync_at: 100,
+        created_at: 1,
+        updated_at: 1,
+      },
+      {
+        id: 'c2',
+        name: 'b',
+        storage_type: 's3',
+        sync_only_new: false,
+        last_sync_at: 300,
+        created_at: 1,
+        updated_at: 1,
+      },
+      {
+        id: 'c3',
+        name: 'c',
+        storage_type: 's3',
+        sync_only_new: false,
+        created_at: 1,
+        updated_at: 1,
+      },
+    ];
+    const manager = new SyncManager({
+      dbClient: { getConnections: async () => connections } as never,
+    });
+    await (
+      manager as unknown as { loadLastCompletedAt: () => Promise<void> }
+    ).loadLastCompletedAt();
+    expect(manager.getSnapshot().lastCompletedAt).toBe(300);
+  });
+
+  it('stays null when connections exist but none has synced yet', async () => {
+    const manager = new SyncManager({
+      dbClient: { getConnections: async () => [] } as never,
+    });
+    await (
+      manager as unknown as { loadLastCompletedAt: () => Promise<void> }
+    ).loadLastCompletedAt();
+    expect(manager.getSnapshot().lastCompletedAt).toBeNull();
+  });
+
+  it('updates to a fresh timestamp after a run completes successfully', () => {
+    const manager = new SyncManager();
+    const before = Date.now();
+    endRun(manager, 'done');
+    const snapshot = manager.getSnapshot();
+    expect(snapshot.lastCompletedAt).not.toBeNull();
+    expect(snapshot.lastCompletedAt as number).toBeGreaterThanOrEqual(before);
+  });
+
+  it('does not update lastCompletedAt after a cancelled or failed run', () => {
+    const manager = new SyncManager();
+    endRun(manager, 'cancelled');
+    expect(manager.getSnapshot().lastCompletedAt).toBeNull();
+    endRun(manager, 'failed');
+    expect(manager.getSnapshot().lastCompletedAt).toBeNull();
   });
 });
