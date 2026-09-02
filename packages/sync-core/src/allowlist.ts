@@ -31,6 +31,15 @@ export const GLOBAL_ALLOWLIST_PATTERNS: readonly string[] = [
   '~/.claude.json',
 ];
 
+/**
+ * @deprecated Claude Code's capture allowlist, kept as a top-level export so
+ * published `@lucasschirm/claude-session-sync` versions that import it
+ * directly do not break. New code should use `ClaudeHarnessProfile.captureAllowlist`
+ * (`packages/plugins/claude-session-sync`) — or, for a different harness, that
+ * harness's own `HarnessProfile.captureAllowlist` — instead of importing this
+ * constant, since it is Claude-specific and no longer the implicit default
+ * used by `packages/sync`'s discovery functions.
+ */
 export const CAPTURE_ALLOWLIST: CaptureAllowlist = {
   version: CAPTURE_ALLOWLIST_VERSION,
   // Session discovery is handled directly by discoverSession() using the exact

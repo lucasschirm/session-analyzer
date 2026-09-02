@@ -8,6 +8,7 @@ import {
   zeroRun,
 } from '@lucasschirm/sal-sync';
 import { parseClaudeHookInput, readStdin, toHarnessSession, toSyncInput } from './claude.js';
+import { ClaudeHarnessProfile } from './claude-profile.js';
 import { resolveCliEnv } from './cli/env.js';
 import { isMainModule } from './is-main-module.js';
 
@@ -31,6 +32,7 @@ export async function runSessionEnd(raw: unknown, options: CliOptions = {}): Pro
   const result = await sessionEnd({
     ...options,
     input: syncInput,
+    harnessProfile: ClaudeHarnessProfile,
   });
 
   // Surface a summary to stderr so the user sees it in Claude Code.

@@ -1,8 +1,6 @@
 import process from 'node:process';
-import type { HarnessSession, HookInput, SyncTrigger } from '@lucasschirm/sal-sync';
-
-export const CLAUDE_HARNESS = 'claude' as const;
-export const CLAUDE_HARNESS_VERSION = '0.1.0';
+import type { HarnessProfile, HarnessSession, HookInput, SyncTrigger } from '@lucasschirm/sal-sync';
+import { CLAUDE_HARNESS, ClaudeHarnessProfile } from './claude-profile.js';
 
 export const CLAUDE_SYNC_TRIGGERS: Record<string, SyncTrigger> = {
   SessionStart: 'session-start',
@@ -71,6 +69,7 @@ export function toSyncInput(
   session: HarnessSession,
   trigger: SyncTrigger,
   extra?: Record<string, unknown>,
+  profile: HarnessProfile = ClaudeHarnessProfile,
 ): HookInput {
   return {
     ...extra,
@@ -81,8 +80,8 @@ export function toSyncInput(
     ended_at: session.endedAt,
     reason: session.endReason,
     model: session.model,
-    harness: CLAUDE_HARNESS,
-    harness_version: CLAUDE_HARNESS_VERSION,
+    harness: profile.harness,
+    harness_version: profile.harnessVersion,
     trigger,
   };
 }

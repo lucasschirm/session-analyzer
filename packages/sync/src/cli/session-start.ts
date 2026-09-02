@@ -131,6 +131,7 @@ export async function sessionStart(options: CliOptions = {}): Promise<CommandRes
         trigger: 'session-start',
         uploadTimeoutMs: config.timeouts.syncTimeoutMs,
         session,
+        harnessProfile: options.harnessProfile,
       });
 
       const generator = new ManifestGenerator(dataDir, { storageAdapter });

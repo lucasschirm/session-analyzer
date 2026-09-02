@@ -9,11 +9,13 @@ import { clearTimeout, setTimeout } from 'node:timers';
 import type {
   ArtifactIdentity,
   PutObjectInput,
+  SessionLayoutDescriptor,
   StorageAdapter,
   SyncConfig,
 } from '@lucasschirm/sal-sync-core';
-import { StorageError } from '@lucasschirm/sal-sync-core';
+import { resolveMainTranscriptFileName, StorageError } from '@lucasschirm/sal-sync-core';
 import { loadConfig } from '../config/index.js';
+import { CLAUDE_SESSION_LAYOUT } from '../discovery/session-layout.js';
 import { isTranscriptJsonl, processDelta, selectSanitizer } from '../hashing/index.js';
 import { normalizeTranscriptDelta } from '../sanitization/index.js';
 import { StateStore } from '../state/index.js';
@@ -51,6 +53,8 @@ export interface WatchTranscriptsOptions {
   debounceMs?: number;
   pollIntervalMs?: number;
   livenessIntervalMs?: number;
+  /** Session transcript layout convention; defaults to Claude Code's. */
+  sessionLayout?: SessionLayoutDescriptor;
 }
 
 const DEFAULT_DEBOUNCE_MS = 500;
@@ -140,6 +144,7 @@ export class TranscriptWatcher {
   private readonly debounceMs: number;
   private readonly pollIntervalMs: number;
   private readonly livenessIntervalMs: number;
+  private readonly sessionLayout: SessionLayoutDescriptor;
 
   private config?: SyncConfig;
   private stateStore?: StateStore;
@@ -171,6 +176,7 @@ export class TranscriptWatcher {
     this.debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.livenessIntervalMs = options.livenessIntervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
+    this.sessionLayout = options.sessionLayout ?? CLAUDE_SESSION_LAYOUT;
     this.stopPromise = new Promise<void>((resolve) => {
       this.stopResolve = resolve;
     });
@@ -203,7 +209,7 @@ export class TranscriptWatcher {
     await this.stateStore.ensureDirectories();
 
     this.baseDir = path.dirname(path.resolve(this.transcriptPath));
-    this.matcher = createWatcherMatcher(this.baseDir, this.sessionId);
+    this.matcher = createWatcherMatcher(this.baseDir, this.sessionId, this.sessionLayout);
 
     await this.acquireWatcherPidFile();
 
@@ -483,7 +489,11 @@ export class TranscriptWatcher {
     }
 
     const base = this.baseDir;
-    const mainTranscript = path.join(base, `${this.sessionId}.jsonl`);
+    const mainTranscriptFileName = resolveMainTranscriptFileName(
+      this.sessionLayout,
+      this.sessionId,
+    );
+    const mainTranscript = path.join(base, mainTranscriptFileName);
     const sessionDir = path.join(base, this.sessionId);
     const subagents = path.join(sessionDir, 'subagents');
 
@@ -534,11 +544,14 @@ export class TranscriptWatcher {
       if (current === undefined) {
         if (this.isFirstPoll) {
           // File already existed when the watcher started; avoid re-uploading.
-          // KNOWN FOLLOW-UP (found during TSK0047/SYNC-001): a write that lands
-          // between spawn and this first poll is treated as pre-existing and
-          // silently skipped. A proper fix needs to seed offsets from the
-          // session-start bulk-upload result or diff against the state
-          // record's lastUploadedHash rather than trusting stat.size alone.
+          // KNOWN FOLLOW-UP (found during TSK0047/SYNC-001; tracked as DS-B6
+          // #144): a write that lands between spawn and this first poll is
+          // treated as pre-existing and silently skipped. A proper fix needs
+          // to seed offsets from the session-start bulk-upload result or diff
+          // against the state record's lastUploadedHash rather than trusting
+          // stat.size alone. This race is independent of the session layout
+          // (DS-F1 #156 only parameterizes which files are scanned via
+          // `this.sessionLayout`) and applies unchanged to any harness.
           this.offsets[relative] = { offset: stat.size, lastProcessedSize: stat.size };
         } else {
           // New file detected after start; process from the beginning.
@@ -621,7 +634,11 @@ export class TranscriptWatcher {
     // Convert the filesystem-relative path (which includes the <sessionId>/
     // prefix) to a storage-relative path so the sessionId is not repeated in
     // the S3 key.
-    const storageRelativePath = toStorageRelativePath(this.sessionId, relativePath);
+    const storageRelativePath = toStorageRelativePath(
+      this.sessionId,
+      relativePath,
+      this.sessionLayout,
+    );
 
     try {
       const result = await this.stateStore.withState((state) =>
