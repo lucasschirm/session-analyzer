@@ -409,7 +409,7 @@ export class ArtifactDiffView extends LitElement {
         ${
           origin
             ? html`<a href=${origin}>${this.breadcrumbOriginLabel()}</a>`
-            : html`<a href="#/portfolio">Portfolio</a>`
+            : html`<a href="#/">Dashboard</a>`
         }
         <span aria-hidden="true">/</span>
         <span class="current">Artifact diff</span>
@@ -430,11 +430,11 @@ export class ArtifactDiffView extends LitElement {
   private breadcrumbOriginLabel(): string {
     switch (this.params.origin) {
       case 'portfolio':
-        return 'Portfolio';
+        return 'Dashboard';
       case 'project':
         return 'Project Behavior';
       case 'component':
-        return 'Component Ecosystem';
+        return 'Artifact Ecosystem';
       case 'session':
         return 'Session Evidence';
       default:

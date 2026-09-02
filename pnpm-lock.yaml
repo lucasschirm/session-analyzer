@@ -108,6 +108,9 @@ importers:
       '@lit-labs/router':
         specifier: ^0.1.4
         version: 0.1.4
+      '@lucasschirm/litjs-typeahead':
+        specifier: ^0.0.10
+        version: 0.0.10
       '@lucasschirm/sal-claude-session-parser':
         specifier: workspace:*
         version: link:../parsers/claude-session-parser
@@ -769,6 +772,9 @@ packages:
 
   '@lit/reactive-element@2.1.2':
     resolution: {integrity: sha512-pbCDiVMnne1lYUIaYNN5wrwQXDtHaYtg7YEFPeW+hws6U47WeFvISGUWekPGKWOP1ygrs0ef0o1VJMk1exos5A==}
+
+  '@lucasschirm/litjs-typeahead@0.0.10':
+    resolution: {integrity: sha512-GPvJDlnpkrjFfrIzWZ/8lZZoKT8TLh6jES/dSMQ/m7hIJnbfD07ggpvY6FAW6op9n6a1Z6NsJ7k5WPE5ZaXc3w==}
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     resolution: {integrity: sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ==}
@@ -2090,6 +2096,10 @@ snapshots:
   '@lit/reactive-element@2.1.2':
     dependencies:
       '@lit-labs/ssr-dom-shim': 1.6.0
+
+  '@lucasschirm/litjs-typeahead@0.0.10':
+    dependencies:
+      lit: 3.3.3
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true

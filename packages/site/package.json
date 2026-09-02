@@ -30,6 +30,7 @@
   "license": "ISC",
   "dependencies": {
     "@lit-labs/router": "^0.1.4",
+    "@lucasschirm/litjs-typeahead": "^0.0.10",
     "@lucasschirm/sal-claude-session-parser": "workspace:*",
     "@lucasschirm/sal-db": "workspace:*",
     "@lucasschirm/sal-db-core": "workspace:*",

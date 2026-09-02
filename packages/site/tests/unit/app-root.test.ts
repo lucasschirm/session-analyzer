@@ -2,16 +2,6 @@ import type { LitElement } from 'lit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '../../src/pages/app-root';
 import type { AppRoot } from '../../src/pages/app-root';
-import type { Connection } from '../../src/types';
-
-const savedConnection: Connection = {
-  id: 'c1',
-  name: 'Saved S3',
-  storage_type: 's3',
-  sync_only_new: false,
-  created_at: 1_700_000_000_000,
-  updated_at: 1_700_000_000_000,
-};
 
 const mockDbClient = vi.hoisted(() => ({
   ensureReady: vi.fn(),
@@ -22,6 +12,8 @@ const mockDbClient = vi.hoisted(() => ({
   updateConnection: vi.fn(),
   saveS3Credentials: vi.fn(),
   deleteConnection: vi.fn(),
+  getProjects: vi.fn(),
+  getProjectByReadableId: vi.fn(),
 }));
 
 vi.mock('../../src/db/db-client', () => ({ dbClient: mockDbClient }));
@@ -86,6 +78,7 @@ async function flush(element: LitElement): Promise<void> {
 
 afterEach(() => {
   document.body.innerHTML = '';
+  window.location.hash = '';
 });
 
 beforeEach(() => {
@@ -98,6 +91,8 @@ beforeEach(() => {
   mockDbClient.updateConnection.mockResolvedValue(undefined);
   mockDbClient.saveS3Credentials.mockResolvedValue(undefined);
   mockDbClient.deleteConnection.mockResolvedValue(undefined);
+  mockDbClient.getProjects.mockResolvedValue([]);
+  mockDbClient.getProjectByReadableId.mockResolvedValue(null);
   mockSyncManager.getSnapshot.mockReturnValue({
     initialized: true,
     readOnly: false,
@@ -110,37 +105,81 @@ beforeEach(() => {
 });
 
 describe('app-root', () => {
-  it('renders the sync progress slot before the storage badge', async () => {
+  it('renders the SAL logo and header navigation', async () => {
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    const logo = root.querySelector('.logo');
+    expect(logo).not.toBeNull();
+    expect(logo?.textContent).toBe('SAL');
+
+    const navLinks = root.querySelectorAll('nav.header-nav a');
+    expect(navLinks.length).toBe(2);
+    const labels = Array.from(navLinks).map((a) => a.textContent);
+    expect(labels).toContain('Dashboard');
+    expect(labels).toContain('Artifacts');
+  });
+
+  it('renders the settings cog button', async () => {
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    const settingsButton = root.querySelector('.settings-button');
+    expect(settingsButton).not.toBeNull();
+    expect(settingsButton?.getAttribute('aria-label')).toBe('Settings');
+  });
+
+  it('renders the sync progress bar in the header right cluster', async () => {
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
     const root = app.shadowRoot as ShadowRoot;
     const headerRight = root.querySelector('.header-right');
     const progress = root.querySelector('sync-progress-bar');
-    const badge = root.querySelector('.storage-badge');
 
     expect(headerRight).not.toBeNull();
     expect(progress).not.toBeNull();
-    expect(badge).not.toBeNull();
-
-    const children = Array.from(headerRight?.children ?? []);
-    const progressIndex = children.indexOf(progress as HTMLElement);
-    const badgeIndex = children.indexOf(badge as HTMLElement);
-    expect(progressIndex).toBeLessThan(badgeIndex);
+    expect(headerRight?.contains(progress)).toBe(true);
   });
 
-  it('refreshes security state when the connect modal closes', async () => {
-    const getConnections = vi.fn().mockResolvedValue([savedConnection]);
-    mockDbClient.getConnections = getConnections;
-
+  it('does not render the old storage badge or connect button', async () => {
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
-    expect(getConnections).toHaveBeenCalledTimes(1);
+    const root = app.shadowRoot as ShadowRoot;
+    expect(root.querySelector('.storage-badge')).toBeNull();
+    expect(root.querySelector('connect-modal')).toBeNull();
+  });
 
-    (app as unknown as { handleConnectClose: () => void }).handleConnectClose();
+  it('renders the left nav on the dashboard route', async () => {
+    window.location.hash = '#/';
+    const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
-    expect(getConnections).toHaveBeenCalledTimes(2);
+    const root = app.shadowRoot as ShadowRoot;
+    const leftNav = root.querySelector('left-nav');
+    expect(leftNav).not.toBeNull();
+  });
+
+  it('renders the left nav on settings routes', async () => {
+    window.location.hash = '#/settings/data-sources';
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    const leftNav = root.querySelector('left-nav');
+    expect(leftNav).not.toBeNull();
+  });
+
+  it('does not render the left nav on session routes', async () => {
+    window.location.hash = '#/sessions/s1';
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    const leftNav = root.querySelector('left-nav');
+    expect(leftNav).toBeNull();
   });
 });

@@ -89,9 +89,9 @@ export function buildComponentEcosystemHash(params: ComponentEcosystemParams): s
   }
   const query = p.toString();
   if (params.component) {
-    return `#/components/${encodeURIComponent(params.component)}${query ? `?${query}` : ''}`;
+    return `#/artifacts/${encodeURIComponent(params.component)}${query ? `?${query}` : ''}`;
   }
-  return `#/components${query ? `?${query}` : ''}`;
+  return `#/artifacts${query ? `?${query}` : ''}`;
 }
 
 export function componentEcosystemParamsToQuery(params: ComponentEcosystemParams): AnalyticsQuery {
@@ -135,7 +135,7 @@ export function evidenceLinkHref(
 ): string {
   switch (link.entityType) {
     case 'project':
-      return `#/projects/${link.entityId}/behavior?returnContext=${encodeURIComponent(
+      return `#/projects/${link.entityId}?returnContext=${encodeURIComponent(
         buildComponentEcosystemQueryString(returnParams),
       )}`;
     case 'session':
@@ -145,7 +145,7 @@ export function evidenceLinkHref(
     case 'component':
       return componentHref(link.entityId, { ...returnParams, kind: returnParams.kind });
     case 'portfolio':
-      return '#/portfolio';
+      return '#/';
     default:
       return buildComponentEcosystemHash(returnParams);
   }
@@ -155,10 +155,10 @@ export function originHref(params: ComponentEcosystemParams): string | null {
   if (!params.origin || !params.returnContext) return null;
   switch (params.origin) {
     case 'portfolio':
-      return `#/portfolio?${params.returnContext}`;
+      return `#/?${params.returnContext}`;
     case 'project':
       return params.project
-        ? `#/projects/${params.project}/behavior?returnContext=${encodeURIComponent(params.returnContext)}`
+        ? `#/projects/${params.project}?returnContext=${encodeURIComponent(params.returnContext)}`
         : null;
     case 'session':
       return params.project ? `#/sessions/${params.project}` : null;

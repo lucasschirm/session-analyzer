@@ -26,7 +26,7 @@ export function parseProjectBehaviorHash(hash: string): ProjectBehaviorParams {
   const path = queryIndex >= 0 ? clean.slice(0, queryIndex) : clean;
   const query = queryIndex >= 0 ? clean.slice(queryIndex + 1) : '';
 
-  const match = path.match(/^\/projects\/([^/]+)\/behavior(?:\/.*)?$/);
+  const match = path.match(/^\/projects\/([^/]+)(?:\/.*)?$/);
   const projectId = match?.[1] ?? '';
 
   const params = new URLSearchParams(query);
@@ -94,12 +94,12 @@ export function evidenceLinkHref(link: EvidenceLink, returnParams?: ProjectBehav
     case 'session':
       return `#/sessions/${link.entityId}`;
     case 'project':
-      return `#/projects/${link.entityId}/behavior${buildProjectBehaviorHash({
+      return `#/projects/${link.entityId}${buildProjectBehaviorHash({
         ...returnParams,
         projectId: link.entityId,
       })}`;
     case 'portfolio':
-      return '#/portfolio';
+      return '#/';
     default:
       return '#';
   }

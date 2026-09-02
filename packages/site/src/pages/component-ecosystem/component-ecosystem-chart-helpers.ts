@@ -41,7 +41,7 @@ export function countsByKindToChartSeries(summary: ComponentEcosystemSummary): C
 
   return {
     seriesId: 'component-counts-by-kind',
-    label: 'Components by kind',
+    label: 'Artifacts by kind',
     chartType: 'stacked_bar',
     xLabel: 'Kind',
     yLabel: 'Count',

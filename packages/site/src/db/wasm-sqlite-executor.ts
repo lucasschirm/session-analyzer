@@ -41,6 +41,8 @@ interface Sqlite3Capi {
   readonly SQLITE_IOERR: number;
   readonly SQLITE_LOCKED: number;
   sqlite3_last_insert_rowid(db: unknown): bigint;
+  /** Serializes a database handle as a byte array (valid SQLite file). */
+  sqlite3_js_db_export(db: unknown): Uint8Array;
 }
 
 interface Sqlite3Module {
@@ -411,6 +413,17 @@ export class WasmSqliteExecutor implements SqliteExecutor {
       this.closed = true;
       this.busy = false;
     }
+  }
+
+  /**
+   * Serializes the underlying SQLite database as a byte array (a valid SQLite
+   * file). Uses the same `sqlite3_js_db_export` helper as the control DB so
+   * the resulting bytes can be downloaded and inspected off-line.
+   */
+  exportDatabase(): Uint8Array {
+    this.guardOpen();
+    if (!this.db.pointer) throw new Error('Database handle is not available');
+    return this.sqlite3.capi.sqlite3_js_db_export(this.db.pointer) as Uint8Array;
   }
 
   isBusy(): boolean {

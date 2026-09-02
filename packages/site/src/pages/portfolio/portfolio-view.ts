@@ -238,13 +238,13 @@ export class PortfolioView extends LitElement {
   }
 
   private handleHashChange(): void {
-    if (window.location.hash.startsWith('#/portfolio')) {
+    if (window.location.hash === '#/' || window.location.hash.startsWith('#/?')) {
       this.load();
     }
   }
 
   private handleDataChange(): void {
-    if (!window.location.hash.startsWith('#/portfolio')) {
+    if (window.location.hash !== '#/' && !window.location.hash.startsWith('#/?')) {
       return;
     }
     this.load();
@@ -306,11 +306,11 @@ export class PortfolioView extends LitElement {
     if (value === '') {
       delete next[key];
     }
-    navigateTo(`/portfolio${buildPortfolioHash(next)}`);
+    navigateTo(`/${buildPortfolioHash(next)}`);
   }
 
   private resetFilters(): void {
-    navigateTo('/portfolio');
+    navigateTo('/');
   }
 
   private goToProject(row: ProjectRowView): void {
@@ -450,7 +450,7 @@ export class PortfolioView extends LitElement {
           overview.unusedOfferedComponents.length > 0
             ? html`
               <div class="section">
-                <strong>Unused offered components</strong>
+                <strong>Unused offered artifacts</strong>
                 <div class="unused-list">
                   ${overview.unusedOfferedComponents.map((c) => html`<span>${c}</span>`)}
                 </div>
@@ -462,7 +462,7 @@ export class PortfolioView extends LitElement {
           Object.keys(overview.componentCounts).length > 0
             ? html`
               <div class="section">
-                <strong>Component counts</strong>
+                <strong>Artifact counts</strong>
                 <div class="component-counts">
                   ${Object.entries(overview.componentCounts).map(
                     ([kind, count]) => html`<span>${kind}: ${count}</span>`,
@@ -510,10 +510,10 @@ export class PortfolioView extends LitElement {
       : null;
     return html`
       <div class="section">
-        <h2>Component utilization</h2>
+        <h2>Artifact utilization</h2>
         <analytics-chart
-          title="Sessions per component"
-          description="Number of sessions that used each component, helping you spot which tools and integrations are most active across the portfolio."
+          title="Sessions per artifact"
+          description="Number of sessions that used each artifact, helping you spot which tools and integrations are most active across the portfolio."
           .series=${series}
           .state=${this.chartState(this.components.state)}
           @point-click=${this.handlePointClick}

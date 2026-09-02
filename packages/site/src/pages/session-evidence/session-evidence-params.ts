@@ -66,13 +66,13 @@ export function evidenceLinkHref(link: EvidenceLink, returnParams?: SessionEvide
     case 'session':
       return `#/sessions/${link.entityId}${buildSessionEvidenceHash(returnParams ?? {})}`;
     case 'project':
-      return `#/projects/${link.entityId}/behavior?returnContext=${encodeURIComponent(
+      return `#/projects/${link.entityId}?returnContext=${encodeURIComponent(
         buildSessionEvidenceHash(returnParams ?? {}, false),
       )}`;
     case 'portfolio':
-      return `#/portfolio`;
+      return `#/`;
     case 'component':
-      return `#/portfolio?component=${encodeURIComponent(link.entityId)}`;
+      return `#/?component=${encodeURIComponent(link.entityId)}`;
     default:
       return `#/sessions/${link.entityId}`;
   }

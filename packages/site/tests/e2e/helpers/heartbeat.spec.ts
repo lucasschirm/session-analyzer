@@ -9,27 +9,24 @@ function progressBar(page: Page): Locator {
 }
 
 async function openConnectModal(page: Page): Promise<void> {
-  await page.goto('/');
-  await page
-    .locator('app-root')
-    .getByText(/OPFS|In-Memory/)
-    .waitFor({ state: 'visible', timeout: 10000 });
-  const button = page.getByRole('button', { name: 'Connect' });
-  await expect(button).toBeVisible({ timeout: 10000 });
-  await button.click();
-  await expect(page.getByRole('dialog', { name: 'Connections' })).toBeVisible({ timeout: 10000 });
+  await page.goto('/#/settings/data-sources');
+  await expect(
+    page.locator('connect-modal').getByRole('heading', { name: 'Connections' }),
+  ).toBeVisible({
+    timeout: 10000,
+  });
 }
 
 async function fillConnectionForm(page: Page): Promise<void> {
-  const modal = page.getByRole('dialog', { name: 'Connections' });
-  await modal.getByRole('button', { name: '+ New connection' }).click();
-  await modal.getByLabel('Connection name').fill('E2E');
-  await modal.getByLabel('Region').fill('us-east-1');
-  await modal.getByLabel('Bucket').fill(S3_BUCKET);
-  await modal.getByLabel('Endpoint (optional)').fill(S3_ENDPOINT);
-  await modal.getByLabel('Access key ID').fill('AKIA');
-  await modal.getByLabel('Secret access key').fill('secret');
-  await modal.getByLabel('Save to local storage').check();
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: '+ New connection' }).click();
+  await panel.getByLabel('Connection name').fill('E2E');
+  await panel.getByLabel('Region').fill('us-east-1');
+  await panel.getByLabel('Bucket').fill(S3_BUCKET);
+  await panel.getByLabel('Endpoint (optional)').fill(S3_ENDPOINT);
+  await panel.getByLabel('Access key ID').fill('AKIA');
+  await panel.getByLabel('Secret access key').fill('secret');
+  await panel.getByLabel('Save to local storage').check();
 }
 
 async function confirmPasskey(page: Page, passkey = PASSKEY): Promise<void> {
@@ -49,8 +46,8 @@ async function startSyncFromHome(page: Page, bucket: FixtureBucket): Promise<voi
   await bucket.installRoute(page);
   await openConnectModal(page);
   await fillConnectionForm(page);
-  const modal = page.getByRole('dialog', { name: 'Connections' });
-  await modal.getByRole('button', { name: 'Sync' }).click();
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: 'Sync' }).click();
   await confirmPasskey(page);
   await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
 }

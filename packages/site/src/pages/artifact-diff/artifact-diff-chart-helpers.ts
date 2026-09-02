@@ -106,9 +106,9 @@ export function metadataToMetricCards(
     },
     {
       metricId: `${prefix}-components`,
-      label: 'Components',
+      label: 'Artifacts',
       value: formatChartValue(componentCount, 'count'),
-      sub: componentCount === 1 ? '1 component' : `${componentCount} components`,
+      sub: componentCount === 1 ? '1 artifact' : `${componentCount} artifacts`,
     },
   ];
 }

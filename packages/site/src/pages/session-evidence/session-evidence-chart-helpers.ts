@@ -58,9 +58,9 @@ export function componentFactsToChartSeries(page: ComponentFactPage): ChartSerie
 
   return {
     seriesId: 'component-facts',
-    label: 'Component invocations by kind',
+    label: 'Artifact invocations by kind',
     chartType: 'stacked_bar',
-    xLabel: 'Component',
+    xLabel: 'Artifact',
     yLabel: 'Invocations',
     buckets,
   };

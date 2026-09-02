@@ -293,6 +293,23 @@ export class DbClient {
     URL.revokeObjectURL(url);
   }
 
+  /**
+   * Tears down the worker and resets all client state so the next call
+   * re-creates a fresh database. Used by the Storage settings page after a
+   * destructive "delete all data" action so the app boots into empty
+   * databases on the next load.
+   */
+  reset(): void {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    this.initPromise = null;
+    this.pending.clear();
+    this.seq = 0;
+    this.fallbackReason = undefined;
+  }
+
   private call(payload: DbRequestPayload): Promise<unknown> {
     if (!this.worker) {
       // Lazy initialization: the worker is created on first use and the

@@ -184,9 +184,9 @@ export function componentUtilizationToChartSeries(
 
   return {
     seriesId: 'component-utilization',
-    label: 'Component Utilization',
+    label: 'Artifact Utilization',
     chartType: 'stacked_bar',
-    xLabel: 'Component',
+    xLabel: 'Artifact',
     yLabel: 'Sessions',
     buckets,
   };
@@ -274,7 +274,7 @@ export function projectListToRows(
     name: project.name,
     sessionCount: project.sessionCount,
     harness: project.harness,
-    href: `#/projects/${project.name}/behavior?returnContext=${encodeURIComponent(
+    href: `#/projects/${project.name}?returnContext=${encodeURIComponent(
       buildPortfolioHash(params).slice(1),
     )}`,
   }));

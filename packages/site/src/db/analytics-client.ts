@@ -344,6 +344,18 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
     }
   }
 
+  /**
+   * Serializes the analytics SQLite database as bytes (a valid SQLite file)
+   * for download/backup from the Storage settings page.
+   */
+  async exportAnalyticsDatabase(): Promise<Uint8Array> {
+    const response = await this.call({ type: 'exportAnalyticsDatabase' });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+    return response.bytes ?? new Uint8Array();
+  }
+
   async close(): Promise<void> {
     const response = await this.call({ type: 'close' });
     if (!response.ok) {

@@ -159,7 +159,8 @@ describe('evidenceLinkHref', () => {
       makeLink({ entityType: 'project', entityId: 'p1', label: 'Project 1' }),
       { project: 'p1', sessions: 'main' },
     );
-    expect(href).toContain('#/projects/p1/behavior');
+    expect(href).toContain('#/projects/p1');
+    expect(href).not.toContain('#/projects/p1/behavior');
     expect(href).toContain('returnContext=');
   });
 
@@ -175,7 +176,7 @@ describe('evidenceLinkHref', () => {
       makeLink({ entityType: 'component', entityId: 'c1', label: 'Component 1' }),
       { sessions: 'main' },
     );
-    expect(href).toContain('#/components');
+    expect(href).toContain('#/artifacts');
     expect(href).toContain('c1');
   });
 
@@ -184,7 +185,7 @@ describe('evidenceLinkHref', () => {
       makeLink({ entityType: 'portfolio', entityId: '', label: 'Portfolio' }),
       { project: 'p1', sessions: 'main' },
     );
-    expect(href).toContain('#/portfolio');
+    expect(href).toContain('#/');
     expect(href).toContain('project=p1');
   });
 
@@ -193,6 +194,6 @@ describe('evidenceLinkHref', () => {
       makeLink({ entityType: 'unknown' as never, entityId: 'x', label: 'Unknown' }),
       { sessions: 'main' },
     );
-    expect(href).toContain('#/portfolio');
+    expect(href).toContain('#/');
   });
 });

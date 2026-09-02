@@ -509,6 +509,13 @@ export async function handleAnalyticsRequest(
         return await handleResolveProjectId(state, request);
       case 'deleteProject':
         return await handleDeleteProject(state, request);
+      case 'exportAnalyticsDatabase':
+        try {
+          const bytes = state.executor.exportDatabase();
+          return { id: 0, ok: true, bytes };
+        } catch (error) {
+          return toErrorResponse(error);
+        }
       case 'close':
         await state.executor.close();
         statePromise = null;

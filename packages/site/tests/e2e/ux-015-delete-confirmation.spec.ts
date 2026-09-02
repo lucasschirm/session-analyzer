@@ -8,7 +8,7 @@ import { expect, type Page, test } from '@playwright/test';
  * below target.
  */
 async function createProject(page: Page, name: string, description = ''): Promise<void> {
-  await page.goto('/');
+  await page.goto('/#/projects');
   await page.getByRole('button', { name: '+ New Project' }).click();
   await page.locator('#project-name-input').fill(name);
   if (description) {
@@ -62,6 +62,6 @@ test.describe('UX-015: delete confirmation focus/keyboard contract', () => {
     await dialog.getByRole('button', { name: 'Delete Project' }).click();
     await expect(dialog).toBeHidden({ timeout: 5000 });
     await expect(page.locator('.project-card')).toHaveCount(0);
-    await expect(page.getByText('No projects yet')).toBeVisible();
+    await expect(page.getByText('No projects yet. Create one to get started!')).toBeVisible();
   });
 });

@@ -23,6 +23,61 @@ export function currentHashPath(): string {
   return clean.startsWith('/') ? clean : `/${clean}`;
 }
 
+/**
+ * Legacy URL redirects. The dashboard was restructured so that the Portfolio
+ * view moved to `/`, "Components" was renamed to "Artifacts", and project
+ * detail pages moved from `/projects/:id/behavior` to `/projects/:id`. Old
+ * deep links (and any persisted bookmarks) keep working by rewriting the
+ * hash before the router resolves it. The query string is preserved.
+ *
+ * Returns the canonical path, or `null` when no redirect applies.
+ */
+export function redirectLegacyPath(path: string): string | null {
+  const queryIndex = path.indexOf('?');
+  const pathname = queryIndex >= 0 ? path.slice(0, queryIndex) : path;
+  const query = queryIndex >= 0 ? path.slice(queryIndex) : '';
+
+  // /portfolio -> /
+  if (pathname === '/portfolio' || pathname === '/portfolio/') return `/${query}`;
+
+  // /components -> /artifacts (+ /components/:id -> /artifacts/:id)
+  if (pathname === '/components') return `/artifacts${query}`;
+  if (pathname === '/components/') return `/artifacts/${query}`;
+  if (pathname.startsWith('/components/')) {
+    const rest = pathname.slice('/components/'.length);
+    return `/artifacts/${rest}${query}`;
+  }
+
+  // /projects/:id/behavior -> /projects/:id
+  if (pathname.startsWith('/projects/')) {
+    const rest = pathname.slice('/projects/'.length);
+    if (rest.endsWith('/behavior')) {
+      const id = rest.slice(0, -'/behavior'.length);
+      if (id.length > 0) return `/projects/${id}${query}`;
+    }
+    if (rest.endsWith('/behavior/')) {
+      const id = rest.slice(0, -'/behavior/'.length);
+      if (id.length > 0) return `/projects/${id}${query}`;
+    }
+  }
+
+  return null;
+}
+
+/** Reads the current hash path, applying any legacy redirect first. */
+export function resolvedHashPath(): string {
+  const raw = currentHashPath();
+  const redirected = redirectLegacyPath(raw);
+  if (redirected !== null && redirected !== raw) {
+    // Keep the address bar in sync so refresh/bookmarks land on the canonical URL.
+    if (window.location.hash !== `#${redirected}`) {
+      window.location.hash = redirected;
+    }
+    return redirected;
+  }
+  return raw;
+}
+
 /** Programmatic navigation helper: `navigateTo('/projects/1')`. */
 export function navigateTo(path: string): void {
   const target = path.startsWith('/') ? path : `/${path}`;
@@ -41,7 +96,7 @@ export class HashRouter extends Routes {
   }
 
   private readonly handleHashChange = (): void => {
-    void this.goto(currentHashPath());
+    void this.goto(resolvedHashPath());
   };
 
   private readonly handleAnchorClick = (event: MouseEvent): void => {
@@ -72,7 +127,7 @@ export class HashRouter extends Routes {
     super.hostConnected();
     window.addEventListener('hashchange', this.handleHashChange);
     window.addEventListener('click', this.handleAnchorClick);
-    void this.goto(currentHashPath());
+    void this.goto(resolvedHashPath());
   }
 
   override hostDisconnected(): void {

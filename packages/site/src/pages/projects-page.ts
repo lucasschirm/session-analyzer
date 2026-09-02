@@ -12,15 +12,15 @@ import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 import type { Project } from '../types';
 
 /**
- * Home page: projects list with full CRUD.
+ * Projects page: projects list with full CRUD.
  *
  * - `[ + New Project ]` opens the project modal (name + description).
  * - `[ Delete Project ]` removes the project and cascades to its sessions.
  * - `[ Export Database ]` downloads the whole SQLite file.
  * - Clicking a project card routes to the Project View.
  */
-@customElement('home-page')
-export class HomePage extends LitElement {
+@customElement('projects-page')
+export class ProjectsPage extends LitElement {
   static styles = css`
     :host {
       display: block;
@@ -283,7 +283,7 @@ export class HomePage extends LitElement {
 
   private openProject(project: Project): void {
     const slug = project.readable_id || project.id;
-    navigateTo(`/projects/${slug}/behavior`);
+    navigateTo(`/projects/${slug}`);
   }
 
   private isProjectSyncing(project: Project): boolean {
@@ -453,6 +453,6 @@ export class HomePage extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    'home-page': HomePage;
+    'projects-page': ProjectsPage;
   }
 }

@@ -84,15 +84,15 @@ export function originHref(params: ArtifactDiffParams): string | null {
   const context = params.returnContext;
   switch (params.origin) {
     case 'portfolio':
-      return `#/portfolio?${context}`;
+      return `#/?${context}`;
     case 'project': {
       const projectId = params.project ?? new URLSearchParams(context).get('project') ?? '';
-      return projectId ? `#/projects/${projectId}/behavior?${context}` : null;
+      return projectId ? `#/projects/${projectId}?${context}` : null;
     }
     case 'component':
       return params.component
-        ? `#/components/${encodeURIComponent(params.component)}?${context}`
-        : '#/components';
+        ? `#/artifacts/${encodeURIComponent(params.component)}?${context}`
+        : '#/artifacts';
     case 'session':
       return params.project ? `#/sessions/${params.project}` : null;
     default:
