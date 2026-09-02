@@ -480,14 +480,6 @@ export class ConnectModal extends LitElement {
 
   private inMemoryConnections = new Map<string, InMemoryEntry>();
 
-  /**
-   * Guard that suppresses the `connectionId` reaction in `willUpdate` when the
-   * connectionId change originated from an explicit user action inside this
-   * component (edit/new/cancel). Without it, updating the hash here would
-   * update `connectionId`, which re-triggers the same handler and loops.
-   */
-  private suppressConnectionIdSync = false;
-
   connectedCallback(): void {
     super.connectedCallback();
     syncManager.addEventListener('change', this.handleSyncChange);
@@ -514,13 +506,12 @@ export class ConnectModal extends LitElement {
       this.loadConnections().catch(() => undefined);
       this.handleSyncChange();
     }
-    // React to route-driven connectionId changes (inline mode only). When the
-    // change originated from an explicit user action here, the guard is set and
-    // we simply clear it so the subsequent property update is a no-op.
+    // React to route-driven connectionId changes (inline mode only).
+    // pushState/replaceState in updateDataSourcesHash do not fire hashchange,
+    // so the router never re-renders and connectionId only changes on genuine
+    // navigation (direct URL, link click, or Browser Back/Forward).
     if (changed.has('connectionId') && this.inline) {
-      if (this.suppressConnectionIdSync) {
-        this.suppressConnectionIdSync = false;
-      } else if (this.connectionId && this.connectionId !== 'new') {
+      if (this.connectionId && this.connectionId !== 'new') {
         this.handleEditConnection(this.connectionId);
       } else if (this.connectionId === 'new') {
         this.handleNewConnection();
@@ -684,10 +675,9 @@ export class ConnectModal extends LitElement {
   }
 
   private handleNewConnection(): void {
-    // Note: we do NOT update the URL hash here. Updating it (even via
-    // replaceState) can cause form detachment on slower machines because
-    // the parent data-sources-page may re-render. The "new" form is
-    // reachable via direct navigation to /settings/data-sources/new.
+    if (this.inline) {
+      this.updateDataSourcesHash('new');
+    }
     this.form = blankForm();
     this.editingId = '';
     this.editingInMemory = false;
@@ -699,7 +689,6 @@ export class ConnectModal extends LitElement {
 
   private handleEditConnection(id: string): void {
     if (this.inline) {
-      this.suppressConnectionIdSync = true;
       this.updateDataSourcesHash(id);
     }
     const inMemory = this.inMemoryConnections.get(id);
@@ -765,23 +754,23 @@ export class ConnectModal extends LitElement {
   }
 
   /**
-   * Updates the URL hash to reflect the current data-sources view without
-   * triggering a hashchange event. Uses `history.replaceState` so the
-   * router does not re-render the page (which would detach the form).
+   * Updates the URL hash to reflect the current data-sources view (list,
+   * new, or edit). Uses `history.pushState` so Browser Back returns from an
+   * open form to the list. pushState does not fire hashchange, so the router
+   * never re-renders and the form stays mounted.
    * The `connectionId` property is NOT updated here — it only flows from
-   * the parent (route) to this component. Internal state is tracked by
-   * `this.view`.
+   * the parent (route) to this component on genuine navigation. Internal
+   * state is tracked by `this.view`.
    */
   private updateDataSourcesHash(connectionId: string): void {
     const hash =
       connectionId === '' ? '#/settings/data-sources' : `#/settings/data-sources/${connectionId}`;
     const url = `${window.location.pathname}${window.location.search}${hash}`;
-    window.history.replaceState(null, '', url);
+    window.history.pushState(null, '', url);
   }
 
   private handleCancelForm(): void {
     if (this.inline) {
-      this.suppressConnectionIdSync = true;
       this.updateDataSourcesHash('');
     }
     this.view = 'list';

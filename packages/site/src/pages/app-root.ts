@@ -119,7 +119,7 @@ export class AppRoot extends LitElement {
 
     nav.header-nav a.active {
       color: var(--md-sys-color-on-surface, #e6e9ef);
-      border-bottom: 2px solid white;
+      border-bottom: 2px solid var(--md-sys-color-primary, #4f8cff);
       border-radius: 0;
     }
 

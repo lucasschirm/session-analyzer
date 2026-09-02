@@ -1,6 +1,7 @@
 import type { LitElement } from 'lit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '../../src/pages/app-root';
+import { analyticsClient } from '../../src/db/analytics-client';
 import type { AppRoot } from '../../src/pages/app-root';
 
 const mockDbClient = vi.hoisted(() => ({
@@ -192,5 +193,41 @@ describe('app-root', () => {
     const root = app.shadowRoot as ShadowRoot;
     const leftNav = root.querySelector('left-nav');
     expect(leftNav).toBeNull();
+  });
+
+  it('reprocess overlay shows an error and Close button when reprocess-completed fires ok:false', async () => {
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    // Start reprocessing — overlay appears.
+    analyticsClient.dispatchEvent(
+      new CustomEvent('reprocess-started', { detail: { reason: 'Test reprocess' } }),
+    );
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    const overlay = root.querySelector('.reprocess-overlay');
+    expect(overlay).not.toBeNull();
+
+    // Complete with failure — error message + Close button appear.
+    analyticsClient.dispatchEvent(
+      new CustomEvent('reprocess-completed', {
+        detail: { ok: false, error: 'Simulated reprocess failure' },
+      }),
+    );
+    await flush(app);
+
+    const errorEl = root.querySelector('.reprocess-error');
+    expect(errorEl).not.toBeNull();
+    expect(errorEl?.textContent).toContain('Simulated reprocess failure');
+
+    const closeButton = root.querySelector<HTMLButtonElement>('.reprocess-overlay button');
+    expect(closeButton).not.toBeNull();
+    expect(closeButton?.textContent).toBe('Close');
+
+    // Clicking Close dismisses the overlay.
+    closeButton?.click();
+    await flush(app);
+    expect(root.querySelector('.reprocess-overlay')).toBeNull();
   });
 });

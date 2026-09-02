@@ -1,5 +1,5 @@
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property, query, state } from 'lit/decorators.js';
 
 /**
  * Per-sync confirmation modal that asks the user whether to sync only new
@@ -31,6 +31,7 @@ export class SyncConfirmModal extends LitElement {
       justify-content: center;
       z-index: 100;
       padding: 16px;
+      outline: none;
     }
 
     .panel {
@@ -106,6 +107,8 @@ export class SyncConfirmModal extends LitElement {
 
   @state() private syncOnlyNew = false;
 
+  @query('.sync-confirm-modal') private overlay!: HTMLDivElement;
+
   private localStorageKey(): string {
     return `sal-sync-only-new:${this.connectionId}`;
   }
@@ -114,6 +117,15 @@ export class SyncConfirmModal extends LitElement {
     if (changed.has('open') && this.open && this.connectionId) {
       const stored = localStorage.getItem(this.localStorageKey());
       this.syncOnlyNew = stored === 'true';
+    }
+  }
+
+  async updated(changed: PropertyValues<this>): Promise<void> {
+    if (changed.has('open') && this.open) {
+      // Move focus into the modal so keyboard users can close it with
+      // Escape (the keydown listener is inside this shadow tree).
+      await this.updateComplete;
+      this.overlay?.focus();
     }
   }
 
@@ -156,6 +168,7 @@ export class SyncConfirmModal extends LitElement {
     return html`
       <div
         class="sync-confirm-modal"
+        tabindex="-1"
         @click=${this.handleOverlayClick}
         @keydown=${this.handleKeydown}
       >

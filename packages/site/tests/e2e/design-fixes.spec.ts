@@ -17,7 +17,8 @@ const PASSKEY = 'e2e-passkey';
  * - UX-017: Header nav active state (2px solid white border-bottom)
  * - UX-018: Left-nav Projects collapsed on /projects list, expanded on
  *   specific project routes, with per-project stats
- * - UX-019: Sync-confirm modal appears when syncing a saved connection
+ * - UX-019: Sync-confirm modal appears when syncing a saved connection,
+ *   and a locked vault prompts for passkey before proceeding
  * - UX-020: Data-sources edit updates the URL hash
  * - UX-021: Loading state is visible before the app is ready
  */
@@ -190,6 +191,79 @@ test.describe('Sync-confirm modal (UX-019)', () => {
     // The modal should have a "Start Sync" button
     await expect(syncConfirm.getByRole('button', { name: 'Start Sync' })).toBeVisible();
   });
+
+  test('syncing a saved connection with a locked vault prompts for passkey then proceeds', async ({
+    page,
+  }) => {
+    const bucket = new FixtureBucket();
+    bucket.addProject('passkey-proj', 'Passkey Project', '');
+    bucket.addSession('passkey-proj', 'e2e-passkey-session', {
+      files: [
+        {
+          scope: 'session',
+          relativePath: 'transcript.jsonl',
+          content: fixtureBuffer('claude-session.jsonl'),
+        },
+      ],
+    });
+    await bucket.installRoute(page);
+
+    // Create + save a connection with a passkey (same flow as above).
+    await page.goto('/#/settings/data-sources/new');
+    await waitForAppReady(page);
+    const panel = page.locator('connect-modal');
+    await expect(panel.getByLabel('Connection name')).toBeVisible({ timeout: 10000 });
+    await panel.getByLabel('Connection name').fill('PasskeySync');
+    await panel.getByLabel('Region').fill('us-east-1');
+    await panel.getByLabel('Bucket').fill(S3_BUCKET);
+    await panel.getByLabel('Endpoint (optional)').fill(S3_ENDPOINT);
+    await panel.getByLabel('Access key ID').fill('AKIA');
+    await panel.getByLabel('Secret access key').fill('secret');
+    await panel.getByLabel('Save to local storage').check();
+    await panel.getByRole('button', { name: 'Save' }).click();
+    const createModal = page.getByRole('dialog', { name: 'Passkey' });
+    await expect(createModal).toBeVisible({ timeout: 10000 });
+    await createModal.getByLabel('Passkey').first().fill(PASSKEY);
+    const confirm = createModal.getByLabel('Confirm passkey');
+    if (await confirm.isVisible().catch(() => false)) {
+      await confirm.fill(PASSKEY);
+    }
+    await createModal.getByRole('button', { name: /Create Passkey/ }).click();
+    await expect(createModal).toBeHidden({ timeout: 10000 });
+    await expect(panel.getByText('PasskeySync')).toBeVisible({ timeout: 10000 });
+
+    // Reload so the vault is locked again.
+    await page.reload();
+    await waitForAppReady(page);
+    await page.goto('/#/settings/data-sources');
+    await expect(panel.getByRole('heading', { name: 'Connections' })).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(panel.getByText('PasskeySync')).toBeVisible({ timeout: 10000 });
+
+    // Click Sync on the saved row → sync-confirm modal → Start Sync.
+    // The vault is locked, so the passkey prompt (driven by setPasskeyPrompt
+    // in app-root) should open. This is the code path the review flagged as
+    // untested: sync a saved connection with a locked vault.
+    await panel.getByRole('button', { name: 'Sync' }).click();
+    const syncConfirm = page.getByRole('dialog', { name: 'Confirm sync' });
+    await expect(syncConfirm).toBeVisible({ timeout: 10000 });
+    await syncConfirm.getByRole('button', { name: 'Start Sync' }).click();
+
+    // The passkey unlock modal should appear (vault is locked).
+    const unlockModal = page.getByRole('dialog', { name: 'Passkey' });
+    await expect(unlockModal).toBeVisible({ timeout: 10000 });
+    await unlockModal.getByLabel('Passkey').first().fill(PASSKEY);
+    await unlockModal.getByRole('button', { name: 'Unlock' }).click();
+    await expect(unlockModal).toBeHidden({ timeout: 10000 });
+
+    // The sync should proceed — wait for the progress bar.
+    await expect(
+      page.locator('app-root').locator('sync-progress-bar').getByRole('status'),
+    ).toBeVisible({
+      timeout: 10000,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -217,6 +291,23 @@ test.describe('Data-sources edit URL (UX-020)', () => {
     const panel = page.locator('connect-modal');
     // The form should be visible with the Connection name input
     await expect(panel.getByLabel('Connection name')).toBeVisible({ timeout: 10000 });
+    // The URL should contain /settings/data-sources/new
+    await expect(page).toHaveURL(/#\/settings\/data-sources\/new/);
+  });
+
+  test('clicking New connection updates the URL hash to /settings/data-sources/new', async ({
+    page,
+  }) => {
+    await page.goto('/#/settings/data-sources');
+    await waitForAppReady(page);
+    const panel = page.locator('connect-modal');
+    await expect(panel.getByRole('heading', { name: 'Connections' })).toBeVisible({
+      timeout: 10000,
+    });
+    await panel.getByRole('button', { name: '+ New connection' }).click();
+    // The form should be visible and the URL should contain /new
+    await expect(panel.getByLabel('Connection name')).toBeVisible({ timeout: 10000 });
+    await expect(page).toHaveURL(/#\/settings\/data-sources\/new/, { timeout: 5000 });
   });
 });
 
