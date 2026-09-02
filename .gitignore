@@ -56,7 +56,14 @@ playwright-report
 
 # Custom
 tmp
-docs/superpowers
+# docs/superpowers is local agent planning scratch (tasks/, specs/, discoveries/,
+# other plans/) and stays untracked, EXCEPT the E2E coverage catalog: that file
+# is a CI-enforced artifact (.agents/rules/e2e-coverage-required.md) and must be
+# committed for the rule to be checkable — see issue #160.
+docs/superpowers/*
+!docs/superpowers/plans
+docs/superpowers/plans/*
+!docs/superpowers/plans/2026-08-27-e2e-coverage-enhancement.md
 .superpowers
 .worktrees
 .claude/scheduled_tasks.lock
