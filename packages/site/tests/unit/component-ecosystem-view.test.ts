@@ -281,6 +281,23 @@ describe('component-ecosystem-view', () => {
     expect(summaries.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('renders a Domain pages link row to Agents/Skills/Tools/MCP', async () => {
+    // Interim reachability path (issue #165): left-nav, the domain pages'
+    // only prior in-app link, is deleted; this row keeps them click-reachable.
+    const view = document.createElement('component-ecosystem-view') as ComponentEcosystemView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const links = Array.from(root.querySelectorAll('.domain-pages-row a'));
+    expect(links.map((a) => a.textContent?.trim())).toEqual(['Agents', 'Skills', 'Tools', 'MCP']);
+    expect(links.map((a) => a.getAttribute('href'))).toEqual([
+      '#/agents',
+      '#/skills',
+      '#/tools',
+      '#/mcp',
+    ]);
+  });
+
   it('filters by kind and updates the hash', async () => {
     const view = document.createElement('component-ecosystem-view') as ComponentEcosystemView;
     await mount(view);

@@ -1,11 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import {
-  buildSessionManifest,
-  FixtureBucket,
-  fixtureBuffer,
-  S3_BUCKET,
-  S3_ENDPOINT,
-} from './sync-fixtures.js';
+import { FixtureBucket, fixtureBuffer, S3_BUCKET, S3_ENDPOINT } from './sync-fixtures.js';
 
 const PASSKEY = 'e2e-passkey';
 
@@ -15,8 +9,8 @@ const PASSKEY = 'e2e-passkey';
  *
  * Covered changes:
  * - UX-017: Header nav active state (2px solid white border-bottom)
- * - UX-018: Left-nav Projects collapsed on /projects list, expanded on
- *   specific project routes, with per-project stats
+ * - UX-018: REMOVED — left-nav (and its expandable Projects section) was
+ *   deleted per issue #165's disposition table; see the section below.
  * - UX-019: Sync-confirm modal appears when syncing a saved connection,
  *   and a locked vault prompts for passkey before proceeding
  * - UX-020: Data-sources edit updates the URL hash
@@ -30,17 +24,6 @@ const PASSKEY = 'e2e-passkey';
 async function waitForAppReady(page: Page): Promise<void> {
   await expect(page.locator('header')).toBeVisible({ timeout: 15000 });
   await expect(page.locator('.app-loading')).toBeHidden({ timeout: 15000 });
-}
-
-async function createProject(page: Page, name: string): Promise<void> {
-  await page.goto('/#/projects');
-  await waitForAppReady(page);
-  await page.getByRole('button', { name: '+ New Project' }).click();
-  await page.locator('#project-name-input').fill(name);
-  await page.getByRole('button', { name: 'Create Project' }).click();
-  await expect(page.locator('.project-card', { hasText: name })).toBeVisible({
-    timeout: 10000,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -89,46 +72,15 @@ test.describe('Header navigation active state (UX-017)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// UX-018: Left-nav Projects section
+// UX-018: Left-nav Projects section — REMOVED per issue #165's disposition
+// table. `left-nav` (and its expandable-Projects-children-with-stats
+// behavior) was deleted and replaced by the `icon-rail` component, which has
+// no expandable children — the per-project list now renders on the
+// `/projects` route body instead. This is a deliberate, documented product
+// change, not a dropped-coverage regression. See catalog §6.1 UX-018 row
+// and §9 for the full disposition; the Projects *rail item's* active-route
+// behavior is covered by UX-023 in `icon-rail.spec.ts`.
 // ---------------------------------------------------------------------------
-
-test.describe('Left-nav Projects section (UX-018)', () => {
-  test('Projects section is collapsed on /projects list page', async ({ page }) => {
-    await page.goto('/#/projects');
-    await waitForAppReady(page);
-    const projectsItem = page.locator('left-nav').locator('a.nav-item', { hasText: 'Projects' });
-    await expect(projectsItem).not.toHaveClass(/expanded/);
-  });
-
-  test('Projects section auto-expands on a specific project route', async ({ page }) => {
-    await createProject(page, 'NavExpandTest');
-    // Navigate to the project behavior page by clicking the card
-    await page.locator('.project-card', { hasText: 'NavExpandTest' }).click();
-    await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
-      timeout: 15000,
-    });
-    const projectsItem = page.locator('left-nav').locator('a.nav-item', { hasText: 'Projects' });
-    await expect(projectsItem).toHaveClass(/expanded/);
-  });
-
-  test('project child links show session count stats', async ({ page }) => {
-    await createProject(page, 'NavStatsTest');
-    // Reload to ensure the left-nav picks up the new project from the DB.
-    await page.reload();
-    await waitForAppReady(page);
-    // Navigate to the project behavior page
-    await page.goto('/#/projects');
-    await page.locator('.project-card', { hasText: 'NavStatsTest' }).click();
-    await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
-      timeout: 15000,
-    });
-    // The expanded Projects section should show child links with stats
-    const childStats = page.locator('left-nav .nav-child-stats');
-    await expect(childStats.first()).toBeVisible({ timeout: 10000 });
-    // Stats should contain "session" text
-    await expect(childStats.first()).toContainText(/session/i);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // UX-019: Sync-confirm modal

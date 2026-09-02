@@ -2,6 +2,7 @@ import { css, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/delete-confirmation-modal';
+import '../../components/settings-tabs';
 import { type AnalyticsBackendReport, analyticsClient } from '../../db/analytics-client';
 import { dbClient } from '../../db/db-client';
 
@@ -356,6 +357,7 @@ export class StoragePage extends PageLitElement {
       this.controlBackend === 'memory' || this.analyticsBackend?.durability === 'ephemeral';
 
     return html`
+      <settings-tabs></settings-tabs>
       <h1>Storage</h1>
       <p class="description">
         View and manage the local SQLite databases. All data is stored in your browser via OPFS

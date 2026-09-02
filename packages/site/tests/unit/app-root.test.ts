@@ -40,6 +40,7 @@ const mockSyncManager = vi.hoisted(() => {
       warnings: [] as string[],
       activeRun: null,
       queuedRuns: [] as unknown[],
+      lastCompletedAt: null as number | null,
     })),
     emitChange: () => {
       for (const listener of listeners.change ?? []) {
@@ -102,6 +103,7 @@ beforeEach(() => {
     warnings: [],
     activeRun: null,
     queuedRuns: [],
+    lastCompletedAt: null,
   });
 });
 
@@ -132,17 +134,24 @@ describe('app-root', () => {
     expect(settingsButton?.getAttribute('aria-label')).toBe('Settings');
   });
 
-  it('renders the sync progress bar in the header right cluster', async () => {
+  it('renders the sync progress bar as always-mounted global chrome, not in the header', async () => {
+    // Issue #165: sync-progress-bar must stay always-mounted across run
+    // transitions, so it moved out of the header into app-root's global
+    // chrome (beside sync-status-bar) where later per-route header
+    // removals cannot unmount it or hide live sync progress.
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
     const root = app.shadowRoot as ShadowRoot;
     const headerRight = root.querySelector('.header-right');
+    const syncChrome = root.querySelector('.sync-chrome');
     const progress = root.querySelector('sync-progress-bar');
 
     expect(headerRight).not.toBeNull();
+    expect(syncChrome).not.toBeNull();
     expect(progress).not.toBeNull();
-    expect(headerRight?.contains(progress)).toBe(true);
+    expect(headerRight?.contains(progress)).toBe(false);
+    expect(syncChrome?.contains(progress)).toBe(true);
   });
 
   it('does not render the old storage badge or connect button', async () => {
@@ -165,34 +174,33 @@ describe('app-root', () => {
     expect((modal as HTMLElement & { open: boolean }).open).toBe(false);
   });
 
-  it('renders the left nav on the dashboard route', async () => {
+  it('renders the icon rail on the dashboard route', async () => {
     window.location.hash = '#/';
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
     const root = app.shadowRoot as ShadowRoot;
-    const leftNav = root.querySelector('left-nav');
-    expect(leftNav).not.toBeNull();
+    expect(root.querySelector('icon-rail')).not.toBeNull();
   });
 
-  it('renders the left nav on settings routes', async () => {
+  it('renders the icon rail on settings routes', async () => {
     window.location.hash = '#/settings/data-sources';
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
     const root = app.shadowRoot as ShadowRoot;
-    const leftNav = root.querySelector('left-nav');
-    expect(leftNav).not.toBeNull();
+    expect(root.querySelector('icon-rail')).not.toBeNull();
   });
 
-  it('does not render the left nav on session routes', async () => {
+  it('renders the icon rail as global chrome on routes with no active rail item', async () => {
+    // The rail is always mounted, even on routes (like session evidence)
+    // that have no matching destination — it just shows no active item.
     window.location.hash = '#/sessions/s1';
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
     const root = app.shadowRoot as ShadowRoot;
-    const leftNav = root.querySelector('left-nav');
-    expect(leftNav).toBeNull();
+    expect(root.querySelector('icon-rail')).not.toBeNull();
   });
 
   it('reprocess overlay shows an error and Close button when reprocess-completed fires ok:false', async () => {
