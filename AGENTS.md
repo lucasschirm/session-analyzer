@@ -148,8 +148,8 @@ See the per-package `AGENTS.md` files for source maps and invariants.
 - `.agents/skills/` — Project-specific reusable skills:
   add-analytics-view, add-db-migration, add-e2e-test, add-harness-integration,
   add-pipeline-e2e-test, add-session-metric, feature-planning,
-  filterable-table-pattern, pr-review, reprocess-analytics,
-  triage-e2e-failure.
+  filterable-table-pattern, implement-issue, pr-review,
+  reprocess-analytics, triage-e2e-failure.
 - `.agents/agents/` — Project-specific agent definitions:
   db-migration-reviewer, e2e-failure-fixer, e2e-test-implementer,
   e2e-test-maintainer, e2e-test-planner, feature-reviewer,
