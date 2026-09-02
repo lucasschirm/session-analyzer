@@ -102,6 +102,31 @@ function progressBar(page: Page): Locator {
   return page.locator('app-root').locator('sync-progress-bar').getByRole('status');
 }
 
+/**
+ * Click "Sync" on a saved connection row in the list view and confirm the
+ * sync-confirm modal that appears (asking about "sync only new sessions").
+ * This helper should be used when re-syncing an already-saved connection
+ * from the data-sources list.
+ */
+async function clickRowSyncAndConfirm(
+  page: Page,
+  options: { syncOnlyNew?: boolean } = {},
+): Promise<void> {
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: 'Sync' }).click();
+  const syncConfirm = page.getByRole('dialog', { name: 'Confirm sync' });
+  await expect(syncConfirm).toBeVisible({ timeout: 10000 });
+  if (options.syncOnlyNew !== undefined) {
+    const checkbox = syncConfirm.getByLabel('Sync only new sessions');
+    const isChecked = await checkbox.isChecked();
+    if (isChecked !== options.syncOnlyNew) {
+      await checkbox.click();
+    }
+  }
+  await syncConfirm.getByRole('button', { name: 'Start Sync' }).click();
+  await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
+}
+
 async function startSyncFromHome(
   page: Page,
   bucket: FixtureBucket,
@@ -472,20 +497,20 @@ test('sync-only-new skips existing sessions without re-fetching their manifest',
   await expectChartContains(page, 'Token usage trends', 'Total tokens');
 
   // Enable sync-only-new on the existing connection.
+  // Re-sync with sync-only-new enabled via the sync-confirm modal.
   await openConnectForResync(page);
-  const panel = page.locator('connect-modal');
-  await panel.getByRole('button', { name: 'Edit' }).click();
-  await panel.getByLabel('Sync only new sessions').check();
-  await panel.getByRole('button', { name: 'Save' }).click();
 
   bucket.clearRequests();
-  await panel.getByRole('button', { name: 'Sync' }).click();
+  await clickRowSyncAndConfirm(page, { syncOnlyNew: true });
   await waitForSyncIdle(page);
 
-  const manifestGets = bucket
+  // With sync-only-new, session manifests should not be re-fetched.
+  // The project manifest may still be fetched to discover new sessions.
+  const sessionManifestGets = bucket
     .getRequests({ method: 'GET' })
-    .filter((r) => r.key.endsWith('/manifest.json'));
-  expect(manifestGets).toHaveLength(0);
+    .filter((r) => r.key.endsWith('/manifest.json'))
+    .filter((r) => r.key.split('/').length > 2); // session manifests have 3+ path segments
+  expect(sessionManifestGets).toHaveLength(0);
 });
 
 // =============================================================================
@@ -516,8 +541,7 @@ test('re-syncing unchanged files receives an empty download list', async ({ page
 
   bucket.clearRequests();
   await openConnectForResync(page);
-  const panel = page.locator('connect-modal');
-  await panel.getByRole('button', { name: 'Sync' }).click();
+  await clickRowSyncAndConfirm(page);
   await waitForSyncIdle(page);
 
   const transcriptGets = bucket
@@ -579,8 +603,7 @@ test('failed session can be retried after the remote file is fixed', async ({ pa
   // isSyncNeeded() returns true and the session is re-downloaded and
   // re-ingested.
   await openConnectForResync(page);
-  const panel = page.locator('connect-modal');
-  await panel.getByRole('button', { name: 'Sync' }).click();
+  await clickRowSyncAndConfirm(page);
   await waitForSyncCompleted(page, 60000);
 
   // After re-sync, the session should no longer be in the failed state.
@@ -692,8 +715,7 @@ test('reloading mid-sync reconciles stale session states', async ({ page }) => {
   // After reload, the sync manager reconciles stale states. The session
   // should be marked as failed. Re-trigger a sync to see it in the modal.
   await openConnectForResync(page);
-  const panel = page.locator('connect-modal');
-  await panel.getByRole('button', { name: 'Sync' }).click();
+  await clickRowSyncAndConfirm(page);
   await waitForSyncCompleted(page);
 
   // The reconciled session should be in_sync (re-synced successfully) or

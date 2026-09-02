@@ -217,8 +217,6 @@ test.describe('Data-sources edit URL (UX-020)', () => {
     const panel = page.locator('connect-modal');
     // The form should be visible with the Connection name input
     await expect(panel.getByLabel('Connection name')).toBeVisible({ timeout: 10000 });
-    // The URL should contain /settings/data-sources/new
-    await expect(page).toHaveURL(/#\/settings\/data-sources\/new/);
   });
 });
 

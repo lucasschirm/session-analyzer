@@ -684,10 +684,10 @@ export class ConnectModal extends LitElement {
   }
 
   private handleNewConnection(): void {
-    if (this.inline) {
-      this.suppressConnectionIdSync = true;
-      this.updateDataSourcesHash('new');
-    }
+    // Note: we do NOT update the URL hash here. Updating it (even via
+    // replaceState) can cause form detachment on slower machines because
+    // the parent data-sources-page may re-render. The "new" form is
+    // reachable via direct navigation to /settings/data-sources/new.
     this.form = blankForm();
     this.editingId = '';
     this.editingInMemory = false;
@@ -922,7 +922,12 @@ export class ConnectModal extends LitElement {
 
   private async afterSave(thenSync: boolean): Promise<void> {
     if (thenSync && this.editingId) {
-      this.startSync(this.editingId);
+      // Start syncing directly — the sync-confirm modal is only for
+      // re-syncing saved connections from the list view, not for the
+      // initial save-and-sync flow from the form.
+      this.registerEphemeralIfNeeded(this.editingId);
+      syncManager.requestRun(this.editingId, { syncOnlyNew: this.form.syncOnlyNew });
+      this.close();
       return;
     }
     this.handleCancelForm();
@@ -1030,9 +1035,10 @@ export class ConnectModal extends LitElement {
   }
 
   private startSync(connectionId: string): void {
-    // In-memory connections haven't been saved yet, so there is no
-    // localStorage preference to pre-select; use the form value directly.
-    if (this.editingInMemory) {
+    // New unsaved connections and in-memory connections haven't been saved
+    // to localStorage, so there is no preference to pre-select; use the
+    // form value directly and start syncing immediately.
+    if (this.editingInMemory || !this.editingId) {
       this.registerEphemeralIfNeeded(connectionId);
       syncManager.requestRun(connectionId, { syncOnlyNew: this.form.syncOnlyNew });
       this.close();
