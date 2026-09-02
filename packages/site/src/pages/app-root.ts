@@ -1,7 +1,7 @@
 import { css, html, LitElement } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import '../components/header-project-selector';
-import '../components/left-nav';
+import '../components/icon-rail';
 import '../components/passkey-modal';
 import '../components/sync-progress-bar';
 import '../components/sync-status-bar';
@@ -158,11 +158,32 @@ export class AppRoot extends LitElement {
       min-height: calc(100vh - 56px);
     }
 
+    icon-rail {
+      position: sticky;
+      top: 56px;
+      align-self: flex-start;
+      height: calc(100vh - 56px);
+    }
+
     main {
       flex: 1;
       padding: 24px;
       padding-bottom: 56px;
       min-width: 0;
+    }
+
+    /* Global chrome that must stay mounted across every route and every
+     * sync run transition. Fixed just below the 56px header (not inside
+     * its flex layout, so a header-cleanup PR can remove the header from
+     * a route without unmounting this) and clear of it vertically at any
+     * viewport width, so it can never overlap header-nav/
+     * header-project-selector the way an overlapping right-offset would
+     * once the progress bar's content grows or the header narrows. */
+    .sync-chrome {
+      position: fixed;
+      top: 64px;
+      right: 24px;
+      z-index: 15;
     }
 
     .app-error {
@@ -567,11 +588,6 @@ export class AppRoot extends LitElement {
   }
 
   render() {
-    const showLeftNav =
-      this.currentPath === '/' ||
-      this.currentPath.startsWith('/projects') ||
-      this.currentPath.startsWith('/settings');
-
     return html`
       <header>
         <a href="#/" class="logo">SAL</a>
@@ -583,7 +599,6 @@ export class AppRoot extends LitElement {
           <a href="#/artifacts" class=${this.isArtifactsActive() ? 'active' : ''}>Artifacts</a>
         </nav>
         <div class="header-right">
-          <sync-progress-bar></sync-progress-bar>
           <button
             type="button"
             class="settings-button"
@@ -602,7 +617,7 @@ export class AppRoot extends LitElement {
       </header>
 
       <div class="app-body">
-        ${showLeftNav && this.appReady ? html`<left-nav .path=${this.currentPath}></left-nav>` : ''}
+        ${this.appReady ? html`<icon-rail .path=${this.currentPath}></icon-rail>` : ''}
         <main>
           ${
             this.dbError
@@ -651,6 +666,9 @@ export class AppRoot extends LitElement {
           : ''
       }
 
+      <div class="sync-chrome">
+        <sync-progress-bar></sync-progress-bar>
+      </div>
       <sync-status-bar></sync-status-bar>
 
       <passkey-modal

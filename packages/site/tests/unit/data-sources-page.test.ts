@@ -23,6 +23,7 @@ vi.mock('../../src/sync/sync-manager', () => ({
       warnings: [],
       activeRun: null,
       queuedRuns: [],
+      lastCompletedAt: null,
     })),
   },
 }));

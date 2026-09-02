@@ -212,6 +212,14 @@ export interface SyncManagerSnapshot {
   sessions: SessionSnapshot[];
   queuedRuns: string[];
   warnings: string[];
+  /**
+   * Timestamp of the most recent successfully-completed sync run, from
+   * either this session's own runs or persisted connection bookkeeping
+   * loaded on `init()`. `null` means "not synced yet" / unknown — per
+   * `.agents/rules/missing-is-never-zero.md` this must never be coerced
+   * to `0` or a fabricated timestamp.
+   */
+  lastCompletedAt: number | null;
 }
 
 interface ProjectSnapshot {
@@ -279,6 +287,7 @@ export class SyncManager extends EventTarget {
   private readOnly = false;
   private activeRun: SyncRun | null = null;
   private runQueue: SyncRun[] = [];
+  private lastCompletedAt: number | null = null;
 
   /**
    * In-memory connections registered by the UI for syncing without persisting
@@ -310,11 +319,30 @@ export class SyncManager extends EventTarget {
     if (this.initialized) return;
 
     await this.db.reconcileSyncStates('Sync interrupted (page closed)');
+    await this.loadLastCompletedAt();
     this.openBroadcastChannel();
     this.attachOfflineListener();
     this.initialized = true;
     await this.waitForLeaderHeartbeat();
     this.emitChange();
+  }
+
+  /**
+   * Loads persisted `last_sync_at` bookkeeping across all known connections
+   * and sets `lastCompletedAt` to the most recent one. `null` (never `0`)
+   * when there are no connections or none has synced yet.
+   */
+  private async loadLastCompletedAt(): Promise<void> {
+    try {
+      const connections = await this.db.getConnections();
+      const timestamps = connections
+        .map((c) => c.last_sync_at)
+        .filter((t): t is number => typeof t === 'number');
+      this.lastCompletedAt = timestamps.length > 0 ? Math.max(...timestamps) : null;
+    } catch {
+      // Non-fatal: bookkeeping stays unknown until a run completes.
+      this.lastCompletedAt = null;
+    }
   }
 
   /** Whether this tab must not start runs or write sync state. */
@@ -1565,6 +1593,9 @@ export class SyncManager extends EventTarget {
   private endRun(run: SyncRun, state: SyncRunState): void {
     run.state = state;
     run.finishedAt = Date.now();
+    if (state === 'done') {
+      this.lastCompletedAt = run.finishedAt;
+    }
     this.stopHeartbeatTimer();
     this.broadcast({ type: 'run-finished', snapshot: this.buildSnapshot() });
 
@@ -1722,6 +1753,7 @@ export class SyncManager extends EventTarget {
       sessions: run ? this.sessionSnapshots(run) : [],
       queuedRuns: this.runQueue.map((r) => r.connectionId),
       warnings: run ? [...run.warnings] : [],
+      lastCompletedAt: this.lastCompletedAt,
     };
   }
 

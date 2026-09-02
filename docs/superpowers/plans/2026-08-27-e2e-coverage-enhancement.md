@@ -71,8 +71,12 @@ In short:
   persistence, export, routing, drag-drop, chart geometry.
 - `chart-content.spec.ts` — smoke tests for the `helpers/chart-content.ts`
   geometry and empty/error affordance helpers themselves.
-- `design-fixes.spec.ts` — header nav active state, left-nav Projects
-  section, sync-confirm modal, data-sources edit URL, loading state.
+- `design-fixes.spec.ts` — header nav active state, sync-confirm modal,
+  data-sources edit URL, loading state. (Left-nav Projects section, UX-018,
+  was removed per issue #165 — see §9.)
+- `icon-rail.spec.ts` — icon rail navigation journey, active-route mapping
+  including nested routes, keyboard accessibility, `aria-current`
+  semantics, and interim domain-page reachability via `/artifacts`.
 - `opfs-fallback.spec.ts` — OPFS-unavailable fallback warning.
 - `passkey.spec.ts` — passkey vault lifecycle (forgot/delete).
 - `portfolio-refresh.spec.ts` — live portfolio refresh after a second
@@ -106,7 +110,12 @@ been tested — it already is).
 
 Status values: `GREEN` (implemented and passing), `PROPOSED` (planned, not
 yet implemented — a merge blocker until it lands), `IMPLEMENTING`,
-`FAILING-PRODUCT-BUG` (per `triage-e2e-failure`).
+`FAILING-PRODUCT-BUG` (per `triage-e2e-failure`), `REMOVED` (the surface the
+row covered was intentionally deleted per a documented product change — the
+row and its ID stay, permanently, per §3's "never renumbered" rule; `REMOVED`
+exists so a deliberate removal is never misread as an unbuilt `PROPOSED` row
+or a silently-dropped mapping — see the Journey/Owning-test-file columns for
+the disposition and pointer to any replacement coverage).
 
 ### 6.1 Tier A — Browser UX (`UX-###`)
 
@@ -129,15 +138,18 @@ yet implemented — a merge blocker until it lands), `IMPLEMENTING`,
 | UX-015 | Delete-confirmation dialog | The delete-project confirmation dialog traps focus, cancels on Escape, and returns focus to the trigger control | none | 2 | 3 | 3 | 18 | `ux-015-delete-confirmation.spec.ts` | GREEN |
 | UX-016 | Passkey vault | "Forgot passkey" deletes the vault (and its saved connections) rather than leaving it in a stuck locked state | none | 2 | 4 | 3 | 24 | `passkey.spec.ts` | GREEN |
 | UX-017 | Header navigation | The active nav link (Dashboard/Artifacts) tracks the current route across all its aliases (`/`, `/projects`, `/portfolio`, `/artifacts`, `/artifact-diff`) | none | 2 | 2 | 3 | 12 | `design-fixes.spec.ts` | GREEN |
-| UX-018 | Left-nav Projects section | The Projects section is collapsed on the `/projects` list and auto-expands with per-project session-count stats on a specific project route | none | 2 | 2 | 3 | 12 | `design-fixes.spec.ts` | GREEN |
+| UX-018 | Left-nav Projects section (REMOVED — issue #165) | `left-nav` and its expandable-Projects-children-with-stats behavior were deleted per issue #165's disposition table: `left-nav` is replaced by the `icon-rail` component (4 flat destinations, no expandable children); the per-project list moved to render on the `/projects` route body instead of a nav sub-tree. This is a deliberate, documented product change, not a dropped-coverage regression — see §9. | none | 2 | 2 | 3 | 12 | superseded — no longer applicable; the Projects rail item's active-route behavior (including nested `/projects/:slug` routes) is covered by UX-023 in `icon-rail.spec.ts` | REMOVED |
 | UX-019 | Sync-confirm modal | Syncing a saved connection opens a confirm-sync modal; a locked vault prompts for the passkey first, then proceeds to sync | none | 3 | 4 | 3 | 36 | `design-fixes.spec.ts` | GREEN |
 | UX-020 | Data-sources connection form | Opening the new-connection form (via click or direct route) updates the URL hash to `/settings/data-sources/new` | none | 2 | 2 | 2 | 8 | `design-fixes.spec.ts` | GREEN |
 | UX-021 | App boot loading state | The loading state is visible before the app is ready and disappears once it is | none | 2 | 2 | 2 | 8 | `design-fixes.spec.ts` | GREEN |
 | UX-022 | Self-hosted typography (redesign token/font foundation) | Space Grotesk's woff2 files load from the same origin (never `fonts.googleapis.com`/`fonts.gstatic.com`) and are usable via the Font Loading API, so the offline/GitHub-Pages build has no runtime Google Fonts dependency | none | 2 | 2 | 3 | 12 | `redesign-tokens.spec.ts` | GREEN |
-| UX-023 | Chart layer error affordance retry control (issue #168) | `echarts-base`'s error-state panel (`.chart-affordance.state-error`) carries a "Retry" button; clicking it dispatches a bubbling/composed `chart-retry` `CustomEvent` a hosting page listens for to re-issue the failed query, proven end-to-end (real click → real event, not just markup presence) | `assertErrorBoundary` (`chart-content.ts`) | 3 | 4 | 3 | 36 | `ux-023-chart-retry.spec.ts` | GREEN |
-| UX-024 | Heatmap missing-vs-zero cell distinction (issue #168) | A `heatmap`-type `analytics-chart` renders a missing native value (`ChartBucket.y === null`) as a dashed "—" cell with `data-missing="true"`, DOM-distinct from a measured `0` cell (`data-missing="false"`, text "0"); the ramp legend surfaces the series max | none (direct `[data-missing]` DOM assertion on the real `rd-heatmap-grid` shadow tree — no existing helper covers heatmap cell classification) | 3 | 5 | 4 | 60 | `ux-024-heatmap-missing.spec.ts` | GREEN |
+| UX-023 | Icon rail (app shell) | From `/`, click each of the four rail items (Portfolio, Projects, Artifacts, Settings) in turn and assert the route/content changes each time; nested routes (a project's behavior page, `/settings/storage`) still highlight the right rail item; keyboard: Tab reaches every rail item in document order, Enter activates the focused item and navigates, and the focused item shows a visible focus outline | none (dedicated `icon-rail.spec.ts`) | 3 | 4 | 3 | 36 | `icon-rail.spec.ts` | GREEN |
+| UX-024 | Icon rail active-state semantics | For each of the four rail destinations, the active item's link carries `aria-current="page"` and the other three carry no `aria-current` attribute at all (never `aria-current="false"`) | none | 2 | 3 | 3 | 18 | `icon-rail.spec.ts` | GREEN |
+| UX-025 | Domain pages reachability via Artifacts | From `/`, click the Artifacts rail item, then click each of the four "Domain pages" links (Agents/Skills/Tools/MCP) added to the `/artifacts` view, and assert each lands on its respective `tbd-page` route — documents/tests the interim 2-click path (rail → Artifacts → domain) per issue #165's disposition table, until sub-issue 7 restores 1-click parity from `/` | none | 3 | 3 | 3 | 27 | `icon-rail.spec.ts` | GREEN |
+| UX-026 | Chart layer error affordance retry control (issue #168) | `echarts-base`'s error-state panel (`.chart-affordance.state-error`) carries a "Retry" button; clicking it dispatches a bubbling/composed `chart-retry` `CustomEvent` a hosting page listens for to re-issue the failed query, proven end-to-end (real click → real event, not just markup presence) | `assertErrorBoundary` (`chart-content.ts`) | 3 | 4 | 3 | 36 | `ux-026-chart-retry.spec.ts` | GREEN |
+| UX-027 | Heatmap missing-vs-zero cell distinction (issue #168) | A `heatmap`-type `analytics-chart` renders a missing native value (`ChartBucket.y === null`) as a dashed "—" cell with `data-missing="true"`, DOM-distinct from a measured `0` cell (`data-missing="false"`, text "0"); the ramp legend surfaces the series max | none (direct `[data-missing]` DOM assertion on the real `rd-heatmap-grid` shadow tree — no existing helper covers heatmap cell classification) | 3 | 5 | 4 | 60 | `ux-027-heatmap-missing.spec.ts` | GREEN |
 
-New redesign entries allocate **UX-025** and up.
+New redesign entries allocate **UX-028** and up next.
 
 ### 6.2 Tier B — Analytics pipeline integration (`PIPE-###`)
 
@@ -225,6 +237,21 @@ filter-param remap verification).
   and §6.3 with these existing rows, so the "every cited ID resolves to a
   real row" acceptance criterion holds for pipeline/sync PRs too, not only
   browser UX ones.
+- **UX-018 (left-nav Projects section) — REMOVED, issue #165.** The "App
+  shell: icon rail + top bar" sub-issue deletes `left-nav.ts` (and its
+  test) and replaces it with `icon-rail.ts`, a flat 4-item rail with no
+  expandable children. The `left-nav`-specific behavior UX-018 covered —
+  the Projects section collapsing on `/projects` and auto-expanding with
+  per-project session-count stats on a specific project route — no longer
+  exists anywhere in the app; the per-project list now renders on the
+  `/projects` route body instead of a nav sub-tree. This is an explicit
+  disposition in issue #165's table, not an accidental coverage drop. Per
+  `.agents/rules/e2e-coverage-required.md` the row and its ID are kept
+  (never renumbered/deleted); its status is set to `REMOVED` and its
+  `design-fixes.spec.ts` test block was replaced with a short comment
+  pointing back here. The Projects rail item's active-route mapping
+  (including nested `/projects/:slug` routes) is now covered by the new
+  UX-023 row (`icon-rail.spec.ts`).
 
 ## 10. Maintenance model
 

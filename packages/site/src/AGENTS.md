@@ -15,6 +15,8 @@ src/
 │   │   ├── chart-helpers.ts       # Domain-agnostic ECharts option builders (time-series, stacked-bar, doughnut) and text summaries
 │   │   └── echarts-base.ts        # Tree-shaken ECharts core registration, SVG renderer, and a11y table fallback
 │   ├── connect-modal.ts           # S3 connection management modal (list, add, edit, test, sync)
+│   ├── icon-rail.ts               # Global 64px icon rail (Portfolio/Projects/Artifacts/Settings), route-aware, replaces left-nav.ts
+│   ├── settings-tabs.ts           # Horizontal tab bar (Data Sources / Storage) rendered atop the /settings/* pages
 │   ├── manual-import/             # Manual import flow components
 │   │   ├── manual-import-harness-selector.ts
 │   │   ├── manual-import-project-workspace.ts

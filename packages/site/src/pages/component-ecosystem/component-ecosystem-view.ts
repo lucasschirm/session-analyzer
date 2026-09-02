@@ -10,6 +10,7 @@ import type {
 } from '@lucasschirm/sal-db';
 import { css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
@@ -42,6 +43,20 @@ import {
   originHref,
   parseComponentEcosystemHash,
 } from './component-ecosystem-params';
+
+/**
+ * Interim reachability path for the four domain pages (`/agents`, `/skills`,
+ * `/tools`, `/mcp`) now that `left-nav` — their only prior in-app link — is
+ * gone. Per issue #165's disposition table this is a documented 2-click
+ * path (rail -> Artifacts -> domain) until sub-issue 7 restores 1-click
+ * parity from `/`.
+ */
+const DOMAIN_PAGES: ReadonlyArray<{ label: string; href: string }> = [
+  { label: 'Agents', href: '#/agents' },
+  { label: 'Skills', href: '#/skills' },
+  { label: 'Tools', href: '#/tools' },
+  { label: 'MCP', href: '#/mcp' },
+];
 
 type LoadState = 'idle' | 'loading' | 'ok' | 'empty' | 'partial' | 'error';
 
@@ -92,6 +107,32 @@ export class ComponentEcosystemView extends PageLitElement {
     .breadcrumbs .current {
       color: var(--md-sys-color-on-surface, #e6e9ef);
       font-weight: 600;
+    }
+
+    .domain-pages-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+      padding: 10px 14px;
+      border: 1px solid var(--rd-border-1, #20242e);
+      border-radius: 8px;
+      background: var(--rd-surface-card, #171b24);
+      font-size: 13px;
+    }
+
+    .domain-pages-row .domain-pages-label {
+      color: var(--rd-ink-muted, #9aa4b2);
+    }
+
+    .domain-pages-row a {
+      color: var(--rd-accent, #4f8cff);
+      text-decoration: none;
+    }
+
+    .domain-pages-row a:hover {
+      text-decoration: underline;
     }
 
     .filter-bar {
@@ -511,6 +552,19 @@ export class ComponentEcosystemView extends PageLitElement {
       default:
         return null;
     }
+  }
+
+  private renderDomainPages() {
+    return html`
+      <div class="domain-pages-row">
+        <span class="domain-pages-label">Domain pages:</span>
+        ${repeat(
+          DOMAIN_PAGES,
+          (page) => page.href,
+          (page) => html`<a href=${page.href}>${page.label}</a>`,
+        )}
+      </div>
+    `;
   }
 
   private renderBreadcrumbs() {
@@ -1037,6 +1091,7 @@ ${this.diff.unifiedDiff.split('\n').map((line) => {
         <h1>
           ${this.componentId ? `Artifact: ${this.componentId}` : 'Artifact Ecosystem'}
         </h1>
+        ${this.renderDomainPages()}
         ${
           this.globalState === 'error' && this.globalError
             ? html`<div class="error" role="alert">${this.globalError}</div>`
