@@ -79,6 +79,13 @@ function appendSessionLines(
 ): number {
   let next = order;
   if (session) {
+    // Sessions have no watermark (current-state, not append-only — see
+    // types.ts's DevinWatermarks): a `session` line is appended on every
+    // pass a session is present in `tables.sessions`, including repeated
+    // incremental passes with nothing new for it. This is intentional
+    // last-write-wins semantics for replay, but it means the caller's
+    // read cadence (e.g. a watcher polling sessions.db) directly controls
+    // how many `session` lines accumulate in the append-only output.
     lines.push(sessionLine(session, next));
     next += 1;
   }
@@ -118,22 +125,30 @@ export function orderMessageNodes(nodes: DevinMessageNodeRow[]): DevinMessageNod
 /**
  * Finds the `tool_call_state` rows referenced by a message node: a row is
  * "resolvable" to a node when its `tool_call_id` appears in that node's raw
- * `chat_message` JSON text (the ACP tool-call reference). Already-resolved
- * ids are skipped; matches are returned in `row_id` order for determinism.
+ * `chat_message` JSON text as a quoted JSON string value (the ACP tool-call
+ * reference), not merely as a raw substring — this avoids false-positive
+ * matches against unrelated numeric/text content that happens to contain a
+ * short id. Already-resolved ids are skipped; matches are returned in
+ * `row_id` order for determinism.
  */
 function resolveToolCallsForNode(
   node: DevinMessageNodeRow,
   toolCalls: DevinToolCallStateRow[],
   resolved: Set<string>,
 ): DevinToolCallStateRow[] {
-  if (!node.chat_message) {
+  const chatMessage = node.chat_message;
+  if (!chatMessage) {
     return [];
   }
   const matches = toolCalls
-    .filter((t) => !resolved.has(t.tool_call_id) && node.chat_message?.includes(t.tool_call_id))
+    .filter((t) => !resolved.has(t.tool_call_id) && referencesToolCallId(chatMessage, t))
     .sort((a, b) => a.row_id - b.row_id);
   for (const m of matches) resolved.add(m.tool_call_id);
   return matches;
+}
+
+function referencesToolCallId(chatMessage: string, toolCall: DevinToolCallStateRow): boolean {
+  return chatMessage.includes(JSON.stringify(toolCall.tool_call_id));
 }
 
 function appendMessageAndToolCallLines(

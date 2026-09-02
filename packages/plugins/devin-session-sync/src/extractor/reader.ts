@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import type { DatabaseSync as DevinDatabaseSync } from 'node:sqlite';
+import type { DatabaseSync as DevinDatabaseSync, SQLInputValue } from 'node:sqlite';
 import {
   KNOWN_TABLE_COLUMNS,
   knownColumnsFor,
@@ -79,8 +79,25 @@ export async function openDevinDatabase(
   try {
     const db = new DatabaseSync(dbPath, { readOnly: true });
     return { db, close: () => db.close() };
-  } catch {
+  } catch (readOnlyErr) {
+    return openSnapshotCopyOrThrow(dbPath, DatabaseSync, readOnlyErr as Error);
+  }
+}
+
+/** Falls back to a snapshot copy; on failure, reports both errors for diagnosis. */
+function openSnapshotCopyOrThrow(
+  dbPath: string,
+  DatabaseSync: NodeSqliteModule['DatabaseSync'],
+  readOnlyErr: Error,
+): OpenDevinDatabaseResult {
+  try {
     return openSnapshotCopy(dbPath, DatabaseSync);
+  } catch (snapshotErr) {
+    throw new Error(
+      `Failed to open Devin sessions.db at ${dbPath}: read-only open failed ` +
+        `(${readOnlyErr.message}), and the snapshot-copy fallback also failed ` +
+        `(${(snapshotErr as Error).message}).`,
+    );
   }
 }
 
@@ -118,8 +135,8 @@ export function readRefineryVersion(db: DevinDatabaseSync): number {
   return Number((row as { max_version: number | null } | undefined)?.max_version ?? 0);
 }
 
-function readTable<T>(db: DevinDatabaseSync, sql: string, params: unknown[] = []): T[] {
-  return db.prepare(sql).all(...(params as never[])) as T[];
+function readTable<T>(db: DevinDatabaseSync, sql: string, params: SQLInputValue[] = []): T[] {
+  return db.prepare(sql).all(...params) as T[];
 }
 
 function readSessions(db: DevinDatabaseSync, resolution: SchemaResolution): DevinSessionRow[] {
@@ -161,8 +178,8 @@ function readToolCallStates(
   resolution: SchemaResolution,
   since: number | null,
 ): DevinToolCallStateRow[] {
-  const columns = knownColumnsFor('tool_call_state', resolution).filter((c) => c !== 'row_id');
-  if (columns.length === 0 || !resolution.knownTables.includes('tool_call_state')) {
+  const columns = knownColumnsFor('tool_call_state', resolution);
+  if (columns.length === 0) {
     return [];
   }
   const select = ['rowid AS row_id', ...columns].join(', ');

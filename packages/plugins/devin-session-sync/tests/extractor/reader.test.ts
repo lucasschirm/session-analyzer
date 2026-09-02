@@ -76,6 +76,28 @@ describe('readDevinTables', () => {
     }
   });
 
+  it('falls back to a snapshot copy when the read-only open fails, and still reads correctly', async () => {
+    const fixture = buildFixtureDb({ sessions: [session('s1')] });
+    cleanup = fixture.close;
+
+    const opened = await openDevinDatabase(fixture.path, flakyImporter(1));
+    try {
+      const { tables } = readDevinTables(opened.db, EMPTY_WATERMARKS);
+      expect(tables.sessions.map((s) => s.id)).toEqual(['s1']);
+    } finally {
+      opened.close();
+    }
+  });
+
+  it('reports both the read-only and snapshot-copy errors when both fail', async () => {
+    await expect(
+      openDevinDatabase(
+        '/nonexistent/devin-session-sync-test/sessions.db',
+        flakyImporter(Infinity),
+      ),
+    ).rejects.toThrow(/read-only open failed.*snapshot-copy fallback also failed/s);
+  });
+
   it('degrades gracefully (never throws) on an unrecognized refinery schema version', () => {
     const fixture = buildFixtureDb({ refineryVersion: 999, sessions: [session('s1')] });
     cleanup = fixture.close;
@@ -141,6 +163,31 @@ describe('computeSchemaDescriptor', () => {
     expect(descriptor.supported).toBe(false);
   });
 });
+
+/**
+ * Builds an importer whose `DatabaseSync` throws for the first
+ * `failCount` construction attempts, then delegates to the real
+ * `node:sqlite` `DatabaseSync` — simulates a read-only open against the
+ * live path failing (once) before the snapshot-copy fallback succeeds, or
+ * always failing (`Infinity`) to exercise the combined-error path.
+ */
+function flakyImporter(failCount: number) {
+  return async () => {
+    const real = await import('node:sqlite');
+    let attempts = 0;
+    class FlakyDatabaseSync extends real.DatabaseSync {
+      constructor(...args: ConstructorParameters<typeof real.DatabaseSync>) {
+        attempts += 1;
+        if (attempts <= failCount) {
+          super(':memory:', { open: false });
+          throw new Error(`simulated open failure (attempt ${attempts})`);
+        }
+        super(...args);
+      }
+    }
+    return { ...real, DatabaseSync: FlakyDatabaseSync };
+  };
+}
 
 function session(id: string) {
   return {

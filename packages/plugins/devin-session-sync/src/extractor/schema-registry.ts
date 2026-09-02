@@ -41,13 +41,11 @@ export const KNOWN_TABLE_COLUMNS: Record<string, string[]> = {
     'metadata',
   ],
   prompt_history: ['id', 'content', 'timestamp', 'session_id', 'is_shell'],
-  tool_call_state: [
-    'row_id',
-    'session_id',
-    'tool_call_id',
-    'tool_call_json',
-    'tool_call_update_json',
-  ],
+  // `tool_call_state` has no explicit autoincrement column — SQLite's
+  // implicit `rowid` is used instead (aliased `AS row_id` by the reader).
+  // It is deliberately absent here since it isn't a real column name; a
+  // literal `SELECT row_id ...` against this table would fail.
+  tool_call_state: ['session_id', 'tool_call_id', 'tool_call_json', 'tool_call_update_json'],
 };
 
 /** Tables that degrade gracefully — `tool_call_state` has no explicit PK
