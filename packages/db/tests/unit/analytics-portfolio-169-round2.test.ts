@@ -260,6 +260,46 @@ describe('PortfolioView.getModelHarnessMatrix (issue #169 round 2, missing vs. z
     expect(opusCell?.sessionCount).toBe(1);
   });
 
+  it('reports sessionCount: null for a (model, harness) pair the harness has never jointly run, distinct from a 0-session pair', async () => {
+    // Regression coverage gap: every other test in this suite only ever
+    // seeds `harness: 'claude-code'`, so the cartesian product of
+    // models x harnesses can never contain a pair outside
+    // everObservedKeys — the null branch was never exercised. Seed a
+    // second harness that has only ever run one of the two models.
+    const executor = await createExecutor();
+    await seedPortfolio(executor);
+    await insertSession(executor, 's-sonnet-cc', 1000, null, 'claude-code');
+    await insertGeneration(executor, 's-sonnet-cc', 'gen-1');
+    await insertModelRequest(executor, 's-sonnet-cc', 'gen-1', 0, 'claude-sonnet', 1, 1);
+    await insertSession(executor, 's-opus-codex', 1000, null, 'codex');
+    await insertGeneration(executor, 's-opus-codex', 'gen-2');
+    await insertModelRequest(executor, 's-opus-codex', 'gen-2', 0, 'claude-opus', 1, 1);
+
+    const view = createPortfolioView(executor);
+    const matrix = await view.getModelHarnessMatrix({ portfolioId: PORTFOLIO_ID });
+
+    const sonnetOnCodex = matrix.cells.find(
+      (c) => c.model === 'claude-sonnet' && c.harness === 'codex',
+    );
+    const opusOnClaudeCode = matrix.cells.find(
+      (c) => c.model === 'claude-opus' && c.harness === 'claude-code',
+    );
+    // codex has never run claude-sonnet, and claude-code has never run
+    // claude-opus — both pairs are missing (never jointly observed), never
+    // a fabricated 0.
+    expect(sonnetOnCodex?.sessionCount).toBeNull();
+    expect(opusOnClaudeCode?.sessionCount).toBeNull();
+    // The pairs that were actually run remain real measured values.
+    const sonnetOnClaudeCode = matrix.cells.find(
+      (c) => c.model === 'claude-sonnet' && c.harness === 'claude-code',
+    );
+    const opusOnCodex = matrix.cells.find(
+      (c) => c.model === 'claude-opus' && c.harness === 'codex',
+    );
+    expect(sonnetOnClaudeCode?.sessionCount).toBe(1);
+    expect(opusOnCodex?.sessionCount).toBe(1);
+  });
+
   it('reports sessionCount: null for every cell when the portfolio has never run any model', async () => {
     const executor = await createExecutor();
     await seedPortfolio(executor);

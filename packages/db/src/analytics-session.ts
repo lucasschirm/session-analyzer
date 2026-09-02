@@ -1280,8 +1280,14 @@ function resolveTimelineBounds(
  * starts (the last segment ends at `bounds.end`); any lead-in gap before the
  * first instant is folded backward into the first segment by starting it at
  * `bounds.start`. This guarantees `sum(durationMs) === bounds.end -
- * bounds.start` by construction — see the invariant unit test in
- * `packages/db/tests/unit/turn-timeline-169.test.ts`.
+ * bounds.start` by construction *whenever at least one instant exists* — see
+ * the invariant unit test in `packages/db/tests/unit/turn-timeline-169.test.ts`.
+ * A session with valid bounds but zero timestamped instants has nothing to
+ * anchor a segment to and returns an empty segment list (`sum === 0`, not
+ * `bounds.end - bounds.start`) — a consumer must not assume this function's
+ * output always spans the full session duration; see "returns an empty
+ * segment list for a session with no timestamped evidence" in
+ * `turn-timeline-169.test.ts`.
  *
  * A silent gap between two recorded events (e.g. the interval after a tool
  * call ends and before the next assistant turn begins) is real elapsed idle
