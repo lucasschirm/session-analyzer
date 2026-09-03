@@ -26,12 +26,25 @@ export const DEVIN_HARD_BLOCKLIST_PATTERNS: readonly string[] = [
 ];
 
 /**
- * Workspace-scope capture allowlist (Part B2, initial). `~/.devin/plans/**`
+ * Workspace-scope capture allowlist (Part B2, initial; DS-B18 #270 extended
+ * with Devin-native project-level rules/skills/subagents). `~/.devin/plans/**`
  * is deliberately NOT here: plan files are session-linked (only entries whose
  * frontmatter `session:` matches the current session id belong to a given
  * session's manifest), which the generic scope-based allowlist discovery
  * cannot express — `session-sync.ts`'s `discoverSessionPlans` implements that
  * filter directly instead.
+ *
+ * `.devin/rules/**`, `.devin/global_rules.md`, `.devin/skills/**` and
+ * `.devin/agents/**` are the Devin-native, precedence-winning project-level
+ * locations documented in `extensibility/rules.mdx` ("Rules in the .devin
+ * Directory") and `extensibility/skills/overview.mdx` / `subagents.mdx`.
+ * `.agents/skills/**` and `.agents/agents/**` are the cross-harness `.agents/`
+ * convention Devin also honors. `AGENTS.local.md` and `AGENT.md` are
+ * documented sibling/variant filenames to the already-captured `AGENTS.md`.
+ * `~/.config/devin/mcp_config.json` / `.devin/mcp_config.json` are
+ * deliberately excluded — tracked separately in #271 pending a
+ * secret-redaction design, since MCP server config commonly holds real API
+ * tokens.
  */
 const WORKSPACE_ALLOWLIST_PATTERNS: readonly string[] = [
   '.devin/hooks.v1.json',
@@ -39,20 +52,50 @@ const WORKSPACE_ALLOWLIST_PATTERNS: readonly string[] = [
   '.devin/config.json',
   '.windsurf/**',
   'AGENTS.md',
+  'AGENTS.local.md',
+  'AGENT.md',
+  '.devin/rules/**',
+  '.devin/global_rules.md',
+  '.devin/skills/**',
+  '.devin/agents/**',
+  '.agents/skills/**',
+  '.agents/agents/**',
 ];
 
 /**
- * Global-scope capture allowlist. `~/.config/devin/config.json` is a fixed,
- * conventional home-relative location (Part B2) resolved via the `~/` prefix
- * independently of `configDir`. `plugins/discovered.json` lives under the
- * Devin CLI's XDG *data* root (the same directory as `sessions.db`), which is
- * what {@link resolveDevinConfigDir} returns as this profile's `configDir` —
- * see that function's doc comment for why data root (not `~/.config/devin`)
- * is the `{configDir}` resolution target here.
+ * Global-scope capture allowlist (Part B2, initial; DS-B18 #270 extended with
+ * Devin-native cross-project rules/skills/subagents). `~/.config/devin/config.json`
+ * is a fixed, conventional home-relative location resolved via the `~/`
+ * prefix independently of `configDir`. `plugins/discovered.json` lives under
+ * the Devin CLI's XDG *data* root (the same directory as `sessions.db`),
+ * which is what {@link resolveDevinConfigDir} returns as this profile's
+ * `configDir` — see that function's doc comment for why data root (not
+ * `~/.config/devin`) is the `{configDir}` resolution target here.
+ *
+ * `~/.config/devin/AGENTS.md` (+ `AGENT.md` / `AGENTS.local.md` variants) is
+ * "loaded at the start of every session, regardless of which project you're
+ * working in" (`extensibility/rules.mdx`, "Global Rules"). `~/.devin/rules/**`
+ * and `~/.devin/global_rules.md` are the equivalent `~/.devin` directory
+ * convention that also applies to every project. `~/.config/devin/skills/**`
+ * and `~/.agents/skills/**` are the documented "Global (all projects)" skill
+ * locations (`extensibility/skills/overview.mdx`, "Where Skills Live").
+ * `~/.config/devin/agents/**` is the documented global subagent location
+ * (`subagents.mdx`, "Global" tab). All of these use the `~/` prefix (not
+ * `{configDir}`) since `configDir` here resolves to the XDG data root, not
+ * `~/.config/devin` — see the doc comment above. `~/.config/devin/mcp_config.json`
+ * is deliberately excluded — tracked separately in #271.
  */
 const GLOBAL_ALLOWLIST_PATTERNS: readonly string[] = [
   '~/.config/devin/config.json',
   '{configDir}/plugins/discovered.json',
+  '~/.config/devin/AGENTS.md',
+  '~/.config/devin/AGENT.md',
+  '~/.config/devin/AGENTS.local.md',
+  '~/.config/devin/skills/**',
+  '~/.config/devin/agents/**',
+  '~/.devin/rules/**',
+  '~/.devin/global_rules.md',
+  '~/.agents/skills/**',
 ];
 
 export const DEVIN_CAPTURE_ALLOWLIST: CaptureAllowlist = {
