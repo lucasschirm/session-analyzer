@@ -3,7 +3,9 @@ import { DevinTransformer } from '../../src/index.js';
 import {
   componentsBundle,
   defaultContext,
+  interruptedSkillCallBundle,
   linearBundle,
+  mcpDeclaredOnlyBundle,
   skillCogOnlyBundle,
   skillInvocationOnlyBundle,
 } from '../conformance/fixtures/index.js';
@@ -126,9 +128,20 @@ describe('DevinTransformer session components (DS-F11 #288)', () => {
     expect(skillMetric?.exact).toBe(true);
   });
 
-  it('sets configurationSnapshot.temporalRole to runtime for a session with components', () => {
+  it('sets configurationSnapshot.temporalRole to runtime for a session with confirmed skill/agent invocations', () => {
     const result = DevinTransformer.transform(componentsBundle, defaultContext);
     expect(result.configurationSnapshot.temporalRole).toBe('runtime');
+  });
+
+  it('does not label the MCP wrapper tool AllowList runtime when it has no matching invocation', () => {
+    // mcpDeclaredOnlyBundle has a core/model AllowList cog (declared
+    // availability of the 4 MCP wrapper tools) and no skill/agent/matching
+    // invocation evidence at all — the 4 MCP tool components exist (still
+    // discoverable), but nothing confirms they were actually used during
+    // the session, so the snapshot must not overclaim 'runtime'.
+    const result = DevinTransformer.transform(mcpDeclaredOnlyBundle, defaultContext);
+    expect(componentsByKind(result, 'tool')).toHaveLength(4);
+    expect(result.configurationSnapshot.temporalRole).toBe('capture_only');
   });
 
   it('reports complete completeness for skill/tool/agent when components are present', () => {
@@ -136,6 +149,22 @@ describe('DevinTransformer session components (DS-F11 #288)', () => {
     expect(result.configurationSnapshot.completeness.skill).toBe('complete');
     expect(result.configurationSnapshot.completeness.tool).toBe('complete');
     expect(result.configurationSnapshot.completeness.agent).toBe('complete');
+  });
+
+  it('classifies a skill call as kind: skill even with no tool_call_update_json record (interrupted session)', () => {
+    // interruptedSkillCallBundle's tool_call has `call` but no `update` at
+    // all. Devin also stamps _meta["cognition.ai/inferenceToolName"] on
+    // tool_call_json itself, so this must resolve from `call` alone rather
+    // than silently falling back to kind: 'tool' (regression guard for the
+    // fallback-chain fix).
+    const result = DevinTransformer.transform(interruptedSkillCallBundle, defaultContext);
+    const invocation = result.evidence.find(
+      (r) => r.recordType === 'invocation' && r.sourceEventId === 'tc-skill-interrupted',
+    );
+    expect(invocation).toBeDefined();
+    const payload = invocation?.payload as { kind?: string; name?: string } | undefined;
+    expect(payload?.kind).toBe('skill');
+    expect(payload?.name).toBe('add-e2e-test');
   });
 
   it('produces stable componentIds across two runs of the same bundle', () => {

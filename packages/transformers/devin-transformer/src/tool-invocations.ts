@@ -8,7 +8,9 @@ export interface ToolInvocationResult {
 }
 
 function toolName(call: DevinToolCallLine['call'], update: DevinToolCallLine['update']): string {
-  return update?.inferenceToolName ?? call?.title ?? call?.kind ?? 'unknown';
+  return (
+    update?.inferenceToolName ?? call?.inferenceToolName ?? call?.title ?? call?.kind ?? 'unknown'
+  );
 }
 
 function rawInputString(call: DevinToolCallLine['call'], field: string): string | undefined {
@@ -23,12 +25,22 @@ function rawInputString(call: DevinToolCallLine['call'], field: string): string 
  * (`run_subagent`) invocations are their own domains, never folded into the
  * generic `tool` pool (DS-F11 (#288)). Every other call keeps the existing
  * `kind: 'tool'` behavior, with `name` resolved exactly as before.
+ *
+ * `_meta["cognition.ai/inferenceToolName"]` is read from `update` first,
+ * falling back to `call`'s own copy of the same `_meta` key (DS-F11 (#288)
+ * review finding): Devin stamps this `_meta` key on both `tool_call_json`
+ * and `tool_call_update_json` when it is present at all, but
+ * `tool_call_update_json` can be entirely missing for a call whose session
+ * was interrupted before it completed. Reading `update` only would silently
+ * fall back to `kind: 'tool'` for such a call, reproducing the exact
+ * Skill/Agent-into-tool conflation this function exists to fix, just for a
+ * narrower trigger (no update record instead of no `_meta` at all).
  */
 function invocationKindAndName(
   call: DevinToolCallLine['call'],
   update: DevinToolCallLine['update'],
 ): { kind: 'tool' | 'skill' | 'agent'; name: string; target?: string } {
-  const inferenceToolName = update?.inferenceToolName;
+  const inferenceToolName = update?.inferenceToolName ?? call?.inferenceToolName;
   if (inferenceToolName === 'skill') {
     return { kind: 'skill', name: rawInputString(call, 'skill') ?? toolName(call, update) };
   }

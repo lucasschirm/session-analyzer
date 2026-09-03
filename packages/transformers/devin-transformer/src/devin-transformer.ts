@@ -22,7 +22,7 @@ import {
 import { type DevinMetricValue, deriveDevinMetrics } from './metrics/index.js';
 import { parseDevinBundle } from './parse-bundle.js';
 import { deriveDevinSessionComponents } from './session-components.js';
-import { buildSessionSpine, deriveSessionId } from './session-spine.js';
+import { buildSessionSpine, deriveSessionId, resolveSourceIdentity } from './session-spine.js';
 import { buildTokenUsageRecords } from './token-usage.js';
 import { buildToolInvocationRecords } from './tool-invocations.js';
 
@@ -103,28 +103,68 @@ function makeProvenanceFromArtifacts(classification: ArtifactClassificationResul
 }
 
 /**
+ * Whether `component` has actual invocation evidence backing it, not just
+ * declared availability. `agent` components are always confirmed: they are
+ * derived exclusively from a real `run_subagent` `tool_call_state` record
+ * (`extractAgentComponents`), so their mere presence is confirmed usage.
+ * `skill` and `tool` (MCP wrapper) components can be declared-only —
+ * `extractSkillComponents` derives from `skill/<name>` cog presence alone,
+ * and `extractMcpToolComponents` derives from a cog's declared
+ * `toolAvailability.mode === 'allow'` list, present in nearly every session
+ * whether used or not (session-components.ts doc comments) — so those two
+ * kinds are only confirmed when a matching `kind`+`name` invocation record
+ * exists in `invocationRecords`.
+ */
+function isConfirmedRuntimeComponent(
+  component: ComponentSummary,
+  invocationRecords: readonly NormalizedEvidenceRecord[],
+): boolean {
+  if (component.kind === 'agent') return true;
+  const nativeId = component.identity.nativeId;
+  if (!nativeId) return false;
+  return invocationRecords.some((record) => {
+    if (record.recordType !== 'invocation') return false;
+    const payload = record.payload as { kind?: string; name?: string };
+    return payload.kind === component.kind && payload.name === nativeId;
+  });
+}
+
+/**
  * Merges `cogs_json`/`tool_call_state`-derived session components (DS-F11
  * (#288)) with `classification.components` (currently always `[]` — see
  * `classifyDevinArtifacts`) and recomputes `configurationSnapshot` from the
  * merged list, reusing `completenessFromComponents` so completeness
- * accounting stays in one place. `temporalRole: 'runtime'` reflects that
- * these components were active *during* the session, not a pre-existing
- * declared config.
+ * accounting stays in one place.
+ *
+ * `temporalRole` is `'runtime'` only when at least one session component has
+ * actual invocation evidence (`isConfirmedRuntimeComponent`) — never
+ * unconditionally, since declared-but-unconfirmed components (e.g. the MCP
+ * wrapper tool AllowList, present in nearly every session regardless of use)
+ * would otherwise overclaim they were "active during the session". Absent
+ * any confirmed invocation, this falls back to `'capture_only'` — the same
+ * convention `packages/db/src/manual-ingestion.ts`'s `adjustForManual` and
+ * `packages/db/src/configuration.ts`'s `applyExposures` already use for
+ * "captured, but not asserted as pre-session or runtime activity" (choosing
+ * `'capture_only'` rather than inventing a new temporal state).
  */
 function mergeSessionComponents(
   classification: ArtifactClassificationResult,
   sessionComponents: readonly ComponentSummary[],
+  invocationRecords: readonly NormalizedEvidenceRecord[],
 ): { components: ComponentSummary[]; configurationSnapshot: ConfigurationSnapshot } {
   const components = [...classification.components, ...sessionComponents];
   const unclassifiedCount = classification.artifacts.filter(
     (a) => a.kind === 'unclassified',
   ).length;
+  const hasConfirmedRuntimeComponent = sessionComponents.some((c) =>
+    isConfirmedRuntimeComponent(c, invocationRecords),
+  );
   return {
     components,
     configurationSnapshot: {
       completeness: completenessFromComponents(components, unclassifiedCount),
       components,
-      temporalRole: 'runtime',
+      temporalRole: hasConfirmedRuntimeComponent ? 'runtime' : 'capture_only',
     },
   };
 }
@@ -281,13 +321,14 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       parsed.models,
       rootArtifactId,
     );
+    const sourceId = resolveSourceIdentity(context, bundle.sourceIdentity).sourceId;
     const sessionComponents = deriveDevinSessionComponents(
-      sessionId,
+      sourceId,
       parsed.sessionLine?.cogsJson,
       parsed.toolCalls,
       rootArtifactId,
     );
-    const merged = mergeSessionComponents(classification, sessionComponents);
+    const merged = mergeSessionComponents(classification, sessionComponents, toolResult.records);
 
     const allEvidence: NormalizedEvidenceRecord[] = [
       ...spine.records,

@@ -103,6 +103,33 @@ function toolCallLine(
   });
 }
 
+/**
+ * A `tool_call` line with `tool_call_json`'s own `_meta` set but NO
+ * `tool_call_update_json` at all — simulates a session interrupted before
+ * the ACP update for this call arrived. Devin stamps
+ * `_meta["cognition.ai/inferenceToolName"]` on `tool_call_json` itself
+ * (not only on the update), so the domain-correct kind/name must still be
+ * resolvable from `call` alone (DS-F11 (#288) review finding).
+ */
+function interruptedToolCallLine(
+  sessionId: string,
+  toolCallId: string,
+  kind: string,
+  title: string,
+  inferenceToolName: string,
+  rawInput: Record<string, unknown>,
+): string {
+  const meta = { 'cognition.ai/inferenceToolName': inferenceToolName };
+  return devinJsonlLine('tool_call', {
+    ts: null,
+    order: 100,
+    row_id: 1,
+    session_id: sessionId,
+    tool_call_id: toolCallId,
+    tool_call_json: JSON.stringify({ toolCallId, title, kind, rawInput, _meta: meta }),
+  });
+}
+
 function atifTranscript(
   steps: { timestamp: string; role: string; text: string }[],
   finalMetrics: {
@@ -381,6 +408,46 @@ const skillInvocationOnlyTranscript = [
 
 export const skillInvocationOnlyBundle: UnknownArtifactBundle = bundle([
   artifact('transcript.jsonl', skillInvocationOnlyTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
+// A core/model AllowList cog (declaring the 4 MCP wrapper tool names) with
+// NO matching tool_call_state invocation of any of them, and no skill/agent
+// activity either — every session component here is declared availability
+// only, never confirmed by an actual invocation. Exercises the
+// temporalRole fix: a merged snapshot with zero confirmed-runtime
+// components must not be labeled 'runtime' (DS-F11 (#288) review finding).
+const mcpDeclaredOnlyTranscript = [
+  sessionLine(sessionId, 1, undefined, [mcpAllowListCog]),
+  messageLine(sessionId, 1, null, 'user', 'Hello'),
+].join('\n');
+
+export const mcpDeclaredOnlyBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', mcpDeclaredOnlyTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
+// A functions.skill call interrupted before its tool_call_update_json
+// arrived — no `update` record exists at all, only `call`. The call's own
+// `_meta["cognition.ai/inferenceToolName"]` must still resolve this as
+// `kind: 'skill'`, not silently fall back to `kind: 'tool'` (DS-F11 (#288)
+// review finding: the fallback chain must not reproduce the Skill/Agent
+// conflation bug this PR fixes for a narrower "no update record" trigger).
+const interruptedSkillTranscript = [
+  sessionLine(sessionId, 1, undefined, [skillCog]),
+  messageLine(sessionId, 1, null, 'user', 'Invoke a skill, then get interrupted'),
+  interruptedToolCallLine(
+    sessionId,
+    'tc-skill-interrupted',
+    'execute',
+    'Invoked skill add-e2e-test',
+    'skill',
+    { command: 'invoke', skill: 'add-e2e-test' },
+  ),
+].join('\n');
+
+export const interruptedSkillCallBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', interruptedSkillTranscript, 'application/jsonl'),
   artifact('native/models.json', modelsJson(), 'application/json'),
 ]);
 

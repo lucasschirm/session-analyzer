@@ -4,18 +4,22 @@ import type { ComponentIdentity, ComponentSummary } from '@lucasschirm/sal-trans
 import { stableId } from './session-spine.js';
 
 /**
- * Derives session-scoped `Skill`/`Tool`(MCP-wrapper-availability)/`Agent`
- * `ComponentSummary` records from `sessions.cogs_json` and `tool_call_state`
- * (DS-F11 (#288) research findings §1-4).
+ * Derives `Skill`/`Tool`(MCP-wrapper-availability)/`Agent` `ComponentSummary`
+ * records from `sessions.cogs_json` and `tool_call_state` (DS-F11 (#288)
+ * research findings §1-4).
  *
  * These components have no backing file — unlike Claude's skills/agents,
  * which are keyed on harness+scope+path+content hash
- * (`.agents/rules/component-identity-not-display-name.md`). `componentId`
- * is instead a session-scoped activation identity (`stableId(kind, {session,
- * name})`), and `sourceArtifactIds` points at the whole-transcript
- * `rootArtifactId` — the only artifact that actually exists for these
- * components. This is a documented, explicit deviation from the file-backed
- * identity model, not a silent gap (see that rule's DS-F11 note).
+ * (`.agents/rules/component-identity-not-display-name.md`). Absent a path
+ * or hash, `componentId` is instead keyed on the harness-scoped ingestion
+ * `sourceId` (never the session id) plus `kind` and the native
+ * skill/tool/agent name — `stableId(kind, {source, name})`, mirroring how
+ * `claude-transformer`'s `extractSkillComponent`/`extractAgentComponent`
+ * key `componentId` on `source.ingestionSourceId` (not the session) so the
+ * same skill/agent invoked across many sessions from the same source
+ * resolves to one stable identity instead of a fresh one per session.
+ * `sourceArtifactIds` still points at the whole-transcript `rootArtifactId`
+ * — the only artifact that actually exists for these components.
  */
 
 const MCP_WRAPPER_TOOL_NAMES: ReadonlySet<string> = new Set([
@@ -53,12 +57,12 @@ function skillNames(cogs: readonly DevinCog[]): Set<string> {
 
 /** One `kind: 'skill'` component per distinct `skill/<name>` lifetime cog. */
 export function extractSkillComponents(
-  sessionId: string,
+  sourceId: string,
   cogs: readonly DevinCog[],
   rootArtifactId: string,
 ): ComponentSummary[] {
   return [...skillNames(cogs)].map((name) => {
-    const componentId = stableId('skill', { session: sessionId, name });
+    const componentId = stableId('skill', { source: sourceId, name });
     return {
       componentId,
       kind: 'skill',
@@ -87,12 +91,12 @@ function mcpWrapperToolNames(cogs: readonly DevinCog[]): Set<string> {
  * same AllowList are not promoted to components.
  */
 export function extractMcpToolComponents(
-  sessionId: string,
+  sourceId: string,
   cogs: readonly DevinCog[],
   rootArtifactId: string,
 ): ComponentSummary[] {
   return [...mcpWrapperToolNames(cogs)].map((name) => {
-    const componentId = stableId('tool', { session: sessionId, name });
+    const componentId = stableId('tool', { source: sourceId, name });
     return {
       componentId,
       kind: 'tool',
@@ -124,12 +128,12 @@ function subagentProfiles(toolCalls: readonly DevinToolCallLine[]): Set<string> 
  * `cogs_json` (no `agent/*` cog exists, DS-F11 (#288) research findings §3).
  */
 export function extractAgentComponents(
-  sessionId: string,
+  sourceId: string,
   toolCalls: readonly DevinToolCallLine[],
   rootArtifactId: string,
 ): ComponentSummary[] {
   return [...subagentProfiles(toolCalls)].map((profile) => {
-    const componentId = stableId('agent', { session: sessionId, profile });
+    const componentId = stableId('agent', { source: sourceId, profile });
     return {
       componentId,
       kind: 'agent',
@@ -139,17 +143,22 @@ export function extractAgentComponents(
   });
 }
 
-/** Derives all `cogs_json`/`tool_call_state`-sourced components for one session. */
+/**
+ * Derives all `cogs_json`/`tool_call_state`-sourced components for one
+ * session. `sourceId` is the harness-scoped ingestion source id (never the
+ * session id) — see the module doc comment above for why component
+ * identity must be keyed on it instead.
+ */
 export function deriveDevinSessionComponents(
-  sessionId: string,
+  sourceId: string,
   cogsJson: string | null | undefined,
   toolCalls: readonly DevinToolCallLine[],
   rootArtifactId: string,
 ): ComponentSummary[] {
   const { cogs } = parseDevinCogsJson(cogsJson ?? null);
   return [
-    ...extractSkillComponents(sessionId, cogs, rootArtifactId),
-    ...extractMcpToolComponents(sessionId, cogs, rootArtifactId),
-    ...extractAgentComponents(sessionId, toolCalls, rootArtifactId),
+    ...extractSkillComponents(sourceId, cogs, rootArtifactId),
+    ...extractMcpToolComponents(sourceId, cogs, rootArtifactId),
+    ...extractAgentComponents(sourceId, toolCalls, rootArtifactId),
   ];
 }
