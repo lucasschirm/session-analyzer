@@ -13,6 +13,7 @@ import type {
 } from '@lucasschirm/sal-transformer-shared';
 import { getDevinMetricCapabilities } from './capabilities.js';
 import { artifactIdFor, classifyDevinArtifacts } from './classification.js';
+import { buildDevinCompactionRecords } from './compaction.js';
 import { type DevinMetricValue, deriveDevinMetrics } from './metrics/index.js';
 import { parseDevinBundle } from './parse-bundle.js';
 import { buildSessionSpine, deriveSessionId } from './session-spine.js';
@@ -245,11 +246,18 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       parsed.models,
       rootArtifactId,
     );
+    const compactionRecords = buildDevinCompactionRecords(
+      sessionId,
+      parsed.orderedMessages,
+      parsed.prompts,
+      rootArtifactId,
+    );
 
     const allEvidence: NormalizedEvidenceRecord[] = [
       ...spine.records,
       ...toolResult.records,
       ...tokenResult.records,
+      ...compactionRecords,
     ];
 
     const tokenUsage = {

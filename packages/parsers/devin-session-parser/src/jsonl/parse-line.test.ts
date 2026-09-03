@@ -136,6 +136,118 @@ describe('parseDevinJsonlLine — message', () => {
   });
 });
 
+describe('parseDevinJsonlLine — message metadata (compaction fields)', () => {
+  function messageLine(metadata: unknown): ReturnType<typeof parseDevinJsonlLine> {
+    return parseDevinJsonlLine(
+      line({
+        type: 'message',
+        ts: null,
+        order: 1,
+        row_id: 5,
+        session_id: 'sess-1',
+        node_id: 57,
+        parent_node_id: 55,
+        chat_message: JSON.stringify({ role: 'assistant', content: 'ok' }),
+        created_at: 1788465400,
+        metadata: metadata === undefined ? undefined : JSON.stringify(metadata),
+      }),
+      2,
+    );
+  }
+
+  it('parses a null metadata column as parsedMetadata: null', () => {
+    const result = messageLine(undefined);
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({ metadata: null, parsedMetadata: null });
+  });
+
+  it('parses summarized_from/num_tokens_preceding/is_system_prefix on an ordinary node', () => {
+    const result = messageLine({
+      summarized_from: null,
+      num_tokens_preceding: 17033,
+      is_system_prefix: null,
+    });
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({
+      parsedMetadata: {
+        summarizedFrom: null,
+        numTokensPreceding: 17033,
+        isSystemPrefix: null,
+      },
+    });
+  });
+
+  it('parses a non-null summarized_from on a compaction output node', () => {
+    const result = messageLine({
+      summarized_from: 57,
+      num_tokens_preceding: null,
+      is_system_prefix: null,
+    });
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({
+      parsedMetadata: { summarizedFrom: 57 },
+    });
+  });
+
+  it('carries unrecognized keys verbatim under extensions, never conflating them with chat_message.metadata', () => {
+    const result = messageLine({
+      summarized_from: null,
+      num_tokens_preceding: null,
+      is_system_prefix: null,
+      'compact/prior_node_ids': [1, 2, 3],
+    });
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({
+      parsedMetadata: {
+        summarizedFrom: null,
+        extensions: { 'compact/prior_node_ids': [1, 2, 3] },
+      },
+    });
+  });
+
+  it('degrades to null on unparseable metadata JSON, never throwing', () => {
+    expect(() => {
+      const result = parseDevinJsonlLine(
+        line({
+          type: 'message',
+          ts: null,
+          order: 1,
+          row_id: 5,
+          session_id: 'sess-1',
+          node_id: 57,
+          parent_node_id: 55,
+          chat_message: JSON.stringify({ role: 'assistant', content: 'ok' }),
+          created_at: null,
+          metadata: 'not json',
+        }),
+        2,
+      );
+      if (!('line' in result)) throw new Error('expected a line');
+      expect(result.line).toMatchObject({ parsedMetadata: null });
+    }).not.toThrow();
+  });
+
+  it('degrades to null when metadata is a JSON array, not an object', () => {
+    const result = parseDevinJsonlLine(
+      line({
+        type: 'message',
+        ts: null,
+        order: 1,
+        row_id: 5,
+        session_id: 'sess-1',
+        node_id: 57,
+        parent_node_id: 55,
+        chat_message: JSON.stringify({ role: 'assistant', content: 'ok' }),
+        created_at: null,
+        metadata: JSON.stringify([1, 2, 3]),
+      }),
+      2,
+    );
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({ parsedMetadata: null });
+  });
+});
+
 describe('parseDevinJsonlLine — tool_call', () => {
   it('parses a valid tool_call line preserving the ACP kind', () => {
     const callJson = JSON.stringify({ toolCallId: 'call-1', title: 'Edit file', kind: 'edit' });

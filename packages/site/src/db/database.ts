@@ -72,7 +72,9 @@ interface SessionRow {
   tasks: string | null;
   external_id: string | null;
   subagents: string | null;
-  context_compactions: number;
+  /** `null` = no compaction count recorded yet (missing, never coerced to a
+   * fabricated `0`); see `DashboardSession.context_compactions`. */
+  context_compactions: number | null;
   total_turns: number;
   files_read: number;
   files_written: number;
@@ -361,7 +363,9 @@ export class DatabaseManager {
         tasks TEXT,
         external_id TEXT,
         subagents TEXT,
-        context_compactions INTEGER NOT NULL DEFAULT 0,
+        -- NULL = no compaction count recorded yet (missing, distinct from a
+        -- confirmed 0) - see DashboardSession.context_compactions.
+        context_compactions INTEGER,
         total_turns INTEGER NOT NULL DEFAULT 0,
         files_read INTEGER NOT NULL DEFAULT 0,
         files_written INTEGER NOT NULL DEFAULT 0,
@@ -895,7 +899,10 @@ export class DatabaseManager {
       stub.tasks ?? null,
       stub.external_id ?? null,
       stub.subagents ?? null,
-      stub.context_compactions ?? 0,
+      // Never coerced to 0: a stub written before parsed content lands has
+      // no compaction signal yet, and that must stay distinguishable from a
+      // confirmed zero-compaction session (missing-is-never-zero).
+      stub.context_compactions ?? null,
       stub.total_turns ?? 0,
       stub.files_read ?? 0,
       stub.files_written ?? 0,

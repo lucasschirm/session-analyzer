@@ -529,6 +529,35 @@ describe('DatabaseManager', () => {
       expect(fetched!.sync_status).toBe('pending');
     });
 
+    it('stores a missing context_compactions as null, never a fabricated 0 (missing-is-never-zero)', () => {
+      const project = makeProject({ id: 'proj-stub-1b', name: 'Stub Project 1b' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-stub-1b', {
+        id: 'sess-stub-1b',
+        sync_session_id: 'sync-1b',
+      });
+      expect(stub.context_compactions).toBeUndefined();
+      mgr.upsertSessionStub(stub);
+
+      const fetched = mgr.getSessionBySyncId('proj-stub-1b', 'sync-1b');
+      expect(fetched!.context_compactions).toBeNull();
+    });
+
+    it('preserves an explicit context_compactions: 0 as a confirmed zero, distinct from missing', () => {
+      const project = makeProject({ id: 'proj-stub-1c', name: 'Stub Project 1c' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-stub-1c', {
+        id: 'sess-stub-1c',
+        sync_session_id: 'sync-1c',
+        context_compactions: 0,
+      });
+      mgr.upsertSessionStub(stub);
+
+      const fetched = mgr.getSessionBySyncId('proj-stub-1c', 'sync-1c');
+      expect(fetched!.context_compactions).toBe(0);
+      expect(fetched!.context_compactions).not.toBeNull();
+    });
+
     it('parseTimestamp: converts ISO-8601 strings to milliseconds', () => {
       const project = makeProject({ id: 'proj-stub-2', name: 'Stub Project 2' });
       mgr.createProject(project);
