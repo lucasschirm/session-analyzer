@@ -286,6 +286,107 @@ function effortBundleWithSubagent(): UnknownArtifactBundle {
   ]);
 }
 
+/**
+ * Root session (2 assistant entries: high, medium — one transition) and a
+ * Sub Agent session (2 assistant entries: low, xhigh — one transition) that
+ * are constructed so both sessions' `model_request` records land on the
+ * exact same per-session `requestOrder` values (each session's own turn
+ * counter restarts at the same ordinals). This proves the inclusive-scope
+ * transition count sums each session's own transitions independently
+ * rather than merging raw records across sessions and sorting by the
+ * shared, per-session-relative ordinal — which would interleave the two
+ * unrelated sessions and fabricate transitions that never happened
+ * adjacently.
+ */
+function effortBundleWithCollidingRequestOrders(): UnknownArtifactBundle {
+  const sessionId = 'eff-collide-root';
+  const agentId = 'eff-collide-agent-1';
+  const toolUseId = 'toolu_eff_collide_1';
+
+  const rootLines = [
+    JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId }),
+    JSON.stringify({
+      parentUuid: null,
+      type: 'user',
+      uuid: 'rc-u-1',
+      sessionId,
+      timestamp: '2026-08-01T10:00:00.000Z',
+      message: { role: 'user', content: 'start' },
+    }),
+    JSON.stringify({
+      parentUuid: 'rc-u-1',
+      type: 'assistant',
+      uuid: 'rc-a-1',
+      sessionId,
+      timestamp: '2026-08-01T10:00:01.000Z',
+      requestId: 'req-rc-1',
+      effort: 'high',
+      message: {
+        model: 'model-a',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'first reply' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    }),
+    JSON.stringify({
+      parentUuid: 'rc-a-1',
+      type: 'user',
+      uuid: 'rc-u-2',
+      sessionId,
+      timestamp: '2026-08-01T10:00:02.000Z',
+      message: { role: 'user', content: [{ type: 'tool_use', id: toolUseId }] },
+    }),
+    JSON.stringify({
+      parentUuid: 'rc-u-2',
+      type: 'assistant',
+      uuid: 'rc-a-2',
+      sessionId,
+      timestamp: '2026-08-01T10:00:03.000Z',
+      requestId: 'req-rc-2',
+      effort: 'medium',
+      message: {
+        model: 'model-a',
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: toolUseId, name: 'Agent', input: { prompt: 'go' } }],
+      },
+    }),
+    JSON.stringify({
+      parentUuid: 'rc-a-2',
+      type: 'user',
+      uuid: 'rc-u-3',
+      sessionId,
+      timestamp: '2026-08-01T10:00:04.000Z',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'done' }],
+      },
+      toolUseResult: { agentId, resolvedModel: 'model-a', totalTokens: 10, status: 'completed' },
+    }),
+  ];
+
+  // Same shape as the root transcript (1 user turn, then 2 user/assistant
+  // pairs) so its own turnOrdinal counter lands on the same requestOrder
+  // values (2, 4) as the root session above — a literal collision.
+  const subLines = effortTurns(sessionId, ['low', 'xhigh'], {
+    agentId,
+    isSidechain: true,
+  });
+
+  const metaJson = JSON.stringify({
+    agentType: 'effort-collide-subagent',
+    description: 'Effort transition collision fixture subagent',
+    toolUseId,
+    spawnDepth: 1,
+    model: 'model-a',
+  });
+
+  return bundle([
+    artifact('transcript.jsonl', rootLines.join('\n'), 'application/jsonl'),
+    artifact(`subagents/agent-${agentId}.jsonl`, subLines.join('\n'), 'application/jsonl'),
+    artifact(`subagents/agent-${agentId}.meta.json`, metaJson, 'application/json'),
+  ]);
+}
+
 describe('claude-code-metrics', () => {
   describe('definitions', () => {
     it('exports a metric definition for every Phase 1 root and inclusive metric', () => {
@@ -527,17 +628,43 @@ describe('claude-code-metrics', () => {
       expect(rootMetric?.value).toBe(1);
       expect(rootMetric?.evidenceRecordIds.length).toBe(3);
 
-      // Inclusive must not be null/unavailable, and its evidence must be
-      // the union of root's and the Sub Agent's contributing records (no
-      // double-counting, no dropped contributions) — the Sub Agent
-      // contributes 3 more non-null normalizedEffort records of its own
-      // (medium, low, medium).
-      expect(inclusiveMetric?.value).not.toBeNull();
+      // Inclusive scope sums each session's own transition count
+      // independently: root contributes 1 (high -> xhigh) and the Sub
+      // Agent contributes 2 (medium -> low -> medium) = 3 total. Merging
+      // raw records across sessions and sorting by the shared,
+      // per-session-relative requestOrder would instead interleave the
+      // two sessions and fabricate a value of 5 — this pins the real
+      // number so that regression ships red, not green.
+      expect(inclusiveMetric?.value).toBe(3);
       expect(inclusiveMetric?.unavailableReason).toBeUndefined();
       expect(inclusiveMetric?.evidenceRecordIds.length).toBe(6);
       for (const id of rootMetric?.evidenceRecordIds ?? []) {
         expect(inclusiveMetric?.evidenceRecordIds).toContain(id);
       }
+    });
+
+    it('does not interleave root and Sub Agent sessions when their requestOrder values literally collide', () => {
+      // Root (requestOrder 2, 4: high -> medium = 1 transition) and the Sub
+      // Agent (requestOrder 2, 4: low -> xhigh = 1 transition) share the
+      // exact same per-session requestOrder values. A merge-then-sort-by-
+      // requestOrder implementation would interleave the four records by
+      // insertion order at each tied requestOrder and could fabricate an
+      // extra cross-session transition; grouping by sessionId before
+      // walking each session's own carried-value streak must not.
+      const result = ClaudeCodeTransformer.transform(
+        effortBundleWithCollidingRequestOrders(),
+        defaultContext,
+      );
+
+      const rootMetric = findMetric(result, 'claude:effort:changes:root_only');
+      const inclusiveMetric = findMetric(result, 'claude:effort:changes:inclusive');
+
+      expect(rootMetric?.value).toBe(1);
+      expect(rootMetric?.evidenceRecordIds.length).toBe(2);
+
+      expect(inclusiveMetric?.value).toBe(2);
+      expect(inclusiveMetric?.unavailableReason).toBeUndefined();
+      expect(inclusiveMetric?.evidenceRecordIds.length).toBe(4);
     });
   });
 });

@@ -846,6 +846,47 @@ function computeEffortTransitions(records: readonly NormalizedEvidenceRecord[]):
   return { transitions, contributing };
 }
 
+function groupBySessionId(
+  records: readonly NormalizedEvidenceRecord[],
+): Map<string, NormalizedEvidenceRecord[]> {
+  const groups = new Map<string, NormalizedEvidenceRecord[]>();
+  for (const record of records) {
+    const list = groups.get(record.sessionId);
+    if (list) {
+      list.push(record);
+    } else {
+      groups.set(record.sessionId, [record]);
+    }
+  }
+  return groups;
+}
+
+/**
+ * Sums effort-level transitions across the root session and its subagent
+ * sessions independently. `requestOrder` is a per-session ordinal (each
+ * subagent session restarts its own turn counter from 1), so records must
+ * be grouped by `sessionId` and walked separately with
+ * `computeEffortTransitions` before summing — merging raw records across
+ * sessions and sorting by the shared, per-session-relative ordinal would
+ * interleave unrelated sessions and fabricate transitions that never
+ * happened adjacently. This mirrors how the token-total metrics above
+ * aggregate root + subagent contributions without conflating their
+ * internal orderings.
+ */
+function computeInclusiveEffortTransitions(records: readonly NormalizedEvidenceRecord[]): {
+  readonly transitions: number;
+  readonly contributing: readonly NormalizedEvidenceRecord[];
+} {
+  let transitions = 0;
+  const contributing: NormalizedEvidenceRecord[] = [];
+  for (const sessionRecords of groupBySessionId(records).values()) {
+    const result = computeEffortTransitions(sessionRecords);
+    transitions += result.transitions;
+    contributing.push(...result.contributing);
+  }
+  return { transitions, contributing };
+}
+
 // ---------------------------------------------------------------------------
 // Main metric derivation
 // ---------------------------------------------------------------------------
@@ -1050,7 +1091,10 @@ export function deriveClaudeCodeMetrics(
   for (const scope of ['root_only', 'inclusive'] as const) {
     const def = definitionFor(`claude:effort:changes:${scope}`);
     const records = scope === 'root_only' ? modelRequests.root : modelRequests.inclusive;
-    const { transitions, contributing } = computeEffortTransitions(records);
+    const { transitions, contributing } =
+      scope === 'root_only'
+        ? computeEffortTransitions(records)
+        : computeInclusiveEffortTransitions(records);
     const n = contributing.length;
 
     let value: number | null = n === 0 ? null : transitions;

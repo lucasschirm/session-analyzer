@@ -72,10 +72,13 @@ async function setupIngestion(executor: WasmSqliteExecutor) {
   return { orchestrator, hasher };
 }
 
-/** A synthetic 3-assistant-entry session: high, high, xhigh (1 transition, n=3). */
-function multiTierJsonl(sessionId: string): string {
+/**
+ * A synthetic multi-assistant-entry session. Defaults to high, high, xhigh
+ * (1 transition, n=3); pass a shorter/different `efforts` array to build a
+ * session with fewer request orders (e.g. for reprocess/prune tests).
+ */
+function multiTierJsonl(sessionId: string, efforts: string[] = ['high', 'high', 'xhigh']): string {
   const lines = [JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId })];
-  const efforts = ['high', 'high', 'xhigh'];
   let parentUuid: string | null = null;
   efforts.forEach((effort, i) => {
     const userUuid = `${sessionId}-u-${i}`;
@@ -206,43 +209,58 @@ describe('message_effort ingestion writer', () => {
     expect(rows[0]?.normalized_effort).toBe('low');
   });
 
-  it('prunes stale message_effort rows when a session is reprocessed with different data', async () => {
+  it('prunes stale message_effort rows when a reprocessed generation has fewer request orders', async () => {
     const executor = await createExecutor();
     const { orchestrator, hasher } = await setupIngestion(executor);
+    const sessionId = 'sess-prune-1';
 
-    const contentA = readFixture('t2-happy-path.jsonl'); // effort: "high"
+    // Generation 1: 3 assistant entries -> request_order 2, 4, 6.
+    const contentA = multiTierJsonl(sessionId, ['high', 'medium', 'xhigh']);
     const shaA = await hasher.hash(contentA);
     const first = await orchestrator.ingestManifest(
-      manifestBundle(contentA, shaA, 'project-meff-reprocess', 'sess-happy-1'),
+      manifestBundle(contentA, shaA, 'project-meff-prune', sessionId),
     );
     expect(first.status).toBe('committed');
 
     const before = await executor.exec(
-      'SELECT raw_effort FROM message_effort WHERE session_id = ?',
+      'SELECT request_order, raw_effort FROM message_effort WHERE session_id = ? ORDER BY request_order',
       [first.sessionId],
     );
-    expect(before.rows.map((r) => r.raw_effort)).toEqual(['high']);
+    expect(before.rows.map((r) => Number(r.request_order))).toEqual([2, 4, 6]);
+    expect(before.rows.map((r) => r.raw_effort)).toEqual(['high', 'medium', 'xhigh']);
 
-    // Reprocess the same session with different content (effort: "medium"
-    // instead of "high") — same manifest sessionId/projectId, different
-    // artifact bytes, so ingestManifest computes a genuinely new
-    // generationId and replaces the current generation.
-    const contentB = contentA.replace('"effort": "high"', '"effort": "medium"');
+    // Reprocess the same session with fewer entries: only 2 assistant
+    // entries -> request_order 2, 4. Same manifest sessionId/projectId,
+    // different artifact bytes, so ingestManifest computes a genuinely new
+    // generationId and replaces the current generation. Because
+    // request_order 2 and 4 are upserted in place (same unique key as
+    // before), only a real DELETE-based prune of rows outside the new
+    // generation's request orders removes the now-stale request_order=6
+    // row — a plain upsert-overwrite would leave it lingering.
+    const contentB = multiTierJsonl(sessionId, ['high', 'medium']);
     const shaB = await hasher.hash(contentB);
     const second = await orchestrator.ingestManifest(
-      manifestBundle(contentB, shaB, 'project-meff-reprocess', 'sess-happy-1'),
+      manifestBundle(contentB, shaB, 'project-meff-prune', sessionId),
     );
     expect(second.status).toBe('committed');
     expect(second.generationId).not.toBe(first.generationId);
 
     const after = await executor.exec(
-      'SELECT raw_effort, normalized_effort, generation_id FROM message_effort WHERE session_id = ?',
+      'SELECT request_order, raw_effort, normalized_effort, generation_id FROM message_effort WHERE session_id = ? ORDER BY request_order',
       [first.sessionId],
     );
-    expect(after.rows).toHaveLength(1);
-    expect(after.rows[0]?.raw_effort).toBe('medium');
-    expect(after.rows[0]?.normalized_effort).toBe('medium');
-    expect(after.rows[0]?.generation_id).toBe(second.generationId);
+    expect(after.rows).toHaveLength(2);
+    expect(after.rows.map((r) => Number(r.request_order))).toEqual([2, 4]);
+    expect(after.rows.map((r) => r.raw_effort)).toEqual(['high', 'medium']);
+    expect(after.rows.map((r) => r.normalized_effort)).toEqual(['high', 'medium']);
+    for (const row of after.rows) {
+      expect(row.generation_id).toBe(second.generationId);
+    }
+
+    // The stale request_order=6 row from generation 1 must be gone, not
+    // just left with its old generation_id.
+    const staleRow = after.rows.find((r) => Number(r.request_order) === 6);
+    expect(staleRow).toBeUndefined();
   });
 });
 
