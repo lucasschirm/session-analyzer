@@ -16,6 +16,7 @@ import type { DevinExtractedTables, DevinSchemaDescriptor } from '../src/extract
 import {
   applyHardBlocklist,
   buildSchemaDescriptorCandidate,
+  devinSessionStateKey,
   discoverSessionPlanCandidates,
   extractPlanFrontmatterSessionId,
   materializeSessionTranscript,
@@ -583,5 +584,83 @@ describe('runDevinSessionSync', () => {
     expect(outcome.warnings).toEqual([]);
     expect(outcome.errors.length).toBeGreaterThan(0);
     expect(events[events.length - 1]).toBe('failure');
+  });
+
+  it(
+    'produces internally-consistent, distinctly-keyed manifests when the same ' +
+      'Devin session id is synced under two different projects (DS-B23/#275 regression)',
+    async () => {
+      const storage = new RecordingStorageAdapter();
+
+      const runFor = (projectId: string) =>
+        runDevinSessionSync({
+          models: devinModelsCaptureOptions,
+          tables: sessionTables,
+          schemaDescriptor: SCHEMA_DESCRIPTOR,
+          sessionId: 'sess-1',
+          cwd: '/tmp/workspace',
+          config: { ...baseConfig, projectId },
+          dataDir,
+          storageAdapter: storage,
+          trigger: 'manual',
+          profile: DevinHarnessProfile,
+          homeDir,
+          dataRoot: homeDir,
+        });
+
+      // First sync under project A, as if SAL_PROJECT_ID were (correctly, at
+      // the time) set to the wrong/old project for this local Devin session.
+      const outcomeA = await runFor('project-a');
+      expect(outcomeA.failed).toBe(0);
+
+      // Second sync of the *same* Devin session id, after correcting
+      // SAL_PROJECT_ID to the right project. Before the fix, resolveSessionData
+      // looked up local session state by sessionId alone, found (and reused)
+      // project A's stale SessionData, and stamped the manifest's top-level
+      // projectId with "project-a" while every artifacts[].projectId entry
+      // (built fresh from the current config) correctly said "project-b".
+      const outcomeB = await runFor('project-b');
+      expect(outcomeB.failed).toBe(0);
+
+      const manifestCalls = storage.calls.filter((c) => c.scope === 'manifest');
+      expect(manifestCalls).toHaveLength(2);
+
+      const manifestFor = (projectId: string) => {
+        const call = manifestCalls.find((c) => c.projectId === projectId);
+        if (!call) throw new Error(`expected a manifest upload call for ${projectId}`);
+        return JSON.parse(Buffer.from(call.body).toString('utf8'));
+      };
+
+      for (const projectId of ['project-a', 'project-b']) {
+        const manifest = manifestFor(projectId);
+        expect(manifest.projectId).toBe(projectId);
+        expect(manifest.sessionId).toBe('sess-1');
+        expect(manifest.artifacts.length).toBeGreaterThan(0);
+        for (const artifact of manifest.artifacts as Array<{ projectId: string }>) {
+          expect(artifact.projectId).toBe(projectId);
+        }
+      }
+
+      // The two manifests must have been stored under their own,
+      // project-scoped keys — not the same key overwriting each other.
+      const keys = manifestCalls.map((c) => buildObjectKey(c));
+      expect(new Set(keys).size).toBe(2);
+      expect(keys.some((k) => k.startsWith('project-a/sess-1/'))).toBe(true);
+      expect(keys.some((k) => k.startsWith('project-b/sess-1/'))).toBe(true);
+    },
+  );
+});
+
+describe('devinSessionStateKey', () => {
+  it('produces distinct keys for the same sessionId under different projects', () => {
+    const keyA = devinSessionStateKey('project-a', 'sess-1');
+    const keyB = devinSessionStateKey('project-b', 'sess-1');
+    expect(keyA).not.toBe(keyB);
+  });
+
+  it('produces the same key for the same (projectId, sessionId) pair', () => {
+    expect(devinSessionStateKey('project-a', 'sess-1')).toBe(
+      devinSessionStateKey('project-a', 'sess-1'),
+    );
   });
 });
