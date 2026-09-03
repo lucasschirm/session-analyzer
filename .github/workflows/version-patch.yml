@@ -43,8 +43,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build workspace dependencies
-        run: pnpm --filter @lucasschirm/claude-session-sync... build
+      - name: Build plugin workspace dependencies
+        run: pnpm --filter @lucasschirm/claude-session-sync... --filter @lucasschirm/devin-session-sync... build
 
       - name: Configure git
         run: |
@@ -54,13 +54,22 @@ jobs:
       # Only bump when the current version already exists on npm. If a previous
       # run bumped but failed to publish, this run publishes that version
       # instead of widening the gap, and re-runs become idempotent.
-      - name: Bump plugin patch version
+      - name: Bump plugin patch versions
         run: |
-          current=$(node -p "require('./packages/plugins/claude-session-sync/package.json').version")
-          if npm view "@lucasschirm/claude-session-sync@${current}" version >/dev/null 2>&1; then
+          claude_current=$(node -p "require('./packages/plugins/claude-session-sync/package.json').version")
+          devin_current=$(node -p "require('./packages/plugins/devin-session-sync/package.json').version")
+          claude_published=false
+          devin_published=false
+          if npm view "@lucasschirm/claude-session-sync@${claude_current}" version >/dev/null 2>&1; then
+            claude_published=true
+          fi
+          if npm view "@lucasschirm/devin-session-sync@${devin_current}" version >/dev/null 2>&1; then
+            devin_published=true
+          fi
+          if [ "$claude_published" = "true" ] && [ "$devin_published" = "true" ]; then
             pnpm run version:patch
           else
-            echo "Version ${current} is not on npm yet; publishing it without bumping."
+            echo "One or more plugin versions are not on npm yet (claude=${claude_current}, devin=${devin_current}); publishing current versions without bumping."
           fi
 
       # If main moved while this job ran (concurrent merge already pushed a
@@ -71,7 +80,7 @@ jobs:
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             git add -A
-            git commit --no-verify -m "chore: bump @lucasschirm/claude-session-sync patch version [skip ci]"
+            git commit --no-verify -m "chore: bump plugin patch versions [skip ci]"
             if ! git push; then
               echo "Push rejected (main moved concurrently); publishing from remote main state instead."
               git fetch origin main
