@@ -305,6 +305,10 @@ describe('runSyncCommand', () => {
     expect(output).toContain('devin models capture failed: devin cli unavailable');
     expect(output).toContain('Warnings:');
     expect(output).toContain('devin cli unavailable');
+
+    // And it must never render as a failure line — a sync that succeeded
+    // must never show a "[fail]" prefix anywhere in its own output.
+    expect(output).not.toContain('[fail]');
   });
 
   it('still reports failure when a real artifact upload fails even though models capture succeeded (regression guard)', async () => {

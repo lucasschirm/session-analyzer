@@ -535,11 +535,14 @@ describe('runDevinSessionSync', () => {
 
     // But it must never be silently dropped either: it is recorded as a
     // distinguishable warning, separate from `errors`, and the mid-stream
-    // capture failure is still visible as its own progress event.
+    // capture failure is still visible as its own progress event — emitted
+    // as 'progress' (never 'failure'), so CLI/hook output never shows a
+    // failure-looking line for a sync that ultimately succeeded.
     expect(outcome.warnings).toEqual(['devin cli unavailable']);
     expect(
-      events.some((e) => e.type === 'failure' && e.message.includes('devin cli unavailable')),
+      events.some((e) => e.type === 'progress' && e.message.includes('devin cli unavailable')),
     ).toBe(true);
+    expect(events.some((e) => e.type === 'failure')).toBe(false);
     expect(events[events.length - 1]?.type).toBe('success');
     expect(events[events.length - 1]?.message).toContain('warning');
 

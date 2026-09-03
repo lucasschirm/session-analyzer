@@ -11,6 +11,7 @@ import { validateCliConfig } from './cli/config.js';
 import { resolveCliEnv } from './cli/env.js';
 import { DevinHarnessProfile } from './devin-profile.js';
 import { readDevinSnapshot } from './devin-snapshot.js';
+import type { CaptureDevinModelsOptions } from './models/capture.js';
 import {
   type DevinSessionSyncOutcome,
   type DevinSyncProgressEvent,
@@ -28,6 +29,8 @@ export interface RunDevinHookSyncOptions {
   /** Overrides `sessions.db`'s resolved path; primarily for tests. */
   sessionsDbPath?: string;
   homeDir?: string;
+  /** Optional overrides for the Devin models-list capture (e.g. test fixtures). */
+  models?: Partial<CaptureDevinModelsOptions>;
 }
 
 export type RunDevinHookSyncResult =
@@ -93,6 +96,7 @@ export async function runDevinHookSync(
       profile,
       env,
       homeDir: options.homeDir,
+      models: options.models,
       onProgress: (event) => writeHookProgress(stderr, label, event),
     });
     return { ok: true, outcome };

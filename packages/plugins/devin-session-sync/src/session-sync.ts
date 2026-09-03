@@ -385,7 +385,13 @@ async function resolveModelCandidates(
     now: options.models?.now,
   });
   if (result.error) {
-    emitProgress(options, 'failure', `devin models capture failed: ${result.error}`);
+    // Non-fatal: emitted as 'progress', never 'failure' — a models-capture
+    // problem must never look like a terminal sync failure in CLI/hook
+    // output (a real 'failure' terminal event is reserved for when the
+    // actual session artifacts fail to sync). Still fully visible: the
+    // message is prefixed 'warning:' and the error is recorded in
+    // `outcome.warnings` by the caller.
+    emitProgress(options, 'progress', `warning: devin models capture failed: ${result.error}`);
   }
   return { candidates: result.candidates, error: result.error };
 }
