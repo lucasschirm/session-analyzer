@@ -122,11 +122,175 @@ function knownModelBundle(): UnknownArtifactBundle {
   return bundle([artifact('transcript.jsonl', jsonl, 'application/jsonl')]);
 }
 
+function effortTurns(
+  sessionId: string,
+  efforts: (string | undefined)[],
+  opts: { agentId?: string; isSidechain?: boolean } = {},
+): string[] {
+  const lines: string[] = [];
+  let parentUuid: string | null = null;
+  const extra: Record<string, unknown> = {};
+  if (opts.agentId) extra.agentId = opts.agentId;
+  if (opts.isSidechain) extra.isSidechain = true;
+  efforts.forEach((effort, i) => {
+    const userUuid = `${sessionId}-u-${i}`;
+    const assistantUuid = `${sessionId}-a-${i}`;
+    lines.push(
+      JSON.stringify({
+        ...extra,
+        parentUuid,
+        type: 'user',
+        uuid: userUuid,
+        sessionId,
+        timestamp: `2026-08-01T10:${String(i).padStart(2, '0')}:00.000Z`,
+        message: { role: 'user', content: `turn ${i}` },
+      }),
+    );
+    const assistantEntry: Record<string, unknown> = {
+      ...extra,
+      parentUuid: userUuid,
+      type: 'assistant',
+      uuid: assistantUuid,
+      sessionId,
+      timestamp: `2026-08-01T10:${String(i).padStart(2, '0')}:30.000Z`,
+      requestId: `req-${sessionId}-${i}`,
+      message: {
+        model: 'model-a',
+        role: 'assistant',
+        content: [{ type: 'text', text: `reply ${i}` }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    };
+    if (effort !== undefined) assistantEntry.effort = effort;
+    lines.push(JSON.stringify(assistantEntry));
+    parentUuid = assistantUuid;
+  });
+  return lines;
+}
+
+function effortBundle(
+  efforts: (string | undefined)[],
+  sessionId = 'eff-root',
+): UnknownArtifactBundle {
+  const lines = [
+    JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId }),
+    ...effortTurns(sessionId, efforts),
+  ];
+  return bundle([artifact('transcript.jsonl', lines.join('\n'), 'application/jsonl')]);
+}
+
+/**
+ * A root session (3 assistant entries: high, high, xhigh — one transition)
+ * that launches a Sub Agent (3 assistant entries of its own: medium, low,
+ * medium — two transitions), so root-only and inclusive scope produce
+ * different, independently-contributed evidence sets.
+ */
+function effortBundleWithSubagent(): UnknownArtifactBundle {
+  const sessionId = 'eff-root-sub';
+  const agentId = 'eff-agent-1';
+  const toolUseId = 'toolu_eff_1';
+
+  const rootLines = [
+    JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId }),
+    JSON.stringify({
+      parentUuid: null,
+      type: 'user',
+      uuid: 'r-u-1',
+      sessionId,
+      timestamp: '2026-08-01T10:00:00.000Z',
+      message: { role: 'user', content: 'start' },
+    }),
+    JSON.stringify({
+      parentUuid: 'r-u-1',
+      type: 'assistant',
+      uuid: 'r-a-1',
+      sessionId,
+      timestamp: '2026-08-01T10:00:01.000Z',
+      requestId: 'req-r-1',
+      effort: 'high',
+      message: {
+        model: 'model-a',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'first reply' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    }),
+    JSON.stringify({
+      parentUuid: 'r-a-1',
+      type: 'user',
+      uuid: 'r-u-2',
+      sessionId,
+      timestamp: '2026-08-01T10:00:02.000Z',
+      message: { role: 'user', content: 'please delegate' },
+    }),
+    JSON.stringify({
+      parentUuid: 'r-u-2',
+      type: 'assistant',
+      uuid: 'r-a-2',
+      sessionId,
+      timestamp: '2026-08-01T10:00:03.000Z',
+      requestId: 'req-r-2',
+      effort: 'high',
+      message: {
+        model: 'model-a',
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: toolUseId, name: 'Agent', input: { prompt: 'go' } }],
+      },
+    }),
+    JSON.stringify({
+      parentUuid: 'r-a-2',
+      type: 'user',
+      uuid: 'r-u-3',
+      sessionId,
+      timestamp: '2026-08-01T10:00:04.000Z',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'done' }],
+      },
+      toolUseResult: { agentId, resolvedModel: 'model-a', totalTokens: 10, status: 'completed' },
+    }),
+    JSON.stringify({
+      parentUuid: 'r-u-3',
+      type: 'assistant',
+      uuid: 'r-a-3',
+      sessionId,
+      timestamp: '2026-08-01T10:00:05.000Z',
+      requestId: 'req-r-3',
+      effort: 'xhigh',
+      message: {
+        model: 'model-a',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'final reply' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    }),
+  ];
+
+  const subLines = effortTurns(sessionId, ['medium', 'low', 'medium'], {
+    agentId,
+    isSidechain: true,
+  });
+
+  const metaJson = JSON.stringify({
+    agentType: 'effort-subagent',
+    description: 'Effort transition fixture subagent',
+    toolUseId,
+    spawnDepth: 1,
+    model: 'model-a',
+  });
+
+  return bundle([
+    artifact('transcript.jsonl', rootLines.join('\n'), 'application/jsonl'),
+    artifact(`subagents/agent-${agentId}.jsonl`, subLines.join('\n'), 'application/jsonl'),
+    artifact(`subagents/agent-${agentId}.meta.json`, metaJson, 'application/json'),
+  ]);
+}
+
 describe('claude-code-metrics', () => {
   describe('definitions', () => {
     it('exports a metric definition for every Phase 1 root and inclusive metric', () => {
       const definitions = getClaudeCodeMetricDefinitions();
-      expect(definitions.length).toBe(28);
+      expect(definitions.length).toBe(30);
       const ids = new Set(definitions.map((d) => d.metricId));
       expect(ids.has('claude:tokens:input:root_only')).toBe(true);
       expect(ids.has('claude:tokens:input:inclusive')).toBe(true);
@@ -134,6 +298,8 @@ describe('claude-code-metrics', () => {
       expect(ids.has('claude:invocations:tool:inclusive')).toBe(true);
       expect(ids.has('claude:cost:total:root_only')).toBe(true);
       expect(ids.has('claude:cost:total:inclusive')).toBe(true);
+      expect(ids.has('claude:effort:changes:root_only')).toBe(true);
+      expect(ids.has('claude:effort:changes:inclusive')).toBe(true);
     });
 
     it('includes required MetricDefinition fields', () => {
@@ -151,7 +317,7 @@ describe('claude-code-metrics', () => {
   describe('getClaudeCodeMetricCapabilities', () => {
     it('returns partial capabilities when no bundle is supplied', () => {
       const caps = getClaudeCodeMetricCapabilities();
-      expect(caps.length).toBe(28);
+      expect(caps.length).toBe(30);
       for (const cap of caps) {
         expect(cap.state).toBe('partial');
         expect(cap.reason).toContain('no bundle');
@@ -161,7 +327,7 @@ describe('claude-code-metrics', () => {
     it('returns unavailable capabilities when bundle has no root transcript', () => {
       const b = bundle([artifact('unknown.bin', 'not claude')]);
       const caps = getClaudeCodeMetricCapabilities(b);
-      expect(caps.length).toBe(28);
+      expect(caps.length).toBe(30);
       for (const cap of caps) {
         expect(cap.state).toBe('unavailable');
         expect(cap.reason).toContain('root transcript');
@@ -170,7 +336,7 @@ describe('claude-code-metrics', () => {
 
     it('returns mixed availability for a valid transcript', () => {
       const caps = getClaudeCodeMetricCapabilities(happyPathBundle());
-      expect(caps.length).toBe(28);
+      expect(caps.length).toBe(30);
       const byId = new Map(caps.map((c) => [c.metricId, c]));
       expect(byId.get('claude:tokens:input:root_only')?.state).toBe('available');
       expect(byId.get('claude:turns:count:root_only')?.state).toBe('available');
@@ -292,6 +458,86 @@ describe('claude-code-metrics', () => {
       expect(findMetric(result, 'claude:file_operations:count:root_only')?.value).toBe(1);
       expect(findMetric(result, 'claude:commands:count:root_only')?.value).toBeGreaterThan(0);
       expect(findMetric(result, 'claude:validations:count:root_only')?.value).toBe(0);
+    });
+  });
+
+  describe('claude:effort:changes:*', () => {
+    it('is null with an unavailableReason (never 0) when n=0: no entry carries a recognized effort value', () => {
+      const result = ClaudeCodeTransformer.transform(
+        effortBundle([undefined, 'not-a-real-level']),
+        defaultContext,
+      );
+      for (const scope of ['root_only', 'inclusive'] as const) {
+        const metric = findMetric(result, `claude:effort:changes:${scope}`);
+        expect(metric?.value).toBeNull();
+        expect(metric?.unavailableReason).toBe(
+          'no recognized effort signal observed for this session',
+        );
+        const reason = result.unavailableReasons.find(
+          (r) => r.metricId === `claude:effort:changes:${scope}`,
+        );
+        expect(reason?.reason).toBe('no recognized effort signal observed for this session');
+      }
+    });
+
+    it('is a measured 0 (not unavailable) when n=1: exactly one entry carries a recognized effort value', () => {
+      const result = ClaudeCodeTransformer.transform(effortBundle(['high']), defaultContext);
+      for (const scope of ['root_only', 'inclusive'] as const) {
+        const metric = findMetric(result, `claude:effort:changes:${scope}`);
+        expect(metric?.value).toBe(0);
+        expect(metric?.unavailableReason).toBeUndefined();
+        expect(metric?.evidenceRecordIds.length).toBe(1);
+      }
+    });
+
+    it('counts exactly one transition for n=3 with values high, high, xhigh', () => {
+      const result = ClaudeCodeTransformer.transform(
+        effortBundle(['high', 'high', 'xhigh']),
+        defaultContext,
+      );
+      for (const scope of ['root_only', 'inclusive'] as const) {
+        const metric = findMetric(result, `claude:effort:changes:${scope}`);
+        expect(metric?.value).toBe(1);
+        expect(metric?.unavailableReason).toBeUndefined();
+        expect(metric?.evidenceRecordIds.length).toBe(3);
+      }
+    });
+
+    it('skips null/unrecognized normalizedEffort values when comparing (they neither end nor start a streak)', () => {
+      // high, <unrecognized -> null>, high, xhigh: the null entry must not
+      // be treated as a transition away from or back to 'high' — only
+      // high -> xhigh counts, and the unrecognized entry never contributes
+      // to n.
+      const result = ClaudeCodeTransformer.transform(
+        effortBundle(['high', 'not-a-real-level', 'high', 'xhigh']),
+        defaultContext,
+      );
+      const metric = findMetric(result, 'claude:effort:changes:root_only');
+      expect(metric?.value).toBe(1);
+      expect(metric?.evidenceRecordIds.length).toBe(3);
+    });
+
+    it('root-only counts only the root session; inclusive also includes the Sub Agent session', () => {
+      const result = ClaudeCodeTransformer.transform(effortBundleWithSubagent(), defaultContext);
+
+      const rootMetric = findMetric(result, 'claude:effort:changes:root_only');
+      const inclusiveMetric = findMetric(result, 'claude:effort:changes:inclusive');
+
+      // Root session alone: high, high, xhigh -> 1 transition, n=3.
+      expect(rootMetric?.value).toBe(1);
+      expect(rootMetric?.evidenceRecordIds.length).toBe(3);
+
+      // Inclusive must not be null/unavailable, and its evidence must be
+      // the union of root's and the Sub Agent's contributing records (no
+      // double-counting, no dropped contributions) — the Sub Agent
+      // contributes 3 more non-null normalizedEffort records of its own
+      // (medium, low, medium).
+      expect(inclusiveMetric?.value).not.toBeNull();
+      expect(inclusiveMetric?.unavailableReason).toBeUndefined();
+      expect(inclusiveMetric?.evidenceRecordIds.length).toBe(6);
+      for (const id of rootMetric?.evidenceRecordIds ?? []) {
+        expect(inclusiveMetric?.evidenceRecordIds).toContain(id);
+      }
     });
   });
 });

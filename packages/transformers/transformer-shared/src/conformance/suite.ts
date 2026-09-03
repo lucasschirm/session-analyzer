@@ -366,10 +366,76 @@ function checkExactAndEstimatedSeparable<TBundle extends UnknownArtifactBundle>(
     );
   }
 
+  checkEffortRoundTrips(results);
+
   return report('exactAndEstimatedSeparable', 'partial', [
     `exact values: ${exactValues.length}; estimated: ${estimatedValues.length}`,
     'TODO: the comparability group does not currently vary when an otherwise-observed token value becomes estimated; full separation requires versioning measurementClass per value.',
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// 2b. effort/normalizedEffort round-trip through model_request evidence
+//
+// Not a standalone canonical invariant (this is a narrow, harness-specific
+// payload-shape check, folded into `exactAndEstimatedSeparable` rather than
+// added as a new CANONICAL_INVARIANTS code every harness plugin must
+// satisfy). Only runs against a fixture tagged 'effort'; harnesses without
+// one (or without any `model_request` records) are silently skipped, so
+// this never fails conformance for a harness that has no per-message effort
+// signal.
+// ---------------------------------------------------------------------------
+
+interface EffortPayload {
+  readonly requestOrder: number;
+  readonly effort?: unknown;
+  readonly normalizedEffort?: unknown;
+}
+
+function extractOrderedEffortPayloads<TBundle extends UnknownArtifactBundle>(
+  target: FixtureResult<TBundle>,
+): EffortPayload[] {
+  return target.result.evidence
+    .filter((r) => r.recordType === 'model_request')
+    .map((r) => r.payload as EffortPayload)
+    .filter((p) => typeof p.requestOrder === 'number')
+    .sort((a, b) => a.requestOrder - b.requestOrder);
+}
+
+function assertEffortPayloadShape(payload: EffortPayload): void {
+  assert.ok(
+    payload.effort === undefined || payload.effort === null || typeof payload.effort === 'string',
+    'model_request.effort must round-trip as the raw string (or be absent/null), never coerced.',
+  );
+  assert.ok(
+    payload.normalizedEffort === undefined ||
+      payload.normalizedEffort === null ||
+      typeof payload.normalizedEffort === 'string',
+    'model_request.normalizedEffort must be a recognized level string or null, never guessed.',
+  );
+}
+
+function checkEffortRoundTrips<TBundle extends UnknownArtifactBundle>(
+  results: FixtureResult<TBundle>[],
+): void {
+  const target = findByTag(results, 'effort');
+  if (!target || !isSuccess(target.result)) return;
+
+  const requests = extractOrderedEffortPayloads(target);
+  assert.ok(
+    requests.length > 0,
+    `Fixture ${target.fixture.name} tagged 'effort' produced no model_request records.`,
+  );
+  for (const payload of requests) assertEffortPayloadShape(payload);
+
+  const rawSequence = requests.map((p) => p.effort ?? null);
+  const normalizedSequence = requests.map((p) => p.normalizedEffort ?? null);
+  assert.deepEqual(
+    rawSequence,
+    normalizedSequence,
+    'For this fixture every raw effort value is itself a recognized NORMALIZED_EFFORT_LEVELS ' +
+      'member, so raw and normalized sequences must be identical (no lossy mapping).',
+  );
 }
 
 // ---------------------------------------------------------------------------

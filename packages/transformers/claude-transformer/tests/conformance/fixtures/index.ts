@@ -63,6 +63,7 @@ const mcpJson = loadParserFixture('e2e-mcp.json');
 const settingsJson = loadParserFixture('e2e-settings-project.json');
 const happyJsonl = loadParserFixture('t2-happy-path.jsonl');
 const replayedJsonl = loadConformanceData('replayed.jsonl');
+const effortMultiTierJsonl = loadConformanceData('effort-multi-tier.jsonl');
 
 const commonConfigArtifacts: Artifact<string>[] = [
   artifact('.claude/skills/csv-wrangler/SKILL.md', skillMd, 'text/markdown'),
@@ -169,6 +170,14 @@ export const claudeConformanceFixtures: TransformerFixtures<UnknownArtifactBundl
       bundle: bundle([]),
       context: testContext,
       tags: ['capabilities', 'unavailable'],
+    },
+    {
+      name: 'effort-multi-tier',
+      description:
+        'A root session with three assistant entries whose raw effort values are high, high, xhigh (one transition), for effort round-trip and effort-change-metric conformance.',
+      bundle: bundle([artifact('transcript.jsonl', effortMultiTierJsonl, 'application/jsonl')]),
+      context: testContext,
+      tags: ['root', 'root-only', 'effort', 'deterministic'],
     },
   ],
 };

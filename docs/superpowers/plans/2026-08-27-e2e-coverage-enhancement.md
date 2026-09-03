@@ -156,6 +156,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | PIPE-012 | `pricing_version` evidence record id is session-scoped | `pipe-012-pricing-version-collision.test.ts` | record-id collision assertion | 2 | 3 | 3 | 18 | P2 | GREEN |
 || PIPE-013 | Devin manifest ingestion, portfolio visibility, and sample-size token contract | `pipe-013-devin-ingest.test.ts` | `devin:tokens:total:inclusive` headline metric, failure injection, missing-vs-zero | 3 | 4 | 4 | 48 | P1 | GREEN |
 | PIPE-014 | Devin drill-down data: transcript messages present, evidence/component facts report missing data | `pipe-014-devin-drilldown-data.test.ts` | `getTranscriptPages`/`getEvidencePages`/`getComponentFacts` assertions | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-016 | Effort-change metric: per-message raw+normalized capture, message_effort backfill on reprocess, rollup reconciliation | `pipe-016-effort-change-metric.test.ts` | `message_effort` row-presence + `claude:effort:changes:*` sample-size/measured-zero-vs-unavailable assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
 
 ### 6.3 Tier C — Sync Lifecycle (`SYNC-###`)
 

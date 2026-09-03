@@ -6,9 +6,9 @@ import type {
   TransformContext,
   UnknownArtifactBundle,
 } from '@lucasschirm/sal-transformer-shared';
-import { TransformerRegistry } from '@lucasschirm/sal-transformer-shared';
+import { NORMALIZED_EFFORT_LEVELS, TransformerRegistry } from '@lucasschirm/sal-transformer-shared';
 import { describe, expect, it } from 'vitest';
-import { ClaudeCodeTransformer } from '../../src/index.js';
+import { ClaudeCodeTransformer, mapClaudeEffortToNormalized } from '../../src/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -64,6 +64,23 @@ describe('ClaudeCodeTransformer', () => {
     expect(registry.ids()).toContain('claude-code');
     expect(registry.harnesses()).toContain('claude-code');
     expect(registry.resolve('claude-code').id).toBe('claude-code');
+  });
+
+  describe('mapClaudeEffortToNormalized()', () => {
+    it('returns every NORMALIZED_EFFORT_LEVELS member unchanged', () => {
+      for (const level of NORMALIZED_EFFORT_LEVELS) {
+        expect(mapClaudeEffortToNormalized(level)).toBe(level);
+      }
+    });
+
+    it('returns null for an unrecognized raw value', () => {
+      expect(mapClaudeEffortToNormalized('turbo-charged')).toBeNull();
+      expect(mapClaudeEffortToNormalized('')).toBeNull();
+    });
+
+    it('returns null for an absent raw value', () => {
+      expect(mapClaudeEffortToNormalized(undefined)).toBeNull();
+    });
   });
 
   describe('detect()', () => {
@@ -249,10 +266,99 @@ describe('ClaudeCodeTransformer', () => {
       expect(turns.length).toBeGreaterThan(0);
       expect(messages.length).toBeGreaterThanOrEqual(turns.length);
       expect(requests.length).toBeGreaterThan(0);
-      expect(requests[0]?.payload).toMatchObject({ model: 'model-a' });
+      expect(requests[0]?.payload).toMatchObject({
+        model: 'model-a',
+        effort: 'high',
+        normalizedEffort: 'high',
+      });
 
       expect(result.sessionSummaries[0]?.rootSessionId).toBe(result.sessionSummaries[0]?.sessionId);
       expect(result.sessionSummaries[0]?.parentSessionId).toBeUndefined();
+    });
+
+    it('threads raw effort and maps it to normalizedEffort for every recognized and unrecognized value', () => {
+      // Real observed raw values (see #289 finding 1): high, xhigh, medium,
+      // max, low. Plus one unrecognized string and one entry with no effort
+      // field at all (older sessions / entries predating this feature).
+      const efforts: (string | undefined)[] = [
+        'high',
+        'xhigh',
+        'medium',
+        'max',
+        'low',
+        'turbo-charged',
+        undefined,
+      ];
+      const lines: string[] = [
+        JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId: 'eff-1' }),
+      ];
+      let parentUuid: string | null = null;
+      efforts.forEach((effort, i) => {
+        const userUuid = `u-eff-${i}`;
+        const assistantUuid = `a-eff-${i}`;
+        lines.push(
+          JSON.stringify({
+            parentUuid,
+            type: 'user',
+            uuid: userUuid,
+            timestamp: `2026-08-01T10:00:0${i}.000Z`,
+            sessionId: 'eff-1',
+            message: { role: 'user', content: `turn ${i}` },
+          }),
+        );
+        const assistantEntry: Record<string, unknown> = {
+          parentUuid: userUuid,
+          type: 'assistant',
+          uuid: assistantUuid,
+          timestamp: `2026-08-01T10:00:0${i}.500Z`,
+          sessionId: 'eff-1',
+          requestId: `req-eff-${i}`,
+          message: {
+            model: 'model-a',
+            role: 'assistant',
+            content: [{ type: 'text', text: `reply ${i}` }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        };
+        if (effort !== undefined) assistantEntry.effort = effort;
+        lines.push(JSON.stringify(assistantEntry));
+        parentUuid = assistantUuid;
+      });
+
+      const b = bundle([artifact('transcript.jsonl', lines.join('\n'), 'application/jsonl')]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      expect(result.errors).toEqual([]);
+
+      const requests = result.evidence
+        .filter((r) => r.recordType === 'model_request')
+        .sort(
+          (a, b2) =>
+            (a.payload as { requestOrder: number }).requestOrder -
+            (b2.payload as { requestOrder: number }).requestOrder,
+        );
+      expect(requests.length).toBe(efforts.length);
+
+      const observed = requests.map(
+        (r) => r.payload as { effort?: string; normalizedEffort?: string | null },
+      );
+      expect(observed.map((p) => p.effort)).toEqual([
+        'high',
+        'xhigh',
+        'medium',
+        'max',
+        'low',
+        'turbo-charged',
+        undefined,
+      ]);
+      expect(observed.map((p) => p.normalizedEffort)).toEqual([
+        'high',
+        'xhigh',
+        'medium',
+        'max',
+        'low',
+        null,
+        null,
+      ]);
     });
 
     it('normalizes root and child sessions, relations, and model requests', () => {
