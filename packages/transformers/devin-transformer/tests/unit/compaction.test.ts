@@ -76,6 +76,58 @@ function bundleWithOutputNodeMissingCreatedAt(): UnknownArtifactBundle {
   };
 }
 
+/** Message set where the anchor node (`node_id: 1`, referenced by the output
+ * node's `metadata.summarized_from`) is never included - the real-world
+ * condition where the pre-compaction node fell outside the captured window.
+ * `anchorMessage` must return `undefined`, and the record's `lineNumber`
+ * must stay genuinely absent, never fall back to a fabricated `0`. */
+function bundleWithMissingAnchorNode(): UnknownArtifactBundle {
+  const sessionId = 'anchor-missing';
+  const transcript = [
+    rawLine('session', {
+      ts: 100,
+      order: 1,
+      id: sessionId,
+      working_directory: '/w',
+      backend_type: 'devin',
+      model: 'devin-default',
+      agent_mode: 'auto',
+      created_at: 100,
+      last_activity_at: 200,
+      title: 'anchor missing',
+      main_chain_id: '2',
+      metadata: null,
+    }),
+    rawLine('message', {
+      ts: null,
+      order: 2,
+      row_id: 2,
+      session_id: sessionId,
+      node_id: 2,
+      parent_node_id: 1,
+      chat_message: JSON.stringify({ message_id: 'm2', role: 'assistant', content: 'summary' }),
+      created_at: 600,
+      metadata: JSON.stringify({
+        summarized_from: 1,
+        num_tokens_preceding: null,
+        is_system_prefix: null,
+      }),
+    }),
+  ].join('\n');
+  return {
+    artifacts: [
+      { relativePath: 'transcript.jsonl', content: transcript, mediaType: 'application/jsonl' },
+    ],
+    sourceIdentity: {
+      sourceId: 'test-source',
+      environmentId: 'test-env',
+      projectId: 'test-proj',
+      sessionId: 'test-sess',
+    },
+    sourceFingerprint: 'fp-test',
+  };
+}
+
 function compactionRecords(result: ReturnType<typeof DevinTransformer.transform>) {
   return result.evidence.filter(
     (r) =>
@@ -153,6 +205,23 @@ describe('DevinTransformer — compaction evidence (DS-B27 / #287)', () => {
     );
     const [record] = compactionRecords(result);
     expect((record.payload as { timestampMs: number }).timestampMs).toBe(500_000);
+  });
+
+  it('populates lineNumber verbatim from the anchor node order when the anchor is found', () => {
+    const result = DevinTransformer.transform(compactionBoundaryBundle, defaultContext);
+    const [record] = compactionRecords(result);
+    const payload = record.payload as { lineNumber?: number };
+    // Anchor node_id 57 -> order 58 (fixture's messageLine sets order = nodeId + 1).
+    expect(payload.lineNumber).toBe(58);
+  });
+
+  it('never fabricates lineNumber as 0 when the anchor node is not found in the message set', () => {
+    const result = DevinTransformer.transform(bundleWithMissingAnchorNode(), defaultContext);
+    const [record] = compactionRecords(result);
+    const payload = record.payload as Record<string, unknown>;
+    expect('lineNumber' in payload).toBe(false);
+    expect(payload.lineNumber).toBeUndefined();
+    expect(payload.lineNumber).not.toBe(0);
   });
 
   it('derives trigger as missing (not "auto") when no correlated /compact prompt row exists', () => {

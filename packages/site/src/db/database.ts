@@ -134,6 +134,59 @@ const COLUMN_MIGRATIONS = [
   'ALTER TABLE session_files ADD COLUMN etag TEXT',
 ] as const;
 
+/**
+ * Column definitions for the `sessions` table body (without the
+ * `CREATE TABLE` wrapper), shared between `createSessionsTable` (fresh
+ * databases) and `migrateContextCompactionsNullable` (rebuilding an
+ * existing database whose `context_compactions` column still carries the
+ * old `NOT NULL DEFAULT 0` constraint) so the two schemas can never drift
+ * apart.
+ */
+const SESSIONS_TABLE_COLUMNS_SQL = `
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL,
+  model TEXT,
+  model_usage TEXT,
+  tasks TEXT,
+  external_id TEXT,
+  subagents TEXT,
+  -- NULL = no compaction count recorded yet (missing, distinct from a
+  -- confirmed 0) - see DashboardSession.context_compactions.
+  context_compactions INTEGER,
+  total_turns INTEGER NOT NULL DEFAULT 0,
+  files_read INTEGER NOT NULL DEFAULT 0,
+  files_written INTEGER NOT NULL DEFAULT 0,
+  agent_invocations INTEGER NOT NULL DEFAULT 0,
+  sync_session_id TEXT,
+  sync_status TEXT,
+  sync_details TEXT,
+  sync_schema_version INTEGER,
+  sync_harness TEXT,
+  sync_harness_version TEXT,
+  sync_manifest_model TEXT,
+  sync_started_at TEXT,
+  sync_ended_at TEXT,
+  sync_duration_ms INTEGER,
+  sync_end_reason TEXT,
+  sync_engine_version TEXT,
+  sync_plugin_version TEXT,
+  sync_transcripts_captured INTEGER,
+  sync_main_transcript_relative_path TEXT,
+  sync_artifacts TEXT,
+  sync_runs TEXT,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+`;
+
 const LOCKED_MESSAGE_RE =
   /NoModificationAllowedError|Access Handles cannot|busy|locked|already in use/i;
 
@@ -303,8 +356,53 @@ export class DatabaseManager {
         if (!/duplicate column name/i.test((error as Error).message)) throw error;
       }
     }
+    this.migrateContextCompactionsNullable();
     this.createSyncIndexes(db);
     this.backfillReadableIds();
+  }
+
+  /**
+   * SQLite has no `ALTER TABLE ... ALTER COLUMN`, so it cannot relax the
+   * pre-existing `context_compactions INTEGER NOT NULL DEFAULT 0` constraint
+   * on a `sessions` table created before this schema change shipped: the
+   * `CREATE TABLE IF NOT EXISTS` in `createSessionsTable` is a no-op for a
+   * table that already exists, and `COLUMN_MIGRATIONS` only knows
+   * `ADD COLUMN`. Without this, `upsertSessionStub` writing a `NULL`
+   * `context_compactions` (missing, never a fabricated `0`) throws
+   * `NOT NULL constraint failed` on every returning user's existing
+   * browser-local database.
+   *
+   * This runs SQLite's documented table-rebuild procedure, scoped to just
+   * this constraint: foreign key checks off (so dropping the old table
+   * doesn't cascade-delete `session_files` rows via its FK), rebuild into a
+   * copy with the current schema, swap it in under the original name, then
+   * foreign keys back on. It is a no-op once `sessions` already allows NULL
+   * (including every fresh database, which never had the old constraint).
+   */
+  private migrateContextCompactionsNullable(): void {
+    const db = this.requireDb();
+    const columnInfo = db.selectObjects('PRAGMA table_info(sessions)') as unknown as Array<{
+      name: string;
+      notnull: number;
+    }>;
+    const compactionsColumn = columnInfo.find((c) => c.name === 'context_compactions');
+    if (!compactionsColumn || compactionsColumn.notnull !== 1) return;
+
+    const columns = columnInfo.map((c) => c.name).join(', ');
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(`CREATE TABLE sessions__rebuild (${SESSIONS_TABLE_COLUMNS_SQL})`);
+        db.exec(`INSERT INTO sessions__rebuild (${columns}) SELECT ${columns} FROM sessions`);
+        db.exec('DROP TABLE sessions');
+        db.exec('ALTER TABLE sessions__rebuild RENAME TO sessions');
+      });
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+    // DROP TABLE sessions also dropped every index defined on it.
+    this.createIndexes();
+    this.createSyncIndexes(db);
   }
 
   private createSyncIndexes(db: Database): void {
@@ -344,52 +442,7 @@ export class DatabaseManager {
   }
 
   private createSessionsTable(): void {
-    this.requireDb().exec(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        source TEXT NOT NULL,
-        title TEXT NOT NULL DEFAULT '',
-        started_at INTEGER NOT NULL,
-        ended_at INTEGER NOT NULL,
-        input_tokens INTEGER NOT NULL DEFAULT 0,
-        output_tokens INTEGER NOT NULL DEFAULT 0,
-        cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
-        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
-        total_tokens INTEGER NOT NULL DEFAULT 0,
-        cost_usd REAL,
-        model TEXT,
-        model_usage TEXT,
-        tasks TEXT,
-        external_id TEXT,
-        subagents TEXT,
-        -- NULL = no compaction count recorded yet (missing, distinct from a
-        -- confirmed 0) - see DashboardSession.context_compactions.
-        context_compactions INTEGER,
-        total_turns INTEGER NOT NULL DEFAULT 0,
-        files_read INTEGER NOT NULL DEFAULT 0,
-        files_written INTEGER NOT NULL DEFAULT 0,
-        agent_invocations INTEGER NOT NULL DEFAULT 0,
-        sync_session_id TEXT,
-        sync_status TEXT,
-        sync_details TEXT,
-        sync_schema_version INTEGER,
-        sync_harness TEXT,
-        sync_harness_version TEXT,
-        sync_manifest_model TEXT,
-        sync_started_at TEXT,
-        sync_ended_at TEXT,
-        sync_duration_ms INTEGER,
-        sync_end_reason TEXT,
-        sync_engine_version TEXT,
-        sync_plugin_version TEXT,
-        sync_transcripts_captured INTEGER,
-        sync_main_transcript_relative_path TEXT,
-        sync_artifacts TEXT,
-        sync_runs TEXT,
-        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-      );
-    `);
+    this.requireDb().exec(`CREATE TABLE IF NOT EXISTS sessions (${SESSIONS_TABLE_COLUMNS_SQL});`);
   }
 
   private createConnectionsTable(): void {

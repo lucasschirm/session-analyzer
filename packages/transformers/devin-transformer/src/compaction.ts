@@ -105,11 +105,14 @@ function buildCompactionRecord(
     eventType: 'compact_boundary',
     timestampMs,
     sourceEventId,
-    // Devin has no JSONL-line-number concept for message_nodes; the node's
-    // own `order` (its position in devin-session-jsonl/v1) is the closest
-    // real analog and is used verbatim, never a fabricated 0.
-    lineNumber: anchor?.order ?? 0,
     summary: compactionSummary(trigger),
+    // Devin has no JSONL-line-number concept for message_nodes; the anchor
+    // node's own `order` (its position in devin-session-jsonl/v1) is the
+    // closest real analog and is used verbatim when the anchor is found in
+    // this message set. When it isn't (e.g. the anchor node fell outside
+    // the captured window), lineNumber stays genuinely absent - never a
+    // fabricated 0 (missing-is-never-zero).
+    ...(anchor !== undefined ? { lineNumber: anchor.order } : {}),
     ...(trigger !== undefined ? { trigger } : {}),
     ...(anchor?.parsedMetadata?.numTokensPreceding !== null &&
     anchor?.parsedMetadata?.numTokensPreceding !== undefined

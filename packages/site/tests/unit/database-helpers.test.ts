@@ -543,6 +543,87 @@ describe('DatabaseManager', () => {
       expect(fetched!.context_compactions).toBeNull();
     });
 
+    it('migrates an existing OLD-schema database (context_compactions NOT NULL DEFAULT 0) so upsertSessionStub with a null value succeeds', async () => {
+      // Reproduces the pre-PR schema exactly (see git history of
+      // createSessionsTable before DS-B27): context_compactions was
+      // `INTEGER NOT NULL DEFAULT 0`. CREATE TABLE IF NOT EXISTS and
+      // COLUMN_MIGRATIONS' ADD COLUMN-only entries cannot relax this
+      // constraint on a database that already has the table, so a real
+      // returning-user database must go through migrateContextCompactionsNullable.
+      const m = await createManager();
+      const project = makeProject({ id: 'proj-old-schema', name: 'Old Schema Project' });
+      m.createProject(project);
+
+      const db = m.getControlDb();
+      db.exec('DROP TABLE sessions');
+      db.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          title TEXT NOT NULL DEFAULT '',
+          started_at INTEGER NOT NULL,
+          ended_at INTEGER NOT NULL,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+          total_tokens INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL,
+          model TEXT,
+          model_usage TEXT,
+          tasks TEXT,
+          external_id TEXT,
+          subagents TEXT,
+          context_compactions INTEGER NOT NULL DEFAULT 0,
+          total_turns INTEGER NOT NULL DEFAULT 0,
+          files_read INTEGER NOT NULL DEFAULT 0,
+          files_written INTEGER NOT NULL DEFAULT 0,
+          agent_invocations INTEGER NOT NULL DEFAULT 0,
+          sync_session_id TEXT,
+          sync_status TEXT,
+          sync_details TEXT,
+          sync_schema_version INTEGER,
+          sync_harness TEXT,
+          sync_harness_version TEXT,
+          sync_manifest_model TEXT,
+          sync_started_at TEXT,
+          sync_ended_at TEXT,
+          sync_duration_ms INTEGER,
+          sync_end_reason TEXT,
+          sync_engine_version TEXT,
+          sync_plugin_version TEXT,
+          sync_transcripts_captured INTEGER,
+          sync_main_transcript_relative_path TEXT,
+          sync_artifacts TEXT,
+          sync_runs TEXT,
+          FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+      `);
+
+      const stub = makeSessionStub('proj-old-schema', { id: 'sess-old-schema' });
+      expect(stub.context_compactions).toBeUndefined();
+
+      // Against the seeded old schema (pre-migration), the write must fail
+      // exactly like the reviewer's repro - this proves the test actually
+      // exercises the bug, not just the fixed path.
+      expect(() => m.upsertSessionStub(stub)).toThrow(/NOT NULL constraint failed/);
+
+      // Re-run the migration path (as a fresh `initialize()` on a returning
+      // user's browser would) against the now-seeded old schema.
+      (m as unknown as { migrate: () => void }).migrate();
+
+      // The rebuild must not have lost the project row it was scoped around.
+      expect(m.getProject('proj-old-schema')).not.toBeNull();
+
+      m.upsertSessionStub(stub);
+      const fetched = m.getSessionBySyncId('proj-old-schema', stub.sync_session_id);
+      expect(fetched).not.toBeNull();
+      expect(fetched!.context_compactions).toBeNull();
+
+      m.close();
+    });
+
     it('preserves an explicit context_compactions: 0 as a confirmed zero, distinct from missing', () => {
       const project = makeProject({ id: 'proj-stub-1c', name: 'Stub Project 1c' });
       mgr.createProject(project);

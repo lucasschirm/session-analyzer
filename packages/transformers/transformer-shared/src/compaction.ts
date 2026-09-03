@@ -26,7 +26,11 @@ export interface CompactionEventPayload {
   readonly eventType: string;
   readonly timestampMs: number;
   readonly sourceEventId: string;
-  readonly lineNumber: number;
+  /** The harness's closest analog to a JSONL line number for the source
+   * event; missing (not a fabricated `0`) when the harness has no such
+   * concept for this record, or the source node it would derive from
+   * cannot be located — per `missing-is-never-zero`. */
+  readonly lineNumber?: number;
   readonly summary?: string;
   /** `'manual'` | `'auto'` | a harness-native string; missing (not a
    * guessed default) when the trigger can't be determined from evidence. */
