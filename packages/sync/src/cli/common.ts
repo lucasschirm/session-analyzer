@@ -813,7 +813,7 @@ export async function runSessionEndUploadLoop(options: {
 
 export function getWatchScriptPath(): string {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(currentDir, 'watch.js');
+  return path.resolve(currentDir, 'watch-entry.js');
 }
 
 export function defaultSpawnWatcher(args: string[]): WatcherHandle {

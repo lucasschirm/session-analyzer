@@ -1,11 +1,12 @@
-name: Devin Plugin CI
+name: Claude Plugin CI
 
 on:
   pull_request:
     branches: [main, develop]
     paths:
-      - 'packages/plugins/devin-session-sync/**'
-      - '.github/workflows/devin-plugin-ci.yml'
+      - 'packages/plugins/claude-session-sync/**'
+      - 'packages/sync/**'
+      - '.github/workflows/claude-plugin-ci.yml'
   workflow_dispatch:
 
 permissions:
@@ -30,39 +31,40 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build devin plugin and its workspace dependencies
-        run: pnpm --filter @lucasschirm/devin-session-sync... build
+      - name: Build claude plugin and its workspace dependencies
+        run: pnpm --filter @lucasschirm/claude-session-sync... build
 
       - name: Pack the package
-        working-directory: packages/plugins/devin-session-sync
+        working-directory: packages/plugins/claude-session-sync
         run: npm pack
 
       - name: Smoke test the packaged bins
-        working-directory: packages/plugins/devin-session-sync
+        working-directory: packages/plugins/claude-session-sync
         run: |
           set -e
-          tarball=$(ls -t lucasschirm-devin-session-sync-*.tgz | head -n 1)
+          tarball=$(ls -t lucasschirm-claude-session-sync-*.tgz | head -n 1)
           tarball_path="$(pwd)/${tarball}"
           smoke_dir=$(mktemp -d)
           (
             cd "${smoke_dir}"
             npm install --omit=dev --no-audit --no-fund "${tarball_path}"
-            ./node_modules/.bin/devin-sync -v
-            ./node_modules/.bin/devin-session-sync -v
+            ./node_modules/.bin/claude-sync -v
+            ./node_modules/.bin/claude-session-sync -v
           )
 
       # Regression coverage for #274: with no SAL_STORAGE_* config, `list`
       # and `sync` must fail loudly (exit 1, "required ... configuration is
-      # missing" on stdout/stderr) exactly like `claude-sync` does — not
-      # silently exit 0 with no output. This exercises the actual packaged
-      # esbuild bundle (not the exported TS function via vitest), which is
-      # the only way this regression was ever caught. `-v` alone does not
-      # reach the vulnerable code path.
+      # missing" on stdout/stderr) — not silently exit 0 with no output.
+      # claude-sync was never observed exhibiting the #274 bug, but this
+      # exercises the actual packaged esbuild bundle (not the exported TS
+      # function via vitest) so a future change to the shared
+      # `packages/sync` barrel can't silently regress it. `-v` alone does
+      # not reach the vulnerable code path.
       - name: Smoke test missing-config error handling (list/sync)
-        working-directory: packages/plugins/devin-session-sync
+        working-directory: packages/plugins/claude-session-sync
         run: |
           set -e
-          tarball=$(ls -t lucasschirm-devin-session-sync-*.tgz | head -n 1)
+          tarball=$(ls -t lucasschirm-claude-session-sync-*.tgz | head -n 1)
           tarball_path="$(pwd)/${tarball}"
           smoke_dir=$(mktemp -d)
           (
@@ -90,6 +92,6 @@ jobs:
               echo "PASS: ${label} exited ${code} with the expected error"
             }
 
-            assert_fails_with_missing_config "devin-sync list" ./node_modules/.bin/devin-sync list
-            assert_fails_with_missing_config "devin-sync sync" ./node_modules/.bin/devin-sync sync
+            assert_fails_with_missing_config "claude-sync list" ./node_modules/.bin/claude-sync list
+            assert_fails_with_missing_config "claude-sync sync" ./node_modules/.bin/claude-sync sync
           )
