@@ -1,0 +1,52 @@
+name: Devin Plugin CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'packages/plugins/devin-session-sync/**'
+      - '.github/workflows/devin-plugin-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build devin plugin and its workspace dependencies
+        run: pnpm --filter @lucasschirm/devin-session-sync... build
+
+      - name: Pack the package
+        working-directory: packages/plugins/devin-session-sync
+        run: npm pack
+
+      - name: Smoke test the packaged bins
+        working-directory: packages/plugins/devin-session-sync
+        run: |
+          set -e
+          tarball=$(ls -t lucasschirm-devin-session-sync-*.tgz | head -n 1)
+          tarball_path="$(pwd)/${tarball}"
+          smoke_dir=$(mktemp -d)
+          (
+            cd "${smoke_dir}"
+            npm install --omit=dev --no-audit --no-fund "${tarball_path}"
+            ./node_modules/.bin/devin-sync -v
+            ./node_modules/.bin/devin-session-sync -v
+          )
