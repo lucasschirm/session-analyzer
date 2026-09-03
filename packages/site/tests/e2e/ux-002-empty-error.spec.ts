@@ -5,14 +5,17 @@ import { assertEmptyAffordance, assertErrorBoundary } from './helpers/chart-cont
 import { buildFailingQueryWorker, installFailingWorker } from './helpers/worker-failure';
 
 /**
- * UX-002: Empty state vs error state are visually and structurally
- * distinguishable on the Project Behavior charts.
+ * UX-002 / UX-044: Empty state vs error state are visually and structurally
+ * distinguishable on the Project Behavior duration-histogram chart (redesigned
+ * in issue #171 — this file is the owning test for both the pre-redesign
+ * UX-002 row and the post-redesign UX-044 row in the catalog).
  *
  * This file exercises the real analytics query → chart rendering path. It does
  * not stub the <analytics-chart> state prop directly. The empty branch triggers
- * a genuine zero-row result through an unmatched analysis-release filter; the
- * error branch replaces the analytics worker with a failing worker so the
- * query failure propagates through analytics-client and into the chart state.
+ * a genuine zero-row result through a narrowed time window that excludes every
+ * seeded session; the error branch replaces the analytics worker with a failing
+ * worker so the query failure propagates through analytics-client and into the
+ * chart state.
  */
 
 const FIXTURES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -63,8 +66,10 @@ async function installFakeAnalyticsWorker(page: Page): Promise<void> {
 const EMPTY_PROJECT = 'UX002Empty';
 const ERROR_PROJECT = 'UX002Error';
 
-test.describe('UX-002: empty vs error state disambiguation', () => {
-  test('empty affordance renders on a genuine zero-row result', async ({ page }) => {
+test.describe('UX-002 / UX-044: empty vs error state disambiguation on Project Behavior charts', () => {
+  test('UX-002 / UX-044: empty affordance renders on a genuine zero-row result', async ({
+    page,
+  }) => {
     // Import a real session so the analytics database has data.
     await importSession(page, EMPTY_PROJECT, ['claude-session.jsonl']);
 
@@ -91,7 +96,9 @@ test.describe('UX-002: empty vs error state disambiguation', () => {
     await expect(() => assertEmptyAffordance(chart)).toPass({ timeout: 10000 });
   });
 
-  test('error affordance renders on a forced worker query failure', async ({ page }) => {
+  test('UX-002 / UX-044: error affordance renders on a forced worker query failure', async ({
+    page,
+  }) => {
     // Replace the analytics worker before the app creates it so every project
     // query fails and the page must surface an error state in the chart.
     await installFakeAnalyticsWorker(page);

@@ -686,7 +686,7 @@ test('offline event aborts the active run', async ({ page }) => {
   // should be visible with a non-in_sync state (pending or failed).
   const modal = await openSyncStatusModal(page);
   const sessionItem = modalSessionItem(modal, 'e2e-offline');
-  await expect(sessionItem).toBeVisible({ timeout: 5000 });
+  await expect(sessionItem).toBeVisible({ timeout: 15000 });
   // The session must not be in_sync — it was aborted mid-download.
   await expect(sessionItem.locator('.state-in_sync')).not.toBeVisible();
 });

@@ -167,8 +167,10 @@ the disposition and pointer to any replacement coverage).
 | UX-043 | Project Behavior session outcomes legend (issue #171) | The outcome legend rows' counts and percentages (plus the unreadable-tail footnote) sum to exactly the session total | none | 3 | 4 | 3 | 36 | `project-behavior.spec.ts` | GREEN |
 | UX-044 | Project Behavior chart empty vs error (issue #171) | A genuine zero-row time window and a forced worker query failure render structurally distinct empty/error affordances on the Session duration histogram | `assertEmptyAffordance`, `assertErrorBoundary` (`chart-content.ts`) | 4 | 5 | 3 | 60 | `ux-002-empty-error.spec.ts` (repointed at the redesigned page's histogram chart by this PR) | GREEN |
 | UX-045 | Project Behavior breadcrumb returnContext (issue #171) | The breadcrumb link carries the originating Portfolio filter state (`returnContext`) and clicking it restores that filtered Portfolio view | none | 2 | 3 | 3 | 18 | `project-behavior.spec.ts` | GREEN |
+| UX-046 | Full analytics redesign journey (issue #173) | Seed a fixture into the analytics worker → Portfolio renders Sessions `n=` → drill to Project Behavior → drill to Session Evidence → filter events to the error row → expand it and assert pretty-printed Input/Result JSON | `captureAnalyticsWorker` / `seedSession` (`seeded-store.ts`); `installCannedSessionWorker` (`canned-session.ts`) for the session-events segment (the real ingestion path does not yet populate `invocations`/`turns`/`messages`/`payloads`, so a canned worker is the only way to reach filter/expand end-to-end today) | 4 | 5 | 3 | 60 | `ux-046-full-journey.spec.ts` | GREEN |
+| UX-047 | Portfolio header Export button (issue #165/#170) | The Portfolio route's title-row Export button downloads a valid `.sqlite` analytics database; `verifyExportContents` confirms it contains at least one project and one session row | `verifyExportContents` (`export-verify.ts`); `captureAnalyticsWorker` / `seedSession` (`seeded-store.ts`) | 3 | 4 | 3 | 36 | `ux-047-portfolio-export.spec.ts` | GREEN |
 
-New redesign entries allocate **UX-046** and up next.
+New redesign entries allocate **UX-048** and up next.
 
 ### 6.2 Tier B — Analytics pipeline integration (`PIPE-###`)
 
