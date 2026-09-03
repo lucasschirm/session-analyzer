@@ -134,6 +134,9 @@ created (issue #160); none are proposed-but-unimplemented.
 | UX-019 | Sync-confirm modal appears when syncing a saved connection | `design-fixes.spec.ts` | modal visibility assertion | 3 | 3 | 3 | 27 | P2 | GREEN |
 | UX-020 | Data-sources edit updates the URL hash | `design-fixes.spec.ts` | URL/hash assertion | 2 | 2 | 3 | 12 | P2 | GREEN |
 | UX-021 | Loading state is visible before the app is ready | `design-fixes.spec.ts` | loading-indicator assertion | 2 | 3 | 3 | 18 | P2 | GREEN |
+| UX-022 | Manual upload of a Devin bundle is detected, ingested, and reaches the session dashboard | `devin-journey.spec.ts` | `importDevinSession` (devin-manual-import.ts) | 4 | 4 | 4 | 64 | P0 | GREEN |
+| UX-023 | Devin transcript drill-down and pagination are visible; missing evidence rows are reported | `devin-journey.spec.ts` | `switchSessionEvidenceTab` (devin-manual-import.ts) | 4 | 4 | 4 | 64 | P0 | GREEN |
+| UX-024 | Devin drill-down empty states are structurally distinct from error states | `devin-journey.spec.ts` | empty/error affordance assertions | 4 | 4 | 4 | 64 | P0 | GREEN |
 
 ### 6.2 Tier B — Analytics Pipeline (`PIPE-###`)
 
@@ -152,6 +155,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | PIPE-011 | Large-session boundedness | `pipe-011-large-session-bounded.test.ts` | resource-bound assertion | 2 | 3 | 4 | 24 | P2 | GREEN |
 | PIPE-012 | `pricing_version` evidence record id is session-scoped | `pipe-012-pricing-version-collision.test.ts` | record-id collision assertion | 2 | 3 | 3 | 18 | P2 | GREEN |
 || PIPE-013 | Devin manifest ingestion, portfolio visibility, and sample-size token contract | `pipe-013-devin-ingest.test.ts` | `devin:tokens:total:inclusive` headline metric, failure injection, missing-vs-zero | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-014 | Devin drill-down data: transcript messages present, evidence/component facts report missing data | `pipe-014-devin-drilldown-data.test.ts` | `getTranscriptPages`/`getEvidencePages`/`getComponentFacts` assertions | 3 | 4 | 4 | 48 | P1 | GREEN |
 
 ### 6.3 Tier C — Sync Lifecycle (`SYNC-###`)
 
@@ -165,6 +169,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | SYNC-006 | Devin hook-triggered sync (SessionStart→Stop→SessionEnd) produces a manifest with the full expected artifact set (transcript, workspace/global config, schema descriptor) | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest artifact-set / classification-key assertion | 4 | 5 | 4 | 80 | P0 | GREEN |
 | SYNC-007 | Devin Cloud-session mitigation: sync completes via `Stop` alone + bulk `devin-sync sync`, with `SessionStart`/`SessionEnd` simulated as never firing (verified Part A3 caveat) | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest/transcript presence assertion without a SessionStart/SessionEnd call | 5 | 5 | 5 | 125 | P0 | GREEN |
 | SYNC-008 | `devin-sync sync`/`list`/`download`/`remove`/`migrate` CLI verb smoke pipeline round-trips one session | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | end-to-end CLI verb chain assertion | 3 | 4 | 3 | 36 | P1 | GREEN |
+| SYNC-009 | Devin CAS sync progress heartbeat advances during a throttled file download | `devin-sync-heartbeat.spec.ts` | `assertHeartbeat` (sync-flow.ts) with `syncProgressFilesParser` | 4 | 4 | 4 | 64 | P0 | GREEN |
 
 ## 7. Infrastructure prerequisites
 
