@@ -1,4 +1,4 @@
-import type { SqliteExecutor, SqliteTransaction } from '@lucasschirm/sal-db-core';
+import type { SessionOutcome, SqliteExecutor, SqliteTransaction } from '@lucasschirm/sal-db-core';
 import { createPortfolioView } from './analytics-portfolio.js';
 import {
   createArtifactVersionView,
@@ -11,6 +11,8 @@ import type { AnalyticsToken, Coverage, EvidenceLink, MetricValueDto } from './d
 import { createSha256ContentHasher } from './ingestion.js';
 import type { ContentHasher } from './ports.js';
 import { createProjectBehaviorView } from './project-behavior.js';
+
+export type { SessionOutcome } from '@lucasschirm/sal-db-core';
 
 export type FilterOperator = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'contains';
 
@@ -523,7 +525,18 @@ export interface SessionEvidenceSummary {
   readonly rootSessionId: string;
   readonly parentSessionId?: string;
   readonly harness: string;
+  /** Current session mode (e.g. `plan`, `default`), when recorded. */
+  readonly mode?: string | null;
   readonly headlineMetrics: readonly MetricValueDto[];
+  /**
+   * The session-level outcome classification (issue #178's `session:outcome`
+   * signal, `SessionStore.getById` in db-core). `null` is the "unreadable
+   * tail / not classifiable" sentinel — never a real outcome — distinct from
+   * a session whose outcome hasn't been resolved yet, which is represented
+   * by `undefined` (state !== 'ok'). See
+   * `.agents/rules/missing-is-never-zero.md`.
+   */
+  readonly outcome?: SessionOutcome | null;
 }
 
 export interface ContextTimingPoint {

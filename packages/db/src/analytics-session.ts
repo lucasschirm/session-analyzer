@@ -1,4 +1,9 @@
-import type { SqliteExecutor, SqliteRow, SqliteTransaction } from '@lucasschirm/sal-db-core';
+import type {
+  SessionOutcome,
+  SqliteExecutor,
+  SqliteRow,
+  SqliteTransaction,
+} from '@lucasschirm/sal-db-core';
 import {
   ComponentIdentityStore,
   DimensionDomainStore,
@@ -9,6 +14,7 @@ import {
   SessionComponentStatStore,
   SessionEventsDetailStore,
   SessionOutcomeStore,
+  SessionStore,
   SourceTombstoneStore,
   TurnTimelineStore,
   ValidationStore,
@@ -494,10 +500,17 @@ async function getSessionEvidenceSummary(
   );
 
   const headlineMetrics: MetricValueDto[] = [];
+  let outcome: SessionOutcome | null | undefined;
+  let mode: string | null | undefined;
   if (state.status === 'ok') {
     const current = await getCurrentSummary(queryable, sessionId, state.generationId);
     if (current?.summary) {
       headlineMetrics.push(...metricValuesFromHeadline(current.summary.headlineMetrics, token));
+    }
+    if (session) {
+      const sessionRecord = await SessionStore.getById(queryable, session.projectId, sessionId);
+      outcome = sessionRecord?.outcome ?? null;
+      mode = sessionRecord?.mode ?? null;
     }
   }
 
@@ -507,7 +520,9 @@ async function getSessionEvidenceSummary(
     rootSessionId,
     parentSessionId,
     harness: session?.harness ?? 'unknown',
+    mode,
     headlineMetrics,
+    outcome,
   };
 }
 

@@ -1,26 +1,29 @@
 import type {
-  ComponentUtilizationPage,
-  MetricValueDto,
-  ModelHarnessCohortPage,
-  PortfolioOverview,
+  InvocationsByDomain,
+  ModelHarnessMatrix,
+  PortfolioKpiBand,
   PortfolioTrendSeries,
-  ProjectListPage,
+  ProjectLeaderboard,
+  SessionsByModelBar,
   TimeSeriesPoint,
 } from '@lucasschirm/sal-db';
 import { describe, expect, it } from 'vitest';
 import {
-  componentUtilizationToChartSeries,
   filterByScope,
+  invocationsByDomainToRows,
   isTokenMetric,
+  kpiBandToCleanCompletionView,
+  kpiBandToCostView,
+  kpiBandToSessionsHero,
+  kpiBandToTokensView,
   metricLabel,
-  modelHarnessCohortsToChartSeries,
-  overviewToMetricCards,
-  projectListToRows,
+  modelHarnessMatrixToHeatmapSeries,
+  periodDeltaToStatDelta,
+  projectLeaderboardToRows,
+  sessionsByModelToChartSeries,
   stripScopeSuffix,
   tokenTrendToChartSeries,
-  trendToChartSeries,
 } from '../../src/pages/portfolio/portfolio-chart-helpers';
-import type { PortfolioParams } from '../../src/pages/portfolio/portfolio-params';
 
 function makePoint(overrides: Partial<TimeSeriesPoint> = {}): TimeSeriesPoint {
   return {
@@ -31,20 +34,6 @@ function makePoint(overrides: Partial<TimeSeriesPoint> = {}): TimeSeriesPoint {
     comparabilityGroupId: 'g1',
     ...overrides,
   } as TimeSeriesPoint;
-}
-
-function makeMetric(overrides: Partial<MetricValueDto> = {}): MetricValueDto {
-  return {
-    metricId: 'portfolio-session-count',
-    label: 'Sessions',
-    value: 100,
-    unit: 'count',
-    knownN: 100,
-    eligibleN: 100,
-    isExact: true,
-    evidenceLinks: [],
-    ...overrides,
-  } as MetricValueDto;
 }
 
 describe('isTokenMetric', () => {
@@ -170,35 +159,6 @@ describe('filterByScope', () => {
   });
 });
 
-describe('trendToChartSeries', () => {
-  it('filters out token metrics and maps to buckets', () => {
-    const trend = {
-      series: [
-        makePoint({ time: 't1', value: 10, metricId: 'm1:root_only', label: 'M1 (root-only)' }),
-        makePoint({
-          time: 't1',
-          value: 500,
-          metricId: 'claude:tokens:total::root_only',
-          label: 'Tokens (root-only)',
-        }),
-      ],
-    } as unknown as PortfolioTrendSeries;
-    const series = trendToChartSeries(trend, 'main');
-    expect(series.buckets).toHaveLength(1);
-    expect(series.buckets[0].x).toBe('t1');
-    expect(series.buckets[0].y).toBe(10);
-    expect(series.chartType).toBe('time_series');
-  });
-
-  it('uses default scope main', () => {
-    const trend = {
-      series: [makePoint({ time: 't1', value: 10, metricId: 'm1:root_only' })],
-    } as unknown as PortfolioTrendSeries;
-    const series = trendToChartSeries(trend);
-    expect(series.buckets).toHaveLength(1);
-  });
-});
-
 describe('tokenTrendToChartSeries', () => {
   it('filters to token metrics only', () => {
     const trend = {
@@ -219,222 +179,394 @@ describe('tokenTrendToChartSeries', () => {
   });
 });
 
-describe('componentUtilizationToChartSeries', () => {
-  it('maps component utilization rows to chart buckets with evidence links', () => {
-    const page = {
-      items: [
-        { componentId: 'Write', kind: 'tool', sessionCount: 50 },
-        { componentId: 'Skill', kind: 'skill', sessionCount: 20 },
-      ],
-    } as unknown as ComponentUtilizationPage;
-    const params: PortfolioParams = { sessions: 'main' };
-    const series = componentUtilizationToChartSeries(page, params);
-    expect(series.buckets).toHaveLength(2);
-    expect(series.buckets[0].x).toBe('Write');
-    expect(series.buckets[0].y).toBe(50);
-    expect(series.buckets[0].series).toBe('tool');
-    expect(series.buckets[0].evidenceLink).toBeDefined();
-    expect(series.chartType).toBe('stacked_bar');
+// ---------------------------------------------------------------------------
+// KPI band (issue #170)
+// ---------------------------------------------------------------------------
+
+describe('periodDeltaToStatDelta', () => {
+  it('renders "—" (flat, never a fabricated 0%) when there is no previous window', () => {
+    const delta = periodDeltaToStatDelta({ current: 42, previous: undefined });
+    expect(delta).toEqual({ direction: 'flat', text: '—' });
   });
 
-  it('works without params', () => {
-    const page = {
-      items: [{ componentId: 'Read', kind: 'tool', sessionCount: 10 }],
-    } as unknown as ComponentUtilizationPage;
-    const series = componentUtilizationToChartSeries(page);
-    expect(series.buckets).toHaveLength(1);
-    expect(series.buckets[0].evidenceLink).toBeDefined();
+  it('renders an up chip when current exceeds previous', () => {
+    const delta = periodDeltaToStatDelta({ current: 120, previous: 100 });
+    expect(delta.direction).toBe('up');
+    expect(delta.text).toBe('+20%');
+  });
+
+  it('renders a down chip when current is below previous', () => {
+    const delta = periodDeltaToStatDelta({ current: 80, previous: 100 });
+    expect(delta.direction).toBe('down');
+    expect(delta.text).toBe('-20%');
+  });
+
+  it('renders flat with 0% when current equals previous', () => {
+    const delta = periodDeltaToStatDelta({ current: 100, previous: 100 });
+    expect(delta).toEqual({ direction: 'flat', text: '0%' });
+  });
+
+  it('renders "—" when previous is exactly 0 and current is also 0', () => {
+    const delta = periodDeltaToStatDelta({ current: 0, previous: 0 });
+    expect(delta).toEqual({ direction: 'flat', text: '—' });
   });
 });
 
-describe('modelHarnessCohortsToChartSeries', () => {
-  it('maps cohorts to chart buckets using session count when no metricId', () => {
-    const page = {
-      items: [
-        { model: 'sonnet', harness: 'claude-code', sessionCount: 30, metricValues: [] },
-        { model: 'opus', harness: 'claude-code', sessionCount: 15, metricValues: [] },
+function makeKpiBand(overrides: Partial<PortfolioKpiBand> = {}): PortfolioKpiBand {
+  return {
+    token: {} as PortfolioKpiBand['token'],
+    sessions: { current: 100, currentN: 100, previous: 80, previousN: 80 },
+    tokens: {
+      in: { current: 1000, currentN: 100 },
+      out: { current: 2000, currentN: 100 },
+    },
+    cost: { currentTotal: 12.5, currentReportedHarnesses: 2, currentTotalHarnesses: 2 },
+    cleanCompletionRate: { value: 0.9, eligibleN: 100, knownN: 90 },
+    ...overrides,
+  } as PortfolioKpiBand;
+}
+
+describe('kpiBandToSessionsHero', () => {
+  it('shapes value, delta, sparkline, footnote, and sample label', () => {
+    const view = kpiBandToSessionsHero(makeKpiBand(), 'main');
+    expect(view.value).toBe('100');
+    expect(view.delta.direction).toBe('up');
+    expect(view.sparklinePoints).toEqual([80, 100]);
+    expect(view.footnote).toBe('Main sessions only');
+    expect(view.sampleLabel).toBe('n=100 sessions');
+  });
+
+  it('reflects the active sessions scope in the footnote (not a hardcoded string)', () => {
+    expect(kpiBandToSessionsHero(makeKpiBand(), 'all').footnote).toBe('Including sub agents');
+    expect(kpiBandToSessionsHero(makeKpiBand(), 'sub_agents').footnote).toBe(
+      'Sub-agent sessions only',
+    );
+  });
+
+  it('falls back to a single-point sparkline under the All preset (no previous window)', () => {
+    const kpi = makeKpiBand({ sessions: { current: 50, currentN: 50 } });
+    const view = kpiBandToSessionsHero(kpi, 'main');
+    expect(view.sparklinePoints).toEqual([50]);
+    expect(view.delta).toEqual({ direction: 'flat', text: '—' });
+  });
+});
+
+describe('kpiBandToTokensView', () => {
+  it('sums in/out for the headline value and breaks them down', () => {
+    const view = kpiBandToTokensView(makeKpiBand());
+    expect(view.value).toBe('3,000');
+    expect(view.breakdown).toEqual([
+      { label: 'In', value: '1,000', color: expect.any(String) },
+      { label: 'Out', value: '2,000', color: expect.any(String) },
+    ]);
+    expect(view.sampleLabel).toBe('n=100 in · n=100 out');
+  });
+
+  it('omits the delta comparison when either side has no previous window', () => {
+    const kpi = makeKpiBand({
+      tokens: {
+        in: { current: 10, currentN: 1, previous: 5, previousN: 1 },
+        out: { current: 20, currentN: 1 },
+      },
+    });
+    expect(kpiBandToTokensView(kpi).delta).toEqual({ direction: 'flat', text: '—' });
+  });
+});
+
+describe('kpiBandToCostView', () => {
+  it('renders the missing-cost path when no harness reports cost (never a fabricated $0)', () => {
+    const kpi = makeKpiBand({
+      cost: { currentTotal: null, currentReportedHarnesses: 0, currentTotalHarnesses: 3 },
+    });
+    const view = kpiBandToCostView(kpi);
+    expect(view).toEqual({
+      kind: 'missing',
+      reason: '0 of 3 harnesses report cost in this window',
+    });
+  });
+
+  it('renders the present path with a currency value and coverage sample label', () => {
+    const view = kpiBandToCostView(makeKpiBand());
+    expect(view).toEqual({
+      kind: 'present',
+      value: '$13',
+      delta: { direction: 'flat', text: '—' },
+      sampleLabel: 'n=2 of 2 harnesses reporting',
+    });
+  });
+});
+
+describe('kpiBandToCleanCompletionView', () => {
+  it('renders the ring when a clean-completion rate is classified', () => {
+    const view = kpiBandToCleanCompletionView(makeKpiBand());
+    expect(view).toEqual({
+      kind: 'present',
+      percent: 90,
+      centerText: '90%',
+      sampleLabel: 'n=90 of 100',
+    });
+  });
+
+  it('renders the missing-state tile (never a fabricated rate) when nothing is classified', () => {
+    const kpi = makeKpiBand({
+      cleanCompletionRate: { value: null, eligibleN: 10, knownN: 0 },
+    });
+    const view = kpiBandToCleanCompletionView(kpi);
+    expect(view).toEqual({
+      kind: 'missing',
+      reason: '0 of 10 final sessions have a classified outcome yet',
+    });
+  });
+
+  it('gives a distinct reason when there are no eligible sessions at all', () => {
+    const kpi = makeKpiBand({
+      cleanCompletionRate: { value: null, eligibleN: 0, knownN: 0 },
+    });
+    expect(kpiBandToCleanCompletionView(kpi)).toEqual({
+      kind: 'missing',
+      reason: 'No final sessions in this window yet',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sessions-by-model, model×harness heatmap, invocations-by-domain
+// ---------------------------------------------------------------------------
+
+describe('sessionsByModelToChartSeries', () => {
+  it('maps bar rows to a horizontal_bar chart series', () => {
+    const bar = {
+      token: {},
+      rows: [
+        { model: 'sonnet', sessionCount: 30 },
+        { model: 'opus', sessionCount: 10 },
       ],
-    } as unknown as ModelHarnessCohortPage;
-    const series = modelHarnessCohortsToChartSeries(page);
+    } as unknown as SessionsByModelBar;
+    const series = sessionsByModelToChartSeries(bar);
+    expect(series.chartType).toBe('horizontal_bar');
     expect(series.buckets).toHaveLength(2);
     expect(series.buckets[0].x).toBe('sonnet');
     expect(series.buckets[0].y).toBe(30);
-    expect(series.buckets[0].series).toBe('claude-code');
-    expect(series.yLabel).toBe('Sessions');
-  });
-
-  it('uses metric value when metricId is provided', () => {
-    const page = {
-      items: [
-        {
-          model: 'sonnet',
-          harness: 'claude-code',
-          sessionCount: 30,
-          metricValues: [
-            makeMetric({
-              metricId: 'm1',
-              value: 42,
-              label: 'M1',
-              unit: 'count',
-              knownN: 30,
-              eligibleN: 30,
-            }),
-          ],
-        },
-      ],
-    } as unknown as ModelHarnessCohortPage;
-    const series = modelHarnessCohortsToChartSeries(page, 'm1');
-    expect(series.buckets[0].y).toBe(42);
-    expect(series.yLabel).toBe('Metric value');
-  });
-
-  it('falls back to sessionCount when metric value is null', () => {
-    const page = {
-      items: [
-        {
-          model: 'sonnet',
-          harness: 'claude-code',
-          sessionCount: 30,
-          metricValues: [
-            makeMetric({
-              metricId: 'm1',
-              value: null,
-              label: 'M1',
-              unit: 'count',
-              knownN: 0,
-              eligibleN: 30,
-            }),
-          ],
-        },
-      ],
-    } as unknown as ModelHarnessCohortPage;
-    const series = modelHarnessCohortsToChartSeries(page, 'm1');
-    expect(series.buckets[0].y).toBe(30);
   });
 });
 
-describe('overviewToMetricCards', () => {
-  it('maps headline metrics to card views with sub-text and hrefs', () => {
-    const overview = {
-      headlineMetrics: [
-        makeMetric({
-          metricId: 'portfolio-session-count',
-          value: 100,
-          evidenceLinks: [
-            {
-              evidenceId: 'e1',
-              entityType: 'portfolio' as never,
-              entityId: '',
-              label: 'Portfolio',
-            },
-          ],
-        }),
-        makeMetric({
-          metricId: 'portfolio-project-count',
-          value: 5,
-          unit: 'count',
-        }),
-      ],
-      totalTokens: 50000,
-      modelCount: 3,
-      harnessCount: 2,
-      componentCounts: { skill: 10, tool: 20 },
-    } as unknown as PortfolioOverview;
-
-    const params: PortfolioParams = { sessions: 'main' };
-    const cards = overviewToMetricCards(overview, params);
-    expect(cards).toHaveLength(2);
-    expect(cards[0].metricId).toBe('portfolio-session-count');
-    expect(cards[0].sub).toBe('3 Models');
-    expect(cards[0].href).toBeDefined();
-    expect(cards[1].sub).toBe('50,000 Tokens');
+describe('modelHarnessMatrixToHeatmapSeries', () => {
+  it('maps a never-observed cell to y: null (missing, never a fabricated 0)', () => {
+    const matrix = {
+      token: {},
+      models: ['sonnet'],
+      harnesses: ['claude-code'],
+      cells: [{ model: 'sonnet', harness: 'claude-code', sessionCount: null }],
+    } as unknown as ModelHarnessMatrix;
+    const series = modelHarnessMatrixToHeatmapSeries(matrix);
+    expect(series.chartType).toBe('heatmap');
+    expect(series.buckets[0].y).toBeNull();
+    expect(series.buckets[0].label).toContain('never observed');
   });
 
-  it('computes skill and other component counts for unused-components card', () => {
-    const overview = {
-      headlineMetrics: [makeMetric({ metricId: 'portfolio-unused-components', value: 5 })],
-      totalTokens: 0,
-      modelCount: 0,
-      harnessCount: 0,
-      componentCounts: { skill: 8, tool: 15, agent: 3 },
-    } as unknown as PortfolioOverview;
-
-    const cards = overviewToMetricCards(overview, { sessions: 'main' });
-    expect(cards[0].sub).toBe('8 Skills • 18 Others');
-  });
-
-  it('handles missing component counts gracefully', () => {
-    const overview = {
-      headlineMetrics: [makeMetric({ metricId: 'portfolio-component-count', value: 5 })],
-      totalTokens: 0,
-      modelCount: 0,
-      harnessCount: 0,
-      componentCounts: {},
-    } as unknown as PortfolioOverview;
-
-    const cards = overviewToMetricCards(overview, { sessions: 'main' });
-    expect(cards[0].sub).toBe('0 Harness');
-  });
-
-  it('uses empty sub for unknown metric ids', () => {
-    const overview = {
-      headlineMetrics: [makeMetric({ metricId: 'unknown-metric', value: 1 })],
-      totalTokens: 0,
-      modelCount: 0,
-      harnessCount: 0,
-      componentCounts: {},
-    } as unknown as PortfolioOverview;
-
-    const cards = overviewToMetricCards(overview, { sessions: 'main' });
-    expect(cards[0].sub).toBe('');
-  });
-
-  it('omits href when metric has no evidence links', () => {
-    const overview = {
-      headlineMetrics: [makeMetric({ evidenceLinks: [] })],
-      totalTokens: 0,
-      modelCount: 0,
-      harnessCount: 0,
-      componentCounts: {},
-    } as unknown as PortfolioOverview;
-
-    const cards = overviewToMetricCards(overview, { sessions: 'main' });
-    expect(cards[0].href).toBeUndefined();
-  });
-
-  it('shows eligibleN in coverage when knownN < eligibleN', () => {
-    const overview = {
-      headlineMetrics: [makeMetric({ knownN: 80, eligibleN: 100, value: 50 })],
-      totalTokens: 0,
-      modelCount: 0,
-      harnessCount: 0,
-      componentCounts: {},
-    } as unknown as PortfolioOverview;
-
-    // coverageN is internal, but the sub text for portfolio-session-count
-    // should still be populated
-    const cards = overviewToMetricCards(overview, { sessions: 'main' });
-    expect(cards[0]).toBeDefined();
+  it('maps a measured cell to its real count', () => {
+    const matrix = {
+      token: {},
+      models: ['sonnet'],
+      harnesses: ['claude-code'],
+      cells: [{ model: 'sonnet', harness: 'claude-code', sessionCount: 0 }],
+    } as unknown as ModelHarnessMatrix;
+    const series = modelHarnessMatrixToHeatmapSeries(matrix);
+    expect(series.buckets[0].y).toBe(0);
   });
 });
 
-describe('projectListToRows', () => {
-  it('maps project list items to row views with hrefs', () => {
-    const page = {
-      items: [
-        { projectId: 'p1', name: 'Project A', sessionCount: 10, harness: 'claude-code' },
-        { projectId: 'p2', name: 'Project B', sessionCount: 5, harness: 'agentic-pi' },
+describe('invocationsByDomainToRows', () => {
+  it('always returns exactly the four canonical kinds, in order, never a fifth MCP bucket', () => {
+    const domain = {
+      token: {},
+      totalInvocations: 40,
+      rows: [
+        { kind: 'tool', count: 10 },
+        { kind: 'skill', count: 20 },
+        { kind: 'agent', count: 5 },
+        { kind: 'sub_agent', count: 5 },
       ],
-    } as unknown as ProjectListPage;
+    } as unknown as InvocationsByDomain;
+    const rows = invocationsByDomainToRows(domain, { sessions: 'main' });
+    expect(rows.map((r) => r.kind)).toEqual(['tool', 'skill', 'agent', 'sub_agent']);
+    expect(rows.map((r) => r.count)).toEqual([10, 20, 5, 5]);
+  });
 
-    const params: PortfolioParams = { project: 'p1', sessions: 'main' };
-    const rows = projectListToRows(page, params);
-    expect(rows).toHaveLength(2);
-    expect(rows[0].projectId).toBe('p1');
-    expect(rows[0].name).toBe('Project A');
-    expect(rows[0].sessionCount).toBe(10);
-    expect(rows[0].harness).toBe('claude-code');
-    expect(rows[0].href).toContain('#/projects/Project A');
+  it('routes each domain to its own page, and Sub Agent to the sub-agent-scoped portfolio hash', () => {
+    const domain = { token: {}, totalInvocations: 0, rows: [] } as unknown as InvocationsByDomain;
+    const rows = invocationsByDomainToRows(domain, { sessions: 'main' });
+    const byKind = Object.fromEntries(rows.map((r) => [r.kind, r.href]));
+    expect(byKind.tool).toBe('#/tools');
+    expect(byKind.skill).toBe('#/skills');
+    expect(byKind.agent).toBe('#/agents');
+    expect(byKind.sub_agent).toContain('sessions=sub_agents');
+  });
+
+  it('reports a real observed zero for a kind with no invocations (never omitted)', () => {
+    const domain = {
+      token: {},
+      totalInvocations: 10,
+      rows: [{ kind: 'tool', count: 10 }],
+    } as unknown as InvocationsByDomain;
+    const rows = invocationsByDomainToRows(domain, { sessions: 'main' });
+    expect(rows.find((r) => r.kind === 'agent')?.count).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Project leaderboard
+// ---------------------------------------------------------------------------
+
+describe('projectLeaderboardToRows', () => {
+  it('ranks rows by total token volume descending', () => {
+    const leaderboard = {
+      token: {},
+      rows: [
+        {
+          projectId: 'p1',
+          name: 'Small',
+          sessionCount: 5,
+          tokens: { inputTokens: 100, inputKnownN: 5, outputTokens: 100, outputKnownN: 5 },
+          cleanRate: { value: 1, eligibleN: 5, knownN: 5 },
+          trend: [],
+        },
+        {
+          projectId: 'p2',
+          name: 'Big',
+          sessionCount: 50,
+          tokens: { inputTokens: 5000, inputKnownN: 50, outputTokens: 5000, outputKnownN: 50 },
+          cleanRate: { value: 0.8, eligibleN: 50, knownN: 40 },
+          trend: [{ day: '2024-01-01', sessionCount: 3 }],
+        },
+      ],
+    } as unknown as ProjectLeaderboard;
+
+    const rows = projectLeaderboardToRows(leaderboard, { sessions: 'main' });
+    expect(rows.map((r) => r.name)).toEqual(['Big', 'Small']);
+    expect(rows[0].tokensFraction).toBe(1);
+    expect(rows[1].tokensFraction).toBeCloseTo(200 / 10000);
+  });
+
+  it('renders "—" for an unclassified clean rate, never a fabricated 0%', () => {
+    const leaderboard = {
+      token: {},
+      rows: [
+        {
+          projectId: 'p1',
+          name: 'A',
+          sessionCount: 1,
+          tokens: { inputTokens: 0, inputKnownN: 0, outputTokens: 0, outputKnownN: 0 },
+          cleanRate: { value: null, eligibleN: 1, knownN: 0 },
+          trend: [],
+        },
+      ],
+    } as unknown as ProjectLeaderboard;
+
+    const rows = projectLeaderboardToRows(leaderboard, { sessions: 'main' });
+    expect(rows[0].cleanRateText).toBe('—');
+    expect(rows[0].cleanRateSampleLabel).toBe('n=0 of 1');
+  });
+
+  it('renders "—" for a project with no recorded last-active timestamp', () => {
+    const leaderboard = {
+      token: {},
+      rows: [
+        {
+          projectId: 'p1',
+          name: 'A',
+          sessionCount: 1,
+          tokens: { inputTokens: 0, inputKnownN: 0, outputTokens: 0, outputKnownN: 0 },
+          cleanRate: { value: null, eligibleN: 0, knownN: 0 },
+          trend: [],
+        },
+      ],
+    } as unknown as ProjectLeaderboard;
+
+    const rows = projectLeaderboardToRows(leaderboard, { sessions: 'main' });
+    expect(rows[0].lastActiveText).toBe('—');
+  });
+
+  it('carries a returnContext back to the portfolio filter state', () => {
+    const leaderboard = {
+      token: {},
+      rows: [
+        {
+          projectId: 'p1',
+          name: 'A',
+          sessionCount: 1,
+          tokens: { inputTokens: 0, inputKnownN: 0, outputTokens: 0, outputKnownN: 0 },
+          cleanRate: { value: null, eligibleN: 0, knownN: 0 },
+          trend: [],
+        },
+      ],
+    } as unknown as ProjectLeaderboard;
+
+    const rows = projectLeaderboardToRows(leaderboard, { project: 'p1', sessions: 'main' });
+    expect(rows[0].href).toContain('#/projects/A');
     expect(rows[0].href).toContain('returnContext=');
+  });
+
+  it("exposes the combined tokens figure's sample size as the smaller of the two independently-tracked coverage counts", () => {
+    const leaderboard = {
+      token: {},
+      rows: [
+        {
+          projectId: 'p1',
+          name: 'A',
+          sessionCount: 5,
+          tokens: { inputTokens: 100, inputKnownN: 5, outputTokens: 200, outputKnownN: 3 },
+          cleanRate: { value: null, eligibleN: 0, knownN: 0 },
+          trend: [],
+        },
+      ],
+    } as unknown as ProjectLeaderboard;
+
+    const rows = projectLeaderboardToRows(leaderboard, { sessions: 'main' });
+    expect(rows[0].tokensSampleLabel).toBe('n=3');
+  });
+
+  it('builds a textual trend summary for the sparkline (which is aria-hidden and needs a text alternative)', () => {
+    const leaderboard = {
+      token: {},
+      rows: [
+        {
+          projectId: 'p1',
+          name: 'A',
+          sessionCount: 5,
+          tokens: { inputTokens: 0, inputKnownN: 0, outputTokens: 0, outputKnownN: 0 },
+          cleanRate: { value: null, eligibleN: 0, knownN: 0 },
+          trend: [
+            { day: '2024-01-01', sessionCount: 2 },
+            { day: '2024-01-02', sessionCount: 9 },
+            { day: '2024-01-03', sessionCount: 4 },
+          ],
+        },
+      ],
+    } as unknown as ProjectLeaderboard;
+
+    const rows = projectLeaderboardToRows(leaderboard, { sessions: 'main' });
+    expect(rows[0].trendAriaLabel).toContain('2 on 2024-01-01');
+    expect(rows[0].trendAriaLabel).toContain('4 on 2024-01-03');
+    expect(rows[0].trendAriaLabel).toContain('peak 9');
+  });
+
+  it('gives an explicit "no data" trend summary when the trend series is empty', () => {
+    const leaderboard = {
+      token: {},
+      rows: [
+        {
+          projectId: 'p1',
+          name: 'A',
+          sessionCount: 0,
+          tokens: { inputTokens: 0, inputKnownN: 0, outputTokens: 0, outputKnownN: 0 },
+          cleanRate: { value: null, eligibleN: 0, knownN: 0 },
+          trend: [],
+        },
+      ],
+    } as unknown as ProjectLeaderboard;
+
+    const rows = projectLeaderboardToRows(leaderboard, { sessions: 'main' });
+    expect(rows[0].trendAriaLabel).toBe('30-day session trend: no data');
   });
 });

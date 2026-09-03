@@ -13,20 +13,18 @@ function fixture(name: string): string {
 }
 
 /**
- * Read the current numeric session-count value from the portfolio view.
+ * Read the current numeric session-count value from the portfolio view's
+ * Sessions KPI tile (`stat-tile-hero`, issue #170's KPI band).
  *
- * Returns `null` when the view has no "Session count" metric card yet (e.g.
- * while loading or when it is empty).
+ * Returns `null` when the tile has no value yet (e.g. while loading).
  */
 async function readPortfolioSessionCount(page: Page): Promise<number | null> {
-  const card = page.locator('metrics-card').filter({
-    has: page.locator('.label', { hasText: 'Session count' }),
-  });
-  const count = await card.count();
+  const tile = page.locator('stat-tile-hero');
+  const count = await tile.count();
   if (count === 0) {
     return null;
   }
-  const raw = await card.first().locator('.value').textContent({ timeout: 5000 });
+  const raw = await tile.first().getAttribute('value');
   if (!raw) return null;
   const numeric = Number(raw.trim());
   return Number.isNaN(numeric) ? null : numeric;
@@ -85,7 +83,10 @@ test.describe('Portfolio refresh liveness', () => {
     // 1. Land on the Portfolio (Dashboard) view once and never reload or navigate away.
     await page.goto('/#/');
     await expect(page.locator('portfolio-view')).toBeVisible({ timeout: 30000 });
-    await expect(page.getByText('Loading portfolio…')).not.toBeVisible({ timeout: 30000 });
+    // Issue #170 replaced the old "Loading portfolio…" placeholder with a
+    // per-card `PanelState`; the Sessions KPI tile (`stat-tile-hero`)
+    // rendering is the real "load finished" signal now.
+    await expect(page.locator('stat-tile-hero')).toBeVisible({ timeout: 30000 });
 
     // 2. Ingest session A through the same analytics worker that the Portfolio
     //    view uses (simulating a session upload while on the page).
@@ -94,7 +95,7 @@ test.describe('Portfolio refresh liveness', () => {
     // 3. Read the pre-second-upload metric and chart state from the portfolio.
     //    The re-query defect means this is usually still the empty state.
     const preMetric = await readPortfolioSessionCount(page);
-    const preGeometry = await getChartGeometryByTitle(page, 'Session Metrics');
+    const preGeometry = await getChartGeometryByTitle(page, 'Token usage trend');
 
     // 4. Ingest session B into the same project, still on #/ (Dashboard).
     await ingestSessionFromPortfolio(
@@ -117,9 +118,9 @@ test.describe('Portfolio refresh liveness', () => {
 
     await expect
       .poll(
-        async () => (await getChartGeometryByTitle(page, 'Session Metrics'))?.shapeCount ?? -1,
+        async () => (await getChartGeometryByTitle(page, 'Token usage trend'))?.shapeCount ?? -1,
         {
-          message: 'Session Metrics chart should render new geometry after the second upload',
+          message: 'Token usage trend chart should render new geometry after the second upload',
           timeout: 10000,
         },
       )
