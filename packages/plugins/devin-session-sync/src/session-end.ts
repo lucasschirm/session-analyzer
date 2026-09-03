@@ -13,6 +13,7 @@ function reportOutcome(outcome: {
   skipped: number;
   failed: number;
   errors: string[];
+  warnings: string[];
 }): void {
   const parts: string[] = [];
   if (outcome.uploaded > 0) parts.push(`${outcome.uploaded} files uploaded`);
@@ -20,6 +21,9 @@ function reportOutcome(outcome: {
   if (outcome.failed > 0) parts.push(`${outcome.failed} files failed`);
   if (parts.length > 0) {
     process.stderr.write(`devin-session-sync: ${parts.join(', ')}.\n`);
+  }
+  if (outcome.warnings.length > 0) {
+    process.stderr.write(`devin-session-sync: warnings: ${outcome.warnings.join(', ')}.\n`);
   }
   if (outcome.errors.length > 0) {
     process.stderr.write(`devin-session-sync: errors: ${outcome.errors.join(', ')}.\n`);

@@ -502,4 +502,86 @@ describe('runDevinSessionSync', () => {
     expect(outcome.errors.length).toBeGreaterThan(0);
     expect(events[events.length - 1]).toBe('failure');
   });
+
+  it('does not fail the sync when only the models-capture side-capture fails (#266)', async () => {
+    const storage = new RecordingStorageAdapter();
+    const events: Array<{ type: string; message: string }> = [];
+
+    const outcome = await runDevinSessionSync({
+      models: {
+        devinCliVersion: 'v1',
+        runModelsList: async () => {
+          throw new Error('devin cli unavailable');
+        },
+      },
+      tables: sessionTables,
+      schemaDescriptor: SCHEMA_DESCRIPTOR,
+      sessionId: 'sess-1',
+      cwd: '/tmp/workspace',
+      config: baseConfig,
+      dataDir,
+      storageAdapter: storage,
+      trigger: 'manual',
+      profile: DevinHarnessProfile,
+      homeDir,
+      dataRoot: homeDir,
+      onProgress: (event) => events.push({ type: event.type, message: event.message }),
+    });
+
+    // The real session artifacts uploaded fine — a models-capture failure
+    // alone must never flip the whole sync to failed.
+    expect(outcome.failed).toBe(0);
+    expect(outcome.errors).toEqual([]);
+
+    // But it must never be silently dropped either: it is recorded as a
+    // distinguishable warning, separate from `errors`, and the mid-stream
+    // capture failure is still visible as its own progress event — emitted
+    // as 'progress' (never 'failure'), so CLI/hook output never shows a
+    // failure-looking line for a sync that ultimately succeeded.
+    expect(outcome.warnings).toEqual(['devin cli unavailable']);
+    expect(
+      events.some((e) => e.type === 'progress' && e.message.includes('devin cli unavailable')),
+    ).toBe(true);
+    expect(events.some((e) => e.type === 'failure')).toBe(false);
+    expect(events[events.length - 1]?.type).toBe('success');
+    expect(events[events.length - 1]?.message).toContain('warning');
+
+    const manifestCall = storage.calls.find((c) => c.scope === 'manifest');
+    if (!manifestCall) throw new Error('expected a manifest upload call');
+    const manifest = JSON.parse(Buffer.from(manifestCall.body).toString('utf8'));
+    const artifactPaths = manifest.artifacts.map((a: { relativePath: string }) => a.relativePath);
+    expect(artifactPaths).not.toContain('native/models.json');
+  });
+
+  it('still reports failure when models capture succeeds but a real artifact upload fails (regression guard)', async () => {
+    const failingStorage: StorageAdapter = {
+      putObject: async (input) => {
+        if (input.scope === 'manifest') {
+          throw new Error('manifest upload failed');
+        }
+        return { key: 'x', sha256: sha256Hex(Buffer.from(input.body).toString('utf8')) };
+      },
+    };
+    const events: string[] = [];
+
+    const outcome = await runDevinSessionSync({
+      models: devinModelsCaptureOptions,
+      tables: sessionTables,
+      schemaDescriptor: SCHEMA_DESCRIPTOR,
+      sessionId: 'sess-1',
+      cwd: '/tmp/workspace',
+      config: baseConfig,
+      dataDir,
+      storageAdapter: failingStorage,
+      trigger: 'manual',
+      profile: DevinHarnessProfile,
+      homeDir,
+      dataRoot: homeDir,
+      onProgress: (event) => events.push(event.type),
+    });
+
+    expect(outcome.warnings).toEqual([]);
+    expect(outcome.errors.length).toBeGreaterThan(0);
+    expect(events[events.length - 1]).toBe('failure');
+  });
 });

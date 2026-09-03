@@ -9,6 +9,7 @@
  *   SYNC-007 — Stop-hook-only mitigation path (simulated Cloud session: no
  *              SessionStart/SessionEnd, only Stop + bulk `devin-sync sync`)
  *   SYNC-008 — devin-sync sync/list/download/remove/migrate CLI verb smoke pipeline
+ *   SYNC-010 — a Devin models-list capture failure never fails the sync (#266)
  */
 import * as fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -327,5 +328,45 @@ describe('Devin sync pipeline: sessions.db -> manifest -> artifact set', () => {
       stdout: listAfterStdout,
     });
     expect(listAfterLines.join('')).toContain('No sessions found');
+  });
+
+  it('SYNC-010: a Devin models-list capture failure never fails the sync — real artifacts still upload, visibly surfaced as a warning (#266)', async () => {
+    const storage = new InMemoryStorageAdapter();
+    const { stream: stdout, lines } = writable();
+
+    // Simulates the real-world trigger (`devin` binary unavailable, e.g. not
+    // on PATH) rather than depending on the environment's actual binary. A
+    // distinct `devinCliVersion` bypasses the successful capture the
+    // `beforeEach` pre-warmed into this `dataDir`'s cache, so the stub below
+    // genuinely gets invoked instead of a cache hit masking it.
+    const syncCode = await runSyncCommand({
+      env: envFor(dataDir),
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: storage,
+      stdout,
+      harnessProfile,
+      models: {
+        devinCliVersion: 'sync-010-test',
+        runModelsList: async () => {
+          throw new Error('devin cli unavailable');
+        },
+      },
+    });
+
+    // The whole point of the sync (the real session artifacts) still
+    // uploaded — a models-capture failure alone must not fail the sync.
+    expect(syncCode).toBe(0);
+    expect(storage.hasKeyEndingWith('manifest.json')).toBe(true);
+    expect(storage.hasKeyEndingWith('transcript.jsonl')).toBe(true);
+    expect(storage.hasKeyEndingWith('native/models.json')).toBe(false);
+
+    // The failure is still visible (never silently dropped, per
+    // .agents/rules/sync-progress-observability.md) but never rendered as a
+    // failure line, since the sync itself succeeded.
+    const output = lines.join('');
+    expect(output).toContain('Warnings:');
+    expect(output).toContain('devin cli unavailable');
+    expect(output).not.toContain('[fail]');
   });
 });

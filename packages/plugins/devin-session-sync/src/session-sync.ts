@@ -84,7 +84,21 @@ export interface DevinSessionSyncOutcome {
   uploaded: number;
   skipped: number;
   failed: number;
+  /**
+   * Failures in the actual session artifact pipeline (discovery, upload,
+   * manifest record/upload). Non-empty `errors` (or `failed > 0`) is what
+   * gates `hasFailure` — this is reserved for problems that mean "this
+   * session's real data failed to sync".
+   */
   errors: string[];
+  /**
+   * Best-effort side-capture problems (currently: the Devin models-list
+   * capture, DS-F4/#153) that must stay visible to the user per
+   * `.agents/rules/sync-progress-observability.md` but never alone flip the
+   * sync's success/failure determination — session sync success is gated on
+   * whether the real session artifacts uploaded, not on this side-channel.
+   */
+  warnings: string[];
 }
 
 function emitProgress(
@@ -105,6 +119,7 @@ function summarizeOutcome(outcome: DevinSessionSyncOutcome): string {
   if (outcome.uploaded > 0) parts.push(`${outcome.uploaded} uploaded`);
   if (outcome.skipped > 0) parts.push(`${outcome.skipped} skipped`);
   if (outcome.failed > 0) parts.push(`${outcome.failed} failed`);
+  if (outcome.warnings.length > 0) parts.push(`${outcome.warnings.length} warning(s)`);
   return `session ${outcome.sessionId}: ${parts.length > 0 ? parts.join(', ') : 'no changes'}`;
 }
 
@@ -370,7 +385,13 @@ async function resolveModelCandidates(
     now: options.models?.now,
   });
   if (result.error) {
-    emitProgress(options, 'failure', `devin models capture failed: ${result.error}`);
+    // Non-fatal: emitted as 'progress', never 'failure' — a models-capture
+    // problem must never look like a terminal sync failure in CLI/hook
+    // output (a real 'failure' terminal event is reserved for when the
+    // actual session artifacts fail to sync). Still fully visible: the
+    // message is prefixed 'warning:' and the error is recorded in
+    // `outcome.warnings` by the caller.
+    emitProgress(options, 'progress', `warning: devin models capture failed: ${result.error}`);
   }
   return { candidates: result.candidates, error: result.error };
 }
@@ -456,6 +477,7 @@ async function uploadSessionArtifacts(
     skipped: deltaResult.filesSkipped,
     failed: deltaResult.filesFailed,
     errors,
+    warnings: [],
   };
 }
 
@@ -498,10 +520,16 @@ export async function runDevinSessionSync(
 
   emitProgress(options, 'progress', `uploading ${candidateResults.length} artifact(s)`);
   const outcome = await uploadSessionArtifacts(options, candidateResults, profile);
-  if (modelsError && !outcome.errors.includes(modelsError)) {
-    outcome.errors.push(modelsError);
+  if (modelsError && !outcome.warnings.includes(modelsError)) {
+    outcome.warnings.push(modelsError);
   }
 
+  // Session sync success is gated on whether the real session artifacts
+  // (transcript, evidence, tool calls, manifest, etc.) uploaded — the
+  // models-list capture is a best-effort side-capture (DS-F4/#153) and must
+  // never alone flip the whole sync to failed. Its failure is still fully
+  // visible: it already emitted its own 'failure' progress event above and
+  // is recorded in `outcome.warnings` (never silently dropped).
   const hasFailure = outcome.failed > 0 || outcome.errors.length > 0;
   emitProgress(options, hasFailure ? 'failure' : 'success', summarizeOutcome(outcome));
   return outcome;

@@ -170,6 +170,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | SYNC-007 | Devin Cloud-session mitigation: sync completes via `Stop` alone + bulk `devin-sync sync`, with `SessionStart`/`SessionEnd` simulated as never firing (verified Part A3 caveat) | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest/transcript presence assertion without a SessionStart/SessionEnd call | 5 | 5 | 5 | 125 | P0 | GREEN |
 | SYNC-008 | `devin-sync sync`/`list`/`download`/`remove`/`migrate` CLI verb smoke pipeline round-trips one session | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | end-to-end CLI verb chain assertion | 3 | 4 | 3 | 36 | P1 | GREEN |
 | SYNC-009 | Devin CAS sync progress heartbeat advances during a throttled file download | `devin-sync-heartbeat.spec.ts` | `assertHeartbeat` (sync-flow.ts) with `syncProgressFilesParser` | 4 | 4 | 4 | 64 | P0 | GREEN |
+| SYNC-010 | Devin models-list capture failure (`devin` binary unavailable) never fails the sync; real session artifacts still upload and the failure surfaces as a distinguishable warning, never as `[fail]` output | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest-upload success + `Warnings:` visibility + absence of `[fail]` output assertion | 4 | 4 | 4 | 64 | P0 | GREEN |
 
 ## 7. Infrastructure prerequisites
 

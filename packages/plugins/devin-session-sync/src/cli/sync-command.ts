@@ -12,7 +12,7 @@ import {
 import { DevinHarnessProfile } from '../devin-profile.js';
 import { type DevinSnapshot, readDevinSnapshot } from '../devin-snapshot.js';
 import type { DevinSessionRow } from '../extractor/types.js';
-import { captureDevinModels } from '../models/capture.js';
+import { type CaptureDevinModelsOptions, captureDevinModels } from '../models/capture.js';
 import {
   type DevinSessionSyncOutcome,
   type DevinSyncProgressEvent,
@@ -34,6 +34,8 @@ export interface SyncCommandOptions {
   /** Overrides `sessions.db`'s resolved path; primarily for tests. */
   sessionsDbPath?: string;
   homeDir?: string;
+  /** Optional overrides for the Devin models-list capture (e.g. test fixtures). */
+  models?: Partial<CaptureDevinModelsOptions>;
 }
 
 function writeProgressLine(stdout: NodeJS.WritableStream, event: DevinSyncProgressEvent): void {
@@ -52,6 +54,7 @@ async function syncOneSessionSafely(
   env: Record<string, string | undefined>,
   stdout: NodeJS.WritableStream,
   homeDir: string | undefined,
+  models: Partial<CaptureDevinModelsOptions> | undefined,
 ): Promise<DevinSessionSyncOutcome> {
   try {
     return await runDevinSessionSync({
@@ -66,12 +69,20 @@ async function syncOneSessionSafely(
       profile,
       env,
       homeDir,
+      models,
       onProgress: (event) => writeProgressLine(stdout, event),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     stdout.write(`[fail] session ${session.id} — ${message}\n`);
-    return { sessionId: session.id, uploaded: 0, skipped: 0, failed: 1, errors: [message] };
+    return {
+      sessionId: session.id,
+      uploaded: 0,
+      skipped: 0,
+      failed: 1,
+      errors: [message],
+      warnings: [],
+    };
   }
 }
 
@@ -117,16 +128,24 @@ function summarizeTotals(
   let skipped = 0;
   let failed = 0;
   const errors: string[] = [];
+  const warnings: string[] = [];
   for (const outcome of outcomes) {
     uploaded += outcome.uploaded;
     skipped += outcome.skipped;
     failed += outcome.failed;
     errors.push(...outcome.errors.map((e) => `${outcome.sessionId}: ${e}`));
+    warnings.push(...outcome.warnings.map((w) => `${outcome.sessionId}: ${w}`));
   }
   stdout.write('\n');
   stdout.write(
     `Synced ${outcomes.length} session(s): ${uploaded} files uploaded, ${skipped} skipped, ${failed} failed.\n`,
   );
+  // Best-effort side-capture warnings (e.g. Devin models-list) never flip the
+  // exit code, but per `.agents/rules/sync-progress-observability.md` they
+  // must still be user-visible, not silently dropped.
+  if (warnings.length > 0) {
+    stdout.write(`Warnings: ${warnings.join('; ')}\n`);
+  }
   return { errors };
 }
 
@@ -174,7 +193,11 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
   const dataDir = getDataDir(env);
   await clearForceState(force, dataDir, config.projectId, stdout);
 
-  const models = await captureDevinModels({ dataDir, devinCliVersion: profile.harnessVersion });
+  const models = await captureDevinModels({
+    dataDir,
+    devinCliVersion: profile.harnessVersion,
+    ...options.models,
+  });
   if (models.error) {
     stderr.write(`devin-sync: models capture warning: ${models.error}\n`);
   }
@@ -196,6 +219,7 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
         env,
         stdout,
         options.homeDir,
+        options.models,
       ),
     );
   }
