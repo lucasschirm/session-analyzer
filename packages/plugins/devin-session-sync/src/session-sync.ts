@@ -396,12 +396,47 @@ async function resolveModelCandidates(
   return { candidates: result.candidates, error: result.error };
 }
 
+/**
+ * Key used to read/write this session's `SessionData` record in `StateStore`.
+ *
+ * `StateStore.getSession`/`setSession` (packages/sync/src/state/state.ts) key
+ * session records by whatever string is passed in — a single field, with no
+ * projectId. That store's data directory (`~/.sal-sync` by default, see
+ * `getDataDir` in packages/sync/src/cli/common.ts) is process-wide, not
+ * project-scoped, and the same `StateStore` class is also used by
+ * claude-session-sync's own hook/CLI entry points elsewhere in the engine
+ * (`packages/sync/src/cli/*.ts`, the transcript watcher). This composes the
+ * key on the Devin side only, rather than changing `StateStore`'s shared
+ * signature — several of those other call sites (e.g. `sal-sync status
+ * --session-id`) don't reliably have a `projectId` available, so widening the
+ * shared signature would be riskier than fixing identity at the one call site
+ * that has the bug.
+ *
+ * Composing `(projectId, sessionId)` into the key (mirroring
+ * `artifactStateKey`'s multi-field JSON encoding in the same state.ts file)
+ * means a session id whose associated project changes between sync runs
+ * resolves to a *distinct* stored record per project, instead of reusing a
+ * stale record from a different project's run.
+ *
+ * DS-B23 (#275): before this fix, running the plugin against project A, then
+ * correcting `SAL_PROJECT_ID` to project B for the same local Devin session,
+ * reused the project-A `SessionData` (keyed by `sessionId` alone) and
+ * produced a manifest whose top-level `projectId` (from that stale session
+ * record) disagreed with every `artifacts[].projectId` entry (built fresh
+ * from the current `config.projectId`) — a single manifest object with two
+ * different `projectId` values depending which field you read.
+ */
+export function devinSessionStateKey(projectId: string, sessionId: string): string {
+  return JSON.stringify([projectId, sessionId]);
+}
+
 async function resolveSessionData(
   options: DevinSessionSyncOptions,
   stateStore: StateStore,
   profile: HarnessProfile,
 ): Promise<SessionData> {
-  const existing = await stateStore.getSession(options.sessionId);
+  const stateKey = devinSessionStateKey(options.config.projectId, options.sessionId);
+  const existing = await stateStore.getSession(stateKey);
   if (existing) return existing;
   const session: SessionData = {
     sessionId: options.sessionId,
@@ -410,7 +445,7 @@ async function resolveSessionData(
     harnessVersion: profile.harnessVersion,
     startedAt: new Date().toISOString(),
   };
-  await stateStore.setSession(options.sessionId, session);
+  await stateStore.setSession(stateKey, session);
   return session;
 }
 
