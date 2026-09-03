@@ -303,6 +303,23 @@ describe('project-behavior-view empty and error affordances', () => {
     expect(root.querySelector('.error')).toBeNull();
     expect(root.textContent).toContain('No model activity in this window');
   });
+
+  it('renders every chart as an empty affordance (never a blank data surface) when the project cannot be resolved', async () => {
+    resolveProjectIdMock.mockResolvedValue(null);
+    const view = await mountView();
+    const root = view.shadowRoot as ShadowRoot;
+    const histogramChart = root.querySelector('analytics-chart[title="Session duration"]') as
+      | (HTMLElement & { state: string | null })
+      | null;
+    expect(histogramChart).not.toBeNull();
+    // 'idle' (the initial panel state) maps to a null chart .state, which
+    // echarts-base treats as "render the data surface" rather than an
+    // empty affordance — regression coverage for that exact gap.
+    expect(histogramChart?.state).toBe('empty');
+    // None of the fetch mocks should have been called — resolution failed
+    // before any panel request was issued.
+    expect(projectMock.getDurationHistogram).not.toHaveBeenCalled();
+  });
 });
 
 describe('project-behavior-view model cohorts table', () => {

@@ -403,6 +403,13 @@ export class ProjectBehaviorPage extends PageLitElement {
     this.globalError = null;
     const resolved = await this.resolveProject();
     if (!resolved) {
+      // An unresolvable project (e.g. referenced only by a sync that never
+      // produced a valid session record) has no panel data to fetch — every
+      // panel must still transition out of its initial 'idle' state, or
+      // each chart renders a blank container instead of an empty affordance
+      // (chartState() maps 'idle' to null, which echarts-base treats as
+      // "show the data surface", not "show the empty state").
+      this.markAllPanelsEmpty();
       this.globalState = 'empty';
       return;
     }
@@ -410,6 +417,17 @@ export class ProjectBehaviorPage extends PageLitElement {
     this.filters = { ...parseProjectBehaviorHash(window.location.hash), projectId: this.projectId };
     const query = projectBehaviorParamsToQuery(this.filters);
     this.applyResults(await this.fetchPanels(resolved, query));
+  }
+
+  private markAllPanelsEmpty(): void {
+    const empty = { data: null, state: 'empty' as const };
+    this.header = empty;
+    this.statStrip = empty;
+    this.histogram = empty;
+    this.outcomes = empty;
+    this.toolErrorRate = empty;
+    this.topTools = empty;
+    this.modelCohorts = empty;
   }
 
   private applyCorePanels(results: PanelResults): void {
