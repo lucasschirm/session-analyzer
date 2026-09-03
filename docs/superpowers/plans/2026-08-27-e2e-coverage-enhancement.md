@@ -162,7 +162,13 @@ the disposition and pointer to any replacement coverage).
 | UX-039 | Portfolio per-section affordances (issue #170) | A failing `portfolio.getKpiBand` query surfaces a `role="alert"` `.panel-error` affordance (UX-039a) that is structurally distinct from a legitimately empty project leaderboard's "No projects found." copy with no error marker (UX-039b) — proving failure-as-"no data" is never conflated (`.agents/rules/no-silent-empty-states.md`) | `installFailingWorker`, `buildFailingQueryWorker` (`worker-failure.ts`) | 4 | 5 | 3 | 60 | `portfolio-redesign.spec.ts` | GREEN |
 | UX-040 | Portfolio project leaderboard (issue #170) | Clicking a project leaderboard row navigates to that project's page with a `returnContext` query param carrying the current portfolio filter hash | none | 3 | 4 | 3 | 36 | `portfolio-redesign.spec.ts` | GREEN |
 
-New redesign entries allocate **UX-041** and up next.
+| UX-041 | Project Behavior drill-down header (issue #171) | Navigating from the Portfolio project leaderboard to a project's drill-down page renders `<h1>` matching the clicked project's display name | none | 3 | 4 | 3 | 36 | `project-behavior.spec.ts` | GREEN |
+| UX-042 | Project Behavior session-duration histogram (issue #171) | The histogram's rendered SVG bars, and its accessible table fallback, correspond to the `SessionDurationHistogram` DTO bins for the seeded session(s) — never a hardcoded bin table | none (direct SVG + `details.table-fallback` row assertions) | 3 | 4 | 4 | 48 | `project-behavior.spec.ts` | GREEN |
+| UX-043 | Project Behavior session outcomes legend (issue #171) | The outcome legend rows' counts and percentages (plus the unreadable-tail footnote) sum to exactly the session total | none | 3 | 4 | 3 | 36 | `project-behavior.spec.ts` | GREEN |
+| UX-044 | Project Behavior chart empty vs error (issue #171) | A genuine zero-row time window and a forced worker query failure render structurally distinct empty/error affordances on the Session duration histogram | `assertEmptyAffordance`, `assertErrorBoundary` (`chart-content.ts`) | 4 | 5 | 3 | 60 | `ux-002-empty-error.spec.ts` (repointed at the redesigned page's histogram chart by this PR) | GREEN |
+| UX-045 | Project Behavior breadcrumb returnContext (issue #171) | The breadcrumb link carries the originating Portfolio filter state (`returnContext`) and clicking it restores that filtered Portfolio view | none | 2 | 3 | 3 | 18 | `project-behavior.spec.ts` | GREEN |
+
+New redesign entries allocate **UX-046** and up next.
 
 ### 6.2 Tier B — Analytics pipeline integration (`PIPE-###`)
 

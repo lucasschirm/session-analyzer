@@ -428,12 +428,14 @@ test.describe('Analytics chart geometry (UX-001)', () => {
     await page.goto(`/#/projects/${projectName}`);
     await expect(page.locator('.filter-bar')).toBeVisible({ timeout: 15000 });
 
-    // Pick the token usage trends chart by its title. The test must prove real
-    // SVG marks are rendered, not just a title, legend, or empty-state badge.
-    // getByRole pierces the open shadow DOM and matches the chart's title.
+    // Pick the session-duration histogram by its title (issue #171 redesign
+    // — the Project Behavior page no longer has a "Token usage trends"
+    // chart). The test must prove real SVG marks are rendered, not just a
+    // title, legend, or empty-state badge. getByRole pierces the open
+    // shadow DOM and matches the chart's title.
     const chart = page
       .locator('analytics-chart')
-      .filter({ has: page.getByRole('heading', { name: 'Token usage trends' }) });
+      .filter({ has: page.getByRole('heading', { name: 'Session duration' }) });
     await expect(chart).toBeVisible({ timeout: 15000 });
 
     // This assertion queries the chart's shadow DOM and checks for non-zero

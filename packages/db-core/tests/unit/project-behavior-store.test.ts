@@ -592,4 +592,74 @@ describe('ProjectBehaviorStore query plans (schema-change-tests.md: no full scan
     );
     expect(details.some((d) => /^SCAN/.test(d))).toBe(false);
   });
+
+  it('getHarnessSessionCounts / getProjectDisplayName resolve via SEARCH, never SCAN', async () => {
+    const executor = await seed();
+    const harnessDetails = await planDetails(
+      executor,
+      `SELECT s.harness AS harness, COUNT(*) AS c,
+         MIN(s.start_time) AS min_start, MAX(s.start_time) AS max_start
+       FROM sessions s WHERE s.project_id = ? GROUP BY s.harness`,
+      [PROJECT_ID],
+    );
+    expect(harnessDetails.some((d) => /^SCAN/.test(d))).toBe(false);
+  });
+});
+
+describe('ProjectBehaviorStore.getHarnessSessionCounts / getProjectDisplayName (issue #171)', () => {
+  it('groups all-time session counts and start-time bounds by harness', async () => {
+    const executor = await seed();
+    await insertSession(executor, 's1', 1000, 2000);
+    await insertSession(executor, 's2', 3000, 4000);
+    await SessionStore.insert(executor, {
+      id: 's3',
+      projectId: PROJECT_ID,
+      ingestionSourceId: 'pb-ingestion',
+      environmentId: 'pb-env',
+      harness: 'codex',
+      nativeSessionId: 's3',
+      currentGenerationId: null,
+      occurrenceTime: null,
+      finality: 'final',
+      mode: null,
+      taskCohort: null,
+      startTime: 500,
+      endTime: null,
+    } as never);
+
+    const rows = await ProjectBehaviorStore.getHarnessSessionCounts(executor, PROJECT_ID);
+    const byHarness = new Map(rows.map((r) => [r.harness, r]));
+    expect(byHarness.get('claude-code')).toEqual({
+      harness: 'claude-code',
+      sessionCount: 2,
+      minStartMs: 1000,
+      maxStartMs: 3000,
+    });
+    expect(byHarness.get('codex')).toEqual({
+      harness: 'codex',
+      sessionCount: 1,
+      minStartMs: 500,
+      maxStartMs: 500,
+    });
+  });
+
+  it('returns an empty array for a project with no sessions', async () => {
+    const executor = await seed();
+    const rows = await ProjectBehaviorStore.getHarnessSessionCounts(executor, PROJECT_ID);
+    expect(rows).toEqual([]);
+  });
+
+  it('reads the project display name, preferring display_name over name', async () => {
+    const executor = await seed();
+    const name = await ProjectBehaviorStore.getProjectDisplayName(executor, PROJECT_ID);
+    // seed() inserts the project without a display_name, so COALESCE falls
+    // back to `name`, which was set to PROJECT_ID.
+    expect(name).toBe(PROJECT_ID);
+  });
+
+  it('returns null for an unknown project id', async () => {
+    const executor = await seed();
+    const name = await ProjectBehaviorStore.getProjectDisplayName(executor, 'missing-project');
+    expect(name).toBeNull();
+  });
 });

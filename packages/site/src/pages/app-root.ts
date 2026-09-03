@@ -607,26 +607,32 @@ export class AppRoot extends LitElement {
   }
 
   /**
-   * The Portfolio route (`/`, issue #170) and Session Evidence route
+   * The Portfolio route (`/`, issue #170), Project drill-down route
+   * (`/projects/:id`, issue #171), and Session Evidence route
    * (`/sessions/:id`, issue #172) each render a page-owned title row in
    * place of this global header — project selection moves into the filter
    * bar's Project chip and Export moves into the page's own Export button
    * on `/`, per the shell sub-issue's disposition table. Every other route
+   * (including the `/projects` index list, per issue #165's disposition)
    * keeps the global header. `sync-progress-bar`/`sync-status-bar` stay
    * mounted below regardless of route — a page's own sync chip only
    * complements them, never replaces them.
    *
    * Known, deliberate trade-off: `header-project-selector`'s type-ahead
-   * "jump straight to any project by name" search is not replicated on `/`.
-   * The filter bar's Project chip only *scopes* the Portfolio view, it does
-   * not navigate. From `/`, reaching a specific project's page still takes
-   * one action — a project leaderboard row click (carries the current
-   * filter context as `returnContext`), or the icon rail's Projects
-   * destination, which has its own full, searchable list. Every other
-   * route keeps the fast type-ahead selector.
+   * "jump straight to any project by name" search is not replicated on `/`
+   * or `/projects/:id`. The filter bar's Project chip only *scopes* the
+   * current view, it does not navigate. From `/`, reaching a specific
+   * project's page still takes one action — a project leaderboard row
+   * click (carries the current filter context as `returnContext`), or the
+   * icon rail's Projects destination, which has its own full, searchable
+   * list. Every other route keeps the fast type-ahead selector.
    */
   private isGlobalHeaderHidden(): boolean {
-    return this.currentPath === '/' || /^\/sessions\//.test(this.currentPath);
+    return (
+      this.currentPath === '/' ||
+      /^\/projects\/[^/]+/.test(this.currentPath) ||
+      /^\/sessions\//.test(this.currentPath)
+    );
   }
 
   private get showGlobalHeader(): boolean {

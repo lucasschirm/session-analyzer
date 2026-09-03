@@ -3,6 +3,14 @@ import { installFailingWorker } from './helpers/worker-failure';
 
 const HANGING_PROJECT = 'UX009Hang';
 
+/**
+ * UX-009: a blocked/hung analytics query reaches a bounded client-side
+ * timeout error affordance instead of an indefinite spinner. Rewritten for
+ * the project-behavior redesign (issue #171): every panel query resolves
+ * with a valid, minimal empty DTO except `project.getStatStrip`, which is
+ * dropped so its 30s client-side timeout must fire and the stat-strip panel
+ * must reach an error affordance instead of hanging indefinitely.
+ */
 const HANGING_ANALYTICS_WORKER = `
 const token = {
   analysisReleaseId: '',
@@ -18,11 +26,13 @@ const token = {
   evidenceLinks: [],
 };
 
-const emptySummary = { token, headlineMetrics: [], trendToken: token };
-const emptyTrends = { token, series: [] };
-const emptyTimeline = { token, events: [] };
-const emptyOutliers = { items: [], generationToken: 'gen-hang', analysisReleaseToken: '' };
-const emptyComparisons = { items: [], generationToken: 'gen-hang', analysisReleaseToken: '' };
+const emptyHeader = { token, displayName: 'UX009Hang', harnesses: [], sessionCount: 0 };
+const emptyHistogram = { token, bins: [], eligibleN: 0, knownN: 0 };
+const emptyOutcomes = { token, buckets: [] };
+const emptyToolErrorRate = { token, series: [], currentValue: null, currentWeekN: 0 };
+const emptyTopTools = { token, rows: [], totalInvocations: 0 };
+const emptyModelCohorts = { token, rows: [] };
+const emptyDomains = { projects: [], harnesses: [], models: [] };
 
 function replyOk(id, result) {
   self.postMessage({ id, ok: true, result });
@@ -54,21 +64,27 @@ self.onmessage = (event) => {
       break;
 
     case 'query':
-      if (request.view === 'project' && request.method === 'getSummary') {
-        // Intentionally drop the summary query so the 30s client-side
-        // timeout must fire and the view reaches an error affordance.
+      if (request.view === 'project' && request.method === 'getStatStrip') {
+        // Intentionally drop the reply: no response is ever posted, so the
+        // 30s client-side timeout must fire.
         break;
       }
-      if (request.view === 'project' && request.method === 'getSessionTrendSeries') {
-        replyOk(id, emptyTrends);
-      } else if (request.view === 'project' && request.method === 'getConfigurationTimeline') {
-        replyOk(id, emptyTimeline);
-      } else if (request.view === 'project' && request.method === 'getOutliers') {
-        replyOk(id, emptyOutliers);
-      } else if (request.view === 'project' && request.method === 'getComparisons') {
-        replyOk(id, emptyComparisons);
+      if (request.view === 'project' && request.method === 'getHeader') {
+        replyOk(id, emptyHeader);
+      } else if (request.view === 'project' && request.method === 'getDurationHistogram') {
+        replyOk(id, emptyHistogram);
+      } else if (request.view === 'project' && request.method === 'getOutcomeMix') {
+        replyOk(id, emptyOutcomes);
+      } else if (request.view === 'project' && request.method === 'getWeeklyToolErrorRate') {
+        replyOk(id, emptyToolErrorRate);
+      } else if (request.view === 'project' && request.method === 'getTopTools') {
+        replyOk(id, emptyTopTools);
+      } else if (request.view === 'project' && request.method === 'getModelHarnessCohorts') {
+        replyOk(id, emptyModelCohorts);
+      } else if (request.view === 'metadata' && request.method === 'getDimensionDomains') {
+        replyOk(id, emptyDomains);
       } else {
-        self.postMessage({ id, ok: true, result: null });
+        replyOk(id, null);
       }
       break;
 
@@ -86,31 +102,25 @@ async function installHangingAnalyticsWorker(page: Page): Promise<void> {
 }
 
 test.describe('UX-009: query hang bounded', () => {
-  test('blocked project summary query reaches a bounded timeout error', async ({ page }) => {
+  test('a blocked stat-strip query reaches a bounded timeout error', async ({ page }) => {
     test.setTimeout(70_000);
 
     await installHangingAnalyticsWorker(page);
     await page.goto(`/#/projects/${encodeURIComponent(HANGING_PROJECT)}`);
 
-    await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
-      timeout: 15_000,
-    });
-
-    // The Overview section derives its state from the summary query, so it
-    // transitions to the error state when the summary query times out.
-    const overviewSection = page.locator('.section', { hasText: 'Overview' });
+    // The breadcrumb and filter bar render independent of any query result,
+    // so they prove the page mounted before the stat-strip query stalls.
+    await expect(page.locator('filter-bar')).toBeVisible({ timeout: 15_000 });
 
     await expect(page.getByText(/analytics query timed out after 30000ms/)).toBeVisible({
       timeout: 35_000,
     });
 
-    // The error affordance must appear inside the Overview section (not just
-    // as a floating toast), proving the panel surfaced the bounded timeout
+    // The error affordance replaces the stat-strip panel itself (not just a
+    // floating toast), proving the panel surfaced the bounded timeout
     // instead of an indefinite loading spinner.
-    await expect(overviewSection.locator('.error')).toContainText(
-      /analytics query timed out after 30000ms/,
-      { timeout: 5_000 },
-    );
-    await expect(page.getByText('Loading project behavior…')).toBeHidden();
+    await expect(page.locator('.error', { hasText: 'timed out' })).toBeVisible({
+      timeout: 5_000,
+    });
   });
 });

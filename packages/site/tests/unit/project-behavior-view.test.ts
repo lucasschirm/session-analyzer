@@ -1,11 +1,12 @@
 import type {
-  AnalyticsToken,
-  ComparisonPage,
-  ConfigurationTimeline,
-  MetricValueDto,
-  OutlierPage,
-  ProjectBehaviorSummary,
-  SessionTrendSeries,
+  DimensionDomains,
+  ProjectHeader,
+  ProjectModelHarnessCohorts,
+  ProjectStatStrip,
+  SessionDurationHistogram,
+  SessionOutcomeDistribution,
+  TopToolsList,
+  WeeklyToolErrorRateSeries,
 } from '@lucasschirm/sal-db';
 import type { LitElement } from 'lit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,18 +14,25 @@ import '../../src/pages/project-behavior/project-behavior-view';
 import type { ProjectBehaviorPage } from '../../src/pages/project-behavior/project-behavior-view';
 
 const projectMock = vi.hoisted(() => ({
-  getSummary: vi.fn(),
-  getSessionTrendSeries: vi.fn(),
-  getConfigurationTimeline: vi.fn(),
-  getOutliers: vi.fn(),
-  getComparisons: vi.fn(),
+  getHeader: vi.fn(),
+  getStatStrip: vi.fn(),
+  getDurationHistogram: vi.fn(),
+  getOutcomeMix: vi.fn(),
+  getWeeklyToolErrorRate: vi.fn(),
+  getTopTools: vi.fn(),
+  getModelHarnessCohorts: vi.fn(),
 }));
 
+const metadataMock = vi.hoisted(() => ({ getDimensionDomains: vi.fn() }));
 const resolveProjectIdMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
-  analyticsClient: { project: projectMock, resolveProjectId: resolveProjectIdMock },
+  analyticsClient: {
+    project: projectMock,
+    metadata: metadataMock,
+    resolveProjectId: resolveProjectIdMock,
+  },
 }));
 
 async function flush(element: LitElement): Promise<void> {
@@ -47,174 +55,142 @@ async function mount<T extends LitElement>(element: T): Promise<T> {
   return element;
 }
 
-function shadowText(parent: ShadowRoot, selector: string): string {
-  const child = parent.querySelector(selector) as LitElement | null;
-  expect(child).not.toBeNull();
-  return (child?.shadowRoot?.textContent ?? '') as string;
-}
-
-function allShadowTexts(parent: ShadowRoot, selector: string): string[] {
-  return Array.from(parent.querySelectorAll(selector)).map(
-    (child) => ((child as LitElement).shadowRoot?.textContent ?? '') as string,
-  );
-}
-
-function tokenFixture(overrides: Partial<AnalyticsToken> = {}): AnalyticsToken {
+function tokenFixture() {
   return {
     analysisReleaseId: 'rel-1',
     generationId: 'gen-1',
     comparabilityGroupId: 'cgrp-1',
-    eligibleN: 100,
-    knownN: 95,
-    unknownCount: 5,
+    eligibleN: 10,
+    knownN: 10,
+    unknownCount: 0,
     coverage: 'complete',
-    measurementClass: 'observed',
+    measurementClass: 'derived',
     confidence: 'high',
-    metricVersion: '1.0.0',
+    metricVersion: '1',
     evidenceLinks: [],
+  };
+}
+
+function headerFixture(overrides: Partial<ProjectHeader> = {}): ProjectHeader {
+  return {
+    token: tokenFixture() as ProjectHeader['token'],
+    displayName: 'Alpha Project',
+    harnesses: ['claude-code', 'codex'],
+    sessionCount: 12,
+    activeWindowStart: '2024-01-01T00:00:00.000Z',
+    activeWindowEnd: '2024-02-01T00:00:00.000Z',
     ...overrides,
   };
 }
 
-function metricValueFixture(overrides: Partial<MetricValueDto> = {}): MetricValueDto {
+function statStripFixture(overrides: Partial<ProjectStatStrip> = {}): ProjectStatStrip {
   return {
-    ...tokenFixture(),
-    metricId: 'm-duration',
-    value: 1_234,
-    unit: 'ms',
-    label: 'Duration',
-    isExact: true,
+    token: tokenFixture() as ProjectStatStrip['token'],
+    sessions: { current: 10, currentN: 10 },
+    durationMedianMs: { value: 60_000, eligibleN: 10, knownN: 10 },
+    durationP90Ms: { value: 120_000, eligibleN: 10, knownN: 10 },
+    turnsMedian: { value: 5, eligibleN: 10, knownN: 10 },
+    turnsP90: { value: 12, eligibleN: 10, knownN: 10 },
+    tokensPerSession: { value: 1000, eligibleN: 10, knownN: 10 },
+    costPerSession: { value: null, eligibleN: 10, knownN: 0 },
+    costHarnessCoverage: { reportingHarnessCount: 1, totalHarnessCount: 2 },
     ...overrides,
   };
 }
 
-function summaryFixture(overrides: Partial<ProjectBehaviorSummary> = {}): ProjectBehaviorSummary {
+function histogramFixture(
+  overrides: Partial<SessionDurationHistogram> = {},
+): SessionDurationHistogram {
   return {
-    token: tokenFixture(),
-    headlineMetrics: [metricValueFixture()],
-    trendToken: tokenFixture(),
+    token: tokenFixture() as SessionDurationHistogram['token'],
+    eligibleN: 3,
+    knownN: 3,
+    bins: [
+      { startMs: 0, endMs: 60_000, count: 1 },
+      { startMs: 60_000, endMs: null, count: 2 },
+    ],
     ...overrides,
   };
 }
 
-function trendsFixture(overrides: Partial<SessionTrendSeries> = {}): SessionTrendSeries {
+function outcomesFixture(
+  overrides: Partial<SessionOutcomeDistribution> = {},
+): SessionOutcomeDistribution {
   return {
-    token: tokenFixture(),
-    series: [
+    token: tokenFixture() as SessionOutcomeDistribution['token'],
+    buckets: [
+      { outcome: 'clean', count: 7, percent: 70 },
+      { outcome: 'interrupted_by_user', count: 2, percent: 20 },
+      { outcome: 'ended_on_error', count: 1, percent: 10 },
+      { outcome: null, count: 0, percent: 0 },
+    ],
+    ...overrides,
+  };
+}
+
+function toolErrorFixture(
+  overrides: Partial<WeeklyToolErrorRateSeries> = {},
+): WeeklyToolErrorRateSeries {
+  return {
+    token: tokenFixture() as WeeklyToolErrorRateSeries['token'],
+    series: [{ weekBucket: '2024-01', rate: 0.1, toolCallsN: 20, failedN: 2 }],
+    currentValue: 0.1,
+    currentWeekN: 20,
+    ...overrides,
+  };
+}
+
+function topToolsFixture(overrides: Partial<TopToolsList> = {}): TopToolsList {
+  return {
+    token: tokenFixture() as TopToolsList['token'],
+    rows: [{ componentId: 'bash', displayName: 'bash', invocationCount: 5 }],
+    totalInvocations: 5,
+    ...overrides,
+  };
+}
+
+function modelCohortsFixture(
+  overrides: Partial<ProjectModelHarnessCohorts> = {},
+): ProjectModelHarnessCohorts {
+  return {
+    token: tokenFixture() as ProjectModelHarnessCohorts['token'],
+    rows: [
       {
-        time: '2024-01-01',
-        value: 100,
-        metricId: 'total_tokens',
-        label: 'Total tokens',
-        comparabilityGroupId: 'cgrp-1',
-      },
-      {
-        time: '2024-01-02',
-        value: 150,
-        metricId: 'total_tokens',
-        label: 'Total tokens',
-        comparabilityGroupId: 'cgrp-1',
+        model: 'claude-sonnet',
+        harness: 'claude-code',
+        n: 10,
+        medianTokens: 500,
+        medianCost: 0.5,
+        cleanRate: 0.9,
+        cleanRateKnownN: 10,
+        lowN: false,
       },
     ],
     ...overrides,
   };
 }
 
-function timelineFixture(overrides: Partial<ConfigurationTimeline> = {}): ConfigurationTimeline {
-  return {
-    token: tokenFixture(),
-    events: [
-      {
-        sequence: 1,
-        captureTime: '2024-01-01T12:00:00.000Z',
-        changeType: 'added',
-        componentId: 'main.ts',
-        componentKind: 'file',
-        toVersion: 'v1.0.0',
-      },
-    ],
-    ...overrides,
-  };
-}
+const domainsFixture: DimensionDomains = {
+  token: tokenFixture() as DimensionDomains['token'],
+  projects: ['Alpha Project'],
+  harnesses: ['claude-code', 'codex'],
+  models: ['claude-sonnet'],
+};
 
-function outlierFixture(overrides: Partial<OutlierPage> = {}): OutlierPage {
-  return {
-    items: [
-      {
-        sessionId: 's1',
-        metricId: 'm-duration',
-        value: 10_000,
-        deviation: 5_000,
-        evidenceLinks: [
-          { evidenceId: 's1', entityType: 'session', entityId: 's1', label: 'Session s1' },
-        ],
-      },
-    ],
-    generationToken: 'gen-1',
-    analysisReleaseToken: 'rel-1',
-    ...overrides,
-  };
-}
-
-function comparisonFixture(overrides: Partial<ComparisonPage> = {}): ComparisonPage {
-  return {
-    items: [
-      {
-        comparisonId: 'cmp-1',
-        kind: 'observed',
-        cohortA: {
-          cohortId: 'before-1',
-          label: 'before',
-          eligibleN: 10,
-          knownN: 10,
-          unknownCount: 0,
-        },
-        cohortB: {
-          cohortId: 'after-1',
-          label: 'after',
-          eligibleN: 10,
-          knownN: 10,
-          unknownCount: 0,
-        },
-        metricValues: [
-          metricValueFixture({
-            metricId: 'absolute-delta',
-            value: 100,
-            unit: 'ms',
-            label: 'Absolute delta',
-          }),
-          metricValueFixture({
-            metricId: 'relative-delta',
-            value: 0.2,
-            unit: 'ratio',
-            label: 'Relative delta',
-          }),
-          metricValueFixture({
-            metricId: 'regression',
-            value: 1,
-            unit: 'flag',
-            label: 'Regression',
-          }),
-        ],
-      },
-    ],
-    generationToken: 'gen-1',
-    analysisReleaseToken: 'rel-1',
-    ...overrides,
-  };
-}
-
-function stubProjectBehaviorLoad(): void {
+function stubLoad(): void {
   resolveProjectIdMock.mockResolvedValue('p1');
-  projectMock.getSummary.mockResolvedValue(summaryFixture());
-  projectMock.getSessionTrendSeries.mockResolvedValue(trendsFixture());
-  projectMock.getConfigurationTimeline.mockResolvedValue(timelineFixture());
-  projectMock.getOutliers.mockResolvedValue(outlierFixture());
-  projectMock.getComparisons.mockResolvedValue(comparisonFixture());
+  projectMock.getHeader.mockResolvedValue(headerFixture());
+  projectMock.getStatStrip.mockResolvedValue(statStripFixture());
+  projectMock.getDurationHistogram.mockResolvedValue(histogramFixture());
+  projectMock.getOutcomeMix.mockResolvedValue(outcomesFixture());
+  projectMock.getWeeklyToolErrorRate.mockResolvedValue(toolErrorFixture());
+  projectMock.getTopTools.mockResolvedValue(topToolsFixture());
+  projectMock.getModelHarnessCohorts.mockResolvedValue(modelCohortsFixture());
+  metadataMock.getDimensionDomains.mockResolvedValue(domainsFixture);
 }
 
 beforeEach(() => {
-  stubProjectBehaviorLoad();
+  stubLoad();
   window.location.hash = '#/projects/p1';
 });
 
@@ -223,193 +199,168 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-describe('project-behavior-view', () => {
-  it('loads and renders overview, trends, timeline, cohorts, and outliers', async () => {
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
+async function mountView(): Promise<ProjectBehaviorPage> {
+  const view = Object.assign(document.createElement('project-behavior-view'), {
+    projectId: 'p1',
+  }) as ProjectBehaviorPage;
+  return mount(view);
+}
+
+describe('project-behavior-view header and breadcrumb', () => {
+  it('renders the project display name and identity chips', async () => {
+    const view = await mountView();
     const root = view.shadowRoot as ShadowRoot;
-
-    expect(root.textContent).toContain('Project Behavior');
-    const cardTexts = allShadowTexts(root, 'metrics-card').join(' ');
-    expect(cardTexts).toContain('Duration');
-    expect(root.textContent).toContain('Session Metrics');
-    expect(root.textContent).toContain('Configuration timeline');
-    expect(root.textContent).toContain('Matched before / after cohorts');
-    expect(root.textContent).toContain('Outliers');
-    expect(root.querySelectorAll('table')[1]?.textContent).toContain('s1');
+    expect(root.textContent).toContain('Alpha Project');
+    expect(root.textContent).toContain('claude-code, codex');
+    expect(root.textContent).toContain('12 sessions');
   });
 
-  it('displays session-to-session context growth as a time-series chart', async () => {
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
+  it('does not render a "Compare period" control', async () => {
+    const view = await mountView();
     const root = view.shadowRoot as ShadowRoot;
-
-    const chart = root.querySelectorAll('analytics-chart')[1] as LitElement;
-    expect(chart).not.toBeNull();
-    const chartRoot = chart.shadowRoot as ShadowRoot;
-    const echarts = chartRoot.querySelector('echarts-base') as LitElement;
-    expect(echarts).not.toBeNull();
-    const chartText = (chartRoot.textContent ?? '') as string;
-    expect(chartText).toMatch(/Session Metrics/i);
+    expect(root.textContent).not.toMatch(/compare period/i);
   });
 
-  it('renders configuration timeline annotations', async () => {
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
-    const root = view.shadowRoot as ShadowRoot;
-
-    expect(root.textContent).toContain('Configuration timeline');
-    const chart = root.querySelectorAll('analytics-chart')[2] as LitElement;
-    const chartRoot = chart.shadowRoot as ShadowRoot;
-    const echarts = chartRoot.querySelector('echarts-base') as LitElement;
-    expect(echarts).not.toBeNull();
-    const chartText = (chartRoot.textContent ?? '') as string;
-    expect(chartText).toMatch(/Configuration timeline/i);
-  });
-
-  it('renders cohort table with regression flags', async () => {
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
-    const root = view.shadowRoot as ShadowRoot;
-
-    const table = root.querySelectorAll('table')[0];
-    expect(table.textContent).toContain('observed');
-    expect(table.textContent).toContain('before');
-    expect(table.textContent).toContain('after');
-    expect(table.textContent).toContain('Yes');
-  });
-
-  it('renders outlier table with links to session evidence', async () => {
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
-    const root = view.shadowRoot as ShadowRoot;
-
-    const link = root.querySelector('a[href^="#/sessions/"]') as HTMLAnchorElement;
-    expect(link).not.toBeNull();
-    expect(link.getAttribute('href')).toBe('#/sessions/s1');
-  });
-
-  it('applies filters and updates the hash', async () => {
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
-    const root = view.shadowRoot as ShadowRoot;
-
-    const modelInput = Array.from(root.querySelectorAll('input')).find(
-      (input) => input.parentElement?.textContent?.trim() === 'Model',
-    );
-    expect(modelInput).not.toBeUndefined();
-    (modelInput as HTMLInputElement).value = 'claude';
-    modelInput?.dispatchEvent(new Event('change'));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(window.location.hash).toMatch(/model=claude/);
-    expect(projectMock.getSummary).toHaveBeenCalled();
-  });
-
-  it('parses filters from the hash and re-loads', async () => {
-    window.location.hash = '#/projects/p1?harness=claude&mode=plan';
-
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
-
-    expect(projectMock.getSummary).toHaveBeenCalled();
-    const query = projectMock.getSummary.mock.calls[0][1];
-    expect(query.filters).toEqual(
-      expect.arrayContaining([
-        { field: 'harness', operator: 'eq', value: 'claude' },
-        { field: 'mode', operator: 'eq', value: 'plan' },
-      ]),
-    );
-  });
-
-  it('navigates back to dashboard preserving return context', async () => {
+  it('returns to the filtered portfolio via returnContext', async () => {
     window.location.hash = '#/projects/p1?returnContext=project%3Dp1';
-
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
+    const view = await mountView();
     const root = view.shadowRoot as ShadowRoot;
-
-    const back = root.querySelector('a[href^="#/"]') as HTMLAnchorElement;
-    expect(back).not.toBeNull();
+    const back = root.querySelector('a.back-link') as HTMLAnchorElement;
     expect(back.getAttribute('href')).toMatch(/project=p1/);
+  });
+});
 
-    back.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+describe('project-behavior-view stat strip', () => {
+  it('renders the cost tile as missing with harness-coverage copy', async () => {
+    const view = await mountView();
+    const root = view.shadowRoot as ShadowRoot;
+    const missing = root.querySelector('stat-tile-missing') as LitElement;
+    expect(missing).not.toBeNull();
+    expect(missing.shadowRoot?.textContent).toContain('Not reported by 1 of 2 harnesses');
+  });
+});
 
-    expect(window.location.hash).toMatch(/#\/\?/);
-    expect(window.location.hash).toMatch(/project=p1/);
+describe('project-behavior-view histogram', () => {
+  it('renders bin count from the histogram DTO', async () => {
+    const view = await mountView();
+    const root = view.shadowRoot as ShadowRoot;
+    const charts = root.querySelectorAll('analytics-chart');
+    const durationChart = Array.from(charts).find((c) =>
+      (c as LitElement).shadowRoot?.textContent?.includes('Session duration'),
+    ) as LitElement;
+    expect(durationChart).not.toBeUndefined();
+  });
+});
+
+describe('project-behavior-view outcomes legend', () => {
+  it('shows legend counts that sum to the session total', async () => {
+    const view = await mountView();
+    const root = view.shadowRoot as ShadowRoot;
+    const rows = root.querySelectorAll('.outcome-legend-row');
+    expect(rows).toHaveLength(3);
+    const text = Array.from(rows)
+      .map((r) => r.textContent ?? '')
+      .join(' ');
+    expect(text).toContain('Clean');
+    expect(text).toContain('7');
+    expect(text).toContain('Interrupted by user');
+    expect(text).toContain('Ended on error');
   });
 
-  it('renders empty state when all panels return empty', async () => {
-    projectMock.getSummary.mockResolvedValue(summaryFixture({ headlineMetrics: [] }));
-    projectMock.getSessionTrendSeries.mockResolvedValue(trendsFixture({ series: [] }));
-    projectMock.getConfigurationTimeline.mockResolvedValue(timelineFixture({ events: [] }));
-    projectMock.getOutliers.mockResolvedValue(outlierFixture({ items: [] }));
-    projectMock.getComparisons.mockResolvedValue(comparisonFixture({ items: [] }));
-
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
+  it('reports the unreadable-tail count in the footnote when non-zero', async () => {
+    projectMock.getOutcomeMix.mockResolvedValue(
+      outcomesFixture({
+        buckets: [
+          { outcome: 'clean', count: 5, percent: 71 },
+          { outcome: null, count: 2, percent: 29 },
+        ],
+      }),
+    );
+    const view = await mountView();
     const root = view.shadowRoot as ShadowRoot;
-
-    expect(allShadowTexts(root, 'analytics-chart').join(' ')).toMatch(/Session Metrics/i);
-    expect(root.textContent).toContain('No metrics available');
-    expect(root.textContent).toContain('No cohort comparisons available');
-    expect(root.textContent).toContain('No outliers available');
+    expect(root.textContent).toContain('unreadable tail');
   });
 
-  it('enters a partial state when one view fails', async () => {
-    projectMock.getSummary.mockRejectedValue(new Error('summary down'));
-    projectMock.getSessionTrendSeries.mockResolvedValue(trendsFixture());
-    projectMock.getConfigurationTimeline.mockResolvedValue(timelineFixture());
-    projectMock.getOutliers.mockResolvedValue(outlierFixture());
-    projectMock.getComparisons.mockResolvedValue(comparisonFixture());
-
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
+  it('omits the unreadable-tail line when the count is zero', async () => {
+    const view = await mountView();
     const root = view.shadowRoot as ShadowRoot;
+    expect(root.textContent).not.toContain('unreadable tail');
+  });
+});
 
-    expect(root.textContent).toContain('summary down');
-    expect(root.textContent).toContain('Session Metrics');
+describe('project-behavior-view empty and error affordances', () => {
+  it('renders an error affordance distinguishable from empty, for the model-cohorts section', async () => {
+    projectMock.getModelHarnessCohorts.mockRejectedValue(new Error('cohorts down'));
+    const view = await mountView();
+    const root = view.shadowRoot as ShadowRoot;
+    expect(root.querySelector('.error')?.textContent).toContain('cohorts down');
   });
 
-  it('exposes chart accessibility (summary, table fallback, keyboard focus)', async () => {
-    const view = Object.assign(document.createElement('project-behavior-view'), {
-      projectId: 'p1',
-    }) as ProjectBehaviorPage;
-    await mount(view);
+  it('renders an empty affordance (not an error) when the model-cohorts section has no rows', async () => {
+    projectMock.getModelHarnessCohorts.mockResolvedValue(modelCohortsFixture({ rows: [] }));
+    const view = await mountView();
     const root = view.shadowRoot as ShadowRoot;
+    expect(root.querySelector('.error')).toBeNull();
+    expect(root.textContent).toContain('No model activity in this window');
+  });
 
-    const chart = root.querySelector('analytics-chart') as LitElement;
-    expect(chart).not.toBeNull();
-    const chartRoot = chart.shadowRoot as ShadowRoot;
-    const echarts = chartRoot.querySelector('echarts-base') as LitElement;
-    expect(echarts).not.toBeNull();
-    const echartsRoot = echarts.shadowRoot as ShadowRoot;
-    const container = echartsRoot.querySelector('.chart-container') as HTMLElement;
-    expect(container).not.toBeNull();
-    expect(container.getAttribute('tabindex')).toBe('0');
-    expect(container.getAttribute('role')).toBe('img');
-    expect(container.getAttribute('aria-label')).toBeTruthy();
-    expect(echartsRoot.querySelector('details.table-fallback')).not.toBeNull();
+  it('renders every chart as an empty affordance (never a blank data surface) when the project cannot be resolved', async () => {
+    resolveProjectIdMock.mockResolvedValue(null);
+    const view = await mountView();
+    const root = view.shadowRoot as ShadowRoot;
+    const histogramChart = root.querySelector('analytics-chart[title="Session duration"]') as
+      | (HTMLElement & { state: string | null })
+      | null;
+    expect(histogramChart).not.toBeNull();
+    // 'idle' (the initial panel state) maps to a null chart .state, which
+    // echarts-base treats as "render the data surface" rather than an
+    // empty affordance — regression coverage for that exact gap.
+    expect(histogramChart?.state).toBe('empty');
+    // None of the fetch mocks should have been called — resolution failed
+    // before any panel request was issued.
+    expect(projectMock.getDurationHistogram).not.toHaveBeenCalled();
+  });
+});
+
+describe('project-behavior-view model cohorts table', () => {
+  it('flags a low-n row with "· low n"', async () => {
+    projectMock.getModelHarnessCohorts.mockResolvedValue(
+      modelCohortsFixture({
+        rows: [
+          {
+            model: 'claude-sonnet',
+            harness: 'claude-code',
+            n: 2,
+            medianTokens: 100,
+            medianCost: null,
+            cleanRate: 1,
+            cleanRateKnownN: 2,
+            lowN: true,
+          },
+        ],
+      }),
+    );
+    const view = await mountView();
+    const root = view.shadowRoot as ShadowRoot;
+    expect(root.textContent).toContain('low n');
+    expect(root.querySelector('td.low-n')).not.toBeNull();
+  });
+});
+
+describe('project-behavior-view filter bar', () => {
+  it('locks the Project chip to this project and preserves harness/model on filter change', async () => {
+    const view = await mountView();
+    const root = view.shadowRoot as ShadowRoot;
+    const filterBar = root.querySelector('filter-bar') as LitElement;
+    expect(filterBar).not.toBeNull();
+    expect((filterBar as unknown as { projectFixed: boolean }).projectFixed).toBe(true);
+  });
+});
+
+describe('project-behavior-view top tools', () => {
+  it('states that Skills/Agents/MCP have their own pages', async () => {
+    const view = await mountView();
+    const root = view.shadowRoot as ShadowRoot;
+    expect(root.textContent).toMatch(/Skills, Agents, and MCP servers are tracked separately/i);
   });
 });

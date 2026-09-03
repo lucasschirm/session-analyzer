@@ -1,5 +1,5 @@
 import type { AnalyticsQuery, EvidenceLink, Filter, TimeRange } from '@lucasschirm/sal-db';
-import type { SessionsScope } from '../portfolio/portfolio-params';
+import type { PortfolioParams, SessionsScope } from '../portfolio/portfolio-params';
 
 export interface ProjectBehaviorParams {
   projectId: string;
@@ -86,6 +86,57 @@ export function projectBehaviorParamsToQuery(params: ProjectBehaviorParams): Ana
     generationId: params.generation,
     timeRange,
     filters,
+  };
+}
+
+/**
+ * Adapts the current project-behavior filters to the shared `<filter-bar>`
+ * component's `PortfolioParams` shape, with the Project chip locked to this
+ * project's display label (`filter-bar`'s `projectFixed` renders it
+ * read-only) — see `.agents/rules/frontend-coding-style.md` on one-way data
+ * flow for input components.
+ */
+export function toFilterBarParams(
+  params: ProjectBehaviorParams,
+  projectLabel: string,
+): PortfolioParams {
+  return {
+    project: projectLabel,
+    harness: params.harness,
+    model: params.model,
+    mode: params.mode,
+    component: params.component,
+    timeStart: params.timeStart,
+    timeEnd: params.timeEnd,
+    analysisRelease: params.analysisRelease,
+    comparabilityGroup: params.comparabilityGroup,
+    generation: params.generation,
+    sessions: params.sessions,
+  };
+}
+
+/**
+ * Merges a `filters-changed` event from `<filter-bar>` back into
+ * `ProjectBehaviorParams`. The Project chip is fixed on this page, so its
+ * value is intentionally never copied back — `projectId` (and thus the
+ * route) never changes as a side effect of the filter bar.
+ */
+export function fromFilterBarParams(
+  params: ProjectBehaviorParams,
+  next: PortfolioParams,
+): ProjectBehaviorParams {
+  return {
+    ...params,
+    harness: next.harness,
+    model: next.model,
+    mode: next.mode,
+    component: next.component,
+    timeStart: next.timeStart,
+    timeEnd: next.timeEnd,
+    analysisRelease: next.analysisRelease,
+    comparabilityGroup: next.comparabilityGroup,
+    generation: next.generation,
+    sessions: next.sessions,
   };
 }
 

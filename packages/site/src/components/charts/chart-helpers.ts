@@ -6,7 +6,7 @@ import {
   seriesTokens,
   surfaceTokens,
 } from '../../styles/tokens';
-import type { ChartBucket, ChartSeries, EChartsCoreOption } from './chart-types';
+import type { ChartAnnotation, ChartBucket, ChartSeries, EChartsCoreOption } from './chart-types';
 
 function sortedUnique<T>(items: T[]): T[] {
   return [...new Set(items)].sort((a, b) => String(a).localeCompare(String(b)));
@@ -218,6 +218,25 @@ function stackedAreaOption(series: ChartSeries): EChartsCoreOption {
   } as EChartsCoreOption;
 }
 
+/**
+ * Modal-bin emphasis: the bin(s) at the series' max count are drawn with the
+ * brightest ramp step instead of the flat series color, so the most common
+ * bucket reads as visually dominant — a display-only color assignment over
+ * an already-computed count, not a metric derivation.
+ */
+function histogramBarData(xAxisData: string[], byX: Map<string, number | null>, color: string) {
+  const known = [...byX.values()].filter((v): v is number => v !== null);
+  const maxY = known.length > 0 ? Math.max(...known) : null;
+  const emphasisColor = rampTokens[rampTokens.length - 1];
+  return xAxisData.map((x) => {
+    const y = byX.get(x) ?? null;
+    if (y !== null && maxY !== null && y === maxY && maxY > 0) {
+      return { value: y, itemStyle: { color: emphasisColor } };
+    }
+    return { value: y, itemStyle: { color } };
+  });
+}
+
 function histogramOption(series: ChartSeries): EChartsCoreOption {
   const xAxisData = sortedUnique(series.buckets.map((b) => String(b.x)));
   const byX = new Map(series.buckets.map((b) => [String(b.x), b.y]));
@@ -232,8 +251,8 @@ function histogramOption(series: ChartSeries): EChartsCoreOption {
       {
         name: series.label,
         type: 'bar',
-        itemStyle: { color },
-        data: xAxisData.map((x) => byX.get(x) ?? null),
+        label: { show: true, position: 'top', color: inkTokens.inkSecondary },
+        data: histogramBarData(xAxisData, byX, color),
       },
     ],
     animation: false,
@@ -497,13 +516,22 @@ function funnelOption(series: ChartSeries): EChartsCoreOption {
   } as EChartsCoreOption;
 }
 
+function annotationMarkLine(annotation: ChartAnnotation) {
+  const shared = {
+    label: { formatter: annotation.label, color: AXIS_TEXT_COLOR },
+    lineStyle: { type: 'dashed', color: BASELINE_COLOR },
+  };
+  // `threshold` is a horizontal (y-axis) reference line, e.g. a
+  // registry-defined review threshold; every other annotation kind marks a
+  // point in time (x-axis).
+  return annotation.type === 'threshold'
+    ? { ...shared, yAxis: annotation.position }
+    : { ...shared, xAxis: annotation.position };
+}
+
 function annotatedTimelineOption(series: ChartSeries): EChartsCoreOption {
   const option = timeSeriesOption(series) as Record<string, unknown>;
-  const markLines = (series.annotations ?? []).map((a) => ({
-    xAxis: a.position,
-    label: { formatter: a.label, color: AXIS_TEXT_COLOR },
-    lineStyle: { type: 'dashed', color: BASELINE_COLOR },
-  }));
+  const markLines = (series.annotations ?? []).map(annotationMarkLine);
   const seriesArray = (option.series as unknown[]) ?? [];
   if (seriesArray.length > 0) {
     seriesArray[0] = { ...(seriesArray[0] as object), markLine: { data: markLines } };

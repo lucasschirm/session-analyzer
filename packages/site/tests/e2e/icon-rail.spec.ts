@@ -74,9 +74,7 @@ test.describe('Icon rail navigation journey (UX-023)', () => {
   }) => {
     await createProject(page, 'RailNestedTest');
     await page.locator('.project-card', { hasText: 'RailNestedTest' }).click();
-    await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
-      timeout: 15000,
-    });
+    await expect(page.locator('filter-bar')).toBeVisible({ timeout: 15000 });
     await expect(railItem(page, 'Projects')).toHaveClass(/active/);
   });
 

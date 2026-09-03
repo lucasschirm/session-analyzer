@@ -179,12 +179,40 @@ const MODEL_HARNESS_COHORT_ROWS_SQL = `
   GROUP BY mr.model, s.harness, s.id
 `;
 
+/** One harness's all-time session facts for a project (issue #171): session
+ * count, and the earliest/latest known `start_time` for that harness. Scoped
+ * all-time (not the query window) — these back the drill-down header's
+ * identity chips (harnesses observed, session count, active window), which
+ * describe the project itself rather than the current filter selection. A
+ * harness with no session carrying a known `start_time` still gets a row
+ * (`minStartMs`/`maxStartMs: null`), never dropped or defaulted to 0. */
+export interface ProjectHeaderHarnessRow {
+  readonly harness: string;
+  readonly sessionCount: number;
+  readonly minStartMs: number | null;
+  readonly maxStartMs: number | null;
+}
+
+const PROJECT_HEADER_BY_HARNESS_SQL = `
+  SELECT s.harness AS harness, COUNT(*) AS c,
+    MIN(s.start_time) AS min_start, MAX(s.start_time) AS max_start
+  FROM sessions s
+  WHERE s.project_id = ?
+  GROUP BY s.harness
+`;
+
+const PROJECT_DISPLAY_NAME_SQL = `
+  SELECT COALESCE(display_name, name) AS display_name
+  FROM projects
+  WHERE id = ?
+`;
+
 /**
  * Read-only queries backing the Project Behavior stat strip, duration
- * histogram, weekly tool error rate, top-tools list, and model×harness
- * cohort rows (issue #169). All SQL lives here per
- * `.agents/rules/sql-only-in-db-core.md`; `packages/db/src/project-behavior.ts`
- * only shapes/aggregates these rows.
+ * histogram, weekly tool error rate, top-tools list, model×harness
+ * cohort rows, and drill-down header (issues #169, #171). All SQL lives
+ * here per `.agents/rules/sql-only-in-db-core.md`;
+ * `packages/db/src/project-behavior.ts` only shapes/aggregates these rows.
  */
 export const ProjectBehaviorStore = {
   async countSessionsInWindow(
@@ -316,5 +344,23 @@ export const ProjectBehaviorStore = {
       costSum: toOptionalNumber(r.cost_sum),
       outcome: toOptionalString(r.outcome),
     }));
+  },
+
+  async getHarnessSessionCounts(
+    queryable: Queryable,
+    projectId: string,
+  ): Promise<readonly ProjectHeaderHarnessRow[]> {
+    const { rows } = await queryable.exec(PROJECT_HEADER_BY_HARNESS_SQL, [projectId]);
+    return rows.map((r) => ({
+      harness: toStringValue(r.harness),
+      sessionCount: toNumber(r.c),
+      minStartMs: toOptionalNumber(r.min_start),
+      maxStartMs: toOptionalNumber(r.max_start),
+    }));
+  },
+
+  async getProjectDisplayName(queryable: Queryable, projectId: string): Promise<string | null> {
+    const { rows } = await queryable.exec(PROJECT_DISPLAY_NAME_SQL, [projectId]);
+    return rows.length > 0 ? toOptionalString(rows[0].display_name) : null;
   },
 };
