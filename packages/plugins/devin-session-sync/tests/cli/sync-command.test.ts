@@ -11,6 +11,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runSyncCommand } from '../../src/cli/sync-command.js';
 import { buildFixtureDb, type FixtureDbHandle } from '../extractor/fixtures/build-fixture-db.js';
+import { devinModelsListFixture } from '../models/fixture.js';
 
 class RecordingStorageAdapter implements StorageAdapter {
   readonly calls: PutObjectInput[] = [];
@@ -52,6 +53,11 @@ describe('runSyncCommand', () => {
     await fsp.rm(dataDir, { recursive: true, force: true });
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
+
+  // Stub the Devin models-list capture rather than depending on the real
+  // `devin` binary being on PATH — deterministic across environments (CI has
+  // no `devin` binary at all) and doesn't depend on binary availability.
+  const stubModels = { runModelsList: async () => devinModelsListFixture };
 
   function envFor(): Record<string, string> {
     return {
@@ -122,6 +128,7 @@ describe('runSyncCommand', () => {
       homeDir,
       storageAdapter: storage,
       stdout,
+      models: stubModels,
     });
 
     expect(code).toBe(0);
@@ -178,6 +185,7 @@ describe('runSyncCommand', () => {
       homeDir,
       storageAdapter: storage,
       stdout,
+      models: stubModels,
     });
     const { stream: stdout2, lines: lines2 } = writable();
     const code = await runSyncCommand({
@@ -187,6 +195,7 @@ describe('runSyncCommand', () => {
       storageAdapter: storage,
       force: true,
       stdout: stdout2,
+      models: stubModels,
     });
     expect(code).toBe(0);
     expect(lines2.join('')).toContain('[force]');
@@ -244,5 +253,101 @@ describe('runSyncCommand', () => {
     });
     expect(code).toBe(1);
     expect(lines.join('')).toContain('[fail] session sess-bad');
+  });
+
+  it('does not fail the sync when only the models-capture side-capture fails (#266)', async () => {
+    fixture = buildFixtureDb({
+      sessions: [
+        {
+          id: 'sess-1',
+          working_directory: '/tmp/proj-a',
+          backend_type: null,
+          model: null,
+          agent_mode: null,
+          created_at: null,
+          last_activity_at: null,
+          title: null,
+          main_chain_id: null,
+          cogs_json: null,
+          workspace_dirs: null,
+          hidden: null,
+          metadata: null,
+        },
+      ],
+    });
+
+    const storage = new RecordingStorageAdapter();
+    const { stream: stdout, lines } = writable();
+    const code = await runSyncCommand({
+      env: envFor(),
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: storage,
+      stdout,
+      models: {
+        runModelsList: async () => {
+          throw new Error('devin cli unavailable');
+        },
+      },
+    });
+
+    // The real session artifacts (transcript, config, manifest, ...) all
+    // uploaded — the sync must not be marked failed just because the
+    // best-effort models-list side-capture failed.
+    expect(code).toBe(0);
+    const manifestCalls = storage.calls.filter((c) => c.scope === 'manifest');
+    expect(manifestCalls).toHaveLength(1);
+    expect(storage.calls.some((c) => c.relativePath === 'native/models.json')).toBe(false);
+
+    // The models-capture failure must still be visible, never silently
+    // dropped, per .agents/rules/sync-progress-observability.md.
+    const output = lines.join('');
+    expect(output).toContain('devin models capture failed: devin cli unavailable');
+    expect(output).toContain('Warnings:');
+    expect(output).toContain('devin cli unavailable');
+  });
+
+  it('still reports failure when a real artifact upload fails even though models capture succeeded (regression guard)', async () => {
+    fixture = buildFixtureDb({
+      sessions: [
+        {
+          id: 'sess-1',
+          working_directory: '/tmp/proj-a',
+          backend_type: null,
+          model: null,
+          agent_mode: null,
+          created_at: null,
+          last_activity_at: null,
+          title: null,
+          main_chain_id: null,
+          cogs_json: null,
+          workspace_dirs: null,
+          hidden: null,
+          metadata: null,
+        },
+      ],
+    });
+
+    const failingStorage: StorageAdapter = {
+      putObject: async (input) => {
+        if (input.scope === 'manifest') {
+          throw new Error('manifest upload failed');
+        }
+        return { key: 'x', sha256: sha256Hex(Buffer.from(input.body).toString('utf8')) };
+      },
+    };
+
+    const { stream: stdout, lines } = writable();
+    const code = await runSyncCommand({
+      env: envFor(),
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: failingStorage,
+      stdout,
+      models: stubModels,
+    });
+
+    expect(code).toBe(1);
+    expect(lines.join('')).toContain('failed');
   });
 });

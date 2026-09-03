@@ -133,7 +133,14 @@ async function syncChangedSession(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     writeWatcherLine(stdout, `session ${session.id} failed: ${message}`);
-    return { sessionId: session.id, uploaded: 0, skipped: 0, failed: 1, errors: [message] };
+    return {
+      sessionId: session.id,
+      uploaded: 0,
+      skipped: 0,
+      failed: 1,
+      errors: [message],
+      warnings: [],
+    };
   }
 }
 
