@@ -1,6 +1,8 @@
 import { parseAtifTranscript, parseDevinJsonlText } from '@lucasschirm/sal-devin-session-parser';
 import type {
   ArtifactClassificationResult,
+  ComponentSummary,
+  ConfigurationSnapshot,
   DetectionResult,
   Issue,
   MetricCapability,
@@ -12,10 +14,15 @@ import type {
   UnknownArtifactBundle,
 } from '@lucasschirm/sal-transformer-shared';
 import { getDevinMetricCapabilities } from './capabilities.js';
-import { artifactIdFor, classifyDevinArtifacts } from './classification.js';
+import {
+  artifactIdFor,
+  classifyDevinArtifacts,
+  completenessFromComponents,
+} from './classification.js';
 import { type DevinMetricValue, deriveDevinMetrics } from './metrics/index.js';
 import { parseDevinBundle } from './parse-bundle.js';
-import { buildSessionSpine, deriveSessionId } from './session-spine.js';
+import { deriveDevinSessionComponents } from './session-components.js';
+import { buildSessionSpine, deriveSessionId, resolveSourceIdentity } from './session-spine.js';
 import { buildTokenUsageRecords } from './token-usage.js';
 import { buildToolInvocationRecords } from './tool-invocations.js';
 
@@ -39,14 +46,16 @@ import { buildToolInvocationRecords } from './tool-invocations.js';
  * Known limitations (documented inline):
  * - `message_nodes.created_at` is unreliable; message order comes from the node
  *   tree (`node_id`/`parent_node_id`/`main_chain_id`), never from `created_at`.
- * - Skill and Agent invocations are not yet derived from `plugins/discovered.json`;
- *   they are reported as unavailable with a reason.
+ * - Skill and Agent invocation counts are derived from `tool_call_state`'s
+ *   `functions.skill:*`/`functions.run_subagent:*` ACP calls (DS-F11 (#288)).
+ *   `plugins/discovered.json` (the cross-session skill/agent definition
+ *   catalog) is never captured and is not needed for these counts.
  * - Per-session cost is pending the `sessions.model` -> `models.json` `model_uid`
  *   join planned for DS-F4 and is reported as unavailable.
  */
 
 export const DEVIN_TRANSFORMER_ID = 'devin';
-export const DEVIN_TRANSFORMER_VERSION = '0.1.0';
+export const DEVIN_TRANSFORMER_VERSION = '0.2.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 export const DEVIN_METRIC_DEFINITION_VERSION = '0.1.0';
 
@@ -91,6 +100,73 @@ function makeProvenanceFromArtifacts(classification: ArtifactClassificationResul
     artifactId: artifactIdFor(a),
     path: a.relativePath,
   }));
+}
+
+/**
+ * Whether `component` has actual invocation evidence backing it, not just
+ * declared availability. `agent` components are always confirmed: they are
+ * derived exclusively from a real `run_subagent` `tool_call_state` record
+ * (`extractAgentComponents`), so their mere presence is confirmed usage.
+ * `skill` and `tool` (MCP wrapper) components can be declared-only —
+ * `extractSkillComponents` derives from `skill/<name>` cog presence alone,
+ * and `extractMcpToolComponents` derives from a cog's declared
+ * `toolAvailability.mode === 'allow'` list, present in nearly every session
+ * whether used or not (session-components.ts doc comments) — so those two
+ * kinds are only confirmed when a matching `kind`+`name` invocation record
+ * exists in `invocationRecords`.
+ */
+function isConfirmedRuntimeComponent(
+  component: ComponentSummary,
+  invocationRecords: readonly NormalizedEvidenceRecord[],
+): boolean {
+  if (component.kind === 'agent') return true;
+  const nativeId = component.identity.nativeId;
+  if (!nativeId) return false;
+  return invocationRecords.some((record) => {
+    if (record.recordType !== 'invocation') return false;
+    const payload = record.payload as { kind?: string; name?: string };
+    return payload.kind === component.kind && payload.name === nativeId;
+  });
+}
+
+/**
+ * Merges `cogs_json`/`tool_call_state`-derived session components (DS-F11
+ * (#288)) with `classification.components` (currently always `[]` — see
+ * `classifyDevinArtifacts`) and recomputes `configurationSnapshot` from the
+ * merged list, reusing `completenessFromComponents` so completeness
+ * accounting stays in one place.
+ *
+ * `temporalRole` is `'runtime'` only when at least one session component has
+ * actual invocation evidence (`isConfirmedRuntimeComponent`) — never
+ * unconditionally, since declared-but-unconfirmed components (e.g. the MCP
+ * wrapper tool AllowList, present in nearly every session regardless of use)
+ * would otherwise overclaim they were "active during the session". Absent
+ * any confirmed invocation, this falls back to `'capture_only'` — the same
+ * convention `packages/db/src/manual-ingestion.ts`'s `adjustForManual` and
+ * `packages/db/src/configuration.ts`'s `applyExposures` already use for
+ * "captured, but not asserted as pre-session or runtime activity" (choosing
+ * `'capture_only'` rather than inventing a new temporal state).
+ */
+function mergeSessionComponents(
+  classification: ArtifactClassificationResult,
+  sessionComponents: readonly ComponentSummary[],
+  invocationRecords: readonly NormalizedEvidenceRecord[],
+): { components: ComponentSummary[]; configurationSnapshot: ConfigurationSnapshot } {
+  const components = [...classification.components, ...sessionComponents];
+  const unclassifiedCount = classification.artifacts.filter(
+    (a) => a.kind === 'unclassified',
+  ).length;
+  const hasConfirmedRuntimeComponent = sessionComponents.some((c) =>
+    isConfirmedRuntimeComponent(c, invocationRecords),
+  );
+  return {
+    components,
+    configurationSnapshot: {
+      completeness: completenessFromComponents(components, unclassifiedCount),
+      components,
+      temporalRole: hasConfirmedRuntimeComponent ? 'runtime' : 'capture_only',
+    },
+  };
 }
 
 export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
@@ -245,6 +321,14 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       parsed.models,
       rootArtifactId,
     );
+    const sourceId = resolveSourceIdentity(context, bundle.sourceIdentity).sourceId;
+    const sessionComponents = deriveDevinSessionComponents(
+      sourceId,
+      parsed.sessionLine?.cogsJson,
+      parsed.toolCalls,
+      rootArtifactId,
+    );
+    const merged = mergeSessionComponents(classification, sessionComponents, toolResult.records);
 
     const allEvidence: NormalizedEvidenceRecord[] = [
       ...spine.records,
@@ -287,10 +371,10 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       metricDefinitionVersion: DEVIN_METRIC_DEFINITION_VERSION,
       evidence: allEvidence,
       sessionSummaries: [spine.summary],
-      componentSummaries: classification.components,
+      componentSummaries: merged.components,
       metricValues: metrics.metricValues as readonly DevinMetricValue[],
       distributions: [],
-      configurationSnapshot: classification.configurationSnapshot,
+      configurationSnapshot: merged.configurationSnapshot,
       capabilities: metrics.capabilities,
       unavailableReasons: metrics.unavailableReasons,
       provenance: allProvenance,

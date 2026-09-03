@@ -8,7 +8,50 @@ export interface ToolInvocationResult {
 }
 
 function toolName(call: DevinToolCallLine['call'], update: DevinToolCallLine['update']): string {
-  return update?.inferenceToolName ?? call?.title ?? call?.kind ?? 'unknown';
+  return (
+    update?.inferenceToolName ?? call?.inferenceToolName ?? call?.title ?? call?.kind ?? 'unknown'
+  );
+}
+
+function rawInputString(call: DevinToolCallLine['call'], field: string): string | undefined {
+  if (!call?.rawInput || typeof call.rawInput !== 'object') return undefined;
+  const value = (call.rawInput as Record<string, unknown>)[field];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Resolves the domain-correct `kind`/`name` for one invocation, per
+ * `.agents/rules/analytics-domain-distinctions.md`: `Skill` and `Agent`
+ * (`run_subagent`) invocations are their own domains, never folded into the
+ * generic `tool` pool (DS-F11 (#288)). Every other call keeps the existing
+ * `kind: 'tool'` behavior, with `name` resolved exactly as before.
+ *
+ * `_meta["cognition.ai/inferenceToolName"]` is read from `update` first,
+ * falling back to `call`'s own copy of the same `_meta` key (DS-F11 (#288)
+ * review finding): Devin stamps this `_meta` key on both `tool_call_json`
+ * and `tool_call_update_json` when it is present at all, but
+ * `tool_call_update_json` can be entirely missing for a call whose session
+ * was interrupted before it completed. Reading `update` only would silently
+ * fall back to `kind: 'tool'` for such a call, reproducing the exact
+ * Skill/Agent-into-tool conflation this function exists to fix, just for a
+ * narrower trigger (no update record instead of no `_meta` at all).
+ */
+function invocationKindAndName(
+  call: DevinToolCallLine['call'],
+  update: DevinToolCallLine['update'],
+): { kind: 'tool' | 'skill' | 'agent'; name: string; target?: string } {
+  const inferenceToolName = update?.inferenceToolName ?? call?.inferenceToolName;
+  if (inferenceToolName === 'skill') {
+    return { kind: 'skill', name: rawInputString(call, 'skill') ?? toolName(call, update) };
+  }
+  if (inferenceToolName === 'run_subagent') {
+    return {
+      kind: 'agent',
+      name: rawInputString(call, 'profile') ?? toolName(call, update),
+      target: rawInputString(call, 'title'),
+    };
+  }
+  return { kind: 'tool', name: toolName(call, update) };
 }
 
 function toolTarget(call: DevinToolCallLine['call']): string | undefined {
@@ -63,8 +106,8 @@ export function buildToolInvocationRecords(
     const call = toolCall.call;
     const update = toolCall.update;
     const toolCallId = toolCall.toolCallId;
-    const name = toolName(call, update);
-    const target = toolTarget(call);
+    const { kind, name, target: domainTarget } = invocationKindAndName(call, update);
+    const target = kind === 'tool' ? toolTarget(call) : domainTarget;
     const status = toolStatus(update);
 
     records.push({
@@ -80,7 +123,7 @@ export function buildToolInvocationRecords(
         path: rootArtifactId,
       },
       payload: {
-        kind: 'tool',
+        kind,
         name,
         target,
         startId: toolCallId,

@@ -46,6 +46,21 @@ describe('parseAcpToolCall', () => {
     const call = parseAcpToolCall(JSON.stringify({ toolCallId: 'call-1', kind: 'search' }));
     expect(call).toMatchObject({ title: null, content: null, rawInput: null });
   });
+
+  it('extracts _meta["cognition.ai/inferenceToolName"] from tool_call_json itself', () => {
+    const json = JSON.stringify({
+      toolCallId: 'call-1',
+      kind: 'execute',
+      _meta: { 'cognition.ai/inferenceToolName': 'skill' },
+    });
+    const call = parseAcpToolCall(json);
+    expect(call?.inferenceToolName).toBe('skill');
+  });
+
+  it('returns null inferenceToolName when _meta is absent from tool_call_json', () => {
+    const call = parseAcpToolCall(JSON.stringify({ toolCallId: 'call-1', kind: 'execute' }));
+    expect(call?.inferenceToolName).toBeNull();
+  });
 });
 
 describe('parseAcpToolCallUpdate', () => {

@@ -35,4 +35,15 @@ describe('DevinTransformer conformance', () => {
       ).toBe(true);
     });
   }
+
+  it('reports complete skill/tool/agent completeness for the session-components fixture', () => {
+    const fixture = devinConformanceFixtures.fixtures.find((f) => f.name === 'session-components');
+    expect(fixture).toBeDefined();
+    if (!fixture) return;
+    const result = DevinTransformer.transform(fixture.bundle, fixture.context);
+    expect(result.configurationSnapshot.completeness.skill).toBe('complete');
+    expect(result.configurationSnapshot.completeness.tool).toBe('complete');
+    expect(result.configurationSnapshot.completeness.agent).toBe('complete');
+    expect(result.configurationSnapshot.temporalRole).toBe('runtime');
+  });
 });

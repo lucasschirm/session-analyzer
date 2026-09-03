@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { DevinTransformer } from '../../src/index.js';
 import { comparabilityGroupFor } from '../../src/metrics/comparability.js';
 import { getDevinMetricDefinitions } from '../../src/metrics/index.js';
+import { componentsBundle, defaultContext, linearBundle } from '../conformance/fixtures/index.js';
 
 describe('Devin metric definitions', () => {
   it('exports a metric definition for every Phase 1 root and inclusive metric', () => {
@@ -51,4 +53,23 @@ describe('Devin metric definitions', () => {
       comparabilityGroupFor(completion, { token_class: 'completion' }),
     );
   });
+});
+
+describe('devin:invocations:skill:*/agent:* standalone-vs-transform consistency (DS-F11 #288)', () => {
+  for (const bundle of [linearBundle, componentsBundle]) {
+    it('getCapabilities(bundle) and transform(bundle, ctx).capabilities agree for skill/agent', () => {
+      const standalone = DevinTransformer.getCapabilities(bundle);
+      const transformed = DevinTransformer.transform(bundle, defaultContext).capabilities;
+      const standaloneById = new Map(standalone.map((c) => [c.metricId, c.state]));
+      const transformedById = new Map(transformed.map((c) => [c.metricId, c.state]));
+      for (const metricId of [
+        'devin:invocations:skill:root_only',
+        'devin:invocations:skill:inclusive',
+        'devin:invocations:agent:root_only',
+        'devin:invocations:agent:inclusive',
+      ]) {
+        expect(standaloneById.get(metricId)).toBe(transformedById.get(metricId));
+      }
+    });
+  }
 });
