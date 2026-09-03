@@ -46,14 +46,22 @@ describe('DevinTransformer.getCapabilities', () => {
     expect(byId.get('devin:tokens:total:root_only')?.state).toBe('unavailable');
   });
 
-  it('marks skill and agent invocations unavailable', () => {
+  it('marks skill and agent invocations available whenever tool_call_state evidence exists', () => {
+    // linearBundle has a tool_call_state row (an edit-kind call) but no
+    // skill/run_subagent calls — the standalone preview still reports
+    // 'available' (a real, exact 0 will be computed on transform, never
+    // 'unavailable'), mirroring devin:invocations:tool:*'s own check.
     const caps = DevinTransformer.getCapabilities(linearBundle);
+    const byId = new Map(caps.map((c) => [c.metricId, c]));
+    expect(byId.get('devin:invocations:skill:root_only')?.state).toBe('available');
+    expect(byId.get('devin:invocations:agent:root_only')?.state).toBe('available');
+  });
+
+  it('marks skill and agent invocations unavailable when there is no tool_call_state evidence at all', () => {
+    const caps = DevinTransformer.getCapabilities(noRootBundle);
     const byId = new Map(caps.map((c) => [c.metricId, c]));
     expect(byId.get('devin:invocations:skill:root_only')?.state).toBe('unavailable');
     expect(byId.get('devin:invocations:agent:root_only')?.state).toBe('unavailable');
-    expect(byId.get('devin:invocations:skill:root_only')?.reason).toContain(
-      'plugins/discovered.json',
-    );
   });
 
   it('marks cost unavailable', () => {

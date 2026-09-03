@@ -11,6 +11,37 @@ function toolName(call: DevinToolCallLine['call'], update: DevinToolCallLine['up
   return update?.inferenceToolName ?? call?.title ?? call?.kind ?? 'unknown';
 }
 
+function rawInputString(call: DevinToolCallLine['call'], field: string): string | undefined {
+  if (!call?.rawInput || typeof call.rawInput !== 'object') return undefined;
+  const value = (call.rawInput as Record<string, unknown>)[field];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Resolves the domain-correct `kind`/`name` for one invocation, per
+ * `.agents/rules/analytics-domain-distinctions.md`: `Skill` and `Agent`
+ * (`run_subagent`) invocations are their own domains, never folded into the
+ * generic `tool` pool (DS-F11 (#288)). Every other call keeps the existing
+ * `kind: 'tool'` behavior, with `name` resolved exactly as before.
+ */
+function invocationKindAndName(
+  call: DevinToolCallLine['call'],
+  update: DevinToolCallLine['update'],
+): { kind: 'tool' | 'skill' | 'agent'; name: string; target?: string } {
+  const inferenceToolName = update?.inferenceToolName;
+  if (inferenceToolName === 'skill') {
+    return { kind: 'skill', name: rawInputString(call, 'skill') ?? toolName(call, update) };
+  }
+  if (inferenceToolName === 'run_subagent') {
+    return {
+      kind: 'agent',
+      name: rawInputString(call, 'profile') ?? toolName(call, update),
+      target: rawInputString(call, 'title'),
+    };
+  }
+  return { kind: 'tool', name: toolName(call, update) };
+}
+
 function toolTarget(call: DevinToolCallLine['call']): string | undefined {
   if (!call) return undefined;
   if (typeof call.rawInput === 'string') return call.rawInput;
@@ -63,8 +94,8 @@ export function buildToolInvocationRecords(
     const call = toolCall.call;
     const update = toolCall.update;
     const toolCallId = toolCall.toolCallId;
-    const name = toolName(call, update);
-    const target = toolTarget(call);
+    const { kind, name, target: domainTarget } = invocationKindAndName(call, update);
+    const target = kind === 'tool' ? toolTarget(call) : domainTarget;
     const status = toolStatus(update);
 
     records.push({
@@ -80,7 +111,7 @@ export function buildToolInvocationRecords(
         path: rootArtifactId,
       },
       payload: {
-        kind: 'tool',
+        kind,
         name,
         target,
         startId: toolCallId,

@@ -76,15 +76,20 @@ function capabilityStateFor(
     if (parsed.toolCalls.length > 0) return { state: 'available' };
     return { state: 'unavailable', reason: 'no tool_call_state records' };
   }
-  if (
-    metricId.startsWith('devin:invocations:skill:') ||
-    metricId.startsWith('devin:invocations:agent:')
-  ) {
-    return {
-      state: 'unavailable',
-      reason:
-        'Skill/Agent invocations require plugins/discovered.json mapping, not implemented in this version',
-    };
+  // Skill/Agent invocations mirror the devin:invocations:tool:* check above:
+  // available whenever tool_call_state evidence exists at all, since a real
+  // 0 is a valid, exact count when no matching calls are present — the same
+  // evidence-presence condition metrics/derive.ts's own computed capability
+  // resolves to (`.agents/rules/missing-is-never-zero.md`; keeps this
+  // standalone preview path consistent with transform(bundle, ctx).capabilities
+  // for the same bundle, per DS-F11 (#288) acceptance criteria).
+  if (metricId.startsWith('devin:invocations:skill:')) {
+    if (parsed.toolCalls.length > 0) return { state: 'available' };
+    return { state: 'unavailable', reason: 'no tool_call_state records' };
+  }
+  if (metricId.startsWith('devin:invocations:agent:')) {
+    if (parsed.toolCalls.length > 0) return { state: 'available' };
+    return { state: 'unavailable', reason: 'no tool_call_state records' };
   }
   if (metricId.startsWith('devin:duration:')) {
     if (hasTimestamps(parsed))

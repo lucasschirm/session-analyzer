@@ -1,6 +1,8 @@
 import { parseAtifTranscript, parseDevinJsonlText } from '@lucasschirm/sal-devin-session-parser';
 import type {
   ArtifactClassificationResult,
+  ComponentSummary,
+  ConfigurationSnapshot,
   DetectionResult,
   Issue,
   MetricCapability,
@@ -12,9 +14,14 @@ import type {
   UnknownArtifactBundle,
 } from '@lucasschirm/sal-transformer-shared';
 import { getDevinMetricCapabilities } from './capabilities.js';
-import { artifactIdFor, classifyDevinArtifacts } from './classification.js';
+import {
+  artifactIdFor,
+  classifyDevinArtifacts,
+  completenessFromComponents,
+} from './classification.js';
 import { type DevinMetricValue, deriveDevinMetrics } from './metrics/index.js';
 import { parseDevinBundle } from './parse-bundle.js';
+import { deriveDevinSessionComponents } from './session-components.js';
 import { buildSessionSpine, deriveSessionId } from './session-spine.js';
 import { buildTokenUsageRecords } from './token-usage.js';
 import { buildToolInvocationRecords } from './tool-invocations.js';
@@ -39,14 +46,16 @@ import { buildToolInvocationRecords } from './tool-invocations.js';
  * Known limitations (documented inline):
  * - `message_nodes.created_at` is unreliable; message order comes from the node
  *   tree (`node_id`/`parent_node_id`/`main_chain_id`), never from `created_at`.
- * - Skill and Agent invocations are not yet derived from `plugins/discovered.json`;
- *   they are reported as unavailable with a reason.
+ * - Skill and Agent invocation counts are derived from `tool_call_state`'s
+ *   `functions.skill:*`/`functions.run_subagent:*` ACP calls (DS-F11 (#288)).
+ *   `plugins/discovered.json` (the cross-session skill/agent definition
+ *   catalog) is never captured and is not needed for these counts.
  * - Per-session cost is pending the `sessions.model` -> `models.json` `model_uid`
  *   join planned for DS-F4 and is reported as unavailable.
  */
 
 export const DEVIN_TRANSFORMER_ID = 'devin';
-export const DEVIN_TRANSFORMER_VERSION = '0.1.0';
+export const DEVIN_TRANSFORMER_VERSION = '0.2.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 export const DEVIN_METRIC_DEFINITION_VERSION = '0.1.0';
 
@@ -91,6 +100,33 @@ function makeProvenanceFromArtifacts(classification: ArtifactClassificationResul
     artifactId: artifactIdFor(a),
     path: a.relativePath,
   }));
+}
+
+/**
+ * Merges `cogs_json`/`tool_call_state`-derived session components (DS-F11
+ * (#288)) with `classification.components` (currently always `[]` — see
+ * `classifyDevinArtifacts`) and recomputes `configurationSnapshot` from the
+ * merged list, reusing `completenessFromComponents` so completeness
+ * accounting stays in one place. `temporalRole: 'runtime'` reflects that
+ * these components were active *during* the session, not a pre-existing
+ * declared config.
+ */
+function mergeSessionComponents(
+  classification: ArtifactClassificationResult,
+  sessionComponents: readonly ComponentSummary[],
+): { components: ComponentSummary[]; configurationSnapshot: ConfigurationSnapshot } {
+  const components = [...classification.components, ...sessionComponents];
+  const unclassifiedCount = classification.artifacts.filter(
+    (a) => a.kind === 'unclassified',
+  ).length;
+  return {
+    components,
+    configurationSnapshot: {
+      completeness: completenessFromComponents(components, unclassifiedCount),
+      components,
+      temporalRole: 'runtime',
+    },
+  };
 }
 
 export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
@@ -245,6 +281,13 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       parsed.models,
       rootArtifactId,
     );
+    const sessionComponents = deriveDevinSessionComponents(
+      sessionId,
+      parsed.sessionLine?.cogsJson,
+      parsed.toolCalls,
+      rootArtifactId,
+    );
+    const merged = mergeSessionComponents(classification, sessionComponents);
 
     const allEvidence: NormalizedEvidenceRecord[] = [
       ...spine.records,
@@ -287,10 +330,10 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       metricDefinitionVersion: DEVIN_METRIC_DEFINITION_VERSION,
       evidence: allEvidence,
       sessionSummaries: [spine.summary],
-      componentSummaries: classification.components,
+      componentSummaries: merged.components,
       metricValues: metrics.metricValues as readonly DevinMetricValue[],
       distributions: [],
-      configurationSnapshot: classification.configurationSnapshot,
+      configurationSnapshot: merged.configurationSnapshot,
       capabilities: metrics.capabilities,
       unavailableReasons: metrics.unavailableReasons,
       provenance: allProvenance,
