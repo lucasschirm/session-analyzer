@@ -125,6 +125,9 @@ component retains a source pointer (JSON Pointer or text range).
 **Parser**: `@lucasschirm/sal-devin-session-parser`
 **Harness ID**: `devin`
 
+See [devin.md](./devin.md) for the full Devin CLI harness documentation,
+including the native artifact bundle, metrics, and known limitations.
+
 ### Artifact classification
 
 Classification uses the bundle's path conventions and, where available,

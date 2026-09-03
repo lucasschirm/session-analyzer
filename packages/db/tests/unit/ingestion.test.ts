@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import { createArtifactVersionView } from '../../src/analytics-session.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';
+import { buildDevinManifestBundle } from '../fixtures/devin-manifest.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, '../../../parsers/claude-session-parser/tests/fixtures');
@@ -614,5 +615,54 @@ describe('DefaultIngestionOrchestrator', () => {
       [receipt.generationId],
     );
     expect(snapshotComponentRows[0]?.c).toBeGreaterThan(0);
+  });
+
+  it('ingests a devin manifest end-to-end', async () => {
+    const executor = await createExecutor();
+    const orchestrator = await setupIngestion(executor);
+    const { bundle } = await buildDevinManifestBundle();
+
+    const receipt = await orchestrator.ingestManifest(bundle);
+
+    expect(receipt.status).toBe('committed');
+    expect(receipt.issueIds).toEqual([]);
+
+    const { rows: sessionRows } = await executor.exec(
+      'SELECT id, harness, current_generation_id, native_session_id FROM sessions WHERE id = ?',
+      [receipt.sessionId],
+    );
+    expect(sessionRows).toHaveLength(1);
+    expect(sessionRows[0]?.harness).toBe('devin');
+    expect(sessionRows[0]?.current_generation_id).toBe(receipt.generationId);
+    expect(sessionRows[0]?.native_session_id).toBe(bundle.manifest.sessionId);
+
+    const { rows: metricValues } = await executor.exec(
+      'SELECT COUNT(*) AS c FROM metric_values WHERE generation_id = ?',
+      [receipt.generationId],
+    );
+    expect(metricValues[0]?.c).toBeGreaterThan(0);
+
+    const { rows: devinMetrics } = await executor.exec(
+      `SELECT COUNT(*) AS c FROM metric_values mv
+       JOIN metric_definitions md ON md.id = mv.metric_definition_id
+       WHERE mv.generation_id = ? AND md.metric_id LIKE ?`,
+      [receipt.generationId, 'devin:%'],
+    );
+    expect(devinMetrics[0]?.c).toBeGreaterThan(0);
+
+    const { rows: summaries } = await executor.exec(
+      'SELECT COUNT(*) AS c FROM session_summaries WHERE generation_id = ?',
+      [receipt.generationId],
+    );
+    expect(summaries[0]?.c).toBeGreaterThan(0);
+
+    const { rows: manifestArtifactRows } = await executor.exec(
+      'SELECT scope, relative_path, status FROM manifest_artifacts WHERE manifest_session_id = ? ORDER BY relative_path',
+      [bundle.manifest.sessionId],
+    );
+    expect(manifestArtifactRows).toHaveLength(bundle.manifest.artifacts.length);
+    expect(manifestArtifactRows.map((r) => r.relative_path)).toEqual(
+      bundle.manifest.artifacts.map((a) => a.relativePath).sort(),
+    );
   });
 });
