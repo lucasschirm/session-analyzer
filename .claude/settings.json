@@ -1,4 +1,7 @@
 {
+  "env": {
+    "SAL_PROJECT_ID": "session-analyzer"
+  },
   "hooks": {
     "SessionStart": [
       {
@@ -13,6 +16,9 @@
       }
     ]
   },
+  "enabledPlugins": {
+    "claude-session-sync@session-analyzer": true
+  },
   "extraKnownMarketplaces": {
     "session-analyzer": {
       "source": {
@@ -20,11 +26,5 @@
         "path": "."
       }
     }
-  },
-  "enabledPlugins": {
-    "claude-session-sync@session-analyzer": true
-  },
-  "env": {
-    "SAL_PROJECT_ID": "session-analyzer"
   }
 }
