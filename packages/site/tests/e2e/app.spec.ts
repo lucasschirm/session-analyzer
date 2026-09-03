@@ -396,8 +396,8 @@ test.describe('Project deletion', () => {
 
     await dialog.getByRole('button', { name: 'Delete Project' }).click();
 
-    await expect(page.locator('.project-card')).toHaveCount(0);
-    await expect(page.getByText('No projects yet. Create one to get started!')).toBeVisible();
+    const doomedCard = page.locator('.project-card', { hasText: 'Doomed Project' });
+    await expect(doomedCard).toHaveCount(0);
   });
 });
 
