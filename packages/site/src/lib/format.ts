@@ -58,3 +58,41 @@ export function estimateTokenCount(text: string): number {
 export function formatEstimatedTokens(count: number): string {
   return `~${formatCompactNumber(count)} tokens (est.)`;
 }
+
+/** "0.42" -> "42%", "1" -> "100%". Rounds to the nearest whole percent. */
+export function formatPercent(fraction: number): string {
+  return `${Math.round(fraction * 100)}%`;
+}
+
+/** Module-level `Intl` formatter singletons — constructing one per call
+ * (the `toLocaleString`/`toLocaleDateString` default) is measurably wasteful
+ * on a list rendered per row (e.g. the portfolio project leaderboard). */
+const wholeNumberFormatter = new Intl.NumberFormat(undefined);
+const shortDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+/** "1234.5" -> "$1,235" (whole-dollar, comma-grouped). `formatChartValue`
+ * (chart-types.ts) handles the compact "$1.2K" form for chart axes/tooltips;
+ * this is the plain form for stat tiles and tables. */
+export function formatCurrency(value: number): string {
+  return `$${wholeNumberFormatter.format(Math.round(value))}`;
+}
+
+/** ISO timestamp -> "Sep 2" (no year) for compact "last active" columns. */
+export function formatShortDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return shortDateFormatter.format(date);
+}
+
+/** Epoch ms -> "just now" / "3m ago" / "2h ago" / "5d ago", for the Portfolio
+ * title row's sync-status chip. */
+export function formatRelativeTime(epochMs: number): string {
+  const deltaMs = Date.now() - epochMs;
+  const minutes = Math.round(deltaMs / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}

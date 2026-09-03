@@ -1,34 +1,45 @@
 import { css, html } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
-import { analyticsClient } from '../../db/analytics-client';
-import { navigateTo } from '../../router';
-import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
-import '../../components/metrics-card';
 import '../../components/analytics/filter-bar';
+import '../../components/analytics/stat-tile-hero';
+import '../../components/analytics/stat-tile-delta';
+import '../../components/analytics/stat-tile-missing';
+import '../../components/analytics/stat-ring';
+import '../../components/charts/sparkline';
 import type {
-  ComponentUtilizationPage,
   DimensionDomains,
-  ModelHarnessCohortPage,
-  PortfolioOverview,
+  InvocationsByDomain,
+  ModelHarnessMatrix,
+  PortfolioKpiBand,
   PortfolioTrendSeries,
-  ProjectListPage,
+  ProjectLeaderboard,
+  SessionsByModelBar,
 } from '@lucasschirm/sal-db';
 import type {
   ChartEvidenceLink,
   ChartSeries,
   ChartState,
 } from '../../components/charts/chart-types';
+import { analyticsClient } from '../../db/analytics-client';
+import { formatRelativeTime } from '../../lib/format';
+import { navigateTo } from '../../router';
+import { type SyncManagerSnapshot, syncManager } from '../../sync/sync-manager';
+import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import {
-  componentUtilizationToChartSeries,
-  type MetricCardView,
-  modelHarnessCohortsToChartSeries,
-  overviewToMetricCards,
-  type ProjectRowView,
-  projectListToRows,
+  type DomainBarRowView,
+  invocationsByDomainToChartSeries,
+  invocationsByDomainToRows,
+  kpiBandToCleanCompletionView,
+  kpiBandToCostView,
+  kpiBandToSessionsHero,
+  kpiBandToTokensView,
+  modelHarnessMatrixToHeatmapSeries,
+  type ProjectLeaderboardRowView,
+  projectLeaderboardToRows,
+  sessionsByModelToChartSeries,
   tokenTrendToChartSeries,
-  trendToChartSeries,
 } from './portfolio-chart-helpers';
 import {
   buildPortfolioHash,
@@ -41,11 +52,9 @@ import { RequestSequenceGuard } from './request-sequence-guard';
 
 type LoadState = 'idle' | 'loading' | 'ok' | 'empty' | 'partial' | 'error';
 
-/** Stable empty-array reference for `filter-bar`'s `*Options` properties
- * before the dimension domains have loaded — reusing one instance (instead
- * of a fresh `[]` per render) avoids forcing `dimension-chip`'s
- * `@property({ type: Array })` to see a changed reference, and re-render,
- * on every unrelated `portfolio-view` update. */
+/** Stable empty-array reference for `filter-bar`'s `*Options` properties —
+ * see `portfolio-view.ts` history for the rationale (reused reference avoids
+ * `dimension-chip` re-rendering on every unrelated update). */
 const EMPTY_DIMENSION_OPTIONS: readonly string[] = [];
 
 interface PanelState<T> {
@@ -54,19 +63,82 @@ interface PanelState<T> {
   error?: string;
 }
 
+function idlePanel<T>(): PanelState<T> {
+  return { data: null, state: 'idle' };
+}
+
+/**
+ * `<portfolio-view>` — the Portfolio analytics home page (`/`), issue #170.
+ * Pure composition: every value comes from `AnalyticsDataSource` DTOs
+ * (issue #169) shaped by `portfolio-chart-helpers.ts`; every widget comes
+ * from the shared card library (issue #166) and chart layer (issue #168).
+ * No metric math happens in this file.
+ */
 @customElement('portfolio-view')
 export class PortfolioView extends PageLitElement {
   static styles = [
     pageHostStyles,
     css`
     :host {
-      color: var(--md-sys-color-on-surface, #e6e9ef);
+      color: var(--rd-ink-primary, #e6e9ef);
     }
 
-    h2 {
-      margin: 0 0 16px;
-      font-size: 22px;
-      color: var(--md-sys-color-on-surface, #e6e9ef);
+    .title-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .title-row h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: var(--rd-ink-muted, #9aa4b2);
+    }
+
+    .title-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sync-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--rd-border-2, #232936);
+      background: var(--rd-surface-card, #171b24);
+      font-size: 12px;
+      color: var(--rd-ink-muted, #9aa4b2);
+    }
+
+    .sync-chip.syncing {
+      color: var(--rd-accent, #4f8cff);
+      border-color: var(--rd-accent, #4f8cff);
+    }
+
+    .export-button {
+      background: var(--rd-surface-card, #171b24);
+      border: 1px solid var(--rd-border-2, #232936);
+      color: var(--rd-ink-primary, #e6e9ef);
+      border-radius: 8px;
+      padding: 7px 14px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .export-button:hover {
+      border-color: var(--rd-border-emphasis, #313947);
     }
 
     filter-bar {
@@ -78,74 +150,140 @@ export class PortfolioView extends PageLitElement {
       margin-bottom: 24px;
     }
 
-    .metric-grid {
+    .kpi-band {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      grid-template-columns: repeat(4, minmax(200px, 1fr));
       gap: 16px;
     }
 
-    metrics-card {
-      cursor: pointer;
+    .split-row {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 16px;
+      align-items: stretch;
     }
 
-    .component-counts {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 8px;
+    /* Grid items default to a min-width of auto, which lets a wide
+     * intrinsically-sized child (an ECharts SVG renders at a fixed pixel
+     * width before it observes its container) push the track wider than
+     * the grid itself — the classic CSS grid overflow trap. Every direct
+     * child must be free to shrink to its track's actual width. */
+    .split-row > * {
+      min-width: 0;
     }
 
-    .component-counts span {
-      background: var(--md-sys-color-surface-container, #1f242e);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 999px;
-      padding: 4px 10px;
+    @media (max-width: 1024px) {
+      .kpi-band {
+        grid-template-columns: repeat(2, minmax(200px, 1fr));
+      }
+
+      .split-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel-error {
+      color: var(--rd-status-error, #ff6b6b);
+      font-size: 13px;
+      padding: 12px;
+      background: var(--rd-surface-card, #171b24);
+      border: 1px solid var(--rd-border-2, #232936);
+      border-radius: 12px;
+    }
+
+    .chart-caption {
       font-size: 12px;
+      color: var(--rd-ink-faint, #7d8794);
+      margin: 8px 0 0;
     }
 
-    .unused-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 8px;
-    }
-
-    .unused-list span {
-      background: var(--md-sys-color-surface-container, #1f242e);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 6px;
-      padding: 4px 8px;
+    .domain-footnote {
       font-size: 12px;
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      color: var(--rd-ink-faint, #7d8794);
+      margin: 8px 0 0;
     }
 
-    table {
+    .domain-footnote a {
+      color: var(--rd-accent, #4f8cff);
+      text-decoration: none;
+    }
+
+    .domain-footnote a:hover {
+      text-decoration: underline;
+    }
+
+    table.leaderboard {
       width: 100%;
       border-collapse: collapse;
-      background: var(--md-sys-color-surface-container, #1f242e);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 8px;
+      background: var(--rd-surface-card, #171b24);
+      border: 1px solid var(--rd-border-2, #232936);
+      border-radius: 12px;
       overflow: hidden;
       font-size: 13px;
     }
 
-    th, td {
+    table.leaderboard th,
+    table.leaderboard td {
       text-align: left;
       padding: 10px 12px;
-      border-bottom: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-bottom: 1px solid var(--rd-border-1, #20242e);
     }
 
-    th {
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+    table.leaderboard th {
+      color: var(--rd-ink-muted, #9aa4b2);
       font-weight: 600;
+      font-size: 12px;
     }
 
-    td {
-      color: var(--md-sys-color-on-surface, #e6e9ef);
+    table.leaderboard td {
+      color: var(--rd-ink-primary, #e6e9ef);
+    }
+
+    .project-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .color-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .tokens-cell {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 140px;
+    }
+
+    .tokens-bar-track {
+      flex: 1;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--rd-border-1, #20242e);
+      overflow: hidden;
+    }
+
+    .tokens-bar-fill {
+      height: 100%;
+      background: var(--rd-accent, #4f8cff);
+      border-radius: 3px;
+    }
+
+    /* Visible sample-size text for a table cell — a title-attribute-only
+     * pattern is hover-only and not reliably reachable by keyboard/AT
+     * users (see .agents/rules/aggregates-expose-sample-size.md). */
+    .cell-caption {
+      font-size: 11px;
+      color: var(--rd-ink-faint, #7d8794);
+      margin-top: 2px;
     }
 
     a {
-      color: var(--md-sys-color-primary, #4f8cff);
+      color: var(--rd-accent, #4f8cff);
       text-decoration: none;
     }
 
@@ -153,44 +291,42 @@ export class PortfolioView extends PageLitElement {
       text-decoration: underline;
     }
 
-    .error {
-      color: var(--md-sys-color-error, #ff6b6b);
-      font-size: 13px;
-      padding: 12px;
-      background: var(--md-sys-color-surface-container, #1f242e);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 8px;
+    .section-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 12px;
     }
 
-    .empty {
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-      font-size: 13px;
-      padding: 12px;
+    .section-header h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .section-header .section-caption {
+      font-size: 12px;
+      color: var(--rd-ink-muted, #9aa4b2);
     }
   `,
   ];
 
-  @property({ type: Object }) params: Record<string, string> = {};
-
   @state() private filters: PortfolioParams = parsePortfolioHash(window.location.hash);
 
-  @state() private loading = false;
+  @state() private syncSnapshot: SyncManagerSnapshot | null = null;
 
-  @state() private globalState: LoadState = 'idle';
+  @state() private kpi: PanelState<PortfolioKpiBand> = idlePanel();
 
-  @state() private globalError: string | null = null;
+  @state() private trends: PanelState<PortfolioTrendSeries> = idlePanel();
 
-  @state() private overview: PanelState<PortfolioOverview> = { data: null, state: 'idle' };
+  @state() private sessionsByModel: PanelState<SessionsByModelBar> = idlePanel();
 
-  @state() private trends: PanelState<PortfolioTrendSeries> = { data: null, state: 'idle' };
+  @state() private matrix: PanelState<ModelHarnessMatrix> = idlePanel();
 
-  @state() private components: PanelState<ComponentUtilizationPage> = { data: null, state: 'idle' };
+  @state() private invocations: PanelState<InvocationsByDomain> = idlePanel();
 
-  @state() private cohorts: PanelState<ModelHarnessCohortPage> = { data: null, state: 'idle' };
+  @state() private leaderboard: PanelState<ProjectLeaderboard> = idlePanel();
 
-  @state() private projects: PanelState<ProjectListPage> = { data: null, state: 'idle' };
-
-  @state() private domains: DimensionDomains | null = null;
+  @state() private dimensionDomains: DimensionDomains | null = null;
 
   private readonly requestGuard = new RequestSequenceGuard();
 
@@ -198,10 +334,16 @@ export class PortfolioView extends PageLitElement {
 
   private dataChangeListener = () => this.handleDataChange();
 
+  private syncChangeListener = (event: Event) => {
+    this.syncSnapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('hashchange', this.hashListener);
     analyticsClient.addEventListener('data-change', this.dataChangeListener);
+    syncManager.addEventListener('change', this.syncChangeListener);
+    this.syncSnapshot = syncManager.getSnapshot();
     this.load();
   }
 
@@ -209,102 +351,85 @@ export class PortfolioView extends PageLitElement {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this.hashListener);
     analyticsClient.removeEventListener('data-change', this.dataChangeListener);
+    syncManager.removeEventListener('change', this.syncChangeListener);
   }
 
   private handleHashChange(): void {
-    if (window.location.hash === '#/' || window.location.hash.startsWith('#/?')) {
-      this.load();
-    }
+    if (this.isPortfolioHash()) this.load();
   }
 
   private handleDataChange(): void {
-    if (window.location.hash !== '#/' && !window.location.hash.startsWith('#/?')) {
-      return;
-    }
-    this.load();
+    if (this.isPortfolioHash()) this.load();
+  }
+
+  private isPortfolioHash(): boolean {
+    return window.location.hash === '#/' || window.location.hash.startsWith('#/?');
   }
 
   /**
-   * Deliberately allows overlapping calls rather than queuing them behind
-   * an in-flight request: a filter change re-issues immediately (no
-   * waiting for a prior, possibly slow, query to finish) and `requestGuard`
-   * discards whichever response is no longer current when it resolves — a
-   * slow 90d response arriving after a faster 7d one must not overwrite it.
-   * `this.filters`/`globalState = 'loading'` are set synchronously (in call
-   * order, before the `await`) so the filter bar reflects the new
-   * selection immediately; only applying the resolved data and clearing
-   * `loading` are gated on the request still being current.
+   * Loads every card's data concurrently under one request token
+   * (`RequestSequenceGuard` discards a stale response, see
+   * `request-sequence-guard.ts`). Each card's `PanelState` is set
+   * independently from its own `PromiseSettledResult`, so a failing query
+   * never blanks a sibling card (`.agents/rules/no-silent-empty-states.md`).
+   * The leaderboard query always omits the time range — it is an all-time
+   * ranking regardless of the active range filter, per issue #170.
    */
   private async load(): Promise<void> {
     const requestToken = this.requestGuard.begin();
-    this.loading = true;
-    this.globalState = 'loading';
-    this.globalError = null;
-
     const params = parsePortfolioHash(window.location.hash);
     this.filters = params;
     const query = portfolioParamsToQuery(params);
+    const leaderboardQuery = { ...query, timeRange: undefined };
 
-    const [overview, trends, components, cohorts, projects, domains] = await Promise.allSettled([
-      analyticsClient.portfolio.getOverview(query),
-      analyticsClient.portfolio.getTrends(query),
-      analyticsClient.portfolio.getComponentUtilization(query),
-      analyticsClient.portfolio.getModelHarnessCohorts(query),
-      analyticsClient.portfolio.getProjectList({ ...query, limit: 50 }),
-      analyticsClient.metadata.getDimensionDomains(),
-    ]);
+    // Every card enters 'loading' synchronously, before the await, so the
+    // first paint (and every filter-change refetch) shows a real loading
+    // affordance instead of silently reusing the prior render — the KPI
+    // band's bare empty div and the leaderboard's headers-only table are
+    // otherwise indistinguishable from "nothing wired up"
+    // (`.agents/rules/no-silent-empty-states.md`).
+    this.kpi = { data: this.kpi.data, state: 'loading' };
+    this.trends = { data: this.trends.data, state: 'loading' };
+    this.sessionsByModel = { data: this.sessionsByModel.data, state: 'loading' };
+    this.matrix = { data: this.matrix.data, state: 'loading' };
+    this.invocations = { data: this.invocations.data, state: 'loading' };
+    this.leaderboard = { data: this.leaderboard.data, state: 'loading' };
 
-    // A newer load has since started — discard this stale response
-    // (including `loading`, which the newer, still-in-flight load owns)
-    // rather than overwriting fresher data or clearing its loading state.
+    const [kpi, trends, sessionsByModel, matrix, invocations, leaderboard, domains] =
+      await Promise.allSettled([
+        analyticsClient.portfolio.getKpiBand(query),
+        analyticsClient.portfolio.getTrends(query),
+        analyticsClient.portfolio.getSessionsByModel(query),
+        analyticsClient.portfolio.getModelHarnessMatrix(query),
+        analyticsClient.portfolio.getInvocationsByDomain(query),
+        analyticsClient.portfolio.getProjectLeaderboard(leaderboardQuery),
+        analyticsClient.metadata.getDimensionDomains(),
+      ]);
+
     if (!this.requestGuard.isCurrent(requestToken)) return;
-
-    this.applyResults(overview, trends, components, cohorts, projects, domains);
-    this.loading = false;
+    this.applyResults(kpi, trends, sessionsByModel, matrix, invocations, leaderboard, domains);
   }
 
   private applyResults(
-    overview: PromiseSettledResult<PortfolioOverview>,
+    kpi: PromiseSettledResult<PortfolioKpiBand>,
     trends: PromiseSettledResult<PortfolioTrendSeries>,
-    components: PromiseSettledResult<ComponentUtilizationPage>,
-    cohorts: PromiseSettledResult<ModelHarnessCohortPage>,
-    projects: PromiseSettledResult<ProjectListPage>,
+    sessionsByModel: PromiseSettledResult<SessionsByModelBar>,
+    matrix: PromiseSettledResult<ModelHarnessMatrix>,
+    invocations: PromiseSettledResult<InvocationsByDomain>,
+    leaderboard: PromiseSettledResult<ProjectLeaderboard>,
     domains: PromiseSettledResult<DimensionDomains>,
   ): void {
-    this.overview = panelStateFromResult(overview);
+    this.kpi = panelStateFromResult(kpi);
     this.trends = panelStateFromResult(trends);
-    this.components = panelStateFromResult(components);
-    this.cohorts = panelStateFromResult(cohorts);
-    this.projects = panelStateFromResult(projects);
-    this.domains = domains.status === 'fulfilled' ? domains.value : this.domains;
-
-    const states = [
-      this.overview.state,
-      this.trends.state,
-      this.components.state,
-      this.cohorts.state,
-      this.projects.state,
-    ];
-    if (states.every((s) => s === 'ok' || s === 'empty')) {
-      this.globalState = states.some((s) => s === 'ok') ? 'ok' : 'empty';
-    } else if (states.some((s) => s === 'ok')) {
-      this.globalState = 'partial';
-    } else {
-      this.globalState = 'error';
-      this.globalError = 'All portfolio views failed to load.';
-    }
+    this.sessionsByModel = panelStateFromResult(sessionsByModel);
+    this.matrix = panelStateFromResult(matrix);
+    this.invocations = panelStateFromResult(invocations);
+    this.leaderboard = panelStateFromResult(leaderboard);
+    this.dimensionDomains = domains.status === 'fulfilled' ? domains.value : this.dimensionDomains;
   }
 
   private handleFiltersChanged(event: CustomEvent<PortfolioParams>): void {
     navigateTo(`/${buildPortfolioHash(event.detail)}`);
-  }
-
-  private goToProject(row: ProjectRowView): void {
-    navigateTo(row.href.replace(/^#/, ''));
-  }
-
-  private goToMetric(metric: MetricCardView): void {
-    if (metric.href) navigateTo(metric.href.replace(/^#/, ''));
   }
 
   private handlePointClick(event: CustomEvent<ChartEvidenceLink>): void {
@@ -312,16 +437,15 @@ export class PortfolioView extends PageLitElement {
     if (link?.href) navigateTo(link.href.replace(/^#/, ''));
   }
 
-  private renderFilters() {
-    return html`
-      <filter-bar
-        .filters=${this.filters}
-        .projectOptions=${this.domains?.projects ?? EMPTY_DIMENSION_OPTIONS}
-        .harnessOptions=${this.domains?.harnesses ?? EMPTY_DIMENSION_OPTIONS}
-        .modelOptions=${this.domains?.models ?? EMPTY_DIMENSION_OPTIONS}
-        @filters-changed=${this.handleFiltersChanged}
-      ></filter-bar>
-    `;
+  private async handleExport(): Promise<void> {
+    const bytes = await analyticsClient.exportAnalyticsDatabase();
+    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `sal-analytics-${new Date().toISOString().slice(0, 10)}.sqlite`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
 
   private chartState(state: LoadState): ChartState | null {
@@ -339,200 +463,341 @@ export class PortfolioView extends PageLitElement {
     }
   }
 
-  private renderOverview() {
-    if (this.overview.state === 'error') {
-      return html`<div class="error">${this.overview.error}</div>`;
-    }
-    if (!this.overview.data) {
-      return html`<analytics-chart title="Overview" .state=${this.chartState(this.overview.state)}></analytics-chart>`;
-    }
+  private get sessionsScope(): SessionsScope {
+    return this.filters.sessions ?? 'main';
+  }
 
-    const overview = this.overview.data;
-    const cards = overviewToMetricCards(overview, this.filters);
-
+  private renderFilters() {
+    const domains = this.dimensionDomains;
     return html`
-      <div class="section">
-        <h2>Overview</h2>
-        <div class="metric-grid">
-          ${repeat(
-            cards,
-            (card) => card.label,
-            (card) => html`
-              <metrics-card
-                label=${card.label}
-                value=${card.value}
-                sub=${card.sub}
-                .clickable=${Boolean(card.href)}
-                @card-click=${() => this.goToMetric(card)}
-              ></metrics-card>
-            `,
-          )}
+      <filter-bar
+        .filters=${this.filters}
+        .projectOptions=${domains?.projects ?? EMPTY_DIMENSION_OPTIONS}
+        .harnessOptions=${domains?.harnesses ?? EMPTY_DIMENSION_OPTIONS}
+        .modelOptions=${domains?.models ?? EMPTY_DIMENSION_OPTIONS}
+        @filters-changed=${this.handleFiltersChanged}
+      ></filter-bar>
+    `;
+  }
+
+  private renderSyncChip() {
+    const snapshot = this.syncSnapshot;
+    const active =
+      snapshot?.activeRun?.state === 'running' || snapshot?.activeRun?.state === 'queued';
+    const label = active
+      ? 'Syncing…'
+      : snapshot?.lastCompletedAt
+        ? `Synced ${formatRelativeTime(snapshot.lastCompletedAt)}`
+        : 'Not synced yet';
+    return html`<span class="sync-chip ${active ? 'syncing' : ''}">${label}</span>`;
+  }
+
+  private renderTitleRow() {
+    return html`
+      <div class="title-row">
+        <div>
+          <h1>Portfolio</h1>
+          <p class="subtitle">Portfolio-wide analytics across every synced project.</p>
         </div>
-        ${
-          overview.unusedOfferedComponents.length > 0
-            ? html`
-              <div class="section">
-                <strong>Unused offered artifacts</strong>
-                <div class="unused-list">
-                  ${overview.unusedOfferedComponents.map((c) => html`<span>${c}</span>`)}
-                </div>
-              </div>
-            `
-            : ''
-        }
-        ${
-          Object.keys(overview.componentCounts).length > 0
-            ? html`
-              <div class="section">
-                <strong>Artifact counts</strong>
-                <div class="component-counts">
-                  ${Object.entries(overview.componentCounts).map(
-                    ([kind, count]) => html`<span>${kind}: ${count}</span>`,
-                  )}
-                </div>
-              </div>
-            `
-            : ''
-        }
+        <div class="title-actions">
+          ${this.renderSyncChip()}
+          <button type="button" class="export-button" @click=${this.handleExport}>
+            Export
+          </button>
+        </div>
       </div>
     `;
   }
 
-  private renderTrends() {
-    const scope: SessionsScope = this.filters.sessions ?? 'main';
-    const tokenSeries: ChartSeries | null = this.trends.data
-      ? tokenTrendToChartSeries(this.trends.data, scope)
-      : null;
-    const series: ChartSeries | null = this.trends.data
-      ? trendToChartSeries(this.trends.data, scope)
-      : null;
-    return html`
-      <div class="section">
-        <h2>Trends</h2>
-        <analytics-chart
-          title="Token usage trends"
-          description="Daily token totals — cache write, cache read, output, and total tokens — so you can track how token consumption evolves over time."
-          .series=${tokenSeries}
-          .state=${this.chartState(this.trends.state)}
-        ></analytics-chart>
-        <analytics-chart
-          title="Session Metrics"
-          description="Daily totals for every metric across all sessions in the portfolio — wall-clock duration, turns, tool/skill/agent invocations, file operations, commands, validations, compaction events, and edit cycles."
-          .series=${series}
-          .state=${this.chartState(this.trends.state)}
-          style="margin-top: 24px;"
-        ></analytics-chart>
-      </div>
-    `;
-  }
-
-  private renderComponents() {
-    const series: ChartSeries | null = this.components.data
-      ? componentUtilizationToChartSeries(this.components.data, this.filters)
-      : null;
-    return html`
-      <div class="section">
-        <h2>Artifact utilization</h2>
-        <analytics-chart
-          title="Sessions per artifact"
-          description="Number of sessions that used each artifact, helping you spot which tools and integrations are most active across the portfolio."
-          .series=${series}
-          .state=${this.chartState(this.components.state)}
-          @point-click=${this.handlePointClick}
-        ></analytics-chart>
-      </div>
-    `;
-  }
-
-  private renderCohorts() {
-    const series: ChartSeries | null = this.cohorts.data
-      ? modelHarnessCohortsToChartSeries(this.cohorts.data)
-      : null;
-    return html`
-      <div class="section">
-        <h2>Model × harness cohorts</h2>
-        <analytics-chart
-          title="Sessions by model and harness"
-          description="Session counts grouped by model and harness, showing which model-harness combinations are used most frequently."
-          .series=${series}
-          .state=${this.chartState(this.cohorts.state)}
-        ></analytics-chart>
-      </div>
-    `;
-  }
-
-  private renderProjects() {
-    if (this.projects.state === 'error') {
-      return html`<div class="error">${this.projects.error}</div>`;
+  private renderKpiBand() {
+    if (this.kpi.state === 'error') {
+      return html`<div class="panel-error" role="alert">${this.kpi.error}</div>`;
     }
-    if (!this.projects.data || this.projects.data.items.length === 0) {
-      return html`<div class="empty">No projects found.</div>`;
+    if (!this.kpi.data) {
+      return html`<div class="kpi-band chart-caption" role="status">Loading KPI band…</div>`;
     }
 
-    const rows = projectListToRows(this.projects.data, this.filters);
+    const kpi = this.kpi.data;
+    const sessions = kpiBandToSessionsHero(kpi, this.sessionsScope);
+    const tokens = kpiBandToTokensView(kpi);
+    const cost = kpiBandToCostView(kpi);
+    const clean = kpiBandToCleanCompletionView(kpi);
+
+    return html`
+      <div class="kpi-band">
+        <stat-tile-hero
+          label="Sessions"
+          value=${sessions.value}
+          .delta=${sessions.delta}
+          .sparklinePoints=${sessions.sparklinePoints}
+          footnote=${sessions.footnote}
+          sampleLabel=${sessions.sampleLabel}
+        ></stat-tile-hero>
+        <stat-tile-delta
+          label="Tokens"
+          value=${tokens.value}
+          .delta=${tokens.delta}
+          .breakdown=${tokens.breakdown}
+          sampleLabel=${tokens.sampleLabel}
+        ></stat-tile-delta>
+        ${this.renderCostTile(cost)}
+        ${this.renderCleanCompletionTile(clean)}
+      </div>
+    `;
+  }
+
+  private renderCostTile(cost: ReturnType<typeof kpiBandToCostView>) {
+    if (cost.kind === 'missing') {
+      return html`<stat-tile-missing label="Cost" reason=${cost.reason}></stat-tile-missing>`;
+    }
+    return html`
+      <stat-tile-delta
+        label="Cost"
+        value=${cost.value}
+        .delta=${cost.delta}
+        sampleLabel=${cost.sampleLabel}
+      ></stat-tile-delta>
+    `;
+  }
+
+  private renderCleanCompletionTile(clean: ReturnType<typeof kpiBandToCleanCompletionView>) {
+    if (clean.kind === 'missing') {
+      return html`
+        <stat-tile-missing label="Clean completion" reason=${clean.reason}></stat-tile-missing>
+      `;
+    }
+    return html`
+      <stat-ring
+        label="Clean completion"
+        percent=${clean.percent}
+        centerText=${clean.centerText}
+        sampleLabel=${clean.sampleLabel}
+      ></stat-ring>
+    `;
+  }
+
+  private tokenTrendSeries(): ChartSeries | null {
+    return this.trends.data ? tokenTrendToChartSeries(this.trends.data, this.sessionsScope) : null;
+  }
+
+  private renderTrendRow() {
+    const tokenSeries = this.tokenTrendSeries();
+    const modelSeries = this.sessionsByModel.data
+      ? sessionsByModelToChartSeries(this.sessionsByModel.data)
+      : null;
+
+    return html`
+      <div class="section split-row">
+        <div>
+          <analytics-chart
+            title="Token usage trend"
+            description="Daily cache write, cache read, output, and total tokens across the portfolio."
+            .series=${tokenSeries}
+            .state=${this.chartState(this.trends.state)}
+          ></analytics-chart>
+          ${this.renderTokenTrendCaption()}
+        </div>
+        <div>
+          <analytics-chart
+            title="Sessions by model"
+            .series=${modelSeries}
+            .state=${this.chartState(this.sessionsByModel.state)}
+          ></analytics-chart>
+          ${this.renderSessionsByModelCaption()}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderTokenTrendCaption() {
+    const token = this.trends.data?.token;
+    if (!token) return null;
+    return html`<p class="chart-caption">n=${token.knownN} of ${token.eligibleN} days</p>`;
+  }
+
+  private renderSessionsByModelCaption() {
+    const token = this.sessionsByModel.data?.token;
+    if (!token) return null;
+    return html`
+      <p class="chart-caption">
+        n=${token.knownN} sessions ·
+        ${SESSIONS_SCOPE_CAPTION[this.sessionsScope]}
+      </p>
+    `;
+  }
+
+  private renderHeatmapCaption() {
+    const token = this.matrix.data?.token;
+    if (!token) return null;
+    return html`
+      <p class="chart-caption">n=${token.knownN} of ${token.eligibleN} (model, harness) cells</p>
+    `;
+  }
+
+  private renderHeatmapDomainsRow() {
+    const heatmapSeries = this.matrix.data
+      ? modelHarnessMatrixToHeatmapSeries(this.matrix.data)
+      : null;
+    const domainSeries = this.invocations.data
+      ? invocationsByDomainToChartSeries(this.invocations.data, this.filters)
+      : null;
+    const domainRows = this.invocations.data
+      ? invocationsByDomainToRows(this.invocations.data, this.filters)
+      : [];
+
+    return html`
+      <div class="section split-row">
+        <div>
+          <analytics-chart
+            title="Sessions by model × harness"
+            description="Session counts for every observed (model, harness) combination. A dashed cell means that combination has never run."
+            .series=${heatmapSeries}
+            .state=${this.chartState(this.matrix.state)}
+          ></analytics-chart>
+          ${this.renderHeatmapCaption()}
+        </div>
+        <div>
+          <analytics-chart
+            title="Invocations by domain"
+            description="Tool, Skill, Agent, and Sub Agent invocation counts across the portfolio."
+            .series=${domainSeries}
+            .state=${this.chartState(this.invocations.state)}
+            @point-click=${this.handlePointClick}
+          ></analytics-chart>
+          ${this.renderDomainFootnote(domainRows)}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderDomainFootnote(rows: DomainBarRowView[]) {
+    if (rows.length === 0) return null;
+    const total = rows.reduce((sum, row) => sum + row.count, 0);
+    return html`
+      <p class="domain-footnote">
+        n=${total} invocations across four canonical domains — Tool, Skill, Agent, Sub Agent.
+        <a href="#/mcp">MCP servers →</a>
+      </p>
+    `;
+  }
+
+  private renderLeaderboard() {
+    if (this.leaderboard.state === 'error') {
+      return html`<div class="panel-error" role="alert">${this.leaderboard.error}</div>`;
+    }
+    if (!this.leaderboard.data) {
+      return html`<div class="chart-caption" role="status">Loading project leaderboard…</div>`;
+    }
+    const rows = projectLeaderboardToRows(this.leaderboard.data, this.filters);
+    if (rows.length === 0) {
+      return html`<div class="chart-caption">No projects found.</div>`;
+    }
 
     return html`
       <div class="section">
-        <h2>Projects (${this.projects.data.items.length})</h2>
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">Sessions</th>
-              <th scope="col">Harness</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${repeat(
-              rows,
-              (row) => row.href,
-              (row) => html`
-                <tr>
-                  <td><a href=${row.href} @click=${(e: Event) => {
-                    e.preventDefault();
-                    this.goToProject(row);
-                  }}>${row.name}</a></td>
-                  <td>${row.sessionCount}</td>
-                  <td>${row.harness}</td>
-                </tr>
-              `,
-            )}
-          </tbody>
-        </table>
+        <div class="section-header">
+          <h2>Project leaderboard</h2>
+          <span class="section-caption">
+            All time · ranked by token volume · <a href="#/projects">View all</a>
+          </span>
+        </div>
+        ${this.renderLeaderboardTable(rows)}
       </div>
+    `;
+  }
+
+  private renderLeaderboardTable(rows: ProjectLeaderboardRowView[]) {
+    return html`
+      <table class="leaderboard">
+        <thead>
+          <tr>
+            <th scope="col">Project</th>
+            <th scope="col">Sessions</th>
+            <th scope="col">Tokens</th>
+            <th scope="col">Clean rate</th>
+            <th scope="col">Last active</th>
+            <th scope="col">30d trend</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${repeat(
+            rows,
+            (row) => row.href,
+            (row) => this.renderLeaderboardRow(row),
+          )}
+        </tbody>
+      </table>
+    `;
+  }
+
+  private renderLeaderboardRow(row: ProjectLeaderboardRowView) {
+    // No click handler: `row.href` is a same-page `#/projects/...` link, and
+    // the app's `HashRouter` already intercepts every such anchor click
+    // globally (`router.ts`'s `handleAnchorClick`) — a per-row handler here
+    // would only reallocate a closure on every render for no behavioral
+    // difference.
+    return html`
+      <tr>
+        <td>
+          <a href=${row.href}>
+            <span class="project-name">
+              <span class="color-dot" style="background:${row.color}"></span>
+              ${row.name}
+            </span>
+          </a>
+        </td>
+        <td>${row.sessionCount}</td>
+        <td>
+          <span class="tokens-cell">
+            <span class="tokens-bar-track">
+              <span class="tokens-bar-fill" style="width:${row.tokensFraction * 100}%"></span>
+            </span>
+            ${row.tokensValue}
+          </span>
+          <div class="cell-caption">${row.tokensSampleLabel}</div>
+        </td>
+        <td>
+          ${row.cleanRateText}
+          <div class="cell-caption">${row.cleanRateSampleLabel}</div>
+        </td>
+        <td>${row.lastActiveText}</td>
+        <td>
+          <span role="img" aria-label=${row.trendAriaLabel}>
+            <rd-sparkline .points=${row.trendPoints} width="80" height="24"></rd-sparkline>
+          </span>
+        </td>
+      </tr>
     `;
   }
 
   render() {
     return html`
       <div class="portfolio-view">
-        <h1>Portfolio</h1>
-        ${
-          this.globalState === 'error' && this.globalError
-            ? html`<div class="error" role="alert">${this.globalError}</div>`
-            : ''
-        }
+        ${this.renderTitleRow()}
         ${this.renderFilters()}
-        ${this.loading ? html`<p>Loading portfolio…</p>` : ''}
-        ${this.renderOverview()}
-        ${this.renderTrends()}
-        ${this.renderComponents()}
-        ${this.renderCohorts()}
-        ${this.renderProjects()}
+        <div class="section">${this.renderKpiBand()}</div>
+        ${this.renderTrendRow()}
+        ${this.renderHeatmapDomainsRow()}
+        ${this.renderLeaderboard()}
       </div>
     `;
   }
 }
 
-/** Cursor/list-page DTOs expose `items`; the trend series DTO exposes
- * `series` instead — both are checked so a range narrowed to zero rows
- * (e.g. the 7d preset excluding every rollup) renders the empty affordance
- * rather than being silently mistaken for 'ok' (`.agents/rules/no-silent-empty-states.md`). */
+const SESSIONS_SCOPE_CAPTION: Record<SessionsScope, string> = {
+  main: 'main sessions only',
+  all: 'including sub agents',
+  sub_agents: 'sub-agent sessions only',
+};
+
+/** Cursor/list-page DTOs expose `items`; the trend/bar-list DTOs expose
+ * `series`/`rows` instead — checked so a range narrowed to zero rows renders
+ * the empty affordance rather than being silently mistaken for 'ok'
+ * (`.agents/rules/no-silent-empty-states.md`). */
 function panelStateFromResult<T>(result: PromiseSettledResult<T>): PanelState<T> {
   if (result.status === 'fulfilled') {
     const data = result.value;
-    const isEmpty = isEmptyPanelData(data);
-    return { data, state: isEmpty ? 'empty' : 'ok' };
+    return { data, state: isEmptyPanelData(data) ? 'empty' : 'ok' };
   }
   return {
     data: null,
@@ -545,6 +810,8 @@ function isEmptyPanelData(data: unknown): boolean {
   if (!data || typeof data !== 'object') return false;
   if ('items' in data) return (data as { items: unknown[] }).items.length === 0;
   if ('series' in data) return (data as { series: unknown[] }).series.length === 0;
+  if ('rows' in data) return (data as { rows: unknown[] }).rows.length === 0;
+  if ('cells' in data) return (data as { cells: unknown[] }).cells.length === 0;
   return false;
 }
 

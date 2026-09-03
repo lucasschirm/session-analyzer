@@ -158,11 +158,24 @@ export class AppRoot extends LitElement {
       min-height: calc(100vh - 56px);
     }
 
+    /* The Portfolio route has no global header (see showGlobalHeader in the
+     * TS class below) — its own title row supplies that vertical space
+     * instead, so the sticky/fixed offsets below collapse to 0 rather than
+     * leaving a 56px gap above the icon rail and sync chrome. */
+    .app-body.no-header {
+      min-height: 100vh;
+    }
+
     icon-rail {
       position: sticky;
       top: 56px;
       align-self: flex-start;
       height: calc(100vh - 56px);
+    }
+
+    .app-body.no-header icon-rail {
+      top: 0;
+      height: 100vh;
     }
 
     main {
@@ -178,12 +191,18 @@ export class AppRoot extends LitElement {
      * a route without unmounting this) and clear of it vertically at any
      * viewport width, so it can never overlap header-nav/
      * header-project-selector the way an overlapping right-offset would
-     * once the progress bar's content grows or the header narrows. */
+     * once the progress bar's content grows or the header narrows. On the
+     * header-less Portfolio route this collapses to the same 8px inset the
+     * header would otherwise leave beneath it. */
     .sync-chrome {
       position: fixed;
       top: 64px;
       right: 24px;
       z-index: 15;
+    }
+
+    .sync-chrome.no-header {
+      top: 8px;
     }
 
     .app-error {
@@ -553,17 +572,6 @@ export class AppRoot extends LitElement {
     );
   }
 
-  /**
-   * `/sessions/:id` (Session Evidence, issue #172) owns its own breadcrumb +
-   * title row and does not render the global header there. Every other
-   * route keeps the global header — `sync-progress-bar`/`sync-status-bar`
-   * are unaffected, since they are mounted outside `<header>` and stay
-   * visible on every route including this one.
-   */
-  private isGlobalHeaderHidden(): boolean {
-    return /^\/sessions\//.test(this.currentPath);
-  }
-
   private async syncProjectSelector(): Promise<void> {
     const path = this.currentPath;
     const projectMatch = path.match(/^\/projects\/([^/]+)/);
@@ -598,42 +606,70 @@ export class AppRoot extends LitElement {
     navigateTo('/settings/data-sources');
   }
 
+  /**
+   * The Portfolio route (`/`, issue #170) and Session Evidence route
+   * (`/sessions/:id`, issue #172) each render a page-owned title row in
+   * place of this global header — project selection moves into the filter
+   * bar's Project chip and Export moves into the page's own Export button
+   * on `/`, per the shell sub-issue's disposition table. Every other route
+   * keeps the global header. `sync-progress-bar`/`sync-status-bar` stay
+   * mounted below regardless of route — a page's own sync chip only
+   * complements them, never replaces them.
+   *
+   * Known, deliberate trade-off: `header-project-selector`'s type-ahead
+   * "jump straight to any project by name" search is not replicated on `/`.
+   * The filter bar's Project chip only *scopes* the Portfolio view, it does
+   * not navigate. From `/`, reaching a specific project's page still takes
+   * one action — a project leaderboard row click (carries the current
+   * filter context as `returnContext`), or the icon rail's Projects
+   * destination, which has its own full, searchable list. Every other
+   * route keeps the fast type-ahead selector.
+   */
+  private isGlobalHeaderHidden(): boolean {
+    return this.currentPath === '/' || /^\/sessions\//.test(this.currentPath);
+  }
+
+  private get showGlobalHeader(): boolean {
+    return !this.isGlobalHeaderHidden();
+  }
+
+  private renderGlobalHeader() {
+    if (!this.showGlobalHeader) return null;
+    return html`
+      <header>
+        <a href="#/" class="logo">SAL</a>
+        <header-project-selector
+          .value=${this.selectedProjectSlug}
+        ></header-project-selector>
+        <nav class="header-nav">
+          <a href="#/" class=${this.isDashboardActive() ? 'active' : ''}>Dashboard</a>
+          <a href="#/artifacts" class=${this.isArtifactsActive() ? 'active' : ''}>Artifacts</a>
+        </nav>
+        <div class="header-right">
+          <button
+            type="button"
+            class="settings-button"
+            title="Settings"
+            aria-label="Settings"
+            @click=${this.handleSettingsClick}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+              ></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+    `;
+  }
+
   render() {
     return html`
-      ${
-        this.isGlobalHeaderHidden()
-          ? ''
-          : html`
-            <header>
-              <a href="#/" class="logo">SAL</a>
-              <header-project-selector
-                .value=${this.selectedProjectSlug}
-              ></header-project-selector>
-              <nav class="header-nav">
-                <a href="#/" class=${this.isDashboardActive() ? 'active' : ''}>Dashboard</a>
-                <a href="#/artifacts" class=${this.isArtifactsActive() ? 'active' : ''}>Artifacts</a>
-              </nav>
-              <div class="header-right">
-                <button
-                  type="button"
-                  class="settings-button"
-                  title="Settings"
-                  aria-label="Settings"
-                  @click=${this.handleSettingsClick}
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                    stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="3"></circle>
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
-                    ></path>
-                  </svg>
-                </button>
-              </div>
-            </header>
-          `
-      }
+      ${this.renderGlobalHeader()}
 
-      <div class="app-body">
+      <div class="app-body ${this.showGlobalHeader ? '' : 'no-header'}">
         ${this.appReady ? html`<icon-rail .path=${this.currentPath}></icon-rail>` : ''}
         <main>
           ${
@@ -683,7 +719,7 @@ export class AppRoot extends LitElement {
           : ''
       }
 
-      <div class="sync-chrome">
+      <div class="sync-chrome ${this.showGlobalHeader ? '' : 'no-header'}">
         <sync-progress-bar></sync-progress-bar>
       </div>
       <sync-status-bar></sync-status-bar>
