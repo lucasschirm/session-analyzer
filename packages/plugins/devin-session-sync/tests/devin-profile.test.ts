@@ -132,6 +132,83 @@ describe('capture allowlist matching (via discover())', () => {
     expect(relativePaths).toContain('.config/devin/config.json');
     expect(relativePaths).toContain('plugins/discovered.json');
   });
+
+  it('matches every DS-B18 (#270) workspace-scope rule/skill/subagent pattern', async () => {
+    await writeFile(workspaceDir, 'AGENTS.local.md', '# local agents');
+    await writeFile(workspaceDir, 'AGENT.md', '# agent');
+    await writeFile(workspaceDir, '.devin/rules/style.md', '# style rule');
+    await writeFile(workspaceDir, '.devin/global_rules.md', '# global rules');
+    // Devin's documented skill/subagent convention nests one directory
+    // level deeper (`<name>/SKILL.md`, `<name>/AGENT.md`) — exercise that
+    // multi-level shape under a `**` pattern, not just a flat file.
+    await writeFile(workspaceDir, '.devin/skills/my-skill/SKILL.md', '# skill');
+    await writeFile(workspaceDir, '.devin/agents/my-agent/AGENT.md', '# agent');
+    await writeFile(workspaceDir, '.agents/skills/shared-skill/SKILL.md', '# shared skill');
+    await writeFile(workspaceDir, '.agents/agents/shared-agent/AGENT.md', '# shared agent');
+
+    const result = await discover(
+      { projectId: 'proj', sessionId: 'sess', workspaceRoot: workspaceDir, homeDir },
+      DevinHarnessProfile,
+    );
+
+    const relativePaths = result.artifacts.map((a) => a.relativePath);
+    expect(relativePaths).toContain('AGENTS.local.md');
+    expect(relativePaths).toContain('AGENT.md');
+    expect(relativePaths).toContain('.devin/rules/style.md');
+    expect(relativePaths).toContain('.devin/global_rules.md');
+    expect(relativePaths).toContain('.devin/skills/my-skill/SKILL.md');
+    expect(relativePaths).toContain('.devin/agents/my-agent/AGENT.md');
+    expect(relativePaths).toContain('.agents/skills/shared-skill/SKILL.md');
+    expect(relativePaths).toContain('.agents/agents/shared-agent/AGENT.md');
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('matches every DS-B18 (#270) global-scope rule/skill/subagent pattern', async () => {
+    await writeFile(homeDir, '.config/devin/AGENTS.md', '# global agents');
+    await writeFile(homeDir, '.config/devin/AGENT.md', '# global agent');
+    await writeFile(homeDir, '.config/devin/AGENTS.local.md', '# global local agents');
+    // Global skill/subagent directories nest one level deeper too
+    // (`<name>/SKILL.md`, `<name>/AGENT.md`), same as workspace scope.
+    await writeFile(homeDir, '.config/devin/skills/global-skill/SKILL.md', '# global skill');
+    await writeFile(homeDir, '.config/devin/agents/global-agent/AGENT.md', '# global subagent');
+    await writeFile(homeDir, '.devin/rules/team-style.md', '# team rule');
+    await writeFile(homeDir, '.devin/global_rules.md', '# devin global rules');
+    await writeFile(homeDir, '.agents/skills/dotagents-skill/SKILL.md', '# dot-agents skill');
+
+    const result = await discover(
+      { projectId: 'proj', sessionId: 'sess', workspaceRoot: workspaceDir, homeDir },
+      DevinHarnessProfile,
+    );
+
+    const relativePaths = result.artifacts.map((a) => a.relativePath);
+    expect(relativePaths).toContain('.config/devin/AGENTS.md');
+    expect(relativePaths).toContain('.config/devin/AGENT.md');
+    expect(relativePaths).toContain('.config/devin/AGENTS.local.md');
+    expect(relativePaths).toContain('.config/devin/skills/global-skill/SKILL.md');
+    expect(relativePaths).toContain('.config/devin/agents/global-agent/AGENT.md');
+    expect(relativePaths).toContain('.devin/rules/team-style.md');
+    expect(relativePaths).toContain('.devin/global_rules.md');
+    expect(relativePaths).toContain('.agents/skills/dotagents-skill/SKILL.md');
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('never overlaps DEVIN_HARD_BLOCKLIST_PATTERNS with any allowlist pattern', () => {
+    const allPatterns = [
+      ...DevinHarnessProfile.captureAllowlist.workspace.map((e) => e.pattern),
+      ...DevinHarnessProfile.captureAllowlist.global.map((e) => e.pattern),
+    ];
+    for (const blocked of DEVIN_HARD_BLOCKLIST_PATTERNS) {
+      expect(allPatterns).not.toContain(blocked);
+      // Guard against a broadened `**` glob sweeping a blocklisted directory
+      // in: no allowlist pattern's directory prefix may equal a blocklisted
+      // directory prefix (e.g. `mcp/**` would collide with `mcp/oauth/**`).
+      const blockedDir = blocked.replace(/\/\*\*$/, '');
+      for (const allowed of allPatterns) {
+        const allowedDir = allowed.replace(/\/\*\*$/, '').replace(/^~\//, '');
+        expect(allowedDir).not.toBe(blockedDir);
+      }
+    }
+  });
 });
 
 describe('DEVIN_HARD_BLOCKLIST_PATTERNS', () => {
