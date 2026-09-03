@@ -21,7 +21,13 @@ export function stableId(namespace: string, parts: Record<string, unknown>): str
   return `${namespace}:${JSON.stringify(ordered)}`;
 }
 
-function sourceIdentity(
+/**
+ * Resolves the harness-scoped source identity (ingestion source,
+ * environment, project) used both for session ids and for component ids
+ * that must stay stable across sessions from the same source
+ * (`.agents/rules/component-identity-not-display-name.md`).
+ */
+export function resolveSourceIdentity(
   context: TransformContext,
   source?: SourceIdentity,
 ): Required<SourceIdentity> {
@@ -38,7 +44,7 @@ export function deriveSessionId(
   source: SourceIdentity | undefined,
   nativeSessionId: string,
 ): string {
-  const s = sourceIdentity(context, source);
+  const s = resolveSourceIdentity(context, source);
   return stableId('session', {
     source: s.sourceId,
     env: s.environmentId,

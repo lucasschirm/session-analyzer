@@ -164,7 +164,7 @@ export function getDevinMetricDefinitions(): readonly MetricDefinition[] {
       metricDefinition(
         `devin:invocations:skill:${scope}`,
         `Skill invocations (${scopeLabel})`,
-        `Count of Skill invocations from plugins/discovered.json. Scope: ${scopeLabel}.`,
+        `Count of Skill invocations from tool_call_state functions.skill:* ACP calls. Scope: ${scopeLabel}.`,
         'invocations',
         'count',
         'integer',
@@ -178,7 +178,7 @@ export function getDevinMetricDefinitions(): readonly MetricDefinition[] {
       metricDefinition(
         `devin:invocations:agent:${scope}`,
         `Agent invocations (${scopeLabel})`,
-        `Count of Agent invocations from plugins/discovered.json. Scope: ${scopeLabel}.`,
+        `Count of Agent invocations from tool_call_state functions.run_subagent:* ACP calls. Scope: ${scopeLabel}.`,
         'invocations',
         'count',
         'integer',

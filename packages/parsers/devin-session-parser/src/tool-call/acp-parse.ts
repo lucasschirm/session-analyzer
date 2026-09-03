@@ -23,6 +23,15 @@ export interface AcpToolCall {
   rawKind: string | null;
   content: unknown;
   rawInput: unknown;
+  /**
+   * `_meta["cognition.ai/inferenceToolName"]` on `tool_call_json` itself.
+   * Devin stamps this `_meta` key on both `tool_call_json` and
+   * `tool_call_update_json` when it is present at all, so this lets a
+   * consumer resolve the domain-correct tool name even for a call whose
+   * `tool_call_update_json` never arrived (e.g. an interrupted session) —
+   * see `AcpToolCallUpdate.inferenceToolName` for the update-side twin.
+   */
+  inferenceToolName: string | null;
 }
 
 export interface AcpToolCallUpdate {
@@ -67,6 +76,7 @@ export function parseAcpToolCall(json: string | null): AcpToolCall | null {
     rawKind,
     content: record.content ?? null,
     rawInput: record.rawInput ?? null,
+    inferenceToolName: extractInferenceToolName(record),
   };
 }
 

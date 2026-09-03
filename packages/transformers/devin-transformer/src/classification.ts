@@ -211,7 +211,7 @@ function classifyByRule(artifact: Artifact<unknown>): {
   };
 }
 
-function completenessFromComponents(
+export function completenessFromComponents(
   components: ComponentSummary[],
   unclassifiedCount: number,
 ): ConfigurationSnapshot['completeness'] {

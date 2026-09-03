@@ -1,7 +1,10 @@
 import type { ManifestArtifact, SyncManifest } from '@lucasschirm/sal-sync-core';
 import { MANIFEST_SCHEMA_VERSION } from '@lucasschirm/sal-sync-core';
 import type { SourceIdentity, UnknownArtifactBundle } from '@lucasschirm/sal-transformer-shared';
-import { linearBundle } from '../../../transformers/devin-transformer/tests/conformance/fixtures/index.js';
+import {
+  componentsBundle,
+  linearBundle,
+} from '../../../transformers/devin-transformer/tests/conformance/fixtures/index.js';
 import { createSha256ContentHasher } from '../../src/ingestion.js';
 import type { VerifiedManifestBundle } from '../../src/manifest.js';
 import type { ResolvedArtifact } from '../../src/ports.js';
@@ -58,6 +61,32 @@ function cloneBundleWithRootTranscript(
   };
 }
 
+/**
+ * The devin-transformer conformance fixtures hardcode the native
+ * `sessions.id`/`message_nodes.session_id` to the constant `'test-sess'`
+ * inside `transcript.jsonl`'s own content, independent of the manifest's
+ * `sessionId` (which only drives artifact routing paths). Two manifests
+ * built from the same source fixture with different manifest `sessionId`s
+ * would otherwise still resolve to the exact same devin-transformer
+ * `deriveSessionId(...)` output (same native session id + same source
+ * scope) and collapse into one session — this rewrites the embedded native
+ * id so each manifest's session is genuinely distinct when needed (e.g. to
+ * test component identity stability *across* sessions).
+ */
+function cloneBundleWithNativeSessionId(
+  bundle: UnknownArtifactBundle,
+  nativeSessionId: string,
+): UnknownArtifactBundle {
+  return {
+    ...bundle,
+    artifacts: bundle.artifacts.map((a) => {
+      if (normalizePath(a.relativePath) !== 'transcript.jsonl') return a;
+      const content = typeof a.content === 'string' ? a.content : '';
+      return { ...a, content: content.replaceAll('test-sess', nativeSessionId) };
+    }),
+  };
+}
+
 export interface DevinManifestFixture {
   readonly bundle: VerifiedManifestBundle;
   readonly resolvedArtifacts: readonly ResolvedArtifact[];
@@ -71,6 +100,15 @@ export async function buildDevinManifestBundle(
     readonly environmentId?: string;
     readonly sourceId?: string;
     readonly corruptRootTranscript?: boolean;
+    /**
+     * Use the `componentsBundle` fixture (a `skill/<name>` cog, a
+     * `core/model` AllowList cog with the 4 MCP wrapper tool names, a
+     * `functions.skill` call, and a `functions.run_subagent` call) instead
+     * of the plain `linearBundle`, to exercise cogs_json-derived
+     * skill/tool/agent component ingestion and the skill/agent invocation
+     * metrics end-to-end (DS-F11 (#288)).
+     */
+    readonly useComponentsBundle?: boolean;
   } = {},
 ): Promise<DevinManifestFixture> {
   const projectId = options.projectId ?? 'devin-project';
@@ -78,7 +116,8 @@ export async function buildDevinManifestBundle(
   const sourceId = options.sourceId ?? 'default';
   const environmentId = options.environmentId ?? 'dev';
 
-  let sourceBundle = linearBundle;
+  let sourceBundle = options.useComponentsBundle ? componentsBundle : linearBundle;
+  sourceBundle = cloneBundleWithNativeSessionId(sourceBundle, sessionId);
   if (options.corruptRootTranscript) {
     sourceBundle = cloneBundleWithRootTranscript(sourceBundle, '');
   }

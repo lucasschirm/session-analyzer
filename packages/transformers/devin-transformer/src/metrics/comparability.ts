@@ -22,8 +22,10 @@ export const DEVIN_PROVENANCE_REQUIREMENT = 'source_artifact_event_field';
  *   share `sessions.last_activity_at` in the observed schema), so duration is
  *   derived from session start/end or ATIF step timestamps, not per-message.
  * - Tool domain: ACP `tool_call_json.kind` values (`edit|execute|search`) map
- *   only to the Tool domain. Skill/Agent invocations are not yet available from
- *   `plugins/discovered.json`, so those metric populations are unavailable.
+ *   only to the Tool domain. Skill/Agent invocations are sourced from
+ *   `tool_call_state`'s `functions.skill:*`/`functions.run_subagent:*` ACP
+ *   calls (DS-F11 (#288)), not `plugins/discovered.json` (which is never
+ *   captured and is not needed for invocation counts).
  * - Cost: per-session cost requires the `sessions.model` -> `models.json`
  *   `variants[].model_uid` join planned for DS-F4; it is unavailable here.
  */
