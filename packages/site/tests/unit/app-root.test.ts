@@ -140,8 +140,19 @@ describe('app-root', () => {
     expect(root.querySelector('sync-progress-bar')).not.toBeNull();
   });
 
-  it('keeps the global header on every other route', async () => {
+  it('swaps the global header for the page-owned title row on /projects/:id only (issue #171)', async () => {
     window.location.hash = '#/projects/p1';
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    expect(root.querySelector('header')).toBeNull();
+    // sync-progress-bar stays visible/globally mounted, unaffected by the header swap.
+    expect(root.querySelector('sync-progress-bar')).not.toBeNull();
+  });
+
+  it('keeps the global header on every other route', async () => {
+    window.location.hash = '#/projects';
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 

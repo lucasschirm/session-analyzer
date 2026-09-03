@@ -6,9 +6,9 @@ import { captureAnalyticsWorker, seedSession } from './helpers/seeded-store';
 
 /**
  * E2E for the Project Behavior drill-down page (issue #171 — canvas page 1,
- * "Project drill-down"). Catalog IDs: UX-031, UX-032, UX-033, UX-035 (see
+ * "Project drill-down"). Catalog IDs: UX-041, UX-042, UX-043, UX-045 (see
  * docs/superpowers/plans/2026-08-27-e2e-coverage-enhancement.md §6.1).
- * UX-034 (empty vs error affordance for a chart section on this page) is
+ * UX-044 (empty vs error affordance for a chart section on this page) is
  * covered by `ux-002-empty-error.spec.ts`, which this redesign PR already
  * repoints at the Session duration histogram — see that file rather than
  * duplicating the assertion here.
@@ -43,7 +43,7 @@ test.describe('Project Behavior drill-down (issue #171)', () => {
     await page.goto('/');
   });
 
-  test('UX-031: navigating from the portfolio leaderboard lands on the matching project header', async ({
+  test('UX-041: navigating from the portfolio leaderboard lands on the matching project header', async ({
     page,
   }) => {
     const projectName = 'PB171 Leaderboard Nav';
@@ -60,7 +60,7 @@ test.describe('Project Behavior drill-down (issue #171)', () => {
     await expect(page.locator('h1')).toHaveText(projectName, { timeout: 15000 });
   });
 
-  test('UX-032: histogram geometry corresponds to the DTO bins', async ({ page }) => {
+  test('UX-042: histogram geometry corresponds to the DTO bins', async ({ page }) => {
     const projectName = 'PB171 Histogram Geometry';
     await seedProjectBehaviorSession(page, projectName);
 
@@ -93,7 +93,7 @@ test.describe('Project Behavior drill-down (issue #171)', () => {
     expect(total).toBeGreaterThan(0);
   });
 
-  test('UX-033: outcomes legend counts sum to the session total', async ({ page }) => {
+  test('UX-043: outcomes legend counts sum to the session total', async ({ page }) => {
     // `session:outcome` is scoped to `finality = 'final'` sessions
     // (`SessionOutcomeStore.rollupByProject`). No harness plugin emits
     // `finality: 'final'` yet for *any* session, seeded or real-synced — a
@@ -138,7 +138,7 @@ test.describe('Project Behavior drill-down (issue #171)', () => {
     expect(percents.reduce((sum, p) => sum + p, 0) + tailPercent).toBe(100);
   });
 
-  test('UX-035: the breadcrumb returns to the filtered portfolio via returnContext', async ({
+  test('UX-045: the breadcrumb returns to the filtered portfolio via returnContext', async ({
     page,
   }) => {
     const projectName = 'PB171 Breadcrumb Return';
