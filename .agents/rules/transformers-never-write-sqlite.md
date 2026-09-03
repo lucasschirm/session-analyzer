@@ -1,12 +1,12 @@
 ---
-globs: "packages/transformer/**,packages/plugins/**"
+globs: "packages/transformers/**,packages/plugins/**"
 ---
 
 # Transformers Never Write SQLite
 
 **When to use this rule:**
 
-- When implementing or extending a transformer plugin or its conformance fixtures under `packages/transformer` or `packages/plugins`.
+- When implementing or extending a transformer plugin or its conformance fixtures under `packages/transformers` (e.g. `transformer-shared`, `claude-transformer`) or `packages/plugins`.
 
 **Invariants (non-negotiable):**
 

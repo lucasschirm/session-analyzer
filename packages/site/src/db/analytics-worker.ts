@@ -28,7 +28,8 @@ import {
 } from '@lucasschirm/sal-db';
 import { ANALYTICS_SCHEMA_NAME, MIGRATIONS, MigrationRunner } from '@lucasschirm/sal-db-core';
 import { parseSyncManifest } from '@lucasschirm/sal-sync-core';
-import { createDefaultRegistry, type TransformerRegistry } from '@lucasschirm/sal-transformer';
+import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
+import type { TransformerRegistry } from '@lucasschirm/sal-transformer-shared';
 import type {
   AnalyticsBackendReport,
   AnalyticsDataChangedBroadcast,

@@ -1,5 +1,5 @@
 ---
-globs: "packages/transformer/**,packages/db/**,packages/site/src/**,packages/plugins/**"
+globs: "packages/transformers/**,packages/db/**,packages/site/src/**,packages/plugins/**"
 ---
 
 # Analytics Domain Distinctions (Tool / Skill / Agent / Sub Agent)

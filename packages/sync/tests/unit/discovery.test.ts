@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  DEFAULT_HARNESS_PROFILE,
   DEFAULT_SYNC_LIMITS,
   discover,
   discoverGlobal,
@@ -98,11 +99,14 @@ describe('discoverWorkspace', () => {
     await writeFile(path.join(workspace, '.claude', 'skills', 'skill-a.md'), '# skill a');
     await writeFile(path.join(workspace, '.claude', 'rules', 'rule-a.md'), '# rule a');
 
-    const result = await discoverWorkspace({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-    });
+    const result = await discoverWorkspace(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     const relativePaths = result.artifacts.map((a) => a.relativePath).sort();
     expect(relativePaths).toEqual([
@@ -123,11 +127,14 @@ describe('discoverWorkspace', () => {
     await writeFile(path.join(workspace, 'README.md'), '# readme');
     await writeFile(path.join(workspace, '.claude', 'settings.json'), '{}');
 
-    const result = await discoverWorkspace({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-    });
+    const result = await discoverWorkspace(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts.map((a) => a.relativePath)).toEqual(['.claude/settings.json']);
   });
@@ -135,11 +142,14 @@ describe('discoverWorkspace', () => {
   it('silently skips missing allowlist files', async () => {
     await writeFile(path.join(workspace, 'CLAUDE.md'), '# project rules');
 
-    const result = await discoverWorkspace({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-    });
+    const result = await discoverWorkspace(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts.map((a) => a.relativePath)).toEqual(['CLAUDE.md']);
     expect(result.errors).toHaveLength(0);
@@ -149,11 +159,14 @@ describe('discoverWorkspace', () => {
     const content = Buffer.from('# project rules');
     await writeFile(path.join(workspace, 'CLAUDE.md'), content);
 
-    const result = await discoverWorkspace({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-    });
+    const result = await discoverWorkspace(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts).toHaveLength(1);
     expect(result.artifacts[0]?.sha256).toBe(sha256(content));
@@ -168,11 +181,14 @@ describe('discoverWorkspace', () => {
       await fsp.mkdir(path.dirname(linkPath), { recursive: true });
       fs.symlinkSync(path.join(outside, 'secret.md'), linkPath);
 
-      const result = await discoverWorkspace({
-        projectId: 'proj-1',
-        sessionId: 'sess-1',
-        workspaceRoot: workspace,
-      });
+      const result = await discoverWorkspace(
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          workspaceRoot: workspace,
+        },
+        DEFAULT_HARNESS_PROFILE,
+      );
 
       expect(result.artifacts).toHaveLength(0);
       expect(result.errors.some((e) => e.code === 'SYNC_DISCOVERY_ERROR')).toBe(true);
@@ -185,12 +201,15 @@ describe('discoverWorkspace', () => {
     const content = Buffer.alloc(101);
     await writeFile(path.join(workspace, '.claude', 'settings.json'), content);
 
-    const result = await discoverWorkspace({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-      limits: makeLimits({ maxFileBytes: 100 }),
-    });
+    const result = await discoverWorkspace(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+        limits: makeLimits({ maxFileBytes: 100 }),
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts).toHaveLength(0);
     expect(result.errors[0]?.code).toBe('SYNC_FILE_TOO_LARGE');
@@ -200,12 +219,15 @@ describe('discoverWorkspace', () => {
     await writeFile(path.join(workspace, 'CLAUDE.md'), Buffer.alloc(60));
     await writeFile(path.join(workspace, '.mcp.json'), Buffer.alloc(60));
 
-    const result = await discoverWorkspace({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-      limits: makeLimits({ maxTotalBytes: 100 }),
-    });
+    const result = await discoverWorkspace(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+        limits: makeLimits({ maxTotalBytes: 100 }),
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts.length).toBeLessThanOrEqual(1);
     expect(result.errors.some((e) => e.code === 'SYNC_TOTAL_SIZE_EXCEEDED')).toBe(true);
@@ -215,12 +237,15 @@ describe('discoverWorkspace', () => {
     await writeFile(path.join(workspace, 'CLAUDE.md'), 'a');
     await writeFile(path.join(workspace, '.mcp.json'), 'b');
 
-    const result = await discoverWorkspace({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-      limits: makeLimits({ maxFiles: 1 }),
-    });
+    const result = await discoverWorkspace(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+        limits: makeLimits({ maxFiles: 1 }),
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts).toHaveLength(1);
     expect(result.errors[0]?.code).toBe('SYNC_FILE_COUNT_EXCEEDED');
@@ -229,12 +254,15 @@ describe('discoverWorkspace', () => {
   it('rejects JSON files that exceed the configured depth', async () => {
     await writeFile(path.join(workspace, '.claude', 'settings.json'), '{"a":{"b":{"c":1}}}');
 
-    const result = await discoverWorkspace({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-      limits: makeLimits({ maxJsonDepth: 1 }),
-    });
+    const result = await discoverWorkspace(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+        limits: makeLimits({ maxJsonDepth: 1 }),
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts).toHaveLength(0);
     expect(result.errors[0]?.code).toBe('SYNC_JSON_PARSE_FAILED');
@@ -246,11 +274,14 @@ describe('discoverWorkspace', () => {
     fs.chmodSync(agentsDir, 0o000);
 
     try {
-      const result = await discoverWorkspace({
-        projectId: 'proj-1',
-        sessionId: 'sess-1',
-        workspaceRoot: workspace,
-      });
+      const result = await discoverWorkspace(
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          workspaceRoot: workspace,
+        },
+        DEFAULT_HARNESS_PROFILE,
+      );
 
       expect(result.artifacts.map((a) => a.relativePath)).not.toContain(
         '.claude/agents/agent-a.md',
@@ -282,12 +313,15 @@ describe('discoverGlobal', () => {
     await writeFile(path.join(claudeConfigDir, 'agents', 'agent-global.md'), '# agent');
     await writeFile(path.join(homeDir, '.claude.json'), '{"mcpServers": {}}');
 
-    const result = await discoverGlobal({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      claudeConfigDir,
-      homeDir,
-    });
+    const result = await discoverGlobal(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        configDir: claudeConfigDir,
+        homeDir,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     const relativePaths = result.artifacts.map((a) => a.relativePath).sort();
     expect(relativePaths).toEqual([
@@ -303,12 +337,15 @@ describe('discoverGlobal', () => {
     await writeFile(path.join(homeDir, '.claude.json'), '{"user": true}');
     await writeFile(path.join(claudeConfigDir, '.claude.json'), '{"wrong": true}');
 
-    const result = await discoverGlobal({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      claudeConfigDir,
-      homeDir,
-    });
+    const result = await discoverGlobal(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        configDir: claudeConfigDir,
+        homeDir,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     const found = result.artifacts.find((a) => a.relativePath === '.claude.json');
     expect(found).toBeDefined();
@@ -320,12 +357,15 @@ describe('discoverGlobal', () => {
   it('respects CLAUDE_CONFIG_DIR when provided', async () => {
     await writeFile(path.join(claudeConfigDir, 'settings.json'), '{"fromOverride": true}');
 
-    const result = await discoverGlobal({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      claudeConfigDir,
-      homeDir,
-    });
+    const result = await discoverGlobal(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        configDir: claudeConfigDir,
+        homeDir,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     const found = result.artifacts.find((a) => a.relativePath === 'settings.json');
     expect(found).toBeDefined();
@@ -341,12 +381,15 @@ describe('discoverGlobal', () => {
       await fsp.mkdir(path.dirname(linkPath), { recursive: true });
       fs.symlinkSync(path.join(outside, 'leaked.md'), linkPath);
 
-      const result = await discoverGlobal({
-        projectId: 'proj-1',
-        sessionId: 'sess-1',
-        claudeConfigDir,
-        homeDir,
-      });
+      const result = await discoverGlobal(
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          configDir: claudeConfigDir,
+          homeDir,
+        },
+        DEFAULT_HARNESS_PROFILE,
+      );
 
       expect(result.artifacts).toHaveLength(0);
       expect(result.errors.some((e) => e.code === 'SYNC_DISCOVERY_ERROR')).toBe(true);
@@ -373,11 +416,14 @@ describe('discoverSession', () => {
     await writeFile(transcriptPath, '{"type":"message"}\n');
     await writeFile(path.join(subagentDir, 'agent-1.jsonl'), '{"type":"message"}\n');
 
-    const result = await discoverSession({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      transcriptPath,
-    });
+    const result = await discoverSession(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        transcriptPath,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     const relativePaths = result.artifacts.map((a) => a.relativePath).sort();
     expect(relativePaths).toEqual(['subagents/agent-1.jsonl', 'transcript.jsonl']);
@@ -390,11 +436,14 @@ describe('discoverSession', () => {
     await writeFile(path.join(subagentDir, 'agent-1.jsonl'), '{"type":"message"}\n');
     await writeFile(path.join(subagentDir, 'agent-1.meta.json'), '{"toolUseId":"x"}\n');
 
-    const result = await discoverSession({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      transcriptPath,
-    });
+    const result = await discoverSession(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        transcriptPath,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     const relativePaths = result.artifacts.map((a) => a.relativePath).sort();
     expect(relativePaths).toEqual([
@@ -409,11 +458,14 @@ describe('discoverSession', () => {
     await writeFile(transcriptPath, '{}\n');
     await writeFile(path.join(transcriptDir, 'sess-2.jsonl'), '{}\n');
 
-    const result = await discoverSession({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      transcriptPath,
-    });
+    const result = await discoverSession(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        transcriptPath,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     const relativePaths = result.artifacts.map((a) => a.relativePath);
     expect(relativePaths).toEqual(['transcript.jsonl']);
@@ -426,11 +478,14 @@ describe('discoverSession', () => {
     await writeFile(path.join(transcriptDir, 'sess-1', 'subagents', 'agent-1.jsonl'), '{}\n');
     await writeFile(path.join(transcriptDir, 'sess-2', 'subagents', 'agent-2.jsonl'), '{}\n');
 
-    const result = await discoverSession({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      transcriptPath,
-    });
+    const result = await discoverSession(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        transcriptPath,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     const relativePaths = result.artifacts.map((a) => a.relativePath);
     expect(relativePaths).toContain('subagents/agent-1.jsonl');
@@ -443,11 +498,14 @@ describe('discoverSession', () => {
     await writeFile(transcriptPath, '{}\n');
     await writeFile(path.join(agentDir, 'agent-def.jsonl'), '{}\n');
 
-    const result = await discoverSession({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      transcriptPath,
-    });
+    const result = await discoverSession(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        transcriptPath,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts.map((a) => a.relativePath)).not.toContain(
       '.claude/agents/agent-def.jsonl',
@@ -458,21 +516,27 @@ describe('discoverSession', () => {
     const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
     await writeFile(transcriptPath, '{}\n');
 
-    const result = await discoverSession({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      transcriptPath,
-      captureTranscripts: false,
-    });
+    const result = await discoverSession(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        transcriptPath,
+        captureTranscripts: false,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts).toHaveLength(0);
   });
 
   it('returns empty when no transcript path is provided', async () => {
-    const result = await discoverSession({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-    });
+    const result = await discoverSession(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts).toHaveLength(0);
     expect(result.errors).toHaveLength(0);
@@ -482,12 +546,15 @@ describe('discoverSession', () => {
     const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
     await writeFile(transcriptPath, Buffer.alloc(101));
 
-    const result = await discoverSession({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      transcriptPath,
-      limits: makeLimits({ maxTranscriptBytes: 100 }),
-    });
+    const result = await discoverSession(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        transcriptPath,
+        limits: makeLimits({ maxTranscriptBytes: 100 }),
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts).toHaveLength(0);
     expect(result.errors[0]?.code).toBe('SYNC_FILE_TOO_LARGE');
@@ -497,12 +564,15 @@ describe('discoverSession', () => {
     const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
     await writeFile(transcriptPath, `${'x'.repeat(51)}\n`);
 
-    const result = await discoverSession({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      transcriptPath,
-      limits: makeLimits({ maxJsonlLineBytes: 50 }),
-    });
+    const result = await discoverSession(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        transcriptPath,
+        limits: makeLimits({ maxJsonlLineBytes: 50 }),
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts).toHaveLength(0);
     expect(result.errors[0]?.code).toBe('SYNC_JSON_PARSE_FAILED');
@@ -534,14 +604,17 @@ describe('discover', () => {
       const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
       await writeFile(transcriptPath, '{}\n');
 
-      const result = await discover({
-        projectId: 'proj-1',
-        sessionId: 'sess-1',
-        workspaceRoot: workspace,
-        claudeConfigDir,
-        homeDir,
-        transcriptPath,
-      });
+      const result = await discover(
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          workspaceRoot: workspace,
+          configDir: claudeConfigDir,
+          homeDir,
+          transcriptPath,
+        },
+        DEFAULT_HARNESS_PROFILE,
+      );
 
       const scopes = new Set(result.artifacts.map((a) => a.scope));
       expect(scopes).toContain('workspace');
@@ -563,15 +636,18 @@ describe('discover', () => {
       const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
       await writeFile(transcriptPath, '{}\n');
 
-      const result = await discover({
-        projectId: 'proj-1',
-        sessionId: 'sess-1',
-        workspaceRoot: workspace,
-        claudeConfigDir,
-        homeDir,
-        transcriptPath,
-        limits: makeLimits({ maxTotalBytes: 50 }),
-      });
+      const result = await discover(
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          workspaceRoot: workspace,
+          configDir: claudeConfigDir,
+          homeDir,
+          transcriptPath,
+          limits: makeLimits({ maxTotalBytes: 50 }),
+        },
+        DEFAULT_HARNESS_PROFILE,
+      );
 
       expect(result.artifacts).toHaveLength(0);
       expect(result.errors[0]?.code).toBe('SYNC_TOTAL_SIZE_EXCEEDED');

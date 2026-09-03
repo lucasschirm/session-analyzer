@@ -1,21 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
-
-import { MAIN_TRANSCRIPT_STORAGE_NAME } from '../discovery/core.js';
-import { isPathWithinRoot } from '../discovery/paths.js';
 import {
-  DEFAULT_WATCHER_MATCHER,
-  WATCHER_SUBAGENT_META_PATTERN,
-  WATCHER_SUBAGENT_TRANSCRIPTS_PATTERN,
-  type WatcherMatcher,
-} from './contract.js';
+  resolveMainTranscriptFileName,
+  type SessionLayoutDescriptor,
+} from '@lucasschirm/sal-sync-core';
+
+import { isPathWithinRoot } from '../discovery/paths.js';
+import { DEFAULT_WATCHER_MATCHER, type WatcherMatcher } from './contract.js';
 
 export type { WatcherMatcher };
-export {
-  DEFAULT_WATCHER_MATCHER,
-  WATCHER_SUBAGENT_META_PATTERN,
-  WATCHER_SUBAGENT_TRANSCRIPTS_PATTERN,
-};
+export { DEFAULT_WATCHER_MATCHER };
 
 /**
  * Convert a simple glob pattern (using `*` and `?`) into a regular expression.
@@ -42,11 +36,14 @@ export function globToRegExp(pattern: string): RegExp {
   return new RegExp(regex);
 }
 
-function patternsForSession(sessionId: string): readonly string[] {
+function patternsForSession(
+  sessionId: string,
+  sessionLayout: SessionLayoutDescriptor,
+): readonly string[] {
   return [
-    `${sessionId}.jsonl`,
-    `${sessionId}/${WATCHER_SUBAGENT_TRANSCRIPTS_PATTERN}`,
-    `${sessionId}/${WATCHER_SUBAGENT_META_PATTERN}`,
+    resolveMainTranscriptFileName(sessionLayout, sessionId),
+    `${sessionId}/${sessionLayout.subagentTranscriptsPattern}`,
+    `${sessionId}/${sessionLayout.subagentMetaPattern}`,
   ];
 }
 
@@ -54,11 +51,15 @@ function patternsForSession(sessionId: string): readonly string[] {
  * Build a matcher that watches only files beneath `baseDirectory` which match
  * the supplied relative patterns. For session-specific discovery, provide a
  * `sessionId`; patterns are then limited to that session's transcript and
- * per-session `subagents/` directory.
+ * per-session `subagents/` directory, per the supplied `sessionLayout`.
  */
-export function createWatcherMatcher(baseDirectory: string, sessionId?: string): WatcherMatcher {
+export function createWatcherMatcher(
+  baseDirectory: string,
+  sessionId: string | undefined,
+  sessionLayout: SessionLayoutDescriptor,
+): WatcherMatcher {
   const resolved = path.resolve(baseDirectory);
-  const allowedRelativePatterns = sessionId ? patternsForSession(sessionId) : [];
+  const allowedRelativePatterns = sessionId ? patternsForSession(sessionId, sessionLayout) : [];
   try {
     return {
       baseDirectory: fs.realpathSync(resolved),
@@ -144,12 +145,16 @@ export function isPathWatched(matcher: WatcherMatcher, filePath: string): boolea
  *   `<sessionId>/subagents/agent-xxx.jsonl`     → `subagents/agent-xxx.jsonl`
  *   `<sessionId>/subagents/agent-xxx.meta.json` → `subagents/agent-xxx.meta.json`
  */
-export function toStorageRelativePath(sessionId: string, fileRelativePath: string): string {
+export function toStorageRelativePath(
+  sessionId: string,
+  fileRelativePath: string,
+  sessionLayout: SessionLayoutDescriptor,
+): string {
   const normalized = fileRelativePath.replace(/\\/g, '/');
 
   // Main transcript: <sessionId>.jsonl → transcript.jsonl
-  if (normalized === `${sessionId}.jsonl`) {
-    return MAIN_TRANSCRIPT_STORAGE_NAME;
+  if (normalized === resolveMainTranscriptFileName(sessionLayout, sessionId)) {
+    return sessionLayout.mainTranscriptStorageName;
   }
 
   // Per-session supplementary files: strip the `<sessionId>/` prefix.

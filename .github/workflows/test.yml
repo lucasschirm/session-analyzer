@@ -109,7 +109,9 @@ jobs:
             packages/site/coverage/
             packages/db-core/coverage/
             packages/db/coverage/
-            packages/transformer/coverage/
+            packages/transformers/transformer-shared/coverage/
+            packages/transformers/claude-transformer/coverage/
+            packages/transformers/registry/coverage/
             packages/sync-core/coverage/
           retention-days: 30
 

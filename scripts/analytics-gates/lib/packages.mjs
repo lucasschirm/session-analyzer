@@ -4,7 +4,12 @@ import { repoRoot } from './runner.mjs';
 
 export function getWorkspacePackages() {
   const packages = [];
-  const globs = ['packages/*', 'packages/parsers/*', 'packages/plugins/*'];
+  const globs = [
+    'packages/*',
+    'packages/parsers/*',
+    'packages/plugins/*',
+    'packages/transformers/*',
+  ];
   for (const glob of globs) {
     const base = join(repoRoot, glob.replace('/*', ''));
     for (const entry of readdirSync(base)) {

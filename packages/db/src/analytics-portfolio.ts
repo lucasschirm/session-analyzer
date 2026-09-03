@@ -1,6 +1,5 @@
 import type {
   PortfolioDailyRollup,
-  PortfolioDimensionRollup,
   PortfolioDistribution,
   SqliteExecutor,
   SqliteTransaction,
@@ -10,7 +9,6 @@ import {
   ComponentIdentityStore,
   MetricDefinitionStore,
   PortfolioDailyRollupStore,
-  PortfolioDimensionRollupStore,
   PortfolioDistributionStore,
   ProjectStore,
 } from '@lucasschirm/sal-db-core';
@@ -244,6 +242,112 @@ function measurementClassForAggregate(
   return 'derived';
 }
 
+interface RollupAggregate {
+  readonly comparabilityGroupId: string;
+  readonly metricDefinitionId: string;
+  readonly analysisReleaseId: string;
+  readonly generationId: string;
+  valueSum: number | null;
+  valueMean: number | null;
+  valueMin: number | null;
+  valueMax: number | null;
+  valueCount: number;
+}
+
+function rollupAggregateValue(aggregate: RollupAggregate, aggregation: string): number | null {
+  const lower = aggregation.toLowerCase();
+  if (lower === 'sum') return aggregate.valueSum;
+  if (lower === 'count') return aggregate.valueCount;
+  if (lower === 'mean') {
+    if (aggregate.valueCount === 0 || aggregate.valueSum === null) return null;
+    return aggregate.valueSum / aggregate.valueCount;
+  }
+  if (lower === 'min') return aggregate.valueMin;
+  if (lower === 'max') return aggregate.valueMax;
+  return null;
+}
+
+function combineNullableNumbers(
+  a: number | null,
+  b: number | null,
+  op: 'min' | 'max',
+): number | null {
+  if (a === null && b === null) return null;
+  if (a === null) return b;
+  if (b === null) return a;
+  return op === 'min' ? Math.min(a, b) : Math.max(a, b);
+}
+
+async function loadHeadlineMetricsFromRollups(
+  queryable: Queryable,
+  portfolioId: string,
+  query: AnalyticsQuery,
+): Promise<readonly MetricValueDto[]> {
+  const allRollups = await PortfolioDailyRollupStore.listByPortfolio(queryable, portfolioId);
+  const range = resolveTimeRange(query, 0, Number.MAX_SAFE_INTEGER);
+  const rollups = allRollups.filter((r) => isDailyRollupInQuery(r, query, range));
+  if (rollups.length === 0) return [];
+
+  const groups = new Map<string, RollupAggregate>();
+  for (const rollup of rollups) {
+    const key = `${rollup.comparabilityGroupId}:${rollup.metricDefinitionId}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.valueSum =
+        existing.valueSum === null
+          ? rollup.valueSum
+          : rollup.valueSum === null
+            ? existing.valueSum
+            : existing.valueSum + rollup.valueSum;
+      existing.valueCount += rollup.valueCount;
+      existing.valueMin = combineNullableNumbers(existing.valueMin, rollup.valueMin, 'min');
+      existing.valueMax = combineNullableNumbers(existing.valueMax, rollup.valueMax, 'max');
+    } else {
+      groups.set(key, {
+        comparabilityGroupId: rollup.comparabilityGroupId,
+        metricDefinitionId: rollup.metricDefinitionId,
+        analysisReleaseId: rollup.analysisReleaseId,
+        generationId: rollup.generationId,
+        valueSum: rollup.valueSum,
+        valueMean: rollup.valueMean,
+        valueMin: rollup.valueMin,
+        valueMax: rollup.valueMax,
+        valueCount: rollup.valueCount,
+      });
+    }
+  }
+
+  const definitions = await loadMetricDefinitions(
+    queryable,
+    [...groups.values()].map((g) => g.metricDefinitionId),
+  );
+
+  const metrics: MetricValueDto[] = [];
+  for (const group of groups.values()) {
+    const definition = definitions.get(group.metricDefinitionId);
+    if (!definition) continue;
+    const value = rollupAggregateValue(group, definition.aggregation);
+    if (value === null) continue;
+    const knownN = group.valueCount;
+    const metricToken = makeToken(
+      group.analysisReleaseId,
+      group.generationId,
+      group.comparabilityGroupId,
+      knownN,
+      knownN,
+      0,
+      measurementClassForAggregate(definition.measurementClass, definition.aggregation),
+      String(definition.version),
+      [evidenceLink('portfolio', portfolioId, `Portfolio rollup: ${definition.metricId}`)],
+    );
+    metrics.push(
+      makeMetricValue(definition.metricId, value, definition.unit, definition.label, metricToken),
+    );
+  }
+
+  return metrics;
+}
+
 function isDistributionInQuery(
   distribution: PortfolioDistribution,
   query: AnalyticsQuery,
@@ -276,18 +380,6 @@ function isDailyRollupInQuery(
   const dayStart = toDayBucket(range.start);
   const dayEnd = toDayBucket(range.end);
   return rollup.dayBucket >= dayStart && rollup.dayBucket <= dayEnd;
-}
-
-function isDimensionRollupInQuery(
-  rollup: PortfolioDimensionRollup,
-  query: AnalyticsQuery,
-): boolean {
-  if (query.analysisReleaseId && rollup.analysisReleaseId !== query.analysisReleaseId) return false;
-  if (query.comparabilityGroupId && rollup.comparabilityGroupId !== query.comparabilityGroupId) {
-    return false;
-  }
-  if (query.generationId && rollup.generationId !== query.generationId) return false;
-  return true;
 }
 
 function makeBaseToken(
@@ -584,6 +676,9 @@ export async function getPortfolioOverview(
     if (!definition) continue;
     headlineMetrics.push(metricFromDistribution(distribution, definition, overviewToken));
   }
+
+  const rollupMetrics = await loadHeadlineMetricsFromRollups(queryable, portfolioId, query);
+  headlineMetrics.push(...rollupMetrics);
 
   const projectCount = await countProjectsInPortfolio(queryable, portfolioId);
   const sessionCount = await countSessionsInPortfolio(queryable, portfolioId, query);

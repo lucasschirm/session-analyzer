@@ -1,5 +1,5 @@
 import { FRESH_SCHEMA_SQL, getCurrentGenerationId } from '@lucasschirm/sal-db-core';
-import { createDefaultRegistry } from '@lucasschirm/sal-transformer';
+import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import type { AnalyticsDataSource } from '../../src/analytics.js';

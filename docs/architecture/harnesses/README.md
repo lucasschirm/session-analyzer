@@ -21,7 +21,7 @@ transformer plugins remain pure and deterministic.
 ## Transformer plugin contract
 
 A transformer plugin implements `SessionTransformer<TBundle>` (see
-`packages/transformer/src/plugin/contract.ts`):
+`packages/transformers/transformer-shared/src/plugin/contract.ts`):
 
 ```ts
 interface SessionTransformer<TBundle> {
@@ -51,7 +51,10 @@ All generated identifiers must be deterministic from stable source identity.
 
 ## Registry
 
-`TransformerRegistry` (`packages/transformer/src/registry.ts`) manages plugins:
+`TransformerRegistry` (`packages/transformers/transformer-shared/src/registry.ts`) manages plugins.
+The default registry composing every transformer plugin package lives in
+`packages/transformers/registry/src/default-registry.ts`
+(`@lucasschirm/sal-transformer-registry`):
 
 - `register(plugin)` — Registers by ID and harness names.
 - `resolve(harness)` — Manifest-declared harness resolution.
@@ -60,7 +63,7 @@ All generated identifiers must be deterministic from stable source identity.
 
 ## Claude Code
 
-**Plugin**: `ClaudeCodeTransformer` (`packages/transformer/src/plugin/claude-code.ts`)
+**Plugin**: `ClaudeCodeTransformer` (`packages/transformers/claude-transformer/src/plugin/claude-code.ts`)
 **Parser**: `@lucasschirm/sal-claude-session-parser`
 **Harness ID**: `claude_code`
 
@@ -116,6 +119,38 @@ component retains a source pointer (JSON Pointer or text range).
   in many projects. One global update creates one environment lifecycle event
   and project/session exposure intervals; it is not duplicated per project.
 
+## Devin CLI
+
+**Plugin**: `DevinTransformer` (`packages/transformers/devin-transformer/src/devin-transformer.ts`)
+**Parser**: `@lucasschirm/sal-devin-session-parser`
+**Harness ID**: `devin`
+
+See [devin.md](./devin.md) for the full Devin CLI harness documentation,
+including the native artifact bundle, metrics, and known limitations.
+
+### Artifact classification
+
+Classification uses the bundle's path conventions and, where available,
+schema-validated content:
+
+| Scope/path | Classification |
+|------------|---------------|
+| `transcript.jsonl` | Session transcript |
+| `native/atif-transcript.json` | Native ATIF transcript (role: `native`) |
+| `native/models.json` | Settings/runtime, role: `models` |
+| `native/schema-descriptor.json` | Settings/runtime, role: `schema` |
+| `native/models-list.raw.json` | Settings/runtime, role: `models-raw` |
+| `plans/plan-<id>.md` | Session transcript, role: `plan` |
+| `.devin/config.json`, `config.json` | Settings (workspace/global) |
+
+### Metrics
+
+Phase 1 emits the following comparability groups: token counts (prompt,
+completion, cached, total), step and turn counts, tool/skill/agent
+invocations, wall-clock duration, and total cost. Token counts are exact
+when `ATIF-v1.7` `final_metrics` or `response_dimensions` are present; skill
+and agent counts and session cost require follow-on parser work.
+
 ## Future harnesses
 
 The transformer plugin contract and conformance suite are designed for
@@ -134,9 +169,10 @@ registration, and conformance guidance.
 
 ## Conformance suite
 
-Every transformer plugin must pass the shared conformance suite
-(`packages/transformer/tests/conformance/suite.ts`) proving the 10 canonical
-invariants:
+Every transformer plugin must pass the shared conformance suite, published as
+the public subpath `@lucasschirm/sal-transformer-shared/conformance`
+(`packages/transformers/transformer-shared/src/conformance/suite.ts`),
+proving the 10 canonical invariants:
 
 1. Tool, Skill, Agent, and Sub Agent remain distinct.
 2. Unknown is not zero.
@@ -155,4 +191,4 @@ invariants:
 - ADR-0003: Component identity
 - ADR-0004: Manifest authority
 - ADR-0006: Metric versioning
-- Implementation: `packages/transformer/src/plugin/`, `packages/transformer/src/registry.ts`, `packages/transformer/src/classification.ts`
+- Implementation: `packages/transformers/claude-transformer/src/plugin/`, `packages/transformers/devin-transformer/src/`, `packages/transformers/transformer-shared/src/registry.ts`, `packages/transformers/transformer-shared/src/classification.ts`
