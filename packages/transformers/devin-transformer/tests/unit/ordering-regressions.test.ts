@@ -132,6 +132,38 @@ describe('DS-B28 (#294) finding #4: duplicate message_nodes pairs must not doubl
     const parsed = parseDevinBundle(bundle(transcript));
     expect(parsed.orderedMessages.map((m) => m.nodeId)).toEqual([1, 2]);
   });
+
+  it('keeps the genuinely richer copy when BOTH duplicates carry non-null parsedMetadata (PR #295 review finding #2)', () => {
+    // Deliberately gives the LOWER nodeId (249) the poorer metadata (every
+    // field null, but the object itself is non-null) and the HIGHER nodeId
+    // (250) the richer metadata (two populated fields). A boolean
+    // presence-only check can't tell these apart -- both are "non-null" --
+    // so it falls through to the nodeId tie-break and would incorrectly
+    // keep 249 (the poorer copy). The richness-scored comparator must keep
+    // 250 instead.
+    const sessionId = 's1';
+    const transcript = [
+      sessionLine(sessionId, undefined),
+      messageLine(sessionId, 245, null, 'user', 'start'),
+      messageLine(sessionId, 249, 245, 'assistant', 'duplicated content', {
+        messageId: 'msg-shared-249-250',
+        metadata: { summarized_from: null, num_tokens_preceding: null, is_system_prefix: null },
+      }),
+      messageLine(sessionId, 250, 245, 'assistant', 'duplicated content', {
+        messageId: 'msg-shared-249-250',
+        metadata: { summarized_from: null, num_tokens_preceding: 500, is_system_prefix: true },
+      }),
+    ].join('\n');
+
+    const parsed = parseDevinBundle(bundle(transcript));
+    const nodeIds = parsed.orderedMessages.map((m) => m.nodeId);
+    expect(nodeIds).toEqual([245, 250]);
+    expect(nodeIds).not.toContain(249);
+
+    const kept = parsed.orderedMessages.find((m) => m.nodeId === 250);
+    expect(kept?.parsedMetadata?.numTokensPreceding).toBe(500);
+    expect(kept?.parsedMetadata?.isSystemPrefix).toBe(true);
+  });
 });
 
 describe('DS-B28 (#294) finding #5: orphaned sub-agent trees must not corrupt main turnOrdinal', () => {
@@ -206,5 +238,44 @@ describe('DS-B28 (#294) finding #5: orphaned sub-agent trees must not corrupt ma
     expect(parsed.orderedMessages.map((m) => m.nodeId)).toEqual([1]);
     // Trees ordered by ascending root nodeId: orphan A (root 10) before orphan B (root 50).
     expect(parsed.detachedMessages.map((m) => m.nodeId)).toEqual([10, 50, 51]);
+  });
+});
+
+describe('PR #295 review finding #1: defaultLeaf() root selection must not be hijacked by a REAL orphan tree with a lower root node_id', () => {
+  it('selects the true (larger) main conversation over a real, non-synthetic orphan tree whose root node_id is LOWER, when mainChainId is absent', () => {
+    const sessionId = 's1';
+    // A REAL orphan tree (no `sal/synthetic_subagent_kind` tag -- this is
+    // NOT one of this PR's own synthesized subagent lines, it's the "real
+    // pre-existing orphan tree" class finding #1 is about) whose root
+    // node_id (5) is LOWER than the true conversation's root (100). Small:
+    // 2 nodes.
+    const orphanTree = [
+      messageLine(sessionId, 5, null, 'system', 'You are a sub-agent persona...'),
+      messageLine(sessionId, 6, 5, 'user', 'orphan turn'),
+    ];
+    // The true main conversation: root node_id 100 (HIGHER than the
+    // orphan's root), but with far more descendants -- 6 nodes.
+    const mainConversation = [
+      messageLine(sessionId, 100, null, 'user', 'start the real session'),
+      messageLine(sessionId, 101, 100, 'assistant', 'ok'),
+      messageLine(sessionId, 102, 101, 'user', 'continue'),
+      messageLine(sessionId, 103, 102, 'assistant', 'continuing'),
+      messageLine(sessionId, 104, 103, 'user', 'more'),
+      messageLine(sessionId, 105, 104, 'assistant', 'done'),
+    ];
+    // No mainChainId: this is the exact fallback path the review flagged.
+    const transcript = [sessionLine(sessionId, undefined), ...orphanTree, ...mainConversation].join(
+      '\n',
+    );
+
+    const parsed = parseDevinBundle(bundle(transcript));
+
+    // The true, larger conversation must be `ordered` -- never excluded
+    // from turnOrdinal just because a smaller real orphan tree happened to
+    // have a lower root node_id.
+    expect(parsed.orderedMessages.map((m) => m.nodeId)).toEqual([100, 101, 102, 103, 104, 105]);
+    // The real orphan tree is correctly excluded from the main sequence
+    // (surfaced separately, never dropped).
+    expect(parsed.detachedMessages.map((m) => m.nodeId)).toEqual([5, 6]);
   });
 });

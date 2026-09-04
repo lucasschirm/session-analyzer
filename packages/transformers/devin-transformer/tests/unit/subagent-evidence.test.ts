@@ -16,7 +16,7 @@ function devinJsonlLine(type: string, rest: Record<string, unknown>): string {
   return JSON.stringify({ type, ...rest });
 }
 
-function sessionLine(id: string): string {
+function sessionLine(id: string, mainChainId?: number): string {
   return devinJsonlLine('session', {
     ts: 1,
     order: 0,
@@ -28,6 +28,7 @@ function sessionLine(id: string): string {
     created_at: 1,
     last_activity_at: 2,
     title: 'Fixture session',
+    main_chain_id: mainChainId === undefined ? undefined : String(mainChainId),
   });
 }
 
@@ -188,8 +189,14 @@ describe('buildDevinSubagentEvidence', () => {
 
   it('never upgrades subagent/model from its raw coarse label to a fabricated resolved model id', () => {
     const sessionId = 's1';
+    // Explicit main_chain_id: 178 -- the real main conversation here is a
+    // single node, so it must not depend on defaultLeaf()'s
+    // undefined-mainChainId fallback (which correctly favors the LARGER
+    // synthetic pair's tree by subtree size, per PR #295 review finding #1
+    // -- exactly as it should for a genuinely tiny real root vs. a bigger
+    // sub-agent tree, which is not what this test is exercising).
     const transcript = [
-      sessionLine(sessionId),
+      sessionLine(sessionId, 178),
       messageLine(sessionId, 178, null, 'tool', 'Subagent agent_id=x completed successfully: r', {
         'subagent/agent_id': 'x',
         'subagent/model': 'Subagent Default',
@@ -205,8 +212,13 @@ describe('buildDevinSubagentEvidence', () => {
 
   it('emits a generic detached_conversation record for a genuine unattributed orphan tree, without claiming a subagent correlation', () => {
     const sessionId = 's1';
+    // Explicit main_chain_id: 1 -- same rationale as above: the real main
+    // conversation here is a single node, smaller than the 2-node orphan
+    // tree, so it must be pinned via main_chain_id rather than relying on
+    // defaultLeaf()'s size-based fallback to happen to pick the smaller
+    // tree (it correctly won't, by design -- see finding #1's fix).
     const transcript = [
-      sessionLine(sessionId),
+      sessionLine(sessionId, 1),
       messageLine(sessionId, 1, null, 'user', 'main'),
       messageLine(sessionId, 317, null, 'system', 'orphan persona'),
       messageLine(sessionId, 318, 317, 'user', 'orphan turn'),

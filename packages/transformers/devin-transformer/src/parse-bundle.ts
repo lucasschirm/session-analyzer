@@ -2,6 +2,7 @@ import type {
   AtifTranscript,
   DevinJsonlParseResult,
   DevinMessageLine,
+  DevinMessageNodeMetadata,
   DevinModelRecord,
   DevinPromptLine,
   DevinSessionLine,
@@ -217,6 +218,52 @@ function findRootIds(messages: readonly DevinMessageLine[]): number[] {
   return roots.sort((a, b) => a - b);
 }
 
+/**
+ * Counts every node reachable from `rootId` by following `children` links
+ * (the root itself included). Used by `selectMainRoot` to size up each
+ * candidate root's tree.
+ */
+function subtreeSize(rootId: number, children: Map<number, DevinMessageLine[]>): number {
+  const visited = new Set<number>();
+  const stack = [rootId];
+  while (stack.length > 0) {
+    const id = stack.pop() as number;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    for (const child of children.get(id) ?? []) stack.push(child.nodeId);
+  }
+  return visited.size;
+}
+
+/**
+ * Picks which of `roots` is the session's true main-conversation root when
+ * `mainChainId` is unavailable (DS-B28 (#294) finding #1: a real, non-empty
+ * orphan sub-agent tree must not win this purely because its root happens to
+ * carry a lower `node_id` than the true conversation's root -- `node_id` is
+ * an opaque allocation counter, not a structural signal).
+ *
+ * Instead, this picks the root whose tree has the most descendants: the true
+ * main conversation is virtually always far larger than an orphaned
+ * sub-agent tree (a handful of turns at most). `roots` is ascending by
+ * `node_id` (see `findRootIds`), so a strict `>` comparison keeps that
+ * ordering as the tie-break for equal-size trees, preserving determinism.
+ */
+function selectMainRoot(
+  roots: readonly number[],
+  children: Map<number, DevinMessageLine[]>,
+): number {
+  let bestRoot = roots[0] ?? 0;
+  let bestSize = roots.length > 0 ? subtreeSize(bestRoot, children) : 0;
+  for (const rootId of roots.slice(1)) {
+    const size = subtreeSize(rootId, children);
+    if (size > bestSize) {
+      bestRoot = rootId;
+      bestSize = size;
+    }
+  }
+  return bestRoot;
+}
+
 function buildMainChain(
   messages: readonly DevinMessageLine[],
   mainChainId: number | undefined,
@@ -236,19 +283,10 @@ function buildMainChain(
     return path;
   }
 
-  function defaultLeaf(): number {
-    if (mainChainId !== undefined && byId.has(mainChainId)) return mainChainId;
-    const allChildren = new Set<number>();
-    for (const list of children.values()) {
-      for (const child of list) allChildren.add(child.nodeId);
-    }
-    const leaves = messages.filter((m) => !allChildren.has(m.nodeId));
-    if (leaves.length === 0) return roots[0] ?? 0;
-    leaves.sort((a, b) => a.nodeId - b.nodeId);
-    return leaves[leaves.length - 1].nodeId;
-  }
-
-  const leaf = mainChainId !== undefined && byId.has(mainChainId) ? mainChainId : defaultLeaf();
+  const leaf =
+    mainChainId !== undefined && byId.has(mainChainId)
+      ? mainChainId
+      : selectMainRoot(roots, children);
   const chain = pathToLeaf(leaf);
   return { chain, leaf };
 }
@@ -265,14 +303,18 @@ function buildMainChain(
  * Grouped by `messageId()` (the real `chat_message.message_id`, falling
  * back to a synthetic `node-<id>` when absent — the same key
  * `session-spine.ts` already uses for `sourceEventId`). Within a group with
- * more than one member, the entry carrying `parsedMetadata` is kept
- * (strictly more information — never discard the more complete record,
- * per `missing-is-never-zero`'s spirit); ties (including "neither has
- * metadata") break on the lower `nodeId` for determinism. Every dropped
- * duplicate's `nodeId` is redirected to the kept entry's `nodeId` in every
- * OTHER message's `parentNodeId` field, so a hypothetical future child of a
- * dropped duplicate stays correctly attached to the tree rather than
- * becoming a spurious orphan root.
+ * more than one member, the entry with the more POPULATED `parsedMetadata`
+ * is kept — see `metadataRichness()`; a copy with `parsedMetadata: null`
+ * always loses to one with any populated metadata, and when BOTH copies
+ * carry non-null metadata, the one with more actually-populated fields wins
+ * (never discard the more complete record, per `missing-is-never-zero`'s
+ * spirit — this is what makes "the kept copy is the metadata-richer one"
+ * literally true, not just true when one side is fully absent). Ties
+ * (including "neither has any populated field") break on the lower `nodeId`
+ * for determinism. Every dropped duplicate's `nodeId` is redirected to the
+ * kept entry's `nodeId` in every OTHER message's `parentNodeId` field, so a
+ * hypothetical future child of a dropped duplicate stays correctly attached
+ * to the tree rather than becoming a spurious orphan root.
  */
 function groupByMessageId(messages: readonly DevinMessageLine[]): Map<string, DevinMessageLine[]> {
   const groups = new Map<string, DevinMessageLine[]>();
@@ -284,10 +326,28 @@ function groupByMessageId(messages: readonly DevinMessageLine[]): Map<string, De
   return groups;
 }
 
-/** Picks one canonical message per `messageId()` group: the entry carrying
- * `parsedMetadata` (strictly more information), tie-broken by lower
- * `nodeId`. Returns the kept node ids plus a `droppedNodeId -> canonicalNodeId`
- * redirect map for every other group member. */
+/**
+ * Scores how populated a `parsedMetadata` value actually is: one point per
+ * non-null `summarizedFrom`/`numTokensPreceding`/`isSystemPrefix` field,
+ * plus one point per key in `extensions` (when present). `null` scores
+ * below every populated value. This is what distinguishes two duplicate
+ * copies that BOTH carry non-null `parsedMetadata` but differ in how much
+ * they actually populate — a plain non-null check can't tell those apart.
+ */
+function metadataRichness(metadata: DevinMessageNodeMetadata | null): number {
+  if (metadata === null) return -1;
+  let score = 0;
+  if (metadata.summarizedFrom !== null) score++;
+  if (metadata.numTokensPreceding !== null) score++;
+  if (metadata.isSystemPrefix !== null) score++;
+  if (metadata.extensions) score += Object.keys(metadata.extensions).length;
+  return score;
+}
+
+/** Picks one canonical message per `messageId()` group: the entry with the
+ * higher `metadataRichness()` score, tie-broken by lower `nodeId`. Returns
+ * the kept node ids plus a `droppedNodeId -> canonicalNodeId` redirect map
+ * for every other group member. */
 function resolveCanonicalNodes(groups: Map<string, DevinMessageLine[]>): {
   keepNodeIds: Set<number>;
   redirect: Map<number, number>;
@@ -300,9 +360,8 @@ function resolveCanonicalNodes(groups: Map<string, DevinMessageLine[]>): {
       continue;
     }
     const sorted = [...group].sort((a, b) => {
-      const aRank = a.parsedMetadata !== null ? 0 : 1;
-      const bRank = b.parsedMetadata !== null ? 0 : 1;
-      return aRank !== bRank ? aRank - bRank : a.nodeId - b.nodeId;
+      const richnessDiff = metadataRichness(b.parsedMetadata) - metadataRichness(a.parsedMetadata);
+      return richnessDiff !== 0 ? richnessDiff : a.nodeId - b.nodeId;
     });
     keepNodeIds.add(sorted[0].nodeId);
     for (const duplicate of sorted.slice(1)) redirect.set(duplicate.nodeId, sorted[0].nodeId);

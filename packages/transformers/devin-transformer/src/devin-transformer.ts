@@ -20,7 +20,11 @@ import {
   completenessFromComponents,
 } from './classification.js';
 import { buildDevinCompactionRecords } from './compaction.js';
-import { type DevinMetricValue, deriveDevinMetrics } from './metrics/index.js';
+import {
+  DEVIN_METRIC_DEFINITION_VERSION,
+  type DevinMetricValue,
+  deriveDevinMetrics,
+} from './metrics/index.js';
 import { parseDevinBundle } from './parse-bundle.js';
 import { deriveDevinSessionComponents } from './session-components.js';
 import { buildSessionSpine, deriveSessionId, resolveSourceIdentity } from './session-spine.js';
@@ -64,7 +68,18 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // rather than silently mixing pre-/post-fix output.
 export const DEVIN_TRANSFORMER_VERSION = '0.3.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
-export const DEVIN_METRIC_DEFINITION_VERSION = '0.1.0';
+// `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
+// from `./metrics/comparability.js` (re-exported below) so there is exactly
+// ONE source of truth for it. A prior revision of this file declared a
+// second, separately-bumped local constant of the same name that fed
+// `TransformResult.metricDefinitionVersion` (and therefore
+// `deterministicGenerationId`) while `comparability.ts`'s copy (the one
+// `deriveDevinMetrics`/`comparabilityGroupFor` actually use for
+// comparability-group ids) had already moved on -- the two silently drifted
+// out of sync. Re-exported here only so external consumers of this
+// package's index (`export * from './devin-transformer.js'`) keep seeing it
+// at the same path.
+export { DEVIN_METRIC_DEFINITION_VERSION };
 
 function hasManifestHarness(bundle: UnknownArtifactBundle): string | undefined {
   const withHarness = bundle as UnknownArtifactBundle & { harness?: string };
