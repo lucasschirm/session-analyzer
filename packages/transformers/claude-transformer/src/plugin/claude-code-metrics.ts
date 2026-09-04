@@ -478,6 +478,21 @@ export function getClaudeCodeMetricDefinitions(): readonly MetricDefinition[] {
         'sum',
       ),
     );
+    defs.push(
+      metricDefinition(
+        `claude:effort:changes:${scope}`,
+        `Effort-level changes (${scopeLabel})`,
+        `Count of reasoning-effort tier transitions across per-message model_request records, ` +
+          `walked in requestOrder order. Scope: ${scopeLabel}.`,
+        'effort',
+        'count',
+        'integer',
+        'derived',
+        [],
+        scope,
+        'sum',
+      ),
+    );
   }
   return defs;
 }
@@ -777,6 +792,101 @@ function hasModelRequestRecords(
   return false;
 }
 
+function collectModelRequestRecords(
+  evidence: readonly NormalizedEvidenceRecord[],
+  ctx: EvidenceContext,
+): {
+  root: NormalizedEvidenceRecord[];
+  inclusive: NormalizedEvidenceRecord[];
+} {
+  const root: NormalizedEvidenceRecord[] = [];
+  const inclusive: NormalizedEvidenceRecord[] = [];
+  for (const record of evidence) {
+    if (record.recordType !== 'model_request') continue;
+    if (!inSessionTree(record, ctx)) continue;
+    inclusive.push(record);
+    if (isRootRecord(record, ctx)) root.push(record);
+  }
+  return { root, inclusive };
+}
+
+interface ModelRequestEffortPayload {
+  readonly requestOrder?: number;
+  readonly normalizedEffort?: string | null;
+}
+
+/**
+ * Walks `model_request` records in `requestOrder` order, carrying forward
+ * the last-seen non-null `normalizedEffort` and incrementing a transition
+ * counter whenever the current non-null value differs from the carried
+ * value. Records with a null/unresolved `normalizedEffort` are skipped for
+ * comparison (they neither end nor start a "known" streak) but are also
+ * never counted toward `contributing` (the sample, `n`).
+ */
+function computeEffortTransitions(records: readonly NormalizedEvidenceRecord[]): {
+  readonly transitions: number;
+  readonly contributing: readonly NormalizedEvidenceRecord[];
+} {
+  const sorted = [...records].sort((a, b) => {
+    const orderA = (a.payload as ModelRequestEffortPayload).requestOrder ?? 0;
+    const orderB = (b.payload as ModelRequestEffortPayload).requestOrder ?? 0;
+    return orderA - orderB;
+  });
+
+  const contributing: NormalizedEvidenceRecord[] = [];
+  let transitions = 0;
+  let carried: string | undefined;
+  for (const record of sorted) {
+    const value = (record.payload as ModelRequestEffortPayload).normalizedEffort;
+    if (value === null || value === undefined) continue;
+    contributing.push(record);
+    if (carried !== undefined && value !== carried) transitions += 1;
+    carried = value;
+  }
+  return { transitions, contributing };
+}
+
+function groupBySessionId(
+  records: readonly NormalizedEvidenceRecord[],
+): Map<string, NormalizedEvidenceRecord[]> {
+  const groups = new Map<string, NormalizedEvidenceRecord[]>();
+  for (const record of records) {
+    const list = groups.get(record.sessionId);
+    if (list) {
+      list.push(record);
+    } else {
+      groups.set(record.sessionId, [record]);
+    }
+  }
+  return groups;
+}
+
+/**
+ * Sums effort-level transitions across the root session and its subagent
+ * sessions independently. `requestOrder` is a per-session ordinal (each
+ * subagent session restarts its own turn counter from 1), so records must
+ * be grouped by `sessionId` and walked separately with
+ * `computeEffortTransitions` before summing — merging raw records across
+ * sessions and sorting by the shared, per-session-relative ordinal would
+ * interleave unrelated sessions and fabricate transitions that never
+ * happened adjacently. This mirrors how the token-total metrics above
+ * aggregate root + subagent contributions without conflating their
+ * internal orderings.
+ */
+function computeInclusiveEffortTransitions(records: readonly NormalizedEvidenceRecord[]): {
+  readonly transitions: number;
+  readonly contributing: readonly NormalizedEvidenceRecord[];
+} {
+  let transitions = 0;
+  const contributing: NormalizedEvidenceRecord[] = [];
+  for (const sessionRecords of groupBySessionId(records).values()) {
+    const result = computeEffortTransitions(sessionRecords);
+    transitions += result.transitions;
+    contributing.push(...result.contributing);
+  }
+  return { transitions, contributing };
+}
+
 // ---------------------------------------------------------------------------
 // Main metric derivation
 // ---------------------------------------------------------------------------
@@ -972,6 +1082,39 @@ export function deriveClaudeCodeMetrics(
           costValue !== null
             ? 'cost is calculated from external pricing, not observed directly'
             : undefined,
+      }),
+    );
+  }
+
+  // Effort-level changes --------------------------------------------------
+  const modelRequests = collectModelRequestRecords(evidence, ctx);
+  for (const scope of ['root_only', 'inclusive'] as const) {
+    const def = definitionFor(`claude:effort:changes:${scope}`);
+    const records = scope === 'root_only' ? modelRequests.root : modelRequests.inclusive;
+    const { transitions, contributing } =
+      scope === 'root_only'
+        ? computeEffortTransitions(records)
+        : computeInclusiveEffortTransitions(records);
+    const n = contributing.length;
+
+    let value: number | null = n === 0 ? null : transitions;
+    let reason: string | undefined =
+      n === 0 ? 'no recognized effort signal observed for this session' : undefined;
+
+    if (scope === 'inclusive' && missingSubagent) {
+      value = null;
+      reason = 'one or more subagent transcripts missing';
+    }
+
+    pushValue(
+      createMetricValue({
+        definition: def,
+        value,
+        exact: value !== null,
+        evidenceRecordIds: contributing.map((r) => r.recordId),
+        provenance: contributing.map((r) => provenanceForRecord(r, rootArtifactId)),
+        estimationMethod: 'count_of_effort_level_transitions',
+        unavailableReason: reason,
       }),
     );
   }

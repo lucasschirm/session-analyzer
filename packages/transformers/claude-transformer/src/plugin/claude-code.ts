@@ -34,6 +34,7 @@ import type {
   DetectionResult,
   Issue,
   MetricCapability,
+  NormalizedEffort,
   NormalizedEvidenceRecord,
   Provenance,
   SessionSummary,
@@ -43,6 +44,7 @@ import type {
   TransformResult,
   UnknownArtifactBundle,
 } from '@lucasschirm/sal-transformer-shared';
+import { NORMALIZED_EFFORT_LEVELS } from '@lucasschirm/sal-transformer-shared';
 import {
   deriveClaudeCodeAttributionMetrics,
   getClaudeCodeAttributionMetricCapabilities,
@@ -78,8 +80,23 @@ import {
 } from './claude-code-usage.js';
 
 export const CLAUDE_CODE_TRANSFORMER_ID = 'claude-code';
-export const CLAUDE_CODE_TRANSFORMER_VERSION = '0.1.0';
+export const CLAUDE_CODE_TRANSFORMER_VERSION = '0.2.0';
 export const CLAUDE_CODE_ONTOLOGY_VERSION = '0.1.0';
+
+/**
+ * Maps Claude Code's raw, per-message `AssistantEntry.effort` string to the
+ * shared `NORMALIZED_EFFORT_LEVELS` vocabulary. Claude's raw values are an
+ * exact subset/spelling of that vocabulary today, so a recognized raw value
+ * is returned unchanged; an unrecognized raw value (or an absent one) maps
+ * to `null` — never guessed into an adjacent bucket, per
+ * `.agents/rules/missing-is-never-zero.md`.
+ */
+export function mapClaudeEffortToNormalized(raw: string | undefined): NormalizedEffort | null {
+  if (raw !== undefined && (NORMALIZED_EFFORT_LEVELS as readonly string[]).includes(raw)) {
+    return raw as NormalizedEffort;
+  }
+  return null;
+}
 
 export interface ClaudeCodeBundle extends ArtifactBundle<string> {
   /** Manifest-supplied harness identity. Takes precedence over schema detection. */
@@ -886,6 +903,8 @@ function normalizeSessionSpine(
           cacheReadTokens: usage?.cache_read_input_tokens,
           thinkingTokens: usage?.output_tokens_details?.thinking_tokens,
           timestamp: entryTimestamp(entry),
+          effort: entry.effort,
+          normalizedEffort: mapClaudeEffortToNormalized(entry.effort),
         },
       });
     }

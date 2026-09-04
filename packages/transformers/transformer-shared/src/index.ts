@@ -3,6 +3,7 @@ export * from './classification.js';
 export * from './comparability.js';
 export * from './component.js';
 export * from './context.js';
+export * from './effort.js';
 export * from './evidence.js';
 export * from './invariants.js';
 export * from './issue.js';
