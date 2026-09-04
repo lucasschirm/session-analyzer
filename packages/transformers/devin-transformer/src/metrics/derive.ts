@@ -83,6 +83,89 @@ function tokenRecordIdsFromEvidence(
   return ids.length > 0 ? ids : [stableId('model_usage', { session: sessionId })];
 }
 
+function modelUsageRecords(
+  evidence: readonly NormalizedEvidenceRecord[],
+  sessionId: string,
+): NormalizedEvidenceRecord[] {
+  return evidence.filter(
+    (record) => record.recordType === 'model_usage' && record.sessionId === sessionId,
+  );
+}
+
+interface ModelUsageEffortPayload {
+  readonly requestOrder?: number;
+  readonly normalizedEffort?: string | null;
+}
+
+/**
+ * Walks `model_usage` records in `requestOrder` order, carrying forward the
+ * last-seen non-null `normalizedEffort` and incrementing a transition
+ * counter whenever the current non-null value differs from the carried
+ * value. Records with a null/unresolved `normalizedEffort` are skipped for
+ * comparison (they neither end nor start a "known" streak) but are also
+ * never counted toward `contributing` (the sample, `n`) — mirrors
+ * `claude-code-metrics.ts`'s `computeEffortTransitions` exactly, since Devin
+ * has only one per-request evidence type (`model_usage`, no `model_request`).
+ */
+function computeDevinEffortTransitions(records: readonly NormalizedEvidenceRecord[]): {
+  readonly transitions: number;
+  readonly contributing: readonly NormalizedEvidenceRecord[];
+} {
+  const sorted = [...records].sort((a, b) => {
+    const orderA = (a.payload as ModelUsageEffortPayload).requestOrder ?? 0;
+    const orderB = (b.payload as ModelUsageEffortPayload).requestOrder ?? 0;
+    return orderA - orderB;
+  });
+
+  const contributing: NormalizedEvidenceRecord[] = [];
+  let transitions = 0;
+  let carried: string | undefined;
+  for (const record of sorted) {
+    const value = (record.payload as ModelUsageEffortPayload).normalizedEffort;
+    if (value === null || value === undefined) continue;
+    contributing.push(record);
+    if (carried !== undefined && value !== carried) transitions += 1;
+    carried = value;
+  }
+  return { transitions, contributing };
+}
+
+/**
+ * Builds the `devin:effort:changes:*` metric value from an already-computed
+ * transition result (extracted out of `deriveDevinMetrics` to keep that
+ * function within `workspace-rules.md`'s function-length cap). `n` is the
+ * count of records with a recognized effort value (`contributing`), never
+ * the raw `model_usage` record count — an unresolved-effort record neither
+ * ends nor starts a "known" streak (see `computeDevinEffortTransitions`).
+ */
+function effortChangesMetricValue(
+  definition: MetricDefinition,
+  effortResult: ReturnType<typeof computeDevinEffortTransitions>,
+  provenance: readonly Provenance[],
+  fallbackEvidenceRecordIds: readonly string[],
+): DevinMetricValue {
+  const n = effortResult.contributing.length;
+  const value = n === 0 ? null : effortResult.transitions;
+  const reason = n === 0 ? 'no recognized effort signal observed for this session' : undefined;
+  // Even when unavailable (n=0), the metric must still cite the model_usage
+  // evidence it inspected (`aggregates-expose-sample-size`) — falls back to
+  // every model_usage record for the session, mirroring `devin:turns:count`'s
+  // `turnIds.length > 0 ? turnIds : [tokenRecordId]` fallback in
+  // `deriveDevinMetrics`.
+  const contributingIds = effortResult.contributing.map((r) => r.recordId);
+  const evidenceRecordIds =
+    contributingIds.length > 0 ? contributingIds : fallbackEvidenceRecordIds;
+  return createMetricValue({
+    definition,
+    value,
+    exact: value !== null,
+    evidenceRecordIds,
+    provenance,
+    estimationMethod: 'count_of_effort_level_transitions',
+    unavailableReason: reason,
+  });
+}
+
 function turnRecordIds(evidence: readonly NormalizedEvidenceRecord[], sessionId: string): string[] {
   return evidence
     .filter((r) => r.recordType === 'turn' && r.sessionId === sessionId)
@@ -293,6 +376,18 @@ export function deriveDevinMetrics(
       unavailableReason: reason,
     });
   });
+
+  // Effort-level changes — same evidence pool for both scopes (Devin has no
+  // session-tree/subagent model_usage evidence to distinguish root_only from
+  // inclusive today), mirroring how devin:tokens:*/devin:steps:count:* above
+  // already treat both scopes identically.
+  const effortResult = computeDevinEffortTransitions(modelUsageRecords(evidence, rootSessionId));
+  const effortProvenance: Provenance[] = [
+    { artifactId: rootArtifactId, sourceField: 'model_usage', path: rootArtifactId },
+  ];
+  pushForBothScopes('devin:effort:changes', (_scope, def) =>
+    effortChangesMetricValue(def, effortResult, effortProvenance, tokenRecordIds),
+  );
 
   // Turns
   const turnIds = turnRecordIds(evidence, rootSessionId);

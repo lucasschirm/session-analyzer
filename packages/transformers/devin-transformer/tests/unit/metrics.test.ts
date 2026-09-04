@@ -1,7 +1,8 @@
+import type { NormalizedEvidenceRecord } from '@lucasschirm/sal-transformer-shared';
 import { describe, expect, it } from 'vitest';
 import { DevinTransformer } from '../../src/index.js';
 import { comparabilityGroupFor } from '../../src/metrics/comparability.js';
-import { getDevinMetricDefinitions } from '../../src/metrics/index.js';
+import { deriveDevinMetrics, getDevinMetricDefinitions } from '../../src/metrics/index.js';
 import {
   componentsBundle,
   defaultContext,
@@ -12,7 +13,7 @@ import {
 describe('Devin metric definitions', () => {
   it('exports a metric definition for every Phase 1 root and inclusive metric', () => {
     const definitions = getDevinMetricDefinitions();
-    expect(definitions.length).toBe(22);
+    expect(definitions.length).toBe(24);
     const ids = new Set(definitions.map((d) => d.metricId));
     expect(ids.has('devin:tokens:prompt:root_only')).toBe(true);
     expect(ids.has('devin:tokens:prompt:inclusive')).toBe(true);
@@ -41,7 +42,7 @@ describe('Devin metric definitions', () => {
       expect(groups.has(group)).toBe(false);
       groups.add(group);
     }
-    expect(groups.size).toBe(22);
+    expect(groups.size).toBe(24);
   });
 
   it('varies comparability groups when dimensions differ', () => {
@@ -100,5 +101,112 @@ describe('DS-B25 (#285): aggregate token/step metrics cite every model_usage rec
       }
       expect(metric.evidenceRecordIds.length).toBe(2);
     }
+  });
+});
+
+function modelUsageRecord(
+  sessionId: string,
+  requestOrder: number,
+  normalizedEffort: string | null,
+): NormalizedEvidenceRecord {
+  return {
+    recordId: `mu-${sessionId}-${requestOrder}`,
+    recordType: 'model_usage',
+    sessionId,
+    sourceEventId: `${sessionId}:step:${requestOrder}`,
+    sourceField: 'atif_step',
+    provenance: { artifactId: 'artifact-1', path: 'artifact-1' },
+    payload: { requestOrder, normalizedEffort },
+  };
+}
+
+const EMPTY_TOKEN_USAGE = {
+  prompt: null,
+  completion: null,
+  cached: null,
+  total: null,
+  steps: null,
+  exact: false,
+  recordId: '',
+};
+
+// DS-B31 (#290): devin:effort:changes:root_only/:inclusive transition
+// counting, mirroring #289's three Claude-side n=0/n=1/n>=2 scenarios
+// exactly (same measured-zero-vs-unavailable rules).
+describe('devin:effort:changes:root_only/:inclusive transition counting', () => {
+  it('is unavailable (never a fabricated 0) when no model_usage record carries a recognized effort', () => {
+    const result = deriveDevinMetrics(
+      undefined,
+      undefined,
+      [],
+      [],
+      EMPTY_TOKEN_USAGE,
+      'artifact-1',
+      's1',
+    );
+    const metric = result.metricValues.find((m) => m.metricId === 'devin:effort:changes:root_only');
+    expect(metric?.value).toBeNull();
+    expect(metric?.unavailableReason).toBe('no recognized effort signal observed for this session');
+    // aggregates-expose-sample-size: even unavailable, the metric must cite
+    // the evidence it inspected — never an empty evidenceRecordIds array.
+    expect(metric?.evidenceRecordIds.length).toBeGreaterThan(0);
+  });
+
+  it('reports a measured 0 (n=1, exact) for a single-record session with no transition possible', () => {
+    const evidence = [modelUsageRecord('s1', 1, 'high')];
+    const result = deriveDevinMetrics(
+      undefined,
+      undefined,
+      [],
+      evidence,
+      EMPTY_TOKEN_USAGE,
+      'artifact-1',
+      's1',
+    );
+    const metric = result.metricValues.find((m) => m.metricId === 'devin:effort:changes:root_only');
+    expect(metric?.value).toBe(0);
+    expect(metric?.exact).toBe(true);
+    expect(metric?.unavailableReason).toBeUndefined();
+  });
+
+  it('counts exactly one transition across two model_usage records (glm-5-3-low -> glm-5-3-high)', () => {
+    const evidence = [modelUsageRecord('s1', 1, 'low'), modelUsageRecord('s1', 2, 'high')];
+    const result = deriveDevinMetrics(
+      undefined,
+      undefined,
+      [],
+      evidence,
+      EMPTY_TOKEN_USAGE,
+      'artifact-1',
+      's1',
+    );
+    for (const scope of ['root_only', 'inclusive'] as const) {
+      const metric = result.metricValues.find(
+        (m) => m.metricId === `devin:effort:changes:${scope}`,
+      );
+      expect(metric?.value).toBe(1);
+      expect(metric?.evidenceRecordIds).toEqual(['mu-s1-1', 'mu-s1-2']);
+    }
+  });
+
+  it('carries forward the last known non-null value across a null-effort record without counting it', () => {
+    const evidence = [
+      modelUsageRecord('s1', 1, 'high'),
+      modelUsageRecord('s1', 2, null),
+      modelUsageRecord('s1', 3, 'xhigh'),
+    ];
+    const result = deriveDevinMetrics(
+      undefined,
+      undefined,
+      [],
+      evidence,
+      EMPTY_TOKEN_USAGE,
+      'artifact-1',
+      's1',
+    );
+    const metric = result.metricValues.find((m) => m.metricId === 'devin:effort:changes:root_only');
+    expect(metric?.value).toBe(1);
+    // The null-effort record is never counted toward the sample.
+    expect(metric?.evidenceRecordIds).toEqual(['mu-s1-1', 'mu-s1-3']);
   });
 });

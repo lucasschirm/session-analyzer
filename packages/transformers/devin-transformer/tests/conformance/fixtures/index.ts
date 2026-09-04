@@ -205,6 +205,22 @@ function modelsJson(): string {
   ]);
 }
 
+/**
+ * DS-B31 (#290): the same two models the `modelSwitchBundle` ATIF steps
+ * reference (`glm-5-2`, `swe-1-7`), with their real catalog `label`s —
+ * finding 3b's unsuffixed-`model_uid`, label-only tier case (`"glm-5-2"` ->
+ * `"GLM-5.2 High"`, `"swe-1-7"` -> `"SWE-1.7 Max"`) — so the model-switch
+ * conformance fixture exercises real effort resolution, not just an
+ * unmatched-model passthrough.
+ */
+function modelsJsonWithTiers(): string {
+  return JSON.stringify([
+    JSON.parse(modelsJson())[0],
+    { modelUid: 'glm-5-2', label: 'GLM-5.2 High', familyUid: 'glm-5', costTier: 'standard' },
+    { modelUid: 'swe-1-7', label: 'SWE-1.7 Max', familyUid: 'swe-1', costTier: 'standard' },
+  ]);
+}
+
 function schemaDescriptor(supported = true): string {
   return JSON.stringify({
     schema_version: 'devin-session-jsonl/v1',
@@ -337,7 +353,38 @@ const modelSwitchAtif = atifTranscript(
 export const modelSwitchBundle: UnknownArtifactBundle = bundle([
   artifact('transcript.jsonl', modelSwitchTranscript, 'application/jsonl'),
   artifact('native/atif-transcript.json', modelSwitchAtif, 'application/json'),
-  artifact('native/models.json', modelsJson(), 'application/json'),
+  artifact('native/models.json', modelsJsonWithTiers(), 'application/json'),
+]);
+
+// DS-B31 (#290): a single ATIF agent-generation step whose model resolves to
+// a real, recognized effort tier, with no second step to transition
+// from/to — exercises `devin:effort:changes:*`'s n=1 "measured zero, never
+// unavailable" case (`.agents/rules/missing-is-never-zero.md`).
+const singleTierAtif = atifTranscript(
+  [
+    { timestamp: '2026-08-01T12:00:00.000Z', role: 'user', text: 'Hello' },
+    {
+      timestamp: '2026-08-01T12:00:05.000Z',
+      role: 'assistant',
+      text: 'Hi there',
+      extra: { generation_model: 'glm-5-3-low' },
+      metrics: { prompt_tokens: 100, completion_tokens: 50, cached_tokens: 10 },
+    },
+  ],
+  { totalPromptTokens: 100, totalCompletionTokens: 50, totalCachedTokens: 10, totalSteps: 2 },
+);
+
+function modelsJsonSingleTier(): string {
+  return JSON.stringify([
+    JSON.parse(modelsJson())[0],
+    { modelUid: 'glm-5-3-low', label: 'GLM-5.3 Low', familyUid: 'glm-5', costTier: 'standard' },
+  ]);
+}
+
+export const singleTierBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', linearTranscript, 'application/jsonl'),
+  artifact('native/atif-transcript.json', singleTierAtif, 'application/json'),
+  artifact('native/models.json', modelsJsonSingleTier(), 'application/json'),
 ]);
 
 const planContent = `# Plan
