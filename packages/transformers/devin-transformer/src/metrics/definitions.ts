@@ -206,6 +206,22 @@ export function getDevinMetricDefinitions(): readonly MetricDefinition[] {
 
     defs.push(
       metricDefinition(
+        `devin:effort:changes:${scope}`,
+        `Effort-level changes (${scopeLabel})`,
+        'Count of reasoning-effort tier transitions across model_usage records, derived from ' +
+          `the Devin model catalog label (per-step when available). Scope: ${scopeLabel}.`,
+        'effort',
+        'count',
+        'integer',
+        'derived',
+        [],
+        scope,
+        'sum',
+      ),
+    );
+
+    defs.push(
+      metricDefinition(
         `devin:cost:total:${scope}`,
         `Total cost (${scopeLabel})`,
         `Estimated cost from Devin model pricing and observed token classes. Scope: ${scopeLabel}.`,

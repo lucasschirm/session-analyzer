@@ -6,6 +6,7 @@ import type {
   DevinSessionLine,
 } from '@lucasschirm/sal-devin-session-parser';
 import type { NormalizedEvidenceRecord } from '@lucasschirm/sal-transformer-shared';
+import { resolveDevinEffortForModel } from './effort.js';
 import { provenanceForArtifact, stableId } from './session-spine.js';
 
 export interface TokenUsageResult {
@@ -160,6 +161,22 @@ function stepMetricsAreExact(metrics: NonNullable<AtifStep['metrics']>): boolean
   );
 }
 
+/**
+ * The `effort`/`normalizedEffort` payload fields shared by both the per-step
+ * (tier 1) and session-level (tiers 2/3) `model_usage` records — sourced
+ * from Devin's model catalog `label` (DS-B31/#290), never from `model_uid`
+ * alone (finding 3b). `resolveDevinEffortForModel` already returns
+ * `{ raw: null, normalized: null }` for an unresolved model, so this never
+ * guesses a tier.
+ */
+function effortPayloadFields(
+  modelUid: string | null,
+  models: readonly DevinModelRecord[],
+): { effort: string | null; normalizedEffort: string | null } {
+  const result = resolveDevinEffortForModel(modelUid, models);
+  return { effort: result.raw, normalizedEffort: result.normalized };
+}
+
 /** Assembles a `model_usage` evidence record, sharing the provenance shape. */
 function usageRecord(
   recordId: string,
@@ -215,6 +232,7 @@ function stepUsageRecord(
     tokenValuesExact: stepMetricsAreExact(metrics),
     cost: null,
     costExact: false,
+    ...effortPayloadFields(step.generationModel, models),
   };
   const recordId = stableId('model_usage', { session: sessionId, step: requestOrder });
   return usageRecord(recordId, sessionId, sourceEventId, 'atif_step', rootArtifactId, payload);
@@ -243,10 +261,11 @@ function sessionLevelRecord(
   aggregate: TokenAggregate,
 ): NormalizedEvidenceRecord {
   const sourceEventId = session?.id ?? 'unknown';
+  const resolvedModel = resolveModel(session, models);
   const payload = {
     requestOrder: 1,
     requestId: sourceEventId,
-    model: resolveModel(session, models),
+    model: resolvedModel,
     provider: 'unknown',
     inputTokens: aggregate.prompt,
     outputTokens: aggregate.completion,
@@ -255,6 +274,7 @@ function sessionLevelRecord(
     tokenValuesExact: aggregate.exact,
     cost: null,
     costExact: false,
+    ...effortPayloadFields(resolvedModel, models),
   };
   const recordId = stableId('model_usage', { session: sessionId });
   return usageRecord(recordId, sessionId, sourceEventId, 'final_metrics', rootArtifactId, payload);

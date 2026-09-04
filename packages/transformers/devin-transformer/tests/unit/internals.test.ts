@@ -55,7 +55,9 @@ describe('Internal token usage', () => {
   // shape (findings 3a/3b) — two agent-generation steps, `glm-5-2` then
   // `swe-1-7`, whose per-step metrics sum exactly to `final_metrics`.
   // Mid-session model switch must yield 2 distinct model_usage records, not
-  // one last-write-wins record.
+  // one last-write-wins record. Extended by DS-B31 (#290) to also assert the
+  // per-step `effort`/`normalizedEffort` payload fields resolved from the
+  // catalog's `label` (finding 3b: both are unsuffixed-uid, label-only tiers).
   it('emits one model_usage record per ATIF step when steps carry metrics (mid-session model switch)', () => {
     const session = {
       id: 's1',
@@ -88,7 +90,11 @@ describe('Internal token usage', () => {
         },
       ],
     } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
-    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1');
+    const models = [
+      { modelUid: 'glm-5-2', label: 'GLM-5.2 High' },
+      { modelUid: 'swe-1-7', label: 'SWE-1.7 Max' },
+    ] as unknown as Parameters<typeof buildTokenUsageRecords>[3];
+    const result = buildTokenUsageRecords('s1', session, atif, models, 'artifact-1');
 
     expect(result.records.length).toBe(2);
     expect(result.records[0]?.payload).toMatchObject({
@@ -98,6 +104,8 @@ describe('Internal token usage', () => {
       outputTokens: 59,
       cacheReadTokens: 11874,
       tokenValuesExact: true,
+      effort: 'High',
+      normalizedEffort: 'high',
     });
     expect(result.records[1]?.payload).toMatchObject({
       model: 'swe-1-7',
@@ -106,6 +114,8 @@ describe('Internal token usage', () => {
       outputTokens: 37,
       cacheReadTokens: 11136,
       tokenValuesExact: true,
+      effort: 'Max',
+      normalizedEffort: 'max',
     });
     // Each record's provenance must independently identify its own step —
     // not collapse to one shared session-level pointer (mirrors
@@ -115,6 +125,55 @@ describe('Internal token usage', () => {
     expect(result.prompt).toBe(35104);
     expect(result.completion).toBe(96);
     expect(result.cached).toBe(23010);
+  });
+
+  // DS-B31 (#290): a step whose `generationModel` has no catalog match (or no
+  // catalog at all) must attach a null effort — never guessed.
+  it('attaches a null effort when the step model has no catalog match', () => {
+    const session = { id: 's1', metadata: null, model: null } as unknown as Parameters<
+      typeof buildTokenUsageRecords
+    >[1];
+    const atif = {
+      finalMetrics: {
+        totalPromptTokens: 10,
+        totalCompletionTokens: 5,
+        totalCachedTokens: 1,
+        totalSteps: 1,
+      },
+      steps: [
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 1,
+          generationModel: 'compactor',
+          metrics: { promptTokens: 10, completionTokens: 5, cachedTokens: 1 },
+        },
+      ],
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
+    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1');
+    expect(result.records[0]?.payload).toMatchObject({ effort: null, normalizedEffort: null });
+  });
+
+  // DS-B31 (#290): tiers 2/3 (no per-step metrics) must still attach a
+  // session-level effort resolved from the same model the payload's own
+  // `model` field already resolves, without crashing.
+  it('attaches a session-level effort in the tier-2/3 fallback path', () => {
+    const session = {
+      id: 's1',
+      metadata: null,
+      model: 'glm-5-3-low',
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[1];
+    const models = [{ modelUid: 'glm-5-3-low', label: 'GLM-5.3 Low' }] as unknown as Parameters<
+      typeof buildTokenUsageRecords
+    >[3];
+    const result = buildTokenUsageRecords('s1', session, undefined, models, 'artifact-1');
+    expect(result.records.length).toBe(1);
+    expect(result.records[0]?.payload).toMatchObject({
+      model: 'glm-5-3-low',
+      effort: 'Low',
+      normalizedEffort: 'low',
+    });
   });
 
   it('marks a step record inexact when any individual metrics field is missing', () => {
@@ -496,6 +555,6 @@ describe('Internal definitions', () => {
   });
 
   it('returns all phase 1 metric definitions', () => {
-    expect(getDevinMetricDefinitions().length).toBe(22);
+    expect(getDevinMetricDefinitions().length).toBe(24);
   });
 });

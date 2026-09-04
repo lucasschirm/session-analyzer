@@ -76,7 +76,16 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // `packages/db` — see the issue for the full justification. Still forces a
 // fresh generation on reprocess so no analysis mixes pre-/post-fix
 // `model_usage` evidence shapes.
-export const DEVIN_TRANSFORMER_VERSION = '0.4.0';
+// Bumped 0.4.0 -> 0.5.0 for DS-B31 (#290): `buildTokenUsageRecords`'s
+// `model_usage` payload gained `effort`/`normalizedEffort` fields (derived
+// from the Devin model catalog's `label`, never `model_uid` alone — see
+// `effort.ts`), and `metrics/definitions.ts`/`derive.ts` gained the new
+// `devin:effort:changes:root_only`/`:inclusive` metric ids (own `version: 1`
+// — Devin and Claude never share a metric id in this codebase, so this is
+// not a coverage extension of `CLAUDE_CODE_TRANSFORMER_VERSION`'s own bump
+// for the same concept). Forces a fresh generation on reprocess so no
+// analysis mixes pre-/post-#290 `model_usage`/metric output.
+export const DEVIN_TRANSFORMER_VERSION = '0.5.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly

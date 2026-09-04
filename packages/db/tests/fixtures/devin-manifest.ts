@@ -4,6 +4,8 @@ import type { SourceIdentity, UnknownArtifactBundle } from '@lucasschirm/sal-tra
 import {
   componentsBundle,
   linearBundle,
+  modelSwitchBundle,
+  singleTierBundle,
   subagentBundle,
 } from '../../../transformers/devin-transformer/tests/conformance/fixtures/index.js';
 import { createSha256ContentHasher } from '../../src/ingestion.js';
@@ -119,6 +121,23 @@ export async function buildDevinManifestBundle(
      * end-to-end through real ingestion.
      */
     readonly useSubagentBundle?: boolean;
+    /**
+     * Use the `modelSwitchBundle` fixture (DS-B25 (#285) / DS-B31 (#290): a
+     * mid-session model switch across two ATIF agent-generation steps,
+     * `glm-5-2` -> `swe-1-7`, whose catalog labels resolve to real,
+     * unsuffixed-uid tiers `"High"`/`"Max"` per finding 3b) instead of
+     * `linearBundle`, to exercise per-step `model_usage` effort attribution
+     * end-to-end through real ingestion.
+     */
+    readonly useModelSwitchBundle?: boolean;
+    /**
+     * Use the `singleTierBundle` fixture (DS-B31 (#290): one ATIF
+     * agent-generation step whose model resolves to a real, recognized
+     * effort tier, with no second step to transition from/to) instead of
+     * `linearBundle`, to exercise `devin:effort:changes:*`'s n=1
+     * measured-zero case end-to-end through real ingestion.
+     */
+    readonly useSingleTierBundle?: boolean;
   } = {},
 ): Promise<DevinManifestFixture> {
   const projectId = options.projectId ?? 'devin-project';
@@ -130,7 +149,11 @@ export async function buildDevinManifestBundle(
     ? componentsBundle
     : options.useSubagentBundle
       ? subagentBundle
-      : linearBundle;
+      : options.useModelSwitchBundle
+        ? modelSwitchBundle
+        : options.useSingleTierBundle
+          ? singleTierBundle
+          : linearBundle;
   sourceBundle = cloneBundleWithNativeSessionId(sourceBundle, sessionId);
   if (options.corruptRootTranscript) {
     sourceBundle = cloneBundleWithRootTranscript(sourceBundle, '');

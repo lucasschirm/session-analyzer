@@ -65,6 +65,28 @@ describe('DevinTransformer conformance', () => {
     expect(cachedSum).toBe(23010);
   });
 
+  it('DS-B31 (#290): the model-switch fixture attaches a non-null, label-derived effort to both steps and reports one transition', () => {
+    const fixture = devinConformanceFixtures.fixtures.find((f) => f.name === 'model-switch');
+    expect(fixture).toBeDefined();
+    if (!fixture) return;
+    const result = DevinTransformer.transform(fixture.bundle, fixture.context);
+
+    const usageRecords = result.evidence.filter((r) => r.recordType === 'model_usage');
+    const efforts = usageRecords.map(
+      (r) => (r.payload as { effort: string | null; normalizedEffort: string | null }).effort,
+    );
+    expect(efforts).toEqual(['High', 'Max']);
+    const normalized = usageRecords.map(
+      (r) => (r.payload as { normalizedEffort: string | null }).normalizedEffort,
+    );
+    expect(normalized).toEqual(['high', 'max']);
+
+    const rootTransitions = result.metricValues.find(
+      (m) => m.metricId === 'devin:effort:changes:root_only',
+    );
+    expect(rootTransitions?.value).toBe(1);
+  });
+
   it('reports complete skill/tool/agent completeness for the session-components fixture', () => {
     const fixture = devinConformanceFixtures.fixtures.find((f) => f.name === 'session-components');
     expect(fixture).toBeDefined();
