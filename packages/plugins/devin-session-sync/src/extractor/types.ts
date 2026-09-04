@@ -118,26 +118,30 @@ export interface DevinExtractedTables {
  * - `toolCallStateHashes`: NOT a monotonic position — see
  *   `tool-call-watermark.ts` for why a rowid watermark is unsound for this
  *   table and what replaces it.
- * - `sessionsLastActivityAt`: NOT a watermark on read order either —
+ * - `sessionsContentHashes`: NOT a watermark on read order either —
  *   `sessions` is a current-state (mutate-in-place) table with no
  *   append-only column at all; this is a cheap "did anything relevant
- *   change" skip signal, safe only because `last_activity_at` was
- *   confirmed live (#298 Phase 1) to advance on every session-affecting
- *   persist observed (ordinary tool call, subagent invocation). A session
- *   id absent from this map is always treated as changed.
+ *   change" skip signal. Deliberately a full-row content hash, not a
+ *   `last_activity_at` comparison — #298 Phase 1 confirmed
+ *   `last_activity_at` advances on ordinary tool-call and subagent
+ *   persists, but left skill-only/effort-only mutations unverified
+ *   against that one field specifically, so a hash of the whole row is
+ *   used instead of trusting a single column to represent "anything
+ *   changed" (see `session-watermark.ts`). A session id absent from this
+ *   map is always treated as changed.
  */
 export interface DevinWatermarks {
   messageNodesRowId: number | null;
   toolCallStateHashes: Record<string, string>;
   promptHistoryId: number | null;
-  sessionsLastActivityAt: Record<string, number>;
+  sessionsContentHashes: Record<string, string>;
 }
 
 export const EMPTY_WATERMARKS: DevinWatermarks = {
   messageNodesRowId: null,
   toolCallStateHashes: {},
   promptHistoryId: null,
-  sessionsLastActivityAt: {},
+  sessionsContentHashes: {},
 };
 
 /** One line of `devin-session-jsonl/v1` output. */

@@ -9,6 +9,7 @@ import {
   KNOWN_TABLE_COLUMNS,
   resolveDevinSchema,
 } from './schema-registry.js';
+import { filterChangedSessions } from './session-watermark.js';
 import { filterChangedToolCallStates } from './tool-call-watermark.js';
 import type {
   DevinExtractedTables,
@@ -146,21 +147,22 @@ function readTable<T>(db: DevinDatabaseSync, sql: string, params: SQLInputValue[
  * change on the same `id` — never a new row). It's read via `SELECT *`
  * (never a curated column list — see `schema-registry.ts`) so no future
  * Devin CLI column addition can be silently dropped the way
- * `shell_last_seen_index` was. `priorLastActivityAt` is a cheap, safe skip
- * signal only (see `types.ts`'s `DevinWatermarks` doc comment) — it never
- * changes what's read from SQLite, only which already-unchanged rows are
- * dropped from the result.
+ * `shell_last_seen_index` was. `priorHashes` is a cheap, safe skip signal
+ * only (a full-row content hash, not a `last_activity_at` comparison —
+ * see `session-watermark.ts` and `types.ts`'s `DevinWatermarks` doc
+ * comment) — it never changes what's read from SQLite, only which
+ * already-unchanged rows are dropped from the result.
  */
 function readSessions(
   db: DevinDatabaseSync,
   resolution: SchemaResolution,
-  priorLastActivityAt: Readonly<Record<string, number>>,
+  priorHashes: Readonly<Record<string, string>>,
 ): DevinSessionRow[] {
   if (!resolution.knownTables.includes('sessions')) {
     return [];
   }
   const all = readTable<DevinSessionRow>(db, 'SELECT * FROM sessions ORDER BY id');
-  return all.filter((s) => priorLastActivityAt[s.id] !== s.last_activity_at);
+  return filterChangedSessions(all, priorHashes);
 }
 
 /**
@@ -318,7 +320,7 @@ export function readDevinTables(
 ): ReadDevinTablesResult {
   const schema = resolveDevinSchema(readRefineryVersion(db));
   const tables: DevinExtractedTables = {
-    sessions: readSessions(db, schema, watermarks.sessionsLastActivityAt),
+    sessions: readSessions(db, schema, watermarks.sessionsContentHashes),
     messageNodes: readMessageNodes(db, schema, watermarks.messageNodesRowId),
     promptHistory: readPromptHistory(db, schema, watermarks.promptHistoryId),
     toolCallStates: readToolCallStates(db, schema, watermarks.toolCallStateHashes),

@@ -7,6 +7,7 @@ import {
   openDevinDatabase,
   readDevinTables,
 } from '../../src/extractor/reader.js';
+import { mergeSessionHashes } from '../../src/extractor/session-watermark.js';
 import { mergeToolCallStateHashes } from '../../src/extractor/tool-call-watermark.js';
 import { EMPTY_WATERMARKS } from '../../src/extractor/types.js';
 import { buildFixtureDb } from './fixtures/build-fixture-db.js';
@@ -275,7 +276,7 @@ describe('tool_call_state incremental strategy (#298 Phase 1 fix)', () => {
 });
 
 describe('sessions change-detection skip signal (#298)', () => {
-  it('skips a session whose last_activity_at has not changed since the watermark', () => {
+  it('skips a session whose full row content has not changed since the watermark', () => {
     const fixture = buildFixtureDb({
       sessions: [{ ...session('s1'), last_activity_at: 100 }],
     });
@@ -284,18 +285,27 @@ describe('sessions change-detection skip signal (#298)', () => {
     const first = readDevinTables(fixture.db, EMPTY_WATERMARKS);
     expect(first.tables.sessions).toHaveLength(1);
 
-    const watermark = { ...EMPTY_WATERMARKS, sessionsLastActivityAt: { s1: 100 } };
+    const priorHashes = mergeSessionHashes({}, first.tables.sessions);
+    const watermark = { ...EMPTY_WATERMARKS, sessionsContentHashes: priorHashes };
     const second = readDevinTables(fixture.db, watermark);
     expect(second.tables.sessions).toEqual([]);
   });
 
-  it('never skips a session whose last_activity_at genuinely changed', () => {
+  it('never skips a session whose content genuinely changed, even a column other than last_activity_at', () => {
     const fixture = buildFixtureDb({
-      sessions: [{ ...session('s1'), last_activity_at: 200 }],
+      sessions: [{ ...session('s1'), last_activity_at: 100, model: 'glm-5-3-high' }],
     });
     cleanup = fixture.close;
 
-    const watermark = { ...EMPTY_WATERMARKS, sessionsLastActivityAt: { s1: 100 } };
+    // Deliberately: same last_activity_at as the fixture, different `model`
+    // — proves the skip signal is a full-row hash, not a last_activity_at
+    // comparison (the #298 review finding this fixes: a skill-only or
+    // effort-only mutation that never bumps last_activity_at must not be
+    // silently skipped).
+    const priorHashes = mergeSessionHashes({}, [
+      { ...session('s1'), last_activity_at: 100, model: 'glm-5-3-low' },
+    ] as Parameters<typeof mergeSessionHashes>[1]);
+    const watermark = { ...EMPTY_WATERMARKS, sessionsContentHashes: priorHashes };
     const result = readDevinTables(fixture.db, watermark);
     expect(result.tables.sessions).toHaveLength(1);
   });
@@ -304,7 +314,7 @@ describe('sessions change-detection skip signal (#298)', () => {
     const fixture = buildFixtureDb({ sessions: [session('s1')] });
     cleanup = fixture.close;
 
-    const watermark = { ...EMPTY_WATERMARKS, sessionsLastActivityAt: { other: 999 } };
+    const watermark = { ...EMPTY_WATERMARKS, sessionsContentHashes: { other: 'deadbeef' } };
     const result = readDevinTables(fixture.db, watermark);
     expect(result.tables.sessions).toHaveLength(1);
   });

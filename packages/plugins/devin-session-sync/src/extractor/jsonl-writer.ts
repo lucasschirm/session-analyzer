@@ -1,3 +1,4 @@
+import { mergeSessionHashes } from './session-watermark.js';
 import { buildSubagentSyntheticNodes } from './subagent-lines.js';
 import { mergeToolCallStateHashes } from './tool-call-watermark.js';
 import type {
@@ -92,12 +93,15 @@ function appendSessionLines(
     // append-only — see types.ts's DevinWatermarks): a `session` line is
     // appended whenever a session is present in `tables.sessions`. As of
     // #298, reader.ts's readSessions already drops a session from
-    // `tables.sessions` when its last_activity_at hasn't changed since the
-    // watermark was last recorded, so an unchanged session is not
-    // re-appended on every incremental pass; a session with no prior
-    // watermark, or whose last_activity_at genuinely changed, always is.
-    // This is intentional last-write-wins semantics for replay, but it
-    // means the caller's read cadence (e.g. a watcher polling sessions.db)
+    // `tables.sessions` when its full-row content hash matches the prior
+    // watermark (session-watermark.ts) — deliberately not a
+    // last_activity_at comparison, since that field's coverage of every
+    // real mutation path (skill-only, effort-only changes) is unconfirmed
+    // — so an unchanged session is not re-appended on every incremental
+    // pass; a session with no prior watermark, or whose content genuinely
+    // changed, always is. This is intentional last-write-wins semantics
+    // for replay, but it means the caller's read cadence (e.g. a watcher
+    // polling sessions.db)
     // still directly controls how many `session` lines accumulate in the
     // append-only output.
     lines.push(sessionLine(session, next));
@@ -281,26 +285,8 @@ function computeWatermarks(tables: DevinExtractedTables, prior: DevinWatermarks)
       prior.promptHistoryId,
       tables.promptHistory.map((p) => p.id),
     ),
-    sessionsLastActivityAt: mergeSessionsLastActivityAt(
-      prior.sessionsLastActivityAt,
-      tables.sessions,
-    ),
+    sessionsContentHashes: mergeSessionHashes(prior.sessionsContentHashes, tables.sessions),
   };
-}
-
-/** Folds this pass's session rows' `last_activity_at` into the skip-signal
- * watermark. A `null` `last_activity_at` is never recorded — missing is
- * never treated as a comparable value (`missing-is-never-zero`), so it can
- * never false-positive-match a later real value and cause a skip. */
-function mergeSessionsLastActivityAt(
-  prior: Readonly<Record<string, number>>,
-  sessions: readonly DevinSessionRow[],
-): Record<string, number> {
-  const merged = { ...prior };
-  for (const s of sessions) {
-    if (typeof s.last_activity_at === 'number') merged[s.id] = s.last_activity_at;
-  }
-  return merged;
 }
 
 /** Merges a prior watermark with a batch's row ids; never regresses. */
