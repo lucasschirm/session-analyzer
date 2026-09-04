@@ -544,6 +544,225 @@ export const interruptedSkillCallBundle: UnknownArtifactBundle = bundle([
   artifact('native/models.json', modelsJson(), 'application/json'),
 ]);
 
+/**
+ * DS-B28 (#294): a session with BOTH a foreground and a background
+ * `run_subagent` invocation, each already carrying the synthetic
+ * prompt/result `message` lines exactly as `jsonl-writer.ts`'s
+ * `appendSubagentLines` would emit them (reusing the real `message` line
+ * shape/fields, per the issue's acceptance criterion) -- proving
+ * `DevinTransformer.transform()` builds `subagent_turn` evidence end-to-end
+ * from real `transcript.jsonl` text, through the UNMODIFIED `parse-line.ts`
+ * parsing path, with no bespoke line format.
+ *
+ * Also includes one duplicate `message_nodes` pair (mirroring the issue's
+ * cited `shadow-collar` nodes 249/250) and one orphaned sub-agent tree
+ * (mirroring `foremost-hide` nodes 316-322), so the conformance suite
+ * exercises findings #4/#5's fixes on the SAME session as the sub-agent
+ * capture, not just in isolation.
+ */
+function subagentTaggedMessageLine(
+  sessionIdArg: string,
+  nodeId: number,
+  parentNodeId: number | null,
+  role: string,
+  content: string,
+  chatMessageExtensions?: Record<string, unknown>,
+): string {
+  return devinJsonlLine('message', {
+    ts: null,
+    order: nodeId + 2000,
+    row_id: nodeId,
+    session_id: sessionIdArg,
+    node_id: nodeId,
+    parent_node_id: parentNodeId,
+    chat_message: JSON.stringify({
+      message_id: `msg-${nodeId}`,
+      role,
+      content,
+      ...(chatMessageExtensions ? { metadata: { extensions: chatMessageExtensions } } : {}),
+    }),
+    created_at: null,
+    metadata: null,
+  });
+}
+
+function subagentSyntheticLine(
+  sessionIdArg: string,
+  nodeId: number,
+  parentNodeId: number | null,
+  role: 'user' | 'assistant',
+  content: string,
+  subagentExtensions: Record<string, unknown>,
+  syntheticBookkeeping: Record<string, unknown>,
+): string {
+  return devinJsonlLine('message', {
+    ts: null,
+    order: nodeId % 100_000,
+    row_id: -1,
+    session_id: sessionIdArg,
+    node_id: nodeId,
+    parent_node_id: parentNodeId,
+    chat_message: JSON.stringify({ role, content, metadata: { extensions: subagentExtensions } }),
+    created_at: null,
+    metadata: JSON.stringify(syntheticBookkeeping),
+  });
+}
+
+function syntheticPair(
+  sessionIdArg: string,
+  taggedNodeId: number,
+  agentId: string,
+  promptContent: string,
+  resultContent: string,
+  resultExtensions: Record<string, unknown>,
+  isBackground: boolean,
+  sourceNodeId: number,
+): string[] {
+  const promptNodeId = Number.MAX_SAFE_INTEGER - taggedNodeId * 2;
+  const resultNodeId = Number.MAX_SAFE_INTEGER - taggedNodeId * 2 - 1;
+  return [
+    subagentSyntheticLine(
+      sessionIdArg,
+      promptNodeId,
+      null,
+      'user',
+      promptContent,
+      { 'subagent/agent_id': agentId },
+      {
+        'sal/synthetic_subagent_kind': 'prompt',
+        'sal/synthetic_subagent_rawinput_profile': 'subagent_explore',
+        'sal/synthetic_subagent_tool_call_id': `functions.run_subagent:${taggedNodeId}`,
+      },
+    ),
+    subagentSyntheticLine(
+      sessionIdArg,
+      resultNodeId,
+      promptNodeId,
+      'assistant',
+      resultContent,
+      resultExtensions,
+      {
+        'sal/synthetic_subagent_kind': 'result',
+        'sal/synthetic_subagent_is_background': isBackground,
+        'sal/synthetic_subagent_source_node_id': sourceNodeId,
+      },
+    ),
+  ];
+}
+
+const subagentSessionId = 'test-sess-subagent';
+
+const foregroundResultExtensions = {
+  'subagent/agent_id': '44472e00',
+  'subagent/profile_name': 'Explore',
+  'subagent/model': 'Subagent Default',
+  'subagent/chain_node_id': 176,
+};
+
+const backgroundResultExtensions = {
+  'subagent/agent_id': '55c47591',
+  'subagent/profile_name': 'Explore',
+  'subagent/model': 'Subagent Default',
+};
+
+const subagentTranscript = [
+  sessionLine(subagentSessionId, 250),
+  // --- Foreground invocation: shadow-collar nodes 177/178 shape. ---
+  subagentTaggedMessageLine(subagentSessionId, 90, null, 'user', 'start'),
+  subagentTaggedMessageLine(subagentSessionId, 177, 90, 'assistant', 'calling run_subagent'),
+  subagentTaggedMessageLine(
+    subagentSessionId,
+    178,
+    177,
+    'tool',
+    'Subagent agent_id=44472e00 completed successfully:\n\nfull foreground report',
+    foregroundResultExtensions,
+  ),
+  ...syntheticPair(
+    subagentSessionId,
+    178,
+    '44472e00',
+    'Explore the auth module',
+    'full foreground report',
+    foregroundResultExtensions,
+    false,
+    178,
+  ),
+  // --- Background invocation: shadow-collar nodes 226-250 shape. ---
+  subagentTaggedMessageLine(subagentSessionId, 226, 178, 'assistant', 'run it bg'),
+  subagentTaggedMessageLine(
+    subagentSessionId,
+    227,
+    226,
+    'tool',
+    'Background subagent started with agent_id=55c47591 running in the background.',
+    backgroundResultExtensions,
+  ),
+  subagentTaggedMessageLine(subagentSessionId, 228, 227, 'assistant', 'ok, later'),
+  subagentTaggedMessageLine(subagentSessionId, 246, 228, 'assistant', 'checking on it'),
+  subagentTaggedMessageLine(
+    subagentSessionId,
+    247,
+    246,
+    'tool',
+    'Subagent 55c47591 completed. Its full report is delivered in the <subagent_completion_notification> message; you do not need to read it again.',
+  ),
+  subagentTaggedMessageLine(
+    subagentSessionId,
+    248,
+    247,
+    'system',
+    '<subagent_completion_notification>\n[Background subagent with agent_id=55c47591 completed]\n\nfull background report',
+  ),
+  ...syntheticPair(
+    subagentSessionId,
+    227,
+    '55c47591',
+    'Explore the billing module',
+    '<subagent_completion_notification>\n[Background subagent with agent_id=55c47591 completed]\n\nfull background report',
+    backgroundResultExtensions,
+    true,
+    248,
+  ),
+  // --- Finding #4: duplicate message_nodes pair (shadow-collar 249/250 shape). ---
+  subagentTaggedMessageLine(subagentSessionId, 249, 248, 'assistant', 'duplicated content'),
+  devinJsonlLine('message', {
+    ts: null,
+    order: 4250,
+    row_id: 250,
+    session_id: subagentSessionId,
+    node_id: 250,
+    parent_node_id: 248,
+    chat_message: JSON.stringify({
+      message_id: 'msg-249',
+      role: 'assistant',
+      content: 'duplicated content',
+    }),
+    created_at: null,
+    metadata: JSON.stringify({
+      summarized_from: null,
+      num_tokens_preceding: 500,
+      is_system_prefix: null,
+    }),
+  }),
+  // --- Finding #5: orphaned sub-agent tree (foremost-hide 316-322 shape). ---
+  subagentTaggedMessageLine(
+    subagentSessionId,
+    317,
+    null,
+    'system',
+    'You are a senior engineer performing thorough pull request reviews...',
+  ),
+  subagentTaggedMessageLine(subagentSessionId, 318, 317, 'user', 'Review PR #264'),
+  subagentTaggedMessageLine(subagentSessionId, 320, 318, 'assistant', 'Looking at the diff'),
+  subagentTaggedMessageLine(subagentSessionId, 322, 320, 'assistant', 'Posted the review'),
+].join('\n');
+
+export const subagentBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', subagentTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
 export const noRootBundle: UnknownArtifactBundle = bundle([
   artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
   artifact('native/models.json', modelsJson(), 'application/json'),
@@ -612,6 +831,15 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
         'the Skill/Agent/Tool invocation domain fix.',
       componentsBundle,
       ['root', 'components', 'skill', 'agent', 'mcp', 'deterministic'],
+    ),
+    fixture(
+      'subagent-evidence',
+      'A session with a foreground and a background run_subagent invocation (real subagent/* ' +
+        'extension tags and synthetic prompt/result message lines), a duplicate message_nodes ' +
+        "pair, and an orphaned sub-agent tree — exercises DS-B28 (#294)'s Sub Agent domain " +
+        'evidence capture and the ordering-corruption fixes together.',
+      subagentBundle,
+      ['root', 'subagent', 'deterministic'],
     ),
   ],
 };

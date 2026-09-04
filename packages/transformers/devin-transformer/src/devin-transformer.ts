@@ -24,6 +24,7 @@ import { type DevinMetricValue, deriveDevinMetrics } from './metrics/index.js';
 import { parseDevinBundle } from './parse-bundle.js';
 import { deriveDevinSessionComponents } from './session-components.js';
 import { buildSessionSpine, deriveSessionId, resolveSourceIdentity } from './session-spine.js';
+import { buildDevinSubagentEvidence } from './subagent-evidence.js';
 import { buildTokenUsageRecords } from './token-usage.js';
 import { buildToolInvocationRecords } from './tool-invocations.js';
 
@@ -56,7 +57,12 @@ import { buildToolInvocationRecords } from './tool-invocations.js';
  */
 
 export const DEVIN_TRANSFORMER_ID = 'devin';
-export const DEVIN_TRANSFORMER_VERSION = '0.2.0';
+// Bumped 0.2.0 -> 0.3.0 for DS-B28 (#294): ordering (dedup + orphan
+// exclusion) and new Sub Agent evidence output shape changed. Feeds
+// `deterministicGenerationId` (packages/db/src/ingestion.ts) alongside
+// `DEVIN_METRIC_DEFINITION_VERSION`, forcing a fresh generation on reprocess
+// rather than silently mixing pre-/post-fix output.
+export const DEVIN_TRANSFORMER_VERSION = '0.3.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 export const DEVIN_METRIC_DEFINITION_VERSION = '0.1.0';
 
@@ -328,6 +334,11 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       parsed.prompts,
       rootArtifactId,
     );
+    const subagentRecords = buildDevinSubagentEvidence(
+      sessionId,
+      parsed.detachedMessages,
+      rootArtifactId,
+    );
     const sourceId = resolveSourceIdentity(context, bundle.sourceIdentity).sourceId;
     const sessionComponents = deriveDevinSessionComponents(
       sourceId,
@@ -342,6 +353,7 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       ...toolResult.records,
       ...tokenResult.records,
       ...compactionRecords,
+      ...subagentRecords,
     ];
 
     const tokenUsage = {

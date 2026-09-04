@@ -38,6 +38,7 @@ export type {
   DevinParsedLine,
   DevinPromptLine,
   DevinSessionLine,
+  DevinSubagentExtensions,
   DevinToolCallLine,
   RawDevinJsonlLine,
 } from './jsonl/types.js';

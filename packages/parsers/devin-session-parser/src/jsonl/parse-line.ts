@@ -16,6 +16,7 @@ import type {
   DevinParsedLine,
   DevinPromptLine,
   DevinSessionLine,
+  DevinSubagentExtensions,
   DevinToolCallLine,
   RawDevinJsonlLine,
 } from './types.js';
@@ -110,6 +111,41 @@ function parseMessageNodeMetadata(raw: string | null): DevinMessageNodeMetadata 
   };
 }
 
+/**
+ * Parses `chat_message.metadata.extensions`' four `subagent/*` keys
+ * (DS-B28 (#294) design item 1) — a **different namespace** from the
+ * row-level `message_nodes.metadata` column `parseMessageNodeMetadata`
+ * handles above (see `DevinSubagentExtensions`'s own doc comment). Never
+ * throws: a non-object `chatMessage`, or one with no `metadata.extensions`
+ * object, degrades to `null`. Returns `null` (not a mostly-null object) when
+ * none of the four keys are present, so callers can treat `subagent !== null`
+ * as "this node is subagent-tagged" without inspecting every field.
+ */
+function parseSubagentExtensions(chatMessage: unknown): DevinSubagentExtensions | null {
+  if (typeof chatMessage !== 'object' || chatMessage === null) return null;
+  const metadata = (chatMessage as Record<string, unknown>).metadata;
+  if (typeof metadata !== 'object' || metadata === null) return null;
+  const extensions = (metadata as Record<string, unknown>).extensions;
+  if (typeof extensions !== 'object' || extensions === null) return null;
+  const ext = extensions as Record<string, unknown>;
+  const agentId =
+    typeof ext['subagent/agent_id'] === 'string' ? (ext['subagent/agent_id'] as string) : null;
+  const profileName =
+    typeof ext['subagent/profile_name'] === 'string'
+      ? (ext['subagent/profile_name'] as string)
+      : null;
+  const model =
+    typeof ext['subagent/model'] === 'string' ? (ext['subagent/model'] as string) : null;
+  const chainNodeId =
+    typeof ext['subagent/chain_node_id'] === 'number'
+      ? (ext['subagent/chain_node_id'] as number)
+      : null;
+  if (agentId === null && profileName === null && model === null && chainNodeId === null) {
+    return null;
+  }
+  return { agentId, profileName, model, chainNodeId };
+}
+
 type MessageFields = Omit<DevinMessageLine, 'type' | 'ts' | 'order' | 'sessionId' | 'nodeId'>;
 
 function messageFields(row: RawDevinJsonlLine): MessageFields {
@@ -125,6 +161,7 @@ function messageFields(row: RawDevinJsonlLine): MessageFields {
     createdAt: num(row, 'created_at'),
     metadata,
     parsedMetadata: parseMessageNodeMetadata(metadata),
+    subagent: parseSubagentExtensions(chatMessage),
   };
 }
 

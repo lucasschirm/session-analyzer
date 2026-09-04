@@ -158,6 +158,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | PIPE-014 | Devin drill-down data: transcript messages present, evidence/component facts report missing data | `pipe-014-devin-drilldown-data.test.ts` | `getTranscriptPages`/`getEvidencePages`/`getComponentFacts` assertions | 3 | 4 | 4 | 48 | P1 | GREEN |
 | PIPE-015 | Devin `cogs_json`/`tool_call_state`-derived skill/tool/agent components and skill/agent invocation metrics reach session summaries and portfolio Component Ecosystem utilization, with stable componentIds across sessions | `pipe-015-devin-skill-agent-components.test.ts` | `devin:invocations:skill\|agent` headline metric, `getComponentUtilization` label/kind assertions, cross-session componentId stability | 3 | 4 | 4 | 48 | P1 | GREEN |
 | PIPE-016 | Effort-change metric: per-message raw+normalized capture, message_effort backfill on reprocess, rollup reconciliation | `pipe-016-effort-change-metric.test.ts` | `message_effort` row-presence + `claude:effort:changes:*` sample-size/measured-zero-vs-unavailable assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-017 | Devin sub-agent evidence (DS-B28/#294): foreground/background subagent_turn capture, duplicate message_nodes dedup, orphaned sub-agent tree exclusion, reach normalized_events end-to-end | `pipe-017-devin-subagent-evidence.test.ts` | `normalized_events` `subagent_turn`/`detached_conversation` row-presence + `devin:turns:count` non-inflation assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
 
 ### 6.3 Tier C — Sync Lifecycle (`SYNC-###`)
 

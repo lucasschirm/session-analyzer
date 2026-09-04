@@ -95,7 +95,36 @@ function messageRole(chatMessage: unknown, normalizedRole: string): string {
   return normalizedRole;
 }
 
-function messageId(message: DevinMessageLine): string {
+/**
+ * Surfaces a node's `subagent/*` extension tags on its `message` payload
+ * "wherever present" (DS-B28 (#294) design item 1's acceptance criterion),
+ * including for a naturally in-main-chain tagged node (e.g. a real
+ * foreground result like `shadow-collar` node 178) that never becomes
+ * `detachedMessages` and so is never picked up by `subagent-evidence.ts`.
+ * Only non-null fields are included; `undefined` (not present at all) when
+ * the node carries no subagent tag, so a plain `message` payload's shape is
+ * unchanged for the overwhelming majority of ordinary nodes.
+ */
+function subagentTagFields(message: DevinMessageLine): Record<string, unknown> | undefined {
+  const subagent = message.subagent;
+  if (!subagent) return undefined;
+  return {
+    ...(subagent.agentId !== null ? { subagentAgentId: subagent.agentId } : {}),
+    ...(subagent.profileName !== null ? { subagentProfileName: subagent.profileName } : {}),
+    ...(subagent.model !== null ? { subagentModel: subagent.model } : {}),
+    ...(subagent.chainNodeId !== null ? { subagentChainNodeId: subagent.chainNodeId } : {}),
+  };
+}
+
+/**
+ * Resolves the real `chat_message.message_id` when present, falling back to
+ * a `node-<id>`-derived synthetic id. This is the SAME identity key
+ * `parse-bundle.ts`'s `orderMessages` dedups on (DS-B28 (#294) finding #4):
+ * two `message_nodes` rows with different `node_id` but the same
+ * `message_id` are the same logical message, and must not be double-counted
+ * — see that module's `dedupeByMessageId`.
+ */
+export function messageId(message: DevinMessageLine): string {
   const chatMessage = message.chatMessage;
   if (chatMessage && typeof chatMessage === 'object') {
     const id = (chatMessage as { message_id?: unknown }).message_id;
@@ -180,6 +209,7 @@ export function buildSessionSpine(
         nodeId: message.nodeId,
         parentNodeId: message.parentNodeId,
         content: messageContent(message.chatMessage),
+        ...subagentTagFields(message),
       },
     });
   }
