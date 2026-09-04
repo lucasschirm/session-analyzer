@@ -147,6 +147,9 @@ describe('devin:effort:changes:root_only/:inclusive transition counting', () => 
     const metric = result.metricValues.find((m) => m.metricId === 'devin:effort:changes:root_only');
     expect(metric?.value).toBeNull();
     expect(metric?.unavailableReason).toBe('no recognized effort signal observed for this session');
+    // aggregates-expose-sample-size: even unavailable, the metric must cite
+    // the evidence it inspected — never an empty evidenceRecordIds array.
+    expect(metric?.evidenceRecordIds.length).toBeGreaterThan(0);
   });
 
   it('reports a measured 0 (n=1, exact) for a single-record session with no transition possible', () => {

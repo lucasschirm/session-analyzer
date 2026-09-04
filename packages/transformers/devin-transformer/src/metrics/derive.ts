@@ -130,6 +130,42 @@ function computeDevinEffortTransitions(records: readonly NormalizedEvidenceRecor
   return { transitions, contributing };
 }
 
+/**
+ * Builds the `devin:effort:changes:*` metric value from an already-computed
+ * transition result (extracted out of `deriveDevinMetrics` to keep that
+ * function within `workspace-rules.md`'s function-length cap). `n` is the
+ * count of records with a recognized effort value (`contributing`), never
+ * the raw `model_usage` record count — an unresolved-effort record neither
+ * ends nor starts a "known" streak (see `computeDevinEffortTransitions`).
+ */
+function effortChangesMetricValue(
+  definition: MetricDefinition,
+  effortResult: ReturnType<typeof computeDevinEffortTransitions>,
+  provenance: readonly Provenance[],
+  fallbackEvidenceRecordIds: readonly string[],
+): DevinMetricValue {
+  const n = effortResult.contributing.length;
+  const value = n === 0 ? null : effortResult.transitions;
+  const reason = n === 0 ? 'no recognized effort signal observed for this session' : undefined;
+  // Even when unavailable (n=0), the metric must still cite the model_usage
+  // evidence it inspected (`aggregates-expose-sample-size`) — falls back to
+  // every model_usage record for the session, mirroring `devin:turns:count`'s
+  // `turnIds.length > 0 ? turnIds : [tokenRecordId]` fallback in
+  // `deriveDevinMetrics`.
+  const contributingIds = effortResult.contributing.map((r) => r.recordId);
+  const evidenceRecordIds =
+    contributingIds.length > 0 ? contributingIds : fallbackEvidenceRecordIds;
+  return createMetricValue({
+    definition,
+    value,
+    exact: value !== null,
+    evidenceRecordIds,
+    provenance,
+    estimationMethod: 'count_of_effort_level_transitions',
+    unavailableReason: reason,
+  });
+}
+
 function turnRecordIds(evidence: readonly NormalizedEvidenceRecord[], sessionId: string): string[] {
   return evidence
     .filter((r) => r.recordType === 'turn' && r.sessionId === sessionId)
@@ -345,32 +381,13 @@ export function deriveDevinMetrics(
   // session-tree/subagent model_usage evidence to distinguish root_only from
   // inclusive today), mirroring how devin:tokens:*/devin:steps:count:* above
   // already treat both scopes identically.
-  const effortRecords = modelUsageRecords(evidence, rootSessionId);
-  const effortResult = computeDevinEffortTransitions(effortRecords);
+  const effortResult = computeDevinEffortTransitions(modelUsageRecords(evidence, rootSessionId));
   const effortProvenance: Provenance[] = [
     { artifactId: rootArtifactId, sourceField: 'model_usage', path: rootArtifactId },
   ];
-  pushForBothScopes('devin:effort:changes', (_scope, def) => {
-    const n = effortResult.contributing.length;
-    const value = n === 0 ? null : effortResult.transitions;
-    const reason = n === 0 ? 'no recognized effort signal observed for this session' : undefined;
-    // Even when unavailable (n=0), the metric must still cite the
-    // model_usage evidence it inspected (`aggregates-expose-sample-size`) —
-    // falls back to every model_usage record for the session, mirroring
-    // `devin:turns:count`'s `turnIds.length > 0 ? turnIds : [tokenRecordId]`
-    // fallback above.
-    const contributingIds = effortResult.contributing.map((r) => r.recordId);
-    const evidenceRecordIds = contributingIds.length > 0 ? contributingIds : tokenRecordIds;
-    return createMetricValue({
-      definition: def,
-      value,
-      exact: value !== null,
-      evidenceRecordIds,
-      provenance: effortProvenance,
-      estimationMethod: 'count_of_effort_level_transitions',
-      unavailableReason: reason,
-    });
-  });
+  pushForBothScopes('devin:effort:changes', (_scope, def) =>
+    effortChangesMetricValue(def, effortResult, effortProvenance, tokenRecordIds),
+  );
 
   // Turns
   const turnIds = turnRecordIds(evidence, rootSessionId);
