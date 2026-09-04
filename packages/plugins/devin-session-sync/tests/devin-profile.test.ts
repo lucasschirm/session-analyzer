@@ -37,6 +37,11 @@ describe('resolveDevinConfigDir', () => {
     const dir = resolveDevinConfigDir({ XDG_DATA_HOME: '/custom/data' });
     expect(dir).toBe(path.join('/custom/data', 'devin', 'cli'));
   });
+
+  it('falls back when XDG_DATA_HOME is whitespace-only', () => {
+    const dir = resolveDevinConfigDir({ XDG_DATA_HOME: '   ' });
+    expect(dir).toBe(path.join(os.homedir(), '.local', 'share', 'devin', 'cli'));
+  });
 });
 
 describe('resolveDevinCliVersion', () => {

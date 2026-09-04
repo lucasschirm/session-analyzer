@@ -1,12 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
-import path from 'node:path';
 import type {
   CaptureAllowlist,
   HarnessProfile,
   SessionLayoutDescriptor,
 } from '@lucasschirm/sal-sync';
 import { UNKNOWN_HARNESS_VERSION } from '@lucasschirm/sal-sync';
+import { resolveDevinDataRoot } from './xdg-data-root.js';
 
 export const DEVIN_HARNESS = 'devin' as const;
 
@@ -134,12 +134,9 @@ const DEVIN_SECURITY_BLOCKLIST: readonly string[] = [
 
 /**
  * Resolves the Devin CLI's XDG *data* root: `$XDG_DATA_HOME/devin/cli` when
- * set, else `~/.local/share/devin/cli`. This mirrors
- * `extractor/paths.ts`'s `resolveDevinDataRoot` exactly (duplicated rather
- * than imported to keep `devin-profile.ts` free of a dependency on the
- * extractor module — `HarnessProfile.configDir` is consumed by `packages/sync`
- * discovery for the `{configDir}/...` global-allowlist prefix, which is a
- * narrower concern than the extractor's full path-resolution surface).
+ * set, else `~/.local/share/devin/cli`, via the single shared resolver in
+ * `xdg-data-root.ts` (also used by `extractor/paths.ts`'s
+ * `resolveDevinPaths`) — see that module for the resolution logic itself.
  *
  * `HarnessProfile.configDir` is used here for the *data* root (not
  * `~/.config/devin`) because `plugins/discovered.json` — the one
@@ -149,12 +146,7 @@ const DEVIN_SECURITY_BLOCKLIST: readonly string[] = [
  * pattern instead (see {@link GLOBAL_ALLOWLIST_PATTERNS}).
  */
 export function resolveDevinConfigDir(env: Record<string, string | undefined>): string {
-  const xdgDataHome = env.XDG_DATA_HOME;
-  const base =
-    xdgDataHome && xdgDataHome.trim() !== ''
-      ? xdgDataHome
-      : path.join(os.homedir(), '.local', 'share');
-  return path.join(base, 'devin', 'cli');
+  return resolveDevinDataRoot({ xdgDataHome: env.XDG_DATA_HOME, home: os.homedir() });
 }
 
 export type ExecFileSyncLike = (
