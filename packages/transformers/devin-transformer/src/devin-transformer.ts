@@ -19,6 +19,7 @@ import {
   classifyDevinArtifacts,
   completenessFromComponents,
 } from './classification.js';
+import { buildDevinCompactionRecords } from './compaction.js';
 import { type DevinMetricValue, deriveDevinMetrics } from './metrics/index.js';
 import { parseDevinBundle } from './parse-bundle.js';
 import { deriveDevinSessionComponents } from './session-components.js';
@@ -321,6 +322,12 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       parsed.models,
       rootArtifactId,
     );
+    const compactionRecords = buildDevinCompactionRecords(
+      sessionId,
+      parsed.orderedMessages,
+      parsed.prompts,
+      rootArtifactId,
+    );
     const sourceId = resolveSourceIdentity(context, bundle.sourceIdentity).sourceId;
     const sessionComponents = deriveDevinSessionComponents(
       sourceId,
@@ -334,6 +341,7 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       ...spine.records,
       ...toolResult.records,
       ...tokenResult.records,
+      ...compactionRecords,
     ];
 
     const tokenUsage = {

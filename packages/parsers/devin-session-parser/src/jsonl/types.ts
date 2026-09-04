@@ -43,6 +43,42 @@ export interface DevinSessionLine {
   metadata: string | null;
 }
 
+/**
+ * Parsed shape of the `message_nodes.metadata` JSON column.
+ *
+ * This is a **different namespace** from `chat_message.metadata` — the
+ * nested object embedded inside the `chat_message` column's own JSON (e.g.
+ * carrying `generation_model`/token counts for a model invocation, or
+ * `extensions['devin-rs/summary']` for a compaction's continuation node).
+ * Never conflate the two: `DevinMessageNodeMetadata` describes the row-level
+ * `message_nodes.metadata` column only.
+ */
+export interface DevinMessageNodeMetadata {
+  /**
+   * Non-null iff this node is a compaction-produced output node
+   * summarizing an earlier conversation; the value is the `node_id` of the
+   * last pre-compaction node (the compaction boundary anchor). `null` on
+   * every ordinary (non-compaction) node.
+   */
+  summarizedFrom: number | null;
+  /**
+   * Context-size checkpoint, when populated. Not compaction-exclusive: seen
+   * on ordinary turn nodes too, and `null` on a compaction's own output
+   * nodes (a post-compaction token count is not derivable from this field).
+   */
+  numTokensPreceding: number | null;
+  /** `true` on a synthetic system-prefix node (e.g. the Summarizer prompt). */
+  isSystemPrefix: boolean | null;
+  /**
+   * Passthrough bag for any other keys under `metadata` (e.g.
+   * `compact/prior_node_ids`, which is unrelated node-forest-rewrite
+   * bookkeeping present throughout a session, not a compaction signal —
+   * see `.agents/rules` discovery notes on DS-B27). Carried verbatim,
+   * unclassified.
+   */
+  extensions?: Record<string, unknown>;
+}
+
 /** A parsed `message_nodes` row line. */
 export interface DevinMessageLine {
   type: 'message';
@@ -59,7 +95,10 @@ export interface DevinMessageLine {
   /** The parsed `chat_message` JSON payload, or `null` if absent/unparseable. */
   chatMessage: unknown;
   createdAt: number | null;
+  /** Raw, unparsed `message_nodes.metadata` JSON string. */
   metadata: string | null;
+  /** `metadata`, parsed and typed; `null` if absent/unparseable/not an object. */
+  parsedMetadata: DevinMessageNodeMetadata | null;
 }
 
 /** A parsed `tool_call_state` row line: no timestamp column exists upstream. */

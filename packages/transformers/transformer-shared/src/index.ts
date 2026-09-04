@@ -1,5 +1,6 @@
 export * from './bundle.js';
 export * from './classification.js';
+export * from './compaction.js';
 export * from './comparability.js';
 export * from './component.js';
 export * from './context.js';

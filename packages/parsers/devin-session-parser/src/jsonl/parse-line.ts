@@ -12,6 +12,7 @@ import type {
   DevinJsonlParseResult,
   DevinJsonlParseWarning,
   DevinMessageLine,
+  DevinMessageNodeMetadata,
   DevinParsedLine,
   DevinPromptLine,
   DevinSessionLine,
@@ -87,11 +88,34 @@ function parseChatMessage(raw: unknown): { chatMessage: unknown; role: string | 
   }
 }
 
+/** `message_nodes.metadata` is JSON-object-shaped `{summarized_from, num_tokens_preceding,
+ * is_system_prefix, ...extensions}`. Never throws: malformed/non-object JSON degrades
+ * to `null`, mirroring `parseChatMessage`'s never-crash posture. */
+function parseMessageNodeMetadata(raw: string | null): DevinMessageNodeMetadata | null {
+  if (typeof raw !== 'string') return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  const { summarized_from, num_tokens_preceding, is_system_prefix, ...rest } = record;
+  return {
+    summarizedFrom: typeof summarized_from === 'number' ? summarized_from : null,
+    numTokensPreceding: typeof num_tokens_preceding === 'number' ? num_tokens_preceding : null,
+    isSystemPrefix: typeof is_system_prefix === 'boolean' ? is_system_prefix : null,
+    extensions: Object.keys(rest).length > 0 ? rest : undefined,
+  };
+}
+
 type MessageFields = Omit<DevinMessageLine, 'type' | 'ts' | 'order' | 'sessionId' | 'nodeId'>;
 
 function messageFields(row: RawDevinJsonlLine): MessageFields {
   const { chatMessage, role } = parseChatMessage(row.chat_message);
   const normalizedRole = mapDevinRole(role);
+  const metadata = str(row, 'metadata');
   return {
     rowId: num(row, 'row_id') ?? 0,
     parentNodeId: num(row, 'parent_node_id'),
@@ -99,7 +123,8 @@ function messageFields(row: RawDevinJsonlLine): MessageFields {
     rawRole: normalizedRole === 'unknown' ? role : null,
     chatMessage,
     createdAt: num(row, 'created_at'),
-    metadata: str(row, 'metadata'),
+    metadata,
+    parsedMetadata: parseMessageNodeMetadata(metadata),
   };
 }
 

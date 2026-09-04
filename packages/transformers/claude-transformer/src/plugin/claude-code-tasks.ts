@@ -20,6 +20,7 @@ import {
   splitMcpToolName,
 } from '@lucasschirm/sal-claude-session-parser';
 import type {
+  CompactionEventPayload,
   ComponentSummary,
   NormalizedEvidenceRecord,
   Provenance,
@@ -164,21 +165,18 @@ export interface CommandExecutionRecordPayload {
   readonly sourceEventId: string;
 }
 
-export interface NormalizedEventRecordPayload {
-  readonly eventId: string;
-  readonly version: number;
-  readonly category: string;
-  readonly eventType: string;
-  readonly timestampMs: number;
-  readonly sourceEventId: string;
-  readonly lineNumber: number;
-  readonly summary?: string;
-  // compaction
-  readonly trigger?: string;
-  readonly preTokens?: number;
-  readonly postTokens?: number;
-  readonly cumulativeDroppedTokens?: number;
-  readonly compactionDurationMs?: number;
+/**
+ * The `category`/`eventType`/`timestampMs`/... base fields plus the
+ * `compaction`-category fields (`trigger`, `preTokens`, `postTokens`,
+ * `cumulativeDroppedTokens`, `compactionDurationMs`) are inherited from
+ * `transformer-shared`'s `CompactionEventPayload` — the harness-agnostic
+ * shape generalized out of this Claude-only type per [DS-B27](#287), so a
+ * second harness (Devin) can produce the same canonical record kind. This
+ * interface adds every other `normalized_event` category's fields on top;
+ * `category` stays untyped as `string` at the base so it can hold any of
+ * them, not just `'compaction'`.
+ */
+export interface NormalizedEventRecordPayload extends CompactionEventPayload {
   // pr_link
   readonly prNumber?: number;
   readonly prRepository?: string;

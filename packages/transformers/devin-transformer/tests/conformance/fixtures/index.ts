@@ -56,10 +56,20 @@ function messageLine(
   parentNodeId: number | null,
   role: string,
   content: string,
+  options?: {
+    rowId?: number;
+    createdAt?: number | null;
+    metadata?: {
+      summarized_from?: number | null;
+      num_tokens_preceding?: number | null;
+      is_system_prefix?: boolean | null;
+    };
+  },
 ): string {
   return devinJsonlLine('message', {
     ts: null,
     order: nodeId + 1,
+    row_id: options?.rowId ?? nodeId,
     session_id: sessionId,
     node_id: nodeId,
     parent_node_id: parentNodeId,
@@ -68,8 +78,19 @@ function messageLine(
       role,
       content,
     }),
-    created_at: null,
-    metadata: null,
+    created_at: options?.createdAt ?? null,
+    metadata: options?.metadata ? JSON.stringify(options.metadata) : null,
+  });
+}
+
+function promptLine(sessionId: string, id: number, content: string, ts: number): string {
+  return devinJsonlLine('prompt', {
+    ts,
+    order: 1000 + id,
+    id,
+    session_id: sessionId,
+    content,
+    is_shell: 0,
   });
 }
 
@@ -324,6 +345,78 @@ export const replayedBundle: UnknownArtifactBundle = bundle([
   artifact('native/models.json', modelsJson(), 'application/json'),
 ]);
 
+// Reproduces (anonymized) the real `shadow-collar` session's node 45-63
+// shape from DS-B27 (#287) Research Finding 2: a linear pre-compaction chain
+// 45->...->49->...->55->57, a dead sibling branch (56, sharing parent 55
+// with 57, from an earlier retried turn) that a naive `node_id BETWEEN 50
+// AND 57` range would wrongly include, and the compaction's own output-node
+// subtree (58-63) reattaching the main chain at node 49. A correlated
+// `/compact` prompt row (Finding 1) makes `trigger: 'manual'` derivable.
+const compactionSessionId = 'shadow-collar-anon';
+
+const compactionTranscript = [
+  sessionLine(compactionSessionId, 63),
+  messageLine(compactionSessionId, 45, null, 'user', 'Start task', { createdAt: 1788465000 }),
+  messageLine(compactionSessionId, 46, 45, 'assistant', 'Working on it', { createdAt: 1788465010 }),
+  messageLine(compactionSessionId, 47, 46, 'user', 'Continue', { createdAt: 1788465020 }),
+  messageLine(compactionSessionId, 48, 47, 'assistant', 'More progress', { createdAt: 1788465030 }),
+  messageLine(compactionSessionId, 49, 48, 'user', 'Keep going', { createdAt: 1788465040 }),
+  messageLine(compactionSessionId, 50, 49, 'assistant', 'Step 50', { createdAt: 1788465050 }),
+  messageLine(compactionSessionId, 51, 50, 'user', 'Step 51', { createdAt: 1788465060 }),
+  messageLine(compactionSessionId, 52, 51, 'assistant', 'Step 52', { createdAt: 1788465070 }),
+  messageLine(compactionSessionId, 53, 52, 'user', 'Step 53', { createdAt: 1788465080 }),
+  messageLine(compactionSessionId, 54, 53, 'assistant', 'Step 54', { createdAt: 1788465090 }),
+  messageLine(compactionSessionId, 55, 54, 'user', 'Step 55', { createdAt: 1788465100 }),
+  messageLine(compactionSessionId, 56, 55, 'assistant', 'Retried approach (dead branch)', {
+    createdAt: 1788465105,
+  }),
+  messageLine(compactionSessionId, 57, 55, 'assistant', 'Last pre-compaction turn', {
+    createdAt: 1788465110,
+    metadata: { summarized_from: null, num_tokens_preceding: 17033, is_system_prefix: null },
+  }),
+  messageLine(compactionSessionId, 58, null, 'system', 'You are a Summarizer...', {
+    createdAt: 1788465458,
+    metadata: { summarized_from: null, num_tokens_preceding: null, is_system_prefix: true },
+  }),
+  messageLine(compactionSessionId, 59, 58, 'user', 'Full prior conversation dump', {
+    createdAt: 1788465458,
+  }),
+  messageLine(compactionSessionId, 60, 59, 'user', 'Now summarize the conversation above...', {
+    createdAt: 1788465458,
+  }),
+  messageLine(compactionSessionId, 61, 60, 'assistant', '<summary>...</summary>', {
+    createdAt: 1788465458,
+    metadata: { summarized_from: 57, num_tokens_preceding: null, is_system_prefix: null },
+  }),
+  messageLine(compactionSessionId, 62, 49, 'system', '<available_skills>...', {
+    createdAt: 1788465458,
+  }),
+  messageLine(
+    compactionSessionId,
+    63,
+    62,
+    'system',
+    'You are continuing work from a previous conversation thread...',
+    {
+      createdAt: 1788465458,
+      metadata: { summarized_from: 57, num_tokens_preceding: null, is_system_prefix: null },
+    },
+  ),
+  promptLine(compactionSessionId, 1, '/compact', 1788465456),
+  toolCallLine(compactionSessionId, 'tc-1', 'edit', 'EditFile', 'success'),
+].join('\n');
+
+const compactionAtif = atifTranscript(
+  [{ timestamp: '2026-09-03T19:57:36.000Z', role: 'user', text: 'compact' }],
+  { totalPromptTokens: 17033, totalCompletionTokens: 154, totalCachedTokens: 0, totalSteps: 19 },
+);
+
+export const compactionBoundaryBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', compactionTranscript, 'application/jsonl'),
+  artifact('native/atif-transcript.json', compactionAtif, 'application/json'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
 const mcpAllowListCog = {
   source: { Session: 'System' },
   lifetime: { Unique: 'core/model' },
@@ -459,6 +552,19 @@ export const noRootBundle: UnknownArtifactBundle = bundle([
 
 export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle> = {
   fixtures: [
+    // Listed first: `runTransformerConformanceSuite`'s provenance/formula
+    // check selects the *first* successful fixture with metrics and
+    // evidence as its single sampled target - this fixture must be that one
+    // so the `compaction`/`context` formula checks (DS-B27 (#287)) flip from
+    // "TODO: no records..." to "...formula records present." It carries a
+    // superset of `linear-root`'s coverage (tokens, a tool call) so no other
+    // formula check regresses.
+    fixture(
+      'compaction-boundary',
+      "A session with a compaction boundary (DS-B27 (#287)'s shadow-collar node 45-63 shape): a dead sibling branch, a summarizer output subtree, and a correlated /compact prompt row.",
+      compactionBoundaryBundle,
+      ['root', 'compaction', 'deterministic', 'provenance', 'formulas'],
+    ),
     fixture(
       'linear-root',
       'A simple linear session with ATIF final metrics and a tool call.',

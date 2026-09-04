@@ -10,7 +10,6 @@
 export type { AtifFinalMetrics, AtifStep, AtifTranscript, ParseAtifResult } from './atif/parse.js';
 // ---- ATIF v1.7 native transcript parsing ---------------------------------
 export { ATIF_SCHEMA_VERSION, parseAtifTranscript } from './atif/parse.js';
-
 export type {
   DevinCog,
   DevinCogLifetime,
@@ -21,6 +20,12 @@ export type {
 } from './cogs/parse-cogs.js';
 // ---- sessions.cogs_json parsing (DS-F11 (#288)) --------------------------
 export { parseDevinCogsJson } from './cogs/parse-cogs.js';
+export type { DevinCompactionBoundary, DevinPrunedRange } from './jsonl/compaction.js';
+// ---- compaction (`/compact`) boundary detection --------------------------
+export {
+  computePrunedNodeIds,
+  detectCompactionBoundaries,
+} from './jsonl/compaction.js';
 
 // ---- devin-session-jsonl/v1 line parsing ---------------------------------
 export { parseDevinJsonlLine, parseDevinJsonlText } from './jsonl/parse-line.js';
@@ -29,6 +34,7 @@ export type {
   DevinJsonlParseResult,
   DevinJsonlParseWarning,
   DevinMessageLine,
+  DevinMessageNodeMetadata,
   DevinParsedLine,
   DevinPromptLine,
   DevinSessionLine,
