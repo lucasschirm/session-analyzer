@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { DevinTransformer } from '../../src/index.js';
 import { comparabilityGroupFor } from '../../src/metrics/comparability.js';
 import { getDevinMetricDefinitions } from '../../src/metrics/index.js';
-import { componentsBundle, defaultContext, linearBundle } from '../conformance/fixtures/index.js';
+import {
+  componentsBundle,
+  defaultContext,
+  linearBundle,
+  modelSwitchBundle,
+} from '../conformance/fixtures/index.js';
 
 describe('Devin metric definitions', () => {
   it('exports a metric definition for every Phase 1 root and inclusive metric', () => {
@@ -72,4 +77,28 @@ describe('devin:invocations:skill:*/agent:* standalone-vs-transform consistency 
       }
     });
   }
+});
+
+describe('DS-B25 (#285): aggregate token/step metrics cite every model_usage record', () => {
+  it('devin:tokens:total:inclusive and devin:steps:count:inclusive evidenceRecordIds include both model-switch step records', () => {
+    const result = DevinTransformer.transform(modelSwitchBundle, defaultContext);
+    const usageRecordIds = new Set(
+      result.evidence.filter((r) => r.recordType === 'model_usage').map((r) => r.recordId),
+    );
+    expect(usageRecordIds.size).toBe(2);
+
+    for (const metricId of ['devin:tokens:total:inclusive', 'devin:steps:count:inclusive']) {
+      const metric = result.metricValues.find((m) => m.metricId === metricId) as
+        | { evidenceRecordIds: readonly string[] }
+        | undefined;
+      expect(metric).toBeDefined();
+      if (!metric) continue;
+      // Every model_usage record for the session must be cited — not just
+      // the first one — since the aggregate value sums across all of them.
+      for (const id of usageRecordIds) {
+        expect(metric.evidenceRecordIds).toContain(id);
+      }
+      expect(metric.evidenceRecordIds.length).toBe(2);
+    }
+  });
 });

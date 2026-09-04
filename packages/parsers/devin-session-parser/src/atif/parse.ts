@@ -10,11 +10,27 @@
 
 export const ATIF_SCHEMA_VERSION = 'ATIF-v1.7';
 
+export interface AtifStepMetrics {
+  promptTokens: number | null;
+  completionTokens: number | null;
+  cachedTokens: number | null;
+}
+
 export interface AtifStep {
   /** RFC3339 timestamp; `null` when absent or not RFC3339-shaped. */
   timestamp: string | null;
   role: string | null;
   text: string | null;
+  /** `raw.step_id`; `null` when absent, for stable per-step ordering. */
+  stepId: number | null;
+  /** `raw.extra.generation_model` — the trustworthy per-step model signal
+   * (unlike `AtifTranscript.agentModelName`, which is agent-level/current-state
+   * and unreliable per step); `null` when `extra` is absent/non-object or the
+   * field isn't a string. */
+  generationModel: string | null;
+  /** `raw.metrics`; `null` (not per-field-zeroed) when the whole object is
+   * absent — present only on `source: "agent"` steps upstream. */
+  metrics: AtifStepMetrics | null;
 }
 
 export interface AtifFinalMetrics {
@@ -47,18 +63,48 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function optionalNumber(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function parseStepMetrics(raw: unknown): AtifStepMetrics | null {
+  if (!isRecord(raw)) return null;
+  return {
+    promptTokens: optionalNumber(raw, 'prompt_tokens'),
+    completionTokens: optionalNumber(raw, 'completion_tokens'),
+    cachedTokens: optionalNumber(raw, 'cached_tokens'),
+  };
+}
+
+function parseStepGenerationModel(raw: unknown): string | null {
+  if (!isRecord(raw) || !isRecord(raw.extra)) return null;
+  return typeof raw.extra.generation_model === 'string' ? raw.extra.generation_model : null;
+}
+
+function parseStepId(raw: Record<string, unknown>): number | null {
+  return typeof raw.step_id === 'number' && Number.isFinite(raw.step_id) ? raw.step_id : null;
+}
+
 function parseStep(raw: unknown): AtifStep {
-  if (!isRecord(raw)) return { timestamp: null, role: null, text: null };
+  if (!isRecord(raw)) {
+    return {
+      timestamp: null,
+      role: null,
+      text: null,
+      stepId: null,
+      generationModel: null,
+      metrics: null,
+    };
+  }
   return {
     timestamp: isRfc3339(raw.timestamp) ? raw.timestamp : null,
     role: typeof raw.role === 'string' ? raw.role : null,
     text: typeof raw.text === 'string' ? raw.text : null,
+    stepId: parseStepId(raw),
+    generationModel: parseStepGenerationModel(raw),
+    metrics: parseStepMetrics(raw.metrics),
   };
-}
-
-function optionalNumber(record: Record<string, unknown>, key: string): number | null {
-  const value = record[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function parseFinalMetrics(raw: unknown): AtifFinalMetrics {

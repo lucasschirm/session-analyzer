@@ -151,8 +151,18 @@ function interruptedToolCallLine(
   });
 }
 
+interface AtifTranscriptStep {
+  timestamp: string;
+  role: string;
+  text: string;
+  /** ATIF-real `source: "agent"` step extras (findings 3a/3b of DS-B25
+   * (#285)): `generation_model` is the trustworthy per-step model signal. */
+  extra?: { generation_model: string };
+  metrics?: { prompt_tokens: number; completion_tokens: number; cached_tokens: number };
+}
+
 function atifTranscript(
-  steps: { timestamp: string; role: string; text: string }[],
+  steps: AtifTranscriptStep[],
   finalMetrics: {
     totalPromptTokens: number;
     totalCompletionTokens: number;
@@ -164,7 +174,7 @@ function atifTranscript(
     {
       schema_version: 'ATIF-v1.7',
       agent: { model_name: 'devin-default' },
-      steps,
+      steps: steps.map((step, index) => ({ ...step, step_id: index + 1 })),
       final_metrics: {
         total_prompt_tokens: finalMetrics.totalPromptTokens,
         total_completion_tokens: finalMetrics.totalCompletionTokens,
@@ -285,6 +295,48 @@ const branchyAtif = atifTranscript(
 export const branchyBundle: UnknownArtifactBundle = bundle([
   artifact('transcript.jsonl', branchyTranscript, 'application/jsonl'),
   artifact('native/atif-transcript.json', branchyAtif, 'application/json'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
+// DS-B25 (#285): a mid-session model switch (glm-5-2 -> swe-1-7) across two
+// ATIF agent-generation steps, using the exact token counts from the real
+// `shadow-collar` repro (findings 3a/3b) — exercises per-step `model_usage`
+// attribution instead of a single last-write-wins record. `final_metrics`
+// equals the exact sum of both steps' `metrics`, mirroring the real data.
+const modelSwitchTranscript = [
+  sessionLine(sessionId, 4),
+  messageLine(sessionId, 1, null, 'user', 'this is a message for glm-5.2'),
+  messageLine(sessionId, 2, 1, 'assistant', 'Got it, running as GLM-5.2.'),
+  messageLine(sessionId, 3, 2, 'user', 'this is a message to swe'),
+  messageLine(sessionId, 4, 3, 'assistant', 'Got it, SWE mode acknowledged.'),
+  toolCallLine(sessionId, 'tc-1', 'edit', 'EditFile', 'success'),
+].join('\n');
+
+const modelSwitchAtif = atifTranscript(
+  [
+    { timestamp: '2026-08-01T12:00:00.000Z', role: 'user', text: 'this is a message for glm-5.2' },
+    {
+      timestamp: '2026-08-01T12:00:05.000Z',
+      role: 'assistant',
+      text: 'Got it, running as GLM-5.2.',
+      extra: { generation_model: 'glm-5-2' },
+      metrics: { prompt_tokens: 18071, completion_tokens: 59, cached_tokens: 11874 },
+    },
+    { timestamp: '2026-08-01T12:00:10.000Z', role: 'user', text: 'this is a message to swe' },
+    {
+      timestamp: '2026-08-01T12:00:15.000Z',
+      role: 'assistant',
+      text: 'Got it, SWE mode acknowledged.',
+      extra: { generation_model: 'swe-1-7' },
+      metrics: { prompt_tokens: 17033, completion_tokens: 37, cached_tokens: 11136 },
+    },
+  ],
+  { totalPromptTokens: 35104, totalCompletionTokens: 96, totalCachedTokens: 23010, totalSteps: 4 },
+);
+
+export const modelSwitchBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', modelSwitchTranscript, 'application/jsonl'),
+  artifact('native/atif-transcript.json', modelSwitchAtif, 'application/json'),
   artifact('native/models.json', modelsJson(), 'application/json'),
 ]);
 
@@ -789,6 +841,15 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
       'A simple linear session with ATIF final metrics and a tool call.',
       linearBundle,
       ['root', 'linear', 'deterministic', 'exact-estimated', 'provenance', 'formulas'],
+    ),
+    fixture(
+      'model-switch',
+      'A session with a mid-session model switch (glm-5-2 -> swe-1-7) across two ATIF ' +
+        "agent-generation steps, using the real shadow-collar repro's token counts " +
+        '(DS-B25 (#285)) — exercises per-step model_usage attribution instead of a single ' +
+        'last-write-wins record.',
+      modelSwitchBundle,
+      ['root', 'model-switch', 'tokens', 'deterministic'],
     ),
     fixture(
       'branchy-messages',

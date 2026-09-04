@@ -64,6 +64,73 @@ describe('parseAtifTranscript — steps', () => {
   });
 });
 
+describe('parseAtifTranscript — steps — stepId/generationModel/metrics', () => {
+  it('extracts stepId, generationModel, and metrics from a real agent-shaped step', () => {
+    const result = parseAtifTranscript(
+      baseTranscript({
+        steps: [
+          {
+            step_id: 9,
+            source: 'agent',
+            model_name: 'SWE-1.7 Max',
+            metrics: { prompt_tokens: 18071, completion_tokens: 59, cached_tokens: 11874 },
+            extra: {
+              generation_model: 'glm-5-2',
+              telemetry: { source: 'assistant', operation: 'inference' },
+            },
+          },
+        ],
+      }),
+    );
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.transcript.steps[0]).toMatchObject({
+      stepId: 9,
+      generationModel: 'glm-5-2',
+      metrics: { promptTokens: 18071, completionTokens: 59, cachedTokens: 11874 },
+    });
+  });
+
+  it('nulls stepId, generationModel, and metrics on a system/user-shaped step', () => {
+    const result = parseAtifTranscript(
+      baseTranscript({
+        steps: [{ step_id: 1, source: 'user', timestamp: '2026-01-01T00:00:00Z' }],
+      }),
+    );
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.transcript.steps[0].generationModel).toBeNull();
+    expect(result.transcript.steps[0].metrics).toBeNull();
+    expect(result.transcript.steps[0].stepId).toBe(1);
+  });
+
+  it('nulls generationModel when extra is absent or not an object', () => {
+    const missingExtra = parseAtifTranscript(baseTranscript({ steps: [{ step_id: 1 }] }));
+    const nonObjectExtra = parseAtifTranscript(
+      baseTranscript({ steps: [{ step_id: 1, extra: 'not-an-object' }] }),
+    );
+    if (!missingExtra.ok || !nonObjectExtra.ok) throw new Error('expected ok');
+    expect(missingExtra.transcript.steps[0].generationModel).toBeNull();
+    expect(nonObjectExtra.transcript.steps[0].generationModel).toBeNull();
+  });
+
+  it('nulls individually-missing metrics fields rather than zeroing them', () => {
+    const result = parseAtifTranscript(
+      baseTranscript({ steps: [{ step_id: 1, metrics: { prompt_tokens: 5 } }] }),
+    );
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.transcript.steps[0].metrics).toEqual({
+      promptTokens: 5,
+      completionTokens: null,
+      cachedTokens: null,
+    });
+  });
+
+  it('nulls stepId when step_id is absent or non-numeric', () => {
+    const result = parseAtifTranscript(baseTranscript({ steps: [{ step_id: 'nine' }] }));
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.transcript.steps[0].stepId).toBeNull();
+  });
+});
+
 describe('parseAtifTranscript — agent.model_name', () => {
   it('extracts agent.model_name', () => {
     const result = parseAtifTranscript(baseTranscript());
