@@ -1,5 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveDevinDataRoot } from '../xdg-data-root.js';
+
+export { resolveDevinDataRoot } from '../xdg-data-root.js';
 
 /** Inputs needed to resolve Devin CLI's data root — injectable for tests. */
 export interface DevinPathEnv {
@@ -25,18 +28,6 @@ export interface ResolvedDevinPaths {
   sessionsDbPath: string;
   /** Optional locations probed for existence only; never required. */
   probes: ProbedPath[];
-}
-
-/**
- * Resolves `$XDG_DATA_HOME/devin/cli` when set, else
- * `~/.local/share/devin/cli` (the Devin CLI default data root).
- */
-export function resolveDevinDataRoot(env: DevinPathEnv): string {
-  const base =
-    env.xdgDataHome && env.xdgDataHome.length > 0
-      ? env.xdgDataHome
-      : join(env.home, '.local', 'share');
-  return join(base, 'devin', 'cli');
 }
 
 /**

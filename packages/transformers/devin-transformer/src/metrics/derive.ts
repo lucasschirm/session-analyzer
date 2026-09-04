@@ -65,15 +65,22 @@ function dimensionsFor(
   return { [definition.dimensions[0]]: dimensionValue };
 }
 
-function tokenRecordIdFromEvidence(
+/**
+ * Every `model_usage` record for the session — DS-B25 (#285) made this
+ * possibly-plural (one per ATIF agent-generation step). Aggregate metrics
+ * derived from `tokenUsage` (token classes, total, step count) must cite
+ * every contributing record, not just the first, or a mid-session model
+ * switch's second-and-later steps become invisible in the evidence trail
+ * even though their token counts are summed into the aggregate value.
+ */
+function tokenRecordIdsFromEvidence(
   evidence: readonly NormalizedEvidenceRecord[],
   sessionId: string,
-): string {
-  for (const record of evidence) {
-    if (record.recordType === 'model_usage' && record.sessionId === sessionId)
-      return record.recordId;
-  }
-  return stableId('model_usage', { session: sessionId });
+): string[] {
+  const ids = evidence
+    .filter((record) => record.recordType === 'model_usage' && record.sessionId === sessionId)
+    .map((record) => record.recordId);
+  return ids.length > 0 ? ids : [stableId('model_usage', { session: sessionId })];
 }
 
 function turnRecordIds(evidence: readonly NormalizedEvidenceRecord[], sessionId: string): string[] {
@@ -219,7 +226,13 @@ export function deriveDevinMetrics(
     }
   }
 
-  const tokenRecordId = tokenRecordIdFromEvidence(evidence, rootSessionId);
+  const tokenRecordIds = tokenRecordIdsFromEvidence(evidence, rootSessionId);
+  // A single representative pointer for metrics unrelated to token usage
+  // that merely need to prove "some evidence exists for this session" when
+  // their own specific evidence (turns/session/invocations) is empty — see
+  // the fallback usages below. Not used for the token/step metrics
+  // themselves, which cite every record via `tokenRecordIds`.
+  const tokenRecordId = tokenRecordIds[0];
   const tokenProvenance: Provenance[] = [
     { artifactId: rootArtifactId, sourceField: 'final_metrics', path: rootArtifactId },
   ];
@@ -239,7 +252,7 @@ export function deriveDevinMetrics(
         definition: def,
         value,
         exact,
-        evidenceRecordIds: [tokenRecordId],
+        evidenceRecordIds: tokenRecordIds,
         provenance: tokenProvenance,
         dimensionValue: label,
         estimationMethod: tokenUsage.exact ? 'provider_reported_total' : 'missing_token_source',
@@ -257,7 +270,7 @@ export function deriveDevinMetrics(
       definition: def,
       value,
       exact,
-      evidenceRecordIds: [tokenRecordId],
+      evidenceRecordIds: tokenRecordIds,
       provenance: tokenProvenance,
       dimensionValue: 'total',
       estimationMethod: tokenUsage.exact ? 'sum_of_token_classes' : 'missing_token_source',
@@ -274,7 +287,7 @@ export function deriveDevinMetrics(
       definition: def,
       value,
       exact,
-      evidenceRecordIds: [tokenRecordId],
+      evidenceRecordIds: tokenRecordIds,
       provenance: tokenProvenance,
       estimationMethod: exact ? 'provider_reported_total' : 'missing_step_count',
       unavailableReason: reason,

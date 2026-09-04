@@ -66,7 +66,17 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // `deterministicGenerationId` (packages/db/src/ingestion.ts) alongside
 // `DEVIN_METRIC_DEFINITION_VERSION`, forcing a fresh generation on reprocess
 // rather than silently mixing pre-/post-fix output.
-export const DEVIN_TRANSFORMER_VERSION = '0.3.0';
+// Bumped 0.3.0 -> 0.4.0 for DS-B25 (#285): `buildTokenUsageRecords`'s
+// `model_usage` evidence-record shape changed (one record per ATIF
+// generation step instead of always one per session, per-turn `model`
+// attribution). No metric-version bump: `devin:tokens:total:*`'s formula,
+// population, and comparability group are unchanged (still sourced from
+// `atif.finalMetrics`/`response_dimensions` aggregate fields, byte-identical
+// per tier), and `model_usage`/`model_requests` are not yet ingested by
+// `packages/db` — see the issue for the full justification. Still forces a
+// fresh generation on reprocess so no analysis mixes pre-/post-fix
+// `model_usage` evidence shapes.
+export const DEVIN_TRANSFORMER_VERSION = '0.4.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly

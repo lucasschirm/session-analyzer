@@ -20,6 +20,11 @@ describe('resolveDevinDataRoot', () => {
     const root = resolveDevinDataRoot({ xdgDataHome: '', home: HOME, cwd: CWD });
     expect(root).toBe(join(HOME, '.local', 'share', 'devin', 'cli'));
   });
+
+  it('falls back when the env var is set but whitespace-only', () => {
+    const root = resolveDevinDataRoot({ xdgDataHome: '   ', home: HOME, cwd: CWD });
+    expect(root).toBe(join(HOME, '.local', 'share', 'devin', 'cli'));
+  });
 });
 
 describe('resolveDevinPaths', () => {

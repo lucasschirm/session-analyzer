@@ -7,7 +7,13 @@
  * `sql-only-in-db-core`).
  */
 
-export type { AtifFinalMetrics, AtifStep, AtifTranscript, ParseAtifResult } from './atif/parse.js';
+export type {
+  AtifFinalMetrics,
+  AtifStep,
+  AtifStepMetrics,
+  AtifTranscript,
+  ParseAtifResult,
+} from './atif/parse.js';
 // ---- ATIF v1.7 native transcript parsing ---------------------------------
 export { ATIF_SCHEMA_VERSION, parseAtifTranscript } from './atif/parse.js';
 export type {

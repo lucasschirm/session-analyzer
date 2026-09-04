@@ -36,6 +36,35 @@ describe('DevinTransformer conformance', () => {
     });
   }
 
+  it('DS-B25 (#285): the model-switch fixture emits one model_usage record per agent step with distinct models, and token totals still balance', () => {
+    const fixture = devinConformanceFixtures.fixtures.find((f) => f.name === 'model-switch');
+    expect(fixture).toBeDefined();
+    if (!fixture) return;
+    const result = DevinTransformer.transform(fixture.bundle, fixture.context);
+
+    const usageRecords = result.evidence.filter((r) => r.recordType === 'model_usage');
+    expect(usageRecords).toHaveLength(2);
+    const models = usageRecords.map((r) => (r.payload as { model: string }).model);
+    expect(new Set(models).size).toBe(2);
+    expect(models).toEqual(['glm-5-2', 'swe-1-7']);
+
+    const inputSum = usageRecords.reduce(
+      (sum, r) => sum + ((r.payload as { inputTokens: number }).inputTokens ?? 0),
+      0,
+    );
+    const outputSum = usageRecords.reduce(
+      (sum, r) => sum + ((r.payload as { outputTokens: number }).outputTokens ?? 0),
+      0,
+    );
+    const cachedSum = usageRecords.reduce(
+      (sum, r) => sum + ((r.payload as { cacheReadTokens: number }).cacheReadTokens ?? 0),
+      0,
+    );
+    expect(inputSum).toBe(35104);
+    expect(outputSum).toBe(96);
+    expect(cachedSum).toBe(23010);
+  });
+
   it('reports complete skill/tool/agent completeness for the session-components fixture', () => {
     const fixture = devinConformanceFixtures.fixtures.find((f) => f.name === 'session-components');
     expect(fixture).toBeDefined();
