@@ -45,6 +45,7 @@ import {
   type CandidateResult,
   type DiscoveryResult,
   discover,
+  FileLock,
   type HarnessProfile,
   hashCandidate,
   processDelta,
@@ -237,14 +238,38 @@ function filterNewRows(
  * `node_id`s already written), since `buildSubagentSyntheticNodes` is
  * deterministic — a previously-emitted pair always re-derives to the same
  * ids and is skipped, never re-appended.
+ *
+ * Concurrency (found in review): `runDevinSessionSync` is invoked
+ * independently from three separate processes for the same session —
+ * `cli/sync-command.ts` (manual sync), `hook-common.ts` (session-start/
+ * session-end/hook events), and `watcher.ts`'s poll loop. Unlike the old
+ * full-rewrite (idempotent under a race — last writer wins, no duplication),
+ * append-only writing is NOT self-correcting under a race: two concurrent
+ * passes reading the same prior-watermark state would each independently
+ * append the same "new" rows, permanently duplicating lines. Guarded with
+ * the same per-resource `FileLock` pattern `models/capture.ts` already
+ * uses for its own cache file, keyed to the transcript path itself so
+ * concurrent syncs of *different* sessions never contend.
  */
 export async function materializeSessionTranscript(
   tables: DevinExtractedTables,
   sessionId: string,
   dataDir: string,
 ): Promise<string> {
-  const sessionTables = filterTablesForSession(tables, sessionId);
   const transcriptPath = path.join(dataDir, 'devin', 'transcripts', `${sessionId}.jsonl`);
+  const lock = new FileLock(`${transcriptPath}.lock`);
+  return lock.withLock(() => appendNewSessionRows(tables, sessionId, transcriptPath));
+}
+
+/** The locked critical section of `materializeSessionTranscript`: read the
+ * existing file's tail, derive prior state from it, filter+append. Never
+ * called outside a held `FileLock` — see caller. */
+async function appendNewSessionRows(
+  tables: DevinExtractedTables,
+  sessionId: string,
+  transcriptPath: string,
+): Promise<string> {
+  const sessionTables = filterTablesForSession(tables, sessionId);
   const existing = await readExistingTranscript(transcriptPath);
   const derived = existing
     ? deriveWatermarksFromExistingLines(existing)

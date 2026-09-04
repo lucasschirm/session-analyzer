@@ -253,6 +253,43 @@ describe('materializeSessionTranscript', () => {
     expect(JSON.parse(appended).type).toBe('session');
   });
 
+  it('two concurrent syncs of the same session never duplicate rows (FileLock serializes the read-derive-append critical section)', async () => {
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1, node_id: 1 })],
+      promptHistory: [promptRow({ id: 1 })],
+      toolCallStates: [toolCallRow()],
+    });
+
+    // Two independent "processes" (e.g. a hook and the watcher poll loop)
+    // racing to sync the SAME session with the SAME source snapshot. Without
+    // FileLock, each would independently read "no existing file"/"no prior
+    // watermark" and each append its own full copy of every row — permanent
+    // duplication the old full-rewrite never risked (this issue found and
+    // fixed during PR review, since append-only isn't self-correcting under
+    // a race the way a full rewrite was).
+    const [pathA, pathB] = await Promise.all([
+      materializeSessionTranscript(tables, 'sess-1', dataDir),
+      materializeSessionTranscript(tables, 'sess-1', dataDir),
+    ]);
+    expect(pathA).toBe(pathB);
+
+    const content = await fsp.readFile(pathA, 'utf8');
+    const lines = content
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    // `session` lines are intentionally re-appended every call regardless of
+    // content (pre-existing last-write-wins replay semantics, unaffected by
+    // this fix) — two calls correctly produce two. What the lock actually
+    // guards is the watermark-filtered rows: exactly one of each real row,
+    // never duplicated by the second call racing the first.
+    expect(lines.filter((l) => l.type === 'session')).toHaveLength(2);
+    expect(lines.filter((l) => l.type === 'message')).toHaveLength(1);
+    expect(lines.filter((l) => l.type === 'prompt')).toHaveLength(1);
+    expect(lines.filter((l) => l.type === 'tool_call')).toHaveLength(1);
+  });
+
   it('a legacy full-rewrite fixture file (no watermark tracking assumed) produces no duplicates on the next incremental call', async () => {
     const tables = tablesOf({
       sessions: [sessionRow()],
