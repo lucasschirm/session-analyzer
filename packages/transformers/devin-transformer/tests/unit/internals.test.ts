@@ -50,6 +50,130 @@ describe('Internal token usage', () => {
     const result = buildTokenUsageRecords('s1', session, undefined, models, 'artifact-1');
     expect(result.records[0]?.payload).toMatchObject({ model: 'devin-default' });
   });
+
+  // DS-B27 (#285) repro: the real `shadow-collar` session's steps[8]/steps[10]
+  // shape (findings 3a/3b) — two agent-generation steps, `glm-5-2` then
+  // `swe-1-7`, whose per-step metrics sum exactly to `final_metrics`.
+  // Mid-session model switch must yield 2 distinct model_usage records, not
+  // one last-write-wins record.
+  it('emits one model_usage record per ATIF step when steps carry metrics (mid-session model switch)', () => {
+    const session = {
+      id: 's1',
+      metadata: null,
+      model: 'swe-1-7',
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[1];
+    const atif = {
+      finalMetrics: {
+        totalPromptTokens: 35104,
+        totalCompletionTokens: 96,
+        totalCachedTokens: 23010,
+        totalSteps: 11,
+      },
+      steps: [
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 9,
+          generationModel: 'glm-5-2',
+          metrics: { promptTokens: 18071, completionTokens: 59, cachedTokens: 11874 },
+        },
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 11,
+          generationModel: 'swe-1-7',
+          metrics: { promptTokens: 17033, completionTokens: 37, cachedTokens: 11136 },
+        },
+      ],
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
+    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1');
+
+    expect(result.records.length).toBe(2);
+    expect(result.records[0]?.payload).toMatchObject({
+      model: 'glm-5-2',
+      requestOrder: 9,
+      inputTokens: 18071,
+      outputTokens: 59,
+      cacheReadTokens: 11874,
+    });
+    expect(result.records[1]?.payload).toMatchObject({
+      model: 'swe-1-7',
+      requestOrder: 11,
+      inputTokens: 17033,
+      outputTokens: 37,
+      cacheReadTokens: 11136,
+    });
+    expect(result.prompt).toBe(35104);
+    expect(result.completion).toBe(96);
+    expect(result.cached).toBe(23010);
+  });
+
+  it('falls back to a single aggregate record when no ATIF step has metrics', () => {
+    const session = {
+      id: 's1',
+      metadata: null,
+      model: 'devin-default',
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[1];
+    const atif = {
+      finalMetrics: {
+        totalPromptTokens: 100,
+        totalCompletionTokens: 50,
+        totalCachedTokens: 10,
+        totalSteps: 2,
+      },
+      steps: [
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 1,
+          generationModel: null,
+          metrics: null,
+        },
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 2,
+          generationModel: null,
+          metrics: null,
+        },
+      ],
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
+    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1');
+
+    expect(result.records.length).toBe(1);
+    expect(result.records[0]?.payload).toMatchObject({ model: 'devin-default', requestOrder: 1 });
+    expect(result.prompt).toBe(100);
+  });
+
+  it('passes an unrecognized generation_model like compactor through unmodified', () => {
+    const session = { id: 's1', metadata: null, model: 'swe-1-7' } as unknown as Parameters<
+      typeof buildTokenUsageRecords
+    >[1];
+    const atif = {
+      finalMetrics: {
+        totalPromptTokens: 10,
+        totalCompletionTokens: 5,
+        totalCachedTokens: 1,
+        totalSteps: 1,
+      },
+      steps: [
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 1,
+          generationModel: 'compactor',
+          metrics: { promptTokens: 10, completionTokens: 5, cachedTokens: 1 },
+        },
+      ],
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
+    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1');
+    expect(result.records[0]?.payload).toMatchObject({ model: 'compactor' });
+  });
 });
 
 describe('Internal tool invocations', () => {
