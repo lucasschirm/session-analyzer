@@ -192,7 +192,6 @@ function usageRecord(
  */
 function stepUsageRecord(
   sessionId: string,
-  session: DevinSessionLine | undefined,
   step: AtifStep,
   metrics: NonNullable<AtifStep['metrics']>,
   index: number,
@@ -200,7 +199,10 @@ function stepUsageRecord(
   rootArtifactId: string,
 ): NormalizedEvidenceRecord {
   const requestOrder = step.stepId ?? index + 1;
-  const sourceEventId = `${session?.id ?? 'unknown'}:step:${requestOrder}`;
+  // `sourceEventId` and `payload.requestId` both key off the canonical
+  // `sessionId` parameter (not `session?.id`, which may legitimately differ
+  // or be absent) so the two stay consistent with each other.
+  const sourceEventId = `${sessionId}:step:${requestOrder}`;
   const payload = {
     requestOrder,
     requestId: `${sessionId}:step:${requestOrder}`,
@@ -220,7 +222,6 @@ function stepUsageRecord(
 
 function buildStepRecords(
   sessionId: string,
-  session: DevinSessionLine | undefined,
   steps: readonly AtifStep[],
   models: readonly DevinModelRecord[],
   rootArtifactId: string,
@@ -228,9 +229,7 @@ function buildStepRecords(
   const records: NormalizedEvidenceRecord[] = [];
   steps.forEach((step, index) => {
     if (!step.metrics) return;
-    records.push(
-      stepUsageRecord(sessionId, session, step, step.metrics, index, models, rootArtifactId),
-    );
+    records.push(stepUsageRecord(sessionId, step, step.metrics, index, models, rootArtifactId));
   });
   return records;
 }
@@ -289,9 +288,7 @@ export function buildTokenUsageRecords(
   const aggregate = aggregateTokens(atif, metadata);
   const total = totalFromParts(aggregate.prompt, aggregate.completion, aggregate.cached);
 
-  const stepRecords = atif
-    ? buildStepRecords(sessionId, session, atif.steps, models, rootArtifactId)
-    : [];
+  const stepRecords = atif ? buildStepRecords(sessionId, atif.steps, models, rootArtifactId) : [];
   const records =
     stepRecords.length > 0
       ? stepRecords
