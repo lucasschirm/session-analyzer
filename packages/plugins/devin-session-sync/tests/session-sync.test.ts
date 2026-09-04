@@ -12,7 +12,15 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DevinHarnessProfile } from '../src/devin-profile.js';
-import type { DevinExtractedTables, DevinSchemaDescriptor } from '../src/extractor/types.js';
+import { buildDevinJsonl } from '../src/extractor/jsonl-writer.js';
+import type {
+  DevinExtractedTables,
+  DevinMessageNodeRow,
+  DevinPromptHistoryRow,
+  DevinSchemaDescriptor,
+  DevinSessionRow,
+  DevinToolCallStateRow,
+} from '../src/extractor/types.js';
 import {
   applyHardBlocklist,
   buildSchemaDescriptorCandidate,
@@ -51,6 +59,57 @@ const SCHEMA_DESCRIPTOR: DevinSchemaDescriptor = {
   supported: true,
   warnings: [],
 };
+
+function sessionRow(overrides: Partial<DevinSessionRow> = {}): DevinSessionRow {
+  return {
+    id: 'sess-1',
+    working_directory: '/tmp',
+    backend_type: null,
+    model: null,
+    agent_mode: null,
+    created_at: null,
+    last_activity_at: 500,
+    title: null,
+    main_chain_id: null,
+    cogs_json: null,
+    workspace_dirs: null,
+    hidden: null,
+    metadata: null,
+    ...overrides,
+  };
+}
+
+function messageRow(overrides: Partial<DevinMessageNodeRow> = {}): DevinMessageNodeRow {
+  return {
+    row_id: 1,
+    session_id: 'sess-1',
+    node_id: 1,
+    parent_node_id: null,
+    chat_message: '{"role":"user","content":"hi"}',
+    created_at: 1,
+    metadata: null,
+    ...overrides,
+  };
+}
+
+function promptRow(overrides: Partial<DevinPromptHistoryRow> = {}): DevinPromptHistoryRow {
+  return { id: 1, content: 'hi', timestamp: 1, session_id: 'sess-1', is_shell: 0, ...overrides };
+}
+
+function toolCallRow(overrides: Partial<DevinToolCallStateRow> = {}): DevinToolCallStateRow {
+  return {
+    row_id: 1,
+    session_id: 'sess-1',
+    tool_call_id: 'call-1',
+    tool_call_json: '{}',
+    tool_call_update_json: null,
+    ...overrides,
+  };
+}
+
+function tablesOf(overrides: Partial<DevinExtractedTables> = {}): DevinExtractedTables {
+  return { sessions: [], messageNodes: [], promptHistory: [], toolCallStates: [], ...overrides };
+}
 
 describe('materializeSessionTranscript', () => {
   let dataDir: string;
@@ -108,6 +167,136 @@ describe('materializeSessionTranscript', () => {
     const content = await fsp.readFile(transcriptPath, 'utf8');
     expect(content).toContain('"sess-1"');
     expect(content).not.toContain('"sess-2"');
+  });
+
+  it("appends only newly-arrived rows on a second call, leaving the first call's content byte-for-byte untouched as a strict prefix", async () => {
+    const batch1 = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1, node_id: 1 })],
+    });
+    const transcriptPath = await materializeSessionTranscript(batch1, 'sess-1', dataDir);
+    const afterFirst = await fsp.readFile(transcriptPath, 'utf8');
+
+    const batch2 = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1, node_id: 1 }), messageRow({ row_id: 2, node_id: 2 })],
+    });
+    await materializeSessionTranscript(batch2, 'sess-1', dataDir);
+    const afterSecond = await fsp.readFile(transcriptPath, 'utf8');
+
+    expect(afterSecond.startsWith(afterFirst)).toBe(true);
+    const appendedLines = afterSecond.slice(afterFirst.length).trim().split('\n');
+    // Exactly the one new message row, plus one more re-appended session line.
+    expect(appendedLines).toHaveLength(2);
+    expect(appendedLines.some((l) => JSON.parse(l).node_id === 2)).toBe(true);
+    expect(appendedLines.filter((l) => JSON.parse(l).type === 'session')).toHaveLength(1);
+  });
+
+  it('a session synced twice with no new rows grows by exactly one line (the re-appended session line)', async () => {
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow()],
+      promptHistory: [promptRow()],
+      toolCallStates: [toolCallRow()],
+    });
+    const transcriptPath = await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const afterFirst = await fsp.readFile(transcriptPath, 'utf8');
+    const firstLineCount = afterFirst.trim().split('\n').length;
+
+    // Same tables again (simulating a re-sync with nothing new since the
+    // last pass) — this is the primary "we used to rewrite everything, now
+    // we don't" regression proof.
+    await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const afterSecond = await fsp.readFile(transcriptPath, 'utf8');
+
+    expect(afterSecond.startsWith(afterFirst)).toBe(true);
+    const secondLineCount = afterSecond.trim().split('\n').length;
+    expect(secondLineCount - firstLineCount).toBe(1);
+    const appended = afterSecond.slice(afterFirst.length).trim();
+    expect(JSON.parse(appended).type).toBe('session');
+  });
+
+  it('a legacy full-rewrite fixture file (no watermark tracking assumed) produces no duplicates on the next incremental call', async () => {
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1 }), messageRow({ row_id: 2, node_id: 2 })],
+      promptHistory: [promptRow({ id: 1 }), promptRow({ id: 2 })],
+    });
+    const transcriptPath = path.join(dataDir, 'devin', 'transcripts', 'sess-1.jsonl');
+    await fsp.mkdir(path.dirname(transcriptPath), { recursive: true });
+    // Seed the file exactly as the OLD full-rewrite code would have left it.
+    const { text } = buildDevinJsonl(tables);
+    await fsp.writeFile(transcriptPath, text, 'utf8');
+
+    await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const content = await fsp.readFile(transcriptPath, 'utf8');
+
+    const messageNodeIds = content
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+      .filter((l) => l.type === 'message')
+      .map((l) => l.node_id);
+    expect(messageNodeIds).toEqual([1, 2]); // no duplicates
+  });
+
+  it('handles a corrupted mid-file line by skipping it, without losing the rest of the derived watermark or crashing', async () => {
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1 })],
+    });
+    const transcriptPath = path.join(dataDir, 'devin', 'transcripts', 'sess-1.jsonl');
+    await fsp.mkdir(path.dirname(transcriptPath), { recursive: true });
+    const { text } = buildDevinJsonl(tables);
+    await fsp.writeFile(transcriptPath, `${text}{this is not valid json\n`, 'utf8');
+
+    const nextTables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1 }), messageRow({ row_id: 2, node_id: 2 })],
+    });
+    await expect(materializeSessionTranscript(nextTables, 'sess-1', dataDir)).resolves.toBe(
+      transcriptPath,
+    );
+
+    const content = await fsp.readFile(transcriptPath, 'utf8');
+    const messageNodeIds = content
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter((l): l is { type: string; node_id: number } => l !== null && l.type === 'message')
+      .map((l) => l.node_id);
+    // row_id:1 was already in the file (behind the derived watermark of 1),
+    // so only the genuinely-new row_id:2 is appended.
+    expect(messageNodeIds).toEqual([1, 2]);
+  });
+
+  it('round-trips chat_message.metadata.generation_model byte-for-byte into a newly-appended message line (Addendum regression)', async () => {
+    const chatMessage = JSON.stringify({
+      role: 'assistant',
+      content: 'done',
+      metadata: { generation_model: 'claude-opus-4', effort: 'high' },
+    });
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1, chat_message: chatMessage })],
+    });
+
+    const transcriptPath = await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const content = await fsp.readFile(transcriptPath, 'utf8');
+    const messageLine = content
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+      .find((l) => l.type === 'message');
+
+    expect(messageLine.chat_message).toBe(chatMessage);
+    expect(JSON.parse(messageLine.chat_message).metadata.generation_model).toBe('claude-opus-4');
   });
 });
 
