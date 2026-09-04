@@ -69,22 +69,24 @@ function capabilityStateFor(
     if (parsed.orderedMessages.length > 0) return { state: 'available' };
     return { state: 'unavailable', reason: 'no message_nodes on main chain' };
   }
+  // Tool/Skill/Agent invocation counts are always available once a root
+  // transcript exists: metrics/derive.ts computes these as a real, exact
+  // integer (`exact: true`, `value` never null) regardless of whether any
+  // tool_call_state records are present — a session with zero matching
+  // calls still gets a real, exact 0 count, never 'unavailable'
+  // (`.agents/rules/missing-is-never-zero.md`). Gating this standalone
+  // preview on `parsed.toolCalls.length > 0` would report 'unavailable'
+  // here while `transform(bundle, ctx).capabilities` reports 'available'
+  // for the very same bundle — this branch must mirror that unconditional
+  // availability, not just approximate it, to keep the two paths
+  // consistent for DS-F11 (#288) acceptance criteria.
   if (
     metricId === 'devin:invocations:tool:root_only' ||
-    metricId === 'devin:invocations:tool:inclusive'
-  ) {
-    if (parsed.toolCalls.length > 0) return { state: 'available' };
-    return { state: 'unavailable', reason: 'no tool_call_state records' };
-  }
-  if (
+    metricId === 'devin:invocations:tool:inclusive' ||
     metricId.startsWith('devin:invocations:skill:') ||
     metricId.startsWith('devin:invocations:agent:')
   ) {
-    return {
-      state: 'unavailable',
-      reason:
-        'Skill/Agent invocations require plugins/discovered.json mapping, not implemented in this version',
-    };
+    return { state: 'available' };
   }
   if (metricId.startsWith('devin:duration:')) {
     if (hasTimestamps(parsed))

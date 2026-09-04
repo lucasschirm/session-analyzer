@@ -85,7 +85,7 @@ function turnRecordIds(evidence: readonly NormalizedEvidenceRecord[], sessionId:
 function invocationRecordIds(
   evidence: readonly NormalizedEvidenceRecord[],
   sessionId: string,
-  kind: 'tool',
+  kind: 'tool' | 'skill' | 'agent',
 ): string[] {
   return evidence
     .filter(
@@ -319,31 +319,39 @@ export function deriveDevinMetrics(
     });
   });
 
+  // Skill/Agent invocations: sourced from tool_call_state (functions.skill:*/
+  // functions.run_subagent:* ACP calls), not plugins/discovered.json — see
+  // DS-F11 (#288). A session with zero matching calls still reports a real,
+  // exact 0 here, never unavailable: tool_call_state parsing is mandatory
+  // evidence for any successfully-transformed Devin session
+  // (`.agents/rules/missing-is-never-zero.md`).
+  // Evidence still traces to the session even at a real 0 (no skill/agent
+  // calls to point at): falls back to session/token evidence, same pattern
+  // duration/cost already use below, so `must reference evidence`
+  // (conformance) always holds without pretending a call happened.
+  const skillIds = invocationRecordIds(evidence, rootSessionId, 'skill');
   pushForBothScopes('devin:invocations:skill', (_scope, def) =>
     createMetricValue({
       definition: def,
-      value: null,
-      exact: false,
-      evidenceRecordIds: fallbackEvidence,
+      value: skillIds.length,
+      exact: true,
+      evidenceRecordIds: skillIds.length > 0 ? skillIds : fallbackEvidence,
       provenance: [{ artifactId: rootArtifactId, path: rootArtifactId }],
       dimensionValue: 'skill',
-      estimationMethod: 'unavailable',
-      unavailableReason:
-        'Skill invocations require plugins/discovered.json mapping, not implemented in this version',
+      estimationMethod: 'count_of_tool_call_records',
     }),
   );
 
+  const agentIds = invocationRecordIds(evidence, rootSessionId, 'agent');
   pushForBothScopes('devin:invocations:agent', (_scope, def) =>
     createMetricValue({
       definition: def,
-      value: null,
-      exact: false,
-      evidenceRecordIds: fallbackEvidence,
+      value: agentIds.length,
+      exact: true,
+      evidenceRecordIds: agentIds.length > 0 ? agentIds : fallbackEvidence,
       provenance: [{ artifactId: rootArtifactId, path: rootArtifactId }],
       dimensionValue: 'agent',
-      estimationMethod: 'unavailable',
-      unavailableReason:
-        'Agent invocations require plugins/discovered.json mapping, not implemented in this version',
+      estimationMethod: 'count_of_tool_call_records',
     }),
   );
 

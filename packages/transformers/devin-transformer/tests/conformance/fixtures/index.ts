@@ -31,6 +31,7 @@ function sessionLine(
   id: string,
   mainChainId: number | undefined,
   metadata?: Record<string, unknown>,
+  cogsJson?: unknown[],
 ): string {
   return devinJsonlLine('session', {
     ts: 1722520800,
@@ -45,6 +46,7 @@ function sessionLine(
     title: 'Devin fixture session',
     main_chain_id: mainChainId === undefined ? undefined : String(mainChainId),
     metadata: metadata ? JSON.stringify(metadata) : undefined,
+    cogs_json: cogsJson ? JSON.stringify(cogsJson) : undefined,
   });
 }
 
@@ -92,30 +94,60 @@ function promptLine(sessionId: string, id: number, content: string, ts: number):
   });
 }
 
+/**
+ * `_meta["cognition.ai/inferenceToolName"]` must be nested under `_meta` on
+ * BOTH `tool_call_json` and `tool_call_update_json` — `parseAcpToolCallUpdate`'s
+ * `extractInferenceToolName` only reads `record._meta`, never a top-level
+ * `inferenceToolName` field (DS-F11 (#288); this was a pre-existing
+ * fixture/production shape mismatch, harmless only because no prior fixture
+ * depended on `inferenceToolName` resolving to anything).
+ */
 function toolCallLine(
   sessionId: string,
   toolCallId: string,
   kind: string,
   title: string,
   status: string,
+  options?: { inferenceToolName?: string; rawInput?: Record<string, unknown> },
 ): string {
+  const inferenceToolName = options?.inferenceToolName ?? title;
+  const rawInput = options?.rawInput ?? { file_path: 'src/index.ts' };
+  const meta = { 'cognition.ai/inferenceToolName': inferenceToolName };
   return devinJsonlLine('tool_call', {
     ts: null,
     order: 100,
     row_id: 1,
     session_id: sessionId,
     tool_call_id: toolCallId,
-    tool_call_json: JSON.stringify({
-      toolCallId,
-      title,
-      kind,
-      rawInput: { file_path: 'src/index.ts' },
-    }),
-    tool_call_update_json: JSON.stringify({
-      toolCallId,
-      status,
-      inferenceToolName: title,
-    }),
+    tool_call_json: JSON.stringify({ toolCallId, title, kind, rawInput, _meta: meta }),
+    tool_call_update_json: JSON.stringify({ toolCallId, status, _meta: meta }),
+  });
+}
+
+/**
+ * A `tool_call` line with `tool_call_json`'s own `_meta` set but NO
+ * `tool_call_update_json` at all — simulates a session interrupted before
+ * the ACP update for this call arrived. Devin stamps
+ * `_meta["cognition.ai/inferenceToolName"]` on `tool_call_json` itself
+ * (not only on the update), so the domain-correct kind/name must still be
+ * resolvable from `call` alone (DS-F11 (#288) review finding).
+ */
+function interruptedToolCallLine(
+  sessionId: string,
+  toolCallId: string,
+  kind: string,
+  title: string,
+  inferenceToolName: string,
+  rawInput: Record<string, unknown>,
+): string {
+  const meta = { 'cognition.ai/inferenceToolName': inferenceToolName };
+  return devinJsonlLine('tool_call', {
+    ts: null,
+    order: 100,
+    row_id: 1,
+    session_id: sessionId,
+    tool_call_id: toolCallId,
+    tool_call_json: JSON.stringify({ toolCallId, title, kind, rawInput, _meta: meta }),
   });
 }
 
@@ -385,6 +417,133 @@ export const compactionBoundaryBundle: UnknownArtifactBundle = bundle([
   artifact('native/models.json', modelsJson(), 'application/json'),
 ]);
 
+const mcpAllowListCog = {
+  source: { Session: 'System' },
+  lifetime: { Unique: 'core/model' },
+  set_system_prefix: null,
+  append_system_messages: [],
+  context: [],
+  footer_messages: [],
+  user_display: [],
+  permissions: [],
+  tool_availability: {
+    AllowList: [
+      { Name: { exact: 'exec' } },
+      { Name: { exact: 'read' } },
+      { Name: { exact: 'mcp_call_tool' } },
+      { Name: { exact: 'mcp_list_servers' } },
+      { Name: { exact: 'mcp_list_tools' } },
+      { Name: { exact: 'mcp_read_resource' } },
+    ],
+  },
+  model: 'devin-default',
+};
+
+const skillCog = {
+  source: { Session: 'Hook' },
+  lifetime: { Unique: 'skill/add-e2e-test' },
+  set_system_prefix: null,
+  append_system_messages: [],
+  context: [],
+  footer_messages: [],
+  user_display: [],
+  permissions: [],
+  tool_availability: null,
+  model: null,
+};
+
+const componentsTranscript = [
+  sessionLine(sessionId, 3, undefined, [mcpAllowListCog, skillCog]),
+  messageLine(sessionId, 1, null, 'user', 'Invoke a skill and a subagent'),
+  messageLine(sessionId, 2, 1, 'assistant', 'On it'),
+  messageLine(sessionId, 3, 2, 'assistant', 'Done'),
+  toolCallLine(sessionId, 'tc-skill-1', 'execute', 'Invoked skill add-e2e-test', 'success', {
+    inferenceToolName: 'skill',
+    rawInput: { command: 'invoke', skill: 'add-e2e-test' },
+  }),
+  toolCallLine(sessionId, 'tc-agent-1', 'execute', 'Ran pr-review subagent', 'success', {
+    inferenceToolName: 'run_subagent',
+    rawInput: { profile: 'pr-review', title: 'Review PR #264', task: 'Review the pull request' },
+  }),
+].join('\n');
+
+export const componentsBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', componentsTranscript, 'application/jsonl'),
+  artifact('native/atif-transcript.json', linearAtif, 'application/json'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
+// A skill/<name> cog present with NO matching tool_call_state invocation —
+// the component must still be derived from the cog alone (DS-F11 (#288)
+// research findings §2: the cog and the invocation are two different
+// evidence sources and must not be conflated).
+const skillCogOnlyTranscript = [
+  sessionLine(sessionId, 1, undefined, [skillCog]),
+  messageLine(sessionId, 1, null, 'user', 'Hello'),
+].join('\n');
+
+export const skillCogOnlyBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', skillCogOnlyTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
+// A functions.skill invocation present with NO matching skill/<name> cog —
+// the invocation-count metric is driven only by tool_call_state, never by
+// cog presence, so the metric must still count it even without a cog.
+const skillInvocationOnlyTranscript = [
+  sessionLine(sessionId, 1, undefined),
+  messageLine(sessionId, 1, null, 'user', 'Hello'),
+  toolCallLine(sessionId, 'tc-skill-only', 'execute', 'Invoked skill add-e2e-test', 'success', {
+    inferenceToolName: 'skill',
+    rawInput: { command: 'invoke', skill: 'add-e2e-test' },
+  }),
+].join('\n');
+
+export const skillInvocationOnlyBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', skillInvocationOnlyTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
+// A core/model AllowList cog (declaring the 4 MCP wrapper tool names) with
+// NO matching tool_call_state invocation of any of them, and no skill/agent
+// activity either — every session component here is declared availability
+// only, never confirmed by an actual invocation. Exercises the
+// temporalRole fix: a merged snapshot with zero confirmed-runtime
+// components must not be labeled 'runtime' (DS-F11 (#288) review finding).
+const mcpDeclaredOnlyTranscript = [
+  sessionLine(sessionId, 1, undefined, [mcpAllowListCog]),
+  messageLine(sessionId, 1, null, 'user', 'Hello'),
+].join('\n');
+
+export const mcpDeclaredOnlyBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', mcpDeclaredOnlyTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
+// A functions.skill call interrupted before its tool_call_update_json
+// arrived — no `update` record exists at all, only `call`. The call's own
+// `_meta["cognition.ai/inferenceToolName"]` must still resolve this as
+// `kind: 'skill'`, not silently fall back to `kind: 'tool'` (DS-F11 (#288)
+// review finding: the fallback chain must not reproduce the Skill/Agent
+// conflation bug this PR fixes for a narrower "no update record" trigger).
+const interruptedSkillTranscript = [
+  sessionLine(sessionId, 1, undefined, [skillCog]),
+  messageLine(sessionId, 1, null, 'user', 'Invoke a skill, then get interrupted'),
+  interruptedToolCallLine(
+    sessionId,
+    'tc-skill-interrupted',
+    'execute',
+    'Invoked skill add-e2e-test',
+    'skill',
+    { command: 'invoke', skill: 'add-e2e-test' },
+  ),
+].join('\n');
+
+export const interruptedSkillCallBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', interruptedSkillTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
 export const noRootBundle: UnknownArtifactBundle = bundle([
   artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
   artifact('native/models.json', modelsJson(), 'application/json'),
@@ -445,5 +604,14 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
       'no-root',
       'unavailable',
     ]),
+    fixture(
+      'session-components',
+      'A session with a skill/add-e2e-test cog, a core/model AllowList including the 4 MCP ' +
+        'wrapper tools, a functions.skill call, and a functions.run_subagent call — exercises ' +
+        'cogs_json-derived skill/tool components, tool_call_state-derived agent components, and ' +
+        'the Skill/Agent/Tool invocation domain fix.',
+      componentsBundle,
+      ['root', 'components', 'skill', 'agent', 'mcp', 'deterministic'],
+    ),
   ],
 };

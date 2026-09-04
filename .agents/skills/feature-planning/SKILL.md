@@ -110,14 +110,22 @@ all sub-issue numbers. Then:
    next round terminate instead of re-listing them). For findings that touch
    several issues, first translate the round into a **round directive file**:
    the authoritative cross-issue decisions (appended to the decisions
-   register) plus a per-issue work order. Snapshot all current bodies, then
-   apply per issue — each fixer edits ONLY its own issue, quoting shared
-   wording verbatim from the directive. This is what keeps parallel fixes
-   from drifting apart. Edit the local body files, push with
-   `gh issue edit <n> --body-file <file>` (and `--title` where numbering
-   changed); create any newly-scoped sub-issue via step 3. For substantial
-   rewrites, send the finding back through the `issue-writer` agent rather
-   than patching prose yourself.
+   register) plus a per-issue work order. **When a finding's fix changes a
+   producer issue's public shape — a method/field name, an enum's members, a
+   mutation's parameter list, a route path, a computed value's mechanism —
+   grep every sibling issue body for the old symbol/shape while building the
+   work order, not just the issues the reviewer explicitly named.** The
+   reviewer reports what it checked, not every consumer that exists; a
+   sibling issue it didn't think to re-check still breaks if it keeps
+   quoting the pre-fix shape, and that gap otherwise resurfaces as a "new"
+   finding a round later instead of being caught in this one. Snapshot all
+   current bodies, then apply per issue — each fixer edits ONLY its own
+   issue, quoting shared wording verbatim from the directive. This is what
+   keeps parallel fixes from drifting apart. Edit the local body files, push
+   with `gh issue edit <n> --body-file <file>` (and `--title` where
+   numbering changed); create any newly-scoped sub-issue via step 3. For
+   substantial rewrites, send the finding back through the `issue-writer`
+   agent rather than patching prose yourself.
 2. Re-dispatch the reviewer on the updated set. Each round's prompt states it
    is round k, scopes the audit to the **changed text plus cross-issue
    coherence**, and carries forward the prior round's "checked and clean"
