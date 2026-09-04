@@ -14,7 +14,17 @@
 
 export const KNOWN_REFINERY_VERSION = 16;
 
-/** Column lists per table, used to build explicit (never `SELECT *`) reads. */
+/**
+ * Column lists per table — informational only (#298). `reader.ts` reads
+ * every table via `SELECT *`/dynamic column discovery unconditionally, so
+ * this list is never used to build a read's projection anymore (it
+ * previously was, and silently dropped `sessions.shell_last_seen_index` as
+ * a result — see `detectUnknownColumns` below, which now exists precisely
+ * so a future gap like that one is surfaced as a warning instead of
+ * discovered by hand again). What remains: `resolveDegradedSchema`'s
+ * unrecognized-schema-version warning path, and `computeSchemaDescriptor`'s
+ * per-table DDL checksums (`reader.ts`).
+ */
 export const KNOWN_TABLE_COLUMNS: Record<string, string[]> = {
   sessions: [
     'id',
@@ -86,10 +96,27 @@ function resolveDegradedSchema(observedVersion: number): SchemaResolution {
   return { observedVersion, supported: false, knownTables: [...DEGRADED_MODE_TABLES], warnings };
 }
 
-/** Explicit `SELECT <columns>` column list for a table under a resolution. */
+/**
+ * The curated column list for a table under a resolution — informational
+ * only (see `KNOWN_TABLE_COLUMNS`'s doc comment); no longer used to build a
+ * `SELECT` projection anywhere in this package.
+ */
 export function knownColumnsFor(table: string, resolution: SchemaResolution): string[] {
   if (!resolution.knownTables.includes(table)) {
     return [];
   }
   return KNOWN_TABLE_COLUMNS[table] ?? [];
+}
+
+/**
+ * Real columns (from a live `PRAGMA table_info`) that aren't in
+ * `KNOWN_TABLE_COLUMNS` for this table — i.e. a schema drift like the
+ * `sessions.shell_last_seen_index` gap this issue closes. Never affects
+ * what gets read (that's unconditional `SELECT *`); only feeds a
+ * proactive warning (`reader.ts`'s `computeSchemaDescriptor`) so a future
+ * drift is surfaced instead of found by hand.
+ */
+export function detectUnknownColumns(table: string, realColumns: string[]): string[] {
+  const known = new Set(KNOWN_TABLE_COLUMNS[table] ?? []);
+  return realColumns.filter((column) => !known.has(column));
 }

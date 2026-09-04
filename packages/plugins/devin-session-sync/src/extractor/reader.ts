@@ -3,12 +3,13 @@ import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { DatabaseSync as DevinDatabaseSync, SQLInputValue } from 'node:sqlite';
+import type { SchemaResolution } from './schema-registry.js';
 import {
+  detectUnknownColumns,
   KNOWN_TABLE_COLUMNS,
-  knownColumnsFor,
   resolveDevinSchema,
-  type SchemaResolution,
 } from './schema-registry.js';
+import { filterChangedToolCallStates } from './tool-call-watermark.js';
 import type {
   DevinExtractedTables,
   DevinMessageNodeRow,
@@ -139,52 +140,80 @@ function readTable<T>(db: DevinDatabaseSync, sql: string, params: SQLInputValue[
   return db.prepare(sql).all(...params) as T[];
 }
 
-function readSessions(db: DevinDatabaseSync, resolution: SchemaResolution): DevinSessionRow[] {
-  const columns = knownColumnsFor('sessions', resolution);
-  if (columns.length === 0) {
+/**
+ * `sessions` is a current-state, mutate-in-place table (#298 Phase 1:
+ * `model`, `cogs_json`, `metadata`, `main_chain_id` all confirmed to
+ * change on the same `id` — never a new row). It's read via `SELECT *`
+ * (never a curated column list — see `schema-registry.ts`) so no future
+ * Devin CLI column addition can be silently dropped the way
+ * `shell_last_seen_index` was. `priorLastActivityAt` is a cheap, safe skip
+ * signal only (see `types.ts`'s `DevinWatermarks` doc comment) — it never
+ * changes what's read from SQLite, only which already-unchanged rows are
+ * dropped from the result.
+ */
+function readSessions(
+  db: DevinDatabaseSync,
+  resolution: SchemaResolution,
+  priorLastActivityAt: Readonly<Record<string, number>>,
+): DevinSessionRow[] {
+  if (!resolution.knownTables.includes('sessions')) {
     return [];
   }
-  return readTable<DevinSessionRow>(db, `SELECT ${columns.join(', ')} FROM sessions ORDER BY id`);
+  const all = readTable<DevinSessionRow>(db, 'SELECT * FROM sessions ORDER BY id');
+  return all.filter((s) => priorLastActivityAt[s.id] !== s.last_activity_at);
 }
 
+/**
+ * `message_nodes` is genuinely insert-only (#298 Phase 1, confirmed live
+ * across two separate CLI invocations resuming the same session — even
+ * the "duplicate node pair" re-persist phenomenon lands on a brand-new
+ * `row_id`, never an in-place update): a `row_id`-watermark stays correct
+ * and cheap. `SELECT *` replaces the curated column list.
+ */
 function readMessageNodes(
   db: DevinDatabaseSync,
   resolution: SchemaResolution,
   since: number | null,
 ): DevinMessageNodeRow[] {
-  const columns = knownColumnsFor('message_nodes', resolution);
-  if (columns.length === 0) {
+  if (!resolution.knownTables.includes('message_nodes')) {
     return [];
   }
-  const sql = `SELECT ${columns.join(', ')} FROM message_nodes WHERE row_id > ? ORDER BY row_id`;
+  const sql = 'SELECT * FROM message_nodes WHERE row_id > ? ORDER BY row_id';
   return readTable<DevinMessageNodeRow>(db, sql, [since ?? -1]);
 }
 
+/** `prompt_history` has a real per-prompt `timestamp` and an
+ * `id`-watermark unchallenged by #298's investigation (append-only,
+ * consistent with every observed prompt). `SELECT *` replaces the curated
+ * column list. */
 function readPromptHistory(
   db: DevinDatabaseSync,
   resolution: SchemaResolution,
   since: number | null,
 ): DevinPromptHistoryRow[] {
-  const columns = knownColumnsFor('prompt_history', resolution);
-  if (columns.length === 0) {
+  if (!resolution.knownTables.includes('prompt_history')) {
     return [];
   }
-  const sql = `SELECT ${columns.join(', ')} FROM prompt_history WHERE id > ? ORDER BY id`;
+  const sql = 'SELECT * FROM prompt_history WHERE id > ? ORDER BY id';
   return readTable<DevinPromptHistoryRow>(db, sql, [since ?? -1]);
 }
 
+/**
+ * `tool_call_state` — see `tool-call-watermark.ts` for why this table
+ * cannot use a rowid watermark. Always read in full (`SELECT *`, plus the
+ * implicit `rowid` aliased for downstream tie-break ordering), then
+ * reduced to genuinely new/changed rows by content hash.
+ */
 function readToolCallStates(
   db: DevinDatabaseSync,
   resolution: SchemaResolution,
-  since: number | null,
+  priorHashes: Readonly<Record<string, string>>,
 ): DevinToolCallStateRow[] {
-  const columns = knownColumnsFor('tool_call_state', resolution);
-  if (columns.length === 0) {
+  if (!resolution.knownTables.includes('tool_call_state')) {
     return [];
   }
-  const select = ['rowid AS row_id', ...columns].join(', ');
-  const sql = `SELECT ${select} FROM tool_call_state WHERE rowid > ? ORDER BY rowid`;
-  return readTable<DevinToolCallStateRow>(db, sql, [since ?? -1]);
+  const sql = 'SELECT rowid AS row_id, * FROM tool_call_state ORDER BY rowid';
+  return filterChangedToolCallStates(readTable<DevinToolCallStateRow>(db, sql), priorHashes);
 }
 
 function readRefineryMigrations(db: DevinDatabaseSync): DevinRefineryMigration[] {
@@ -218,6 +247,34 @@ function readTableChecksum(db: DevinDatabaseSync, table: string): string | null 
   return createHash('sha256').update(row.sql).digest('hex');
 }
 
+/** Real column names for a table via `PRAGMA table_info`; empty for an
+ * absent table (`PRAGMA table_info` returns zero rows, never throws). */
+function readTableColumnNames(db: DevinDatabaseSync, table: string): string[] {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return rows.map((r) => r.name);
+}
+
+/**
+ * A warning per known table with a real column `KNOWN_TABLE_COLUMNS`
+ * doesn't list yet — informational only (reads are unconditional
+ * `SELECT *`, never gated on this), so a future schema drift like the
+ * `sessions.shell_last_seen_index` gap this issue closes is surfaced
+ * proactively instead of found by hand again.
+ */
+function unknownColumnWarnings(db: DevinDatabaseSync, knownTables: readonly string[]): string[] {
+  const warnings: string[] = [];
+  for (const table of knownTables) {
+    const unknown = detectUnknownColumns(table, readTableColumnNames(db, table));
+    if (unknown.length > 0) {
+      warnings.push(
+        `${table}: column(s) ${unknown.join(', ')} are captured (SELECT * always reads ` +
+          'everything) but not yet listed in KNOWN_TABLE_COLUMNS — update it for documentation.',
+      );
+    }
+  }
+  return warnings;
+}
+
 /**
  * Computes `native/schema-descriptor.json` content: Devin CLI version (as
  * supplied by the caller — this extractor never shells out itself), the
@@ -239,7 +296,7 @@ export function computeSchemaDescriptor(
     refineryMigrations: readRefineryMigrations(db),
     tableChecksums,
     supported: schema.supported,
-    warnings: schema.warnings,
+    warnings: [...schema.warnings, ...unknownColumnWarnings(db, schema.knownTables)],
   };
 }
 
@@ -249,10 +306,11 @@ export interface ReadDevinTablesResult {
 }
 
 /**
- * Reads all four known tables, filtered above their respective watermarks
- * (`sessions` has no watermark — it is current-state, not append-only, and
- * is always read in full). Degrades per `schema-registry.ts` on an
- * unrecognized refinery version; never throws on schema mismatch.
+ * Reads all four known tables, each above its own watermark using its own
+ * per-table strategy (see `types.ts`'s `DevinWatermarks` doc comment and
+ * `tool-call-watermark.ts`) — never a uniform default. Degrades per
+ * `schema-registry.ts` on an unrecognized refinery version; never throws
+ * on schema mismatch.
  */
 export function readDevinTables(
   db: DevinDatabaseSync,
@@ -260,10 +318,10 @@ export function readDevinTables(
 ): ReadDevinTablesResult {
   const schema = resolveDevinSchema(readRefineryVersion(db));
   const tables: DevinExtractedTables = {
-    sessions: readSessions(db, schema),
+    sessions: readSessions(db, schema, watermarks.sessionsLastActivityAt),
     messageNodes: readMessageNodes(db, schema, watermarks.messageNodesRowId),
     promptHistory: readPromptHistory(db, schema, watermarks.promptHistoryId),
-    toolCallStates: readToolCallStates(db, schema, watermarks.toolCallStateRowId),
+    toolCallStates: readToolCallStates(db, schema, watermarks.toolCallStateHashes),
   };
   return { tables, schema };
 }

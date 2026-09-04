@@ -1,4 +1,5 @@
 import { buildSubagentSyntheticNodes } from './subagent-lines.js';
+import { mergeToolCallStateHashes } from './tool-call-watermark.js';
 import type {
   DevinExtractedTables,
   DevinJsonlLine,
@@ -17,8 +18,11 @@ import { EMPTY_WATERMARKS } from './types.js';
  * produces byte-identical output — no `Date.now()`/random values, every
  * sort is over a stable, fully-specified key (session id, then node_id via
  * `orderMessageNodes`, then rowid/id), and JSON field order is fixed
- * (`type`, `ts`, `order`, then the raw row's columns in their SQL SELECT
- * order — see `schema-registry.ts`'s `KNOWN_TABLE_COLUMNS`). Synthetic
+ * (`type`, `ts`, `order`, then the raw row's columns in SQLite's own table
+ * column order — reader.ts reads every table via `SELECT *`/dynamic column
+ * discovery as of #298, never a curated list, so this naturally includes
+ * any column not yet named in `schema-registry.ts`'s `KNOWN_TABLE_COLUMNS`,
+ * which is informational only). Synthetic
  * sub-agent prompt/result `message` lines (`subagent-lines.ts`, DS-B28
  * (#294)) are appended after every real message/tool_call line for a
  * session, deterministically derived from the same real, positive-only
@@ -84,13 +88,18 @@ function appendSessionLines(
 ): number {
   let next = order;
   if (session) {
-    // Sessions have no watermark (current-state, not append-only — see
-    // types.ts's DevinWatermarks): a `session` line is appended on every
-    // pass a session is present in `tables.sessions`, including repeated
-    // incremental passes with nothing new for it. This is intentional
-    // last-write-wins semantics for replay, but it means the caller's
-    // read cadence (e.g. a watcher polling sessions.db) directly controls
-    // how many `session` lines accumulate in the append-only output.
+    // Sessions have no row-order watermark (current-state, not
+    // append-only — see types.ts's DevinWatermarks): a `session` line is
+    // appended whenever a session is present in `tables.sessions`. As of
+    // #298, reader.ts's readSessions already drops a session from
+    // `tables.sessions` when its last_activity_at hasn't changed since the
+    // watermark was last recorded, so an unchanged session is not
+    // re-appended on every incremental pass; a session with no prior
+    // watermark, or whose last_activity_at genuinely changed, always is.
+    // This is intentional last-write-wins semantics for replay, but it
+    // means the caller's read cadence (e.g. a watcher polling sessions.db)
+    // still directly controls how many `session` lines accumulate in the
+    // append-only output.
     lines.push(sessionLine(session, next));
     next += 1;
   }
@@ -267,15 +276,31 @@ function computeWatermarks(tables: DevinExtractedTables, prior: DevinWatermarks)
       prior.messageNodesRowId,
       tables.messageNodes.map((m) => m.row_id),
     ),
-    toolCallStateRowId: mergeWatermark(
-      prior.toolCallStateRowId,
-      tables.toolCallStates.map((t) => t.row_id),
-    ),
+    toolCallStateHashes: mergeToolCallStateHashes(prior.toolCallStateHashes, tables.toolCallStates),
     promptHistoryId: mergeWatermark(
       prior.promptHistoryId,
       tables.promptHistory.map((p) => p.id),
     ),
+    sessionsLastActivityAt: mergeSessionsLastActivityAt(
+      prior.sessionsLastActivityAt,
+      tables.sessions,
+    ),
   };
+}
+
+/** Folds this pass's session rows' `last_activity_at` into the skip-signal
+ * watermark. A `null` `last_activity_at` is never recorded — missing is
+ * never treated as a comparable value (`missing-is-never-zero`), so it can
+ * never false-positive-match a later real value and cause a skip. */
+function mergeSessionsLastActivityAt(
+  prior: Readonly<Record<string, number>>,
+  sessions: readonly DevinSessionRow[],
+): Record<string, number> {
+  const merged = { ...prior };
+  for (const s of sessions) {
+    if (typeof s.last_activity_at === 'number') merged[s.id] = s.last_activity_at;
+  }
+  return merged;
 }
 
 /** Merges a prior watermark with a batch's row ids; never regresses. */

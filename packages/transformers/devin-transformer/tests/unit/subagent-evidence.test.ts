@@ -237,4 +237,49 @@ describe('buildDevinSubagentEvidence', () => {
   it('returns no records for a session with nothing detached', () => {
     expect(buildDevinSubagentEvidence('s1', [], 'artifact-1')).toEqual([]);
   });
+
+  it('captures a synthetic bookkeeping key not yet named by this module, instead of silently dropping it (#298 widening)', () => {
+    // #298 design item 3 audit: buildSubagentTurnPayload previously read
+    // only its five named sal/synthetic_* keys from parsedMetadata
+    // .extensions; a future subagent-lines.ts addition without a matching
+    // named field here would have vanished. additionalExtensions is the
+    // generic fallback that prevents that.
+    const sessionId = 's1';
+    const promptNodeId = Number.MAX_SAFE_INTEGER - 178 * 2;
+    const transcript = [
+      sessionLine(sessionId),
+      messageLine(sessionId, 177, null, 'assistant', 'calling run_subagent'),
+      messageLine(
+        sessionId,
+        178,
+        177,
+        'tool',
+        'Subagent agent_id=44472e00 completed successfully: report',
+        { 'subagent/agent_id': '44472e00' },
+      ),
+      messageLine(
+        sessionId,
+        promptNodeId,
+        null,
+        'user',
+        'Explore the auth module',
+        {
+          'subagent/agent_id': '44472e00',
+        },
+        {
+          'sal/synthetic_subagent_kind': 'prompt',
+          'sal/synthetic_subagent_tool_call_id': 'functions.run_subagent:1',
+          'sal/synthetic_subagent_future_field_not_yet_modeled': 'future-value',
+        },
+      ),
+    ].join('\n');
+
+    const parsed = parseDevinBundle(bundle(transcript));
+    const records = buildDevinSubagentEvidence(sessionId, parsed.detachedMessages, 'artifact-1');
+    const promptPayload = records.find((r) => (r.payload as { kind?: string }).kind === 'prompt')
+      ?.payload as Record<string, unknown>;
+    expect(promptPayload.additionalExtensions).toEqual({
+      'sal/synthetic_subagent_future_field_not_yet_modeled': 'future-value',
+    });
+  });
 });
