@@ -7,6 +7,8 @@ import {
   openDevinDatabase,
   readDevinTables,
 } from '../../src/extractor/reader.js';
+import { mergeSessionHashes } from '../../src/extractor/session-watermark.js';
+import { mergeToolCallStateHashes } from '../../src/extractor/tool-call-watermark.js';
 import { EMPTY_WATERMARKS } from '../../src/extractor/types.js';
 import { buildFixtureDb } from './fixtures/build-fixture-db.js';
 
@@ -125,6 +127,196 @@ describe('readDevinTables', () => {
     const second = readDevinTables(fixture.db, firstWatermark);
     expect(second.tables.messageNodes).toHaveLength(1);
     expect(second.tables.promptHistory).toHaveLength(1);
+  });
+});
+
+describe('SELECT * / dynamic column discovery (#298)', () => {
+  const FUTURE_COL = 'sal_test_future_column';
+
+  it('captures a column previously unknown to KNOWN_TABLE_COLUMNS on sessions, unfiltered', () => {
+    const fixture = buildFixtureDb({ sessions: [session('s1')] });
+    cleanup = fixture.close;
+    fixture.db.exec(`ALTER TABLE sessions ADD COLUMN ${FUTURE_COL} TEXT`);
+    fixture.db.prepare(`UPDATE sessions SET ${FUTURE_COL} = 'future-value' WHERE id = 's1'`).run();
+
+    const { tables } = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    expect(tables.sessions[0][FUTURE_COL]).toBe('future-value');
+  });
+
+  it('captures a column previously unknown to KNOWN_TABLE_COLUMNS on message_nodes, unfiltered', () => {
+    const fixture = buildFixtureDb({});
+    cleanup = fixture.close;
+    fixture.db.exec(`ALTER TABLE message_nodes ADD COLUMN ${FUTURE_COL} TEXT`);
+    fixture.db
+      .prepare(
+        `INSERT INTO message_nodes (session_id, node_id, parent_node_id, ${FUTURE_COL}) VALUES (?, ?, ?, ?)`,
+      )
+      .run('s1', 0, null, 'future-value');
+
+    const { tables } = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    expect(tables.messageNodes[0][FUTURE_COL]).toBe('future-value');
+  });
+
+  it('captures a column previously unknown to KNOWN_TABLE_COLUMNS on prompt_history, unfiltered', () => {
+    const fixture = buildFixtureDb({});
+    cleanup = fixture.close;
+    fixture.db.exec(`ALTER TABLE prompt_history ADD COLUMN ${FUTURE_COL} TEXT`);
+    fixture.db
+      .prepare(
+        `INSERT INTO prompt_history (content, timestamp, session_id, is_shell, ${FUTURE_COL}) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run('hi', 1, 's1', 0, 'future-value');
+
+    const { tables } = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    expect(tables.promptHistory[0][FUTURE_COL]).toBe('future-value');
+  });
+
+  it('captures a column previously unknown to KNOWN_TABLE_COLUMNS on tool_call_state, unfiltered', () => {
+    const fixture = buildFixtureDb({ toolCallStates: [toolCall('s1', 'call-1')] });
+    cleanup = fixture.close;
+    fixture.db.exec(`ALTER TABLE tool_call_state ADD COLUMN ${FUTURE_COL} TEXT`);
+    fixture.db.prepare(`UPDATE tool_call_state SET ${FUTURE_COL} = 'future-value'`).run();
+
+    const { tables } = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    expect(tables.toolCallStates[0][FUTURE_COL]).toBe('future-value');
+  });
+
+  it('closes the confirmed, real sessions.shell_last_seen_index gap specifically', () => {
+    // #298: KNOWN_TABLE_COLUMNS['sessions'] never listed this real column
+    // (confirmed on-machine against a live Devin CLI v3000.6.7
+    // sessions.db, refinery version 16) -- it was silently dropped by the
+    // old curated-column SELECT. This is a dedicated regression for that
+    // exact column, not just the generic dynamic-column test above.
+    const fixture = buildFixtureDb({ sessions: [session('s1')] });
+    cleanup = fixture.close;
+    fixture.db.exec('ALTER TABLE sessions ADD COLUMN shell_last_seen_index INTEGER');
+    fixture.db.prepare('UPDATE sessions SET shell_last_seen_index = ? WHERE id = ?').run(7, 's1');
+
+    const { tables } = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    expect(tables.sessions[0].shell_last_seen_index).toBe(7);
+  });
+});
+
+describe('tool_call_state incremental strategy (#298 Phase 1 fix)', () => {
+  it('catches a real content mutation whose reinsert reuses a rowid at or below the watermark', () => {
+    // Reproduces #298's live finding on SQLite's own rowid-reuse semantics
+    // (this table has no AUTOINCREMENT column): a `rowid > watermark`
+    // strategy would silently miss this. The content-hash strategy must
+    // not.
+    const fixture = buildFixtureDb({
+      toolCallStates: [
+        {
+          session_id: 's1',
+          tool_call_id: 'call-1',
+          tool_call_json: '{}',
+          tool_call_update_json: null,
+        },
+        {
+          session_id: 's1',
+          tool_call_id: 'call-2',
+          tool_call_json: '{}',
+          tool_call_update_json: null,
+        },
+      ],
+    });
+    cleanup = fixture.close;
+
+    const first = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    expect(first.tables.toolCallStates).toHaveLength(2);
+    const priorHashes = mergeToolCallStateHashes({}, first.tables.toolCallStates);
+
+    // Delete both rows, then reinsert call-1 with genuinely new content.
+    // With no rows left, SQLite's default rowid assignment restarts at 1
+    // -- reusing (or landing below) a rowid this session already saw.
+    fixture.db.prepare('DELETE FROM tool_call_state WHERE session_id = ?').run('s1');
+    fixture.db
+      .prepare(
+        'INSERT INTO tool_call_state (session_id, tool_call_id, tool_call_json, tool_call_update_json) VALUES (?, ?, ?, ?)',
+      )
+      .run('s1', 'call-1', '{}', '{"status":"completed"}');
+
+    const second = readDevinTables(fixture.db, {
+      ...EMPTY_WATERMARKS,
+      toolCallStateHashes: priorHashes,
+    });
+    expect(second.tables.toolCallStates.map((t) => t.tool_call_id)).toEqual(['call-1']);
+    expect(second.tables.toolCallStates[0].tool_call_update_json).toBe('{"status":"completed"}');
+  });
+
+  it('does not re-emit an unchanged tool call even after its rowid churns (no duplication)', () => {
+    const fixture = buildFixtureDb({
+      toolCallStates: [
+        {
+          session_id: 's1',
+          tool_call_id: 'call-1',
+          tool_call_json: '{}',
+          tool_call_update_json: null,
+        },
+      ],
+    });
+    cleanup = fixture.close;
+
+    const first = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    const priorHashes = mergeToolCallStateHashes({}, first.tables.toolCallStates);
+
+    // Simulate Devin's observed full-session rewrite: same content, new rowid.
+    fixture.db.prepare('DELETE FROM tool_call_state WHERE session_id = ?').run('s1');
+    fixture.db
+      .prepare(
+        'INSERT INTO tool_call_state (session_id, tool_call_id, tool_call_json, tool_call_update_json) VALUES (?, ?, ?, ?)',
+      )
+      .run('s1', 'call-1', '{}', null);
+
+    const second = readDevinTables(fixture.db, {
+      ...EMPTY_WATERMARKS,
+      toolCallStateHashes: priorHashes,
+    });
+    expect(second.tables.toolCallStates).toEqual([]);
+  });
+});
+
+describe('sessions change-detection skip signal (#298)', () => {
+  it('skips a session whose full row content has not changed since the watermark', () => {
+    const fixture = buildFixtureDb({
+      sessions: [{ ...session('s1'), last_activity_at: 100 }],
+    });
+    cleanup = fixture.close;
+
+    const first = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    expect(first.tables.sessions).toHaveLength(1);
+
+    const priorHashes = mergeSessionHashes({}, first.tables.sessions);
+    const watermark = { ...EMPTY_WATERMARKS, sessionsContentHashes: priorHashes };
+    const second = readDevinTables(fixture.db, watermark);
+    expect(second.tables.sessions).toEqual([]);
+  });
+
+  it('never skips a session whose content genuinely changed, even a column other than last_activity_at', () => {
+    const fixture = buildFixtureDb({
+      sessions: [{ ...session('s1'), last_activity_at: 100, model: 'glm-5-3-high' }],
+    });
+    cleanup = fixture.close;
+
+    // Deliberately: same last_activity_at as the fixture, different `model`
+    // — proves the skip signal is a full-row hash, not a last_activity_at
+    // comparison (the #298 review finding this fixes: a skill-only or
+    // effort-only mutation that never bumps last_activity_at must not be
+    // silently skipped).
+    const priorHashes = mergeSessionHashes({}, [
+      { ...session('s1'), last_activity_at: 100, model: 'glm-5-3-low' },
+    ] as Parameters<typeof mergeSessionHashes>[1]);
+    const watermark = { ...EMPTY_WATERMARKS, sessionsContentHashes: priorHashes };
+    const result = readDevinTables(fixture.db, watermark);
+    expect(result.tables.sessions).toHaveLength(1);
+  });
+
+  it('never skips a session absent from the prior watermark (first sight is always included)', () => {
+    const fixture = buildFixtureDb({ sessions: [session('s1')] });
+    cleanup = fixture.close;
+
+    const watermark = { ...EMPTY_WATERMARKS, sessionsContentHashes: { other: 'deadbeef' } };
+    const result = readDevinTables(fixture.db, watermark);
+    expect(result.tables.sessions).toHaveLength(1);
   });
 });
 

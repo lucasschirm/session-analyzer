@@ -27,13 +27,6 @@ const SYNTHETIC_TOOL_CALL_ID_KEY = 'sal/synthetic_subagent_tool_call_id';
 const SYNTHETIC_SOURCE_NODE_ID_KEY = 'sal/synthetic_subagent_source_node_id';
 const SYNTHETIC_IS_BACKGROUND_KEY = 'sal/synthetic_subagent_is_background';
 
-const SUBAGENT_TAG_KEYS = [
-  'subagent/agent_id',
-  'subagent/profile_name',
-  'subagent/model',
-  'subagent/chain_node_id',
-] as const;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -181,16 +174,20 @@ function findResultSource(
   return { node: tagged.node, content: taggedContent, isBackground: false };
 }
 
-/** Carries the four real `subagent/*` tag values from a tagged node
- * verbatim (never re-derived/guessed) into a synthetic line's extensions. */
+/**
+ * Carries EVERY real key from the tagged node's `chat_message.metadata
+ * .extensions` verbatim (never re-derived/guessed, never filtered to a
+ * fixed known-key list) into a synthetic line's extensions — #298 design
+ * item 3: this extraction layer must not decide which `subagent/*`
+ * extension fields (or any sibling key Devin might add there) are
+ * "relevant enough" to carry through. Previously this filtered to a
+ * 4-key whitelist (`subagent/agent_id`, `subagent/profile_name`,
+ * `subagent/model`, `subagent/chain_node_id`); any other real key present
+ * on the tagged node would have been silently dropped rather than
+ * captured, the exact class of bug this issue exists to close.
+ */
 function realSubagentTagExtensions(chatMessage: string | null): Record<string, unknown> {
-  const extensions = chatMessageExtensions(chatMessage);
-  const out: Record<string, unknown> = {};
-  if (!extensions) return out;
-  for (const key of SUBAGENT_TAG_KEYS) {
-    if (key in extensions) out[key] = extensions[key];
-  }
-  return out;
+  return chatMessageExtensions(chatMessage) ?? {};
 }
 
 /**
@@ -199,14 +196,21 @@ function realSubagentTagExtensions(chatMessage: string | null): Record<string, u
  * line, so this is a clearly out-of-band sentinel, never mistaken for real
  * DB data.
  *
- * `subagentExtensions` (real `subagent/*` keys only) is embedded under
+ * `subagentExtensions` (every real key from the tagged node's own
+ * extensions, per `realSubagentTagExtensions` above -- #298 widened this
+ * from a 4-key whitelist to everything present) is embedded under
  * `chat_message.metadata.extensions` -- the SAME location real Devin data
  * uses (see `DevinSubagentExtensions` in the parser package's `types.ts`)
  * -- so a consumer reading `DevinMessageLine.subagent` picks these up
  * through the exact same, unmodified parsing path as a real
- * subagent-tagged node. Never mixed with `syntheticBookkeeping`:
- * `parseSubagentExtensions` only recognizes the 4 real keys, so anything
- * else placed there would silently vanish, not "pass through".
+ * subagent-tagged node. This extraction layer no longer decides which of
+ * those keys matter; note the parser package's own `parseSubagentExtensions`
+ * (out of this issue's scope) still whitelists 4 keys when building the
+ * typed `subagent` field, so a 5th real key is captured verbatim in the
+ * raw JSONL by this module but not yet surfaced through that typed field
+ * -- a separate, parser-package-level gap. Never mixed with
+ * `syntheticBookkeeping`, which goes through a different field entirely
+ * (below), so this asymmetry never applies to our own bookkeeping data.
  *
  * `syntheticBookkeeping` (our own "how was this line constructed" data,
  * never real Devin data) goes in the row-level `message_nodes.metadata`

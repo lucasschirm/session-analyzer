@@ -233,6 +233,41 @@ describe('buildSubagentSyntheticNodes — foreground/background asymmetry (DS-B2
     expect(buildSubagentSyntheticNodes([tagged], [toolCall])).toHaveLength(0);
   });
 
+  it('captures a real subagent/* extension key not yet known to this module (#298 widening)', () => {
+    // Previously realSubagentTagExtensions filtered to a 4-key whitelist
+    // (subagent/agent_id, subagent/profile_name, subagent/model,
+    // subagent/chain_node_id); a 5th real key would have been silently
+    // dropped. #298 widens this to pass through everything present.
+    const callSite = node(177, 90, {
+      message_id: 'msg-177',
+      role: 'assistant',
+      content: 'calling run_subagent',
+    });
+    const taggedResult = node(178, 177, {
+      message_id: 'msg-178',
+      role: 'tool',
+      content: 'Subagent agent_id=44472e00 completed successfully:\n\nreport',
+      tool_call_id: 'functions.run_subagent:1',
+      metadata: {
+        extensions: {
+          'subagent/agent_id': '44472e00',
+          'subagent/profile_name': 'Explore',
+          'subagent/future_field_not_yet_modeled': 'some-future-value',
+        },
+      },
+    });
+    const toolCalls = [
+      runSubagentCall('functions.run_subagent:1', 'Explore the auth module', 'subagent_explore'),
+    ];
+
+    const synthetic = buildSubagentSyntheticNodes([callSite, taggedResult], toolCalls);
+    const resultRow = synthetic[1];
+    const result = JSON.parse(resultRow.chat_message as string);
+    expect(result.metadata.extensions['subagent/future_field_not_yet_modeled']).toBe(
+      'some-future-value',
+    );
+  });
+
   it('ignores non-run_subagent tool calls entirely', () => {
     const toolCall: DevinToolCallStateRow = {
       row_id: 1,

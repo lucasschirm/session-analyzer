@@ -119,6 +119,37 @@ describe('watermark-based incremental extraction', () => {
     expect(new Set(allToolCalls.map((l) => l.tool_call_id)).size).toBe(2); // no duplicates
   });
 
+  it('sessions: resuming from a watermark re-emits a session line only when its content genuinely changed (#298)', () => {
+    const fixture = buildFixtureDb({
+      sessions: [{ ...minimalSession('s1'), last_activity_at: 1, model: 'glm-5-2' }],
+    });
+    cleanup = fixture.close;
+
+    const first = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    const firstResult = buildDevinJsonl(first.tables, { priorWatermarks: EMPTY_WATERMARKS });
+    expect(byType(firstResult.lines, 'session')).toHaveLength(1);
+
+    // Unchanged resume: content hash matches, so no session line re-emitted.
+    const unchanged = readDevinTables(fixture.db, firstResult.watermarks);
+    const unchangedResult = buildDevinJsonl(unchanged.tables, {
+      priorWatermarks: firstResult.watermarks,
+    });
+    expect(byType(unchangedResult.lines, 'session')).toHaveLength(0);
+
+    // A real mutation that does NOT touch last_activity_at must still be
+    // detected — the exact gap the full-row content hash (as opposed to a
+    // last_activity_at comparison) exists to close.
+    fixture.db.prepare('UPDATE sessions SET model = ? WHERE id = ?').run('glm-5-3-high', 's1');
+    const changed = readDevinTables(fixture.db, unchangedResult.watermarks);
+    const changedResult = buildDevinJsonl(changed.tables, {
+      priorWatermarks: unchangedResult.watermarks,
+    });
+    expect(byType(changedResult.lines, 'session')).toHaveLength(1);
+    expect(changedResult.watermarks.sessionsContentHashes.s1).not.toBe(
+      firstResult.watermarks.sessionsContentHashes.s1,
+    );
+  });
+
   it('a no-op resume (no new rows) preserves the prior watermark rather than regressing to null', () => {
     const fixture = buildFixtureDb({
       promptHistory: [{ id: 1, content: 'only', timestamp: 1, session_id: 's1', is_shell: 0 }],

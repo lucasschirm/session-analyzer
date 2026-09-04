@@ -7,7 +7,17 @@
  * timestamp column carries `null`, never `0` (`missing-is-never-zero`).
  */
 
-/** A row from the `sessions` table (current-state, not append-only). */
+/**
+ * A row from the `sessions` table (current-state, not append-only).
+ *
+ * The index signature is load-bearing, not decoration: `reader.ts` reads
+ * this table via `SELECT *` (#298) so a column this interface doesn't yet
+ * name (e.g. `shell_last_seen_index`, confirmed real and previously
+ * silently dropped by a curated `SELECT` column list) still flows through
+ * to the JSONL output unfiltered — extraction never gets to decide a
+ * column is irrelevant. Every other row interface below carries the same
+ * signature for the same reason.
+ */
 export interface DevinSessionRow {
   id: string;
   working_directory: string | null;
@@ -22,6 +32,7 @@ export interface DevinSessionRow {
   workspace_dirs: string | null;
   hidden: number | null;
   metadata: string | null;
+  [column: string]: unknown;
 }
 
 /**
@@ -43,6 +54,7 @@ export interface DevinMessageNodeRow {
   chat_message: string | null;
   created_at: number | null;
   metadata: string | null;
+  [column: string]: unknown;
 }
 
 /** A row from the `prompt_history` table. `timestamp` is real per-prompt. */
@@ -52,12 +64,26 @@ export interface DevinPromptHistoryRow {
   timestamp: number | null;
   session_id: string;
   is_shell: number | null;
+  [column: string]: unknown;
 }
 
 /**
  * A row from the `tool_call_state` table. There is no explicit
  * autoincrement column, so `row_id` here is SQLite's implicit `rowid`,
- * read explicitly (`SELECT rowid AS row_id, ...`) for use as the watermark.
+ * read explicitly (`SELECT rowid AS row_id, ...`).
+ *
+ * `row_id` is deliberately NOT this table's incremental-fetch identity
+ * (see `tool-call-watermark.ts`): #298's Phase-1 investigation confirmed,
+ * against a real live `sessions.db`, that this rowid is not stable across
+ * a row's lifetime — Devin rewrites a session's entire `tool_call_state`
+ * row set (delete+reinsert, including untouched already-completed calls)
+ * on every persist, so the same `(session_id, tool_call_id)` reappears
+ * under a new rowid with byte-identical content. Combined with this
+ * table's composite `(session_id, tool_call_id)` primary key (no
+ * `INTEGER PRIMARY KEY AUTOINCREMENT`), SQLite's implicit rowid is also
+ * structurally eligible for reuse after a delete. The real identity is
+ * `(session_id, tool_call_id)`; `row_id` is carried only for stable
+ * tie-break ordering downstream (`jsonl-writer.ts`).
  */
 export interface DevinToolCallStateRow {
   row_id: number;
@@ -65,6 +91,7 @@ export interface DevinToolCallStateRow {
   tool_call_id: string;
   tool_call_json: string | null;
   tool_call_update_json: string | null;
+  [column: string]: unknown;
 }
 
 /** Raw table reads passed into the JSONL writer for one extraction pass. */
@@ -76,20 +103,45 @@ export interface DevinExtractedTables {
 }
 
 /**
- * Incremental watermarks. `null` means "no prior watermark" (full extract).
- * Persistence is owned by the sync engine's `StateStore`
- * (`packages/sync/src/state/`) — this package only accepts/emits values.
+ * Incremental watermarks. Persistence is owned by the sync engine's
+ * `StateStore` (`packages/sync/src/state/`) — this package only
+ * accepts/emits values. Each field's shape is dictated by #298's Phase-1
+ * investigation into how that table's rows actually change, not a uniform
+ * default:
+ *
+ * - `messageNodesRowId` / `promptHistoryId`: `null` means "no prior
+ *   watermark" (full extract). Both tables were confirmed live to be
+ *   genuinely insert-only (never a same-`row_id`/`id` in-place update —
+ *   even Devin's own "duplicate node pair" re-persist behavior always
+ *   lands on a brand-new `row_id`), so a monotonic-key watermark remains
+ *   correct and cheap.
+ * - `toolCallStateHashes`: NOT a monotonic position — see
+ *   `tool-call-watermark.ts` for why a rowid watermark is unsound for this
+ *   table and what replaces it.
+ * - `sessionsContentHashes`: NOT a watermark on read order either —
+ *   `sessions` is a current-state (mutate-in-place) table with no
+ *   append-only column at all; this is a cheap "did anything relevant
+ *   change" skip signal. Deliberately a full-row content hash, not a
+ *   `last_activity_at` comparison — #298 Phase 1 confirmed
+ *   `last_activity_at` advances on ordinary tool-call and subagent
+ *   persists, but left skill-only/effort-only mutations unverified
+ *   against that one field specifically, so a hash of the whole row is
+ *   used instead of trusting a single column to represent "anything
+ *   changed" (see `session-watermark.ts`). A session id absent from this
+ *   map is always treated as changed.
  */
 export interface DevinWatermarks {
   messageNodesRowId: number | null;
-  toolCallStateRowId: number | null;
+  toolCallStateHashes: Record<string, string>;
   promptHistoryId: number | null;
+  sessionsContentHashes: Record<string, string>;
 }
 
 export const EMPTY_WATERMARKS: DevinWatermarks = {
   messageNodesRowId: null,
-  toolCallStateRowId: null,
+  toolCallStateHashes: {},
   promptHistoryId: null,
+  sessionsContentHashes: {},
 };
 
 /** One line of `devin-session-jsonl/v1` output. */

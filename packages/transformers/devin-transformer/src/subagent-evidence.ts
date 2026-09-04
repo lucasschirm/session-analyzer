@@ -18,6 +18,22 @@ import { provenanceForArtifact, stableId } from './session-spine.js';
  *    semantics are unconfirmed — DS-B28 finding #2 — so it is never used to
  *    force one). These become generic `detached_conversation` records:
  *    never dropped, never mis-attributed.
+ *
+ * #298 design item 3 audit: `buildSubagentTurnPayload` reads
+ * `parsedMetadata.extensions` (our own synthetic bookkeeping bag — see
+ * `subagent-lines.ts`) by five named keys and `message.subagent` (the
+ * parser's typed 4-field struct) by name; every key either module
+ * currently writes is already modeled here, so no field-selection gap was
+ * found in THIS file's own logic. `unmodeledExtensions` still captures any
+ * future `subagent-lines.ts` bookkeeping key generically, so a later
+ * addition here doesn't silently vanish for lack of a matching named
+ * field. The one real gap found in the wider #294/#298 data path —
+ * `chat_message.metadata.extensions`'s `subagent/*` real-data namespace
+ * being whitelisted to 4 keys by the parser package's
+ * `parseSubagentExtensions`, upstream of `message.subagent` — is outside
+ * this issue's scope (`packages/parsers/devin-session-parser`); this
+ * module cannot see past that whitelist since it only receives the
+ * already-parsed, already-narrowed `DevinMessageLine`.
  */
 
 const SYNTHETIC_KIND_KEY = 'sal/synthetic_subagent_kind';
@@ -64,6 +80,16 @@ export interface DevinSubagentTurnPayload {
   /** The `run_subagent` `tool_call_state.tool_call_id` that spawned this
    * invocation. */
   readonly spawningToolCallId?: string;
+  /**
+   * Any `parsedMetadata.extensions` key on this node that isn't one of the
+   * five named bookkeeping keys above (#298 design item 3 audit: this
+   * module previously read only those five by name, silently dropping a
+   * key `subagent-lines.ts` might add later without a matching update
+   * here). Empty/absent today — every key `subagent-lines.ts` currently
+   * writes is named above — but present so a future addition is captured
+   * by default rather than by remembering to wire it in both places.
+   */
+  readonly additionalExtensions?: Record<string, unknown>;
 }
 
 /**
@@ -90,6 +116,26 @@ function extensionValue(message: DevinMessageLine, key: string): unknown {
   return message.parsedMetadata?.extensions?.[key];
 }
 
+/** Every named bookkeeping key this module already reads by name (#298
+ * design item 3's audit target for `unmodeledExtensions`). */
+const KNOWN_SYNTHETIC_KEYS: readonly string[] = [
+  SYNTHETIC_KIND_KEY,
+  SYNTHETIC_RAWINPUT_PROFILE_KEY,
+  SYNTHETIC_TOOL_CALL_ID_KEY,
+  SYNTHETIC_SOURCE_NODE_ID_KEY,
+  SYNTHETIC_IS_BACKGROUND_KEY,
+];
+
+/** `parsedMetadata.extensions` keys this module doesn't already model by
+ * name — captured generically so a future `subagent-lines.ts` addition is
+ * never silently dropped for lack of a matching named field here. */
+function unmodeledExtensions(message: DevinMessageLine): Record<string, unknown> | undefined {
+  const extensions = message.parsedMetadata?.extensions;
+  if (!extensions) return undefined;
+  const entries = Object.entries(extensions).filter(([key]) => !KNOWN_SYNTHETIC_KEYS.includes(key));
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 function syntheticKind(message: DevinMessageLine): 'prompt' | 'result' | null {
   const value = extensionValue(message, SYNTHETIC_KIND_KEY);
   return value === 'prompt' || value === 'result' ? value : null;
@@ -107,6 +153,7 @@ function buildSubagentTurnPayload(
   const sourceNodeId = extensionValue(message, SYNTHETIC_SOURCE_NODE_ID_KEY);
   const toolCallId = extensionValue(message, SYNTHETIC_TOOL_CALL_ID_KEY);
   const content = messageContent(message.chatMessage);
+  const additionalExtensions = unmodeledExtensions(message);
 
   return {
     eventId: recordId,
@@ -122,6 +169,7 @@ function buildSubagentTurnPayload(
     ...(typeof isBackground === 'boolean' ? { isBackground } : {}),
     ...(typeof sourceNodeId === 'number' ? { sourceNodeId } : {}),
     ...(typeof toolCallId === 'string' ? { spawningToolCallId: toolCallId } : {}),
+    ...(additionalExtensions ? { additionalExtensions } : {}),
   };
 }
 

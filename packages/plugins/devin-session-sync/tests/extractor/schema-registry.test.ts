@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  detectUnknownColumns,
   KNOWN_REFINERY_VERSION,
   KNOWN_TABLE_COLUMNS,
   knownColumnsFor,
@@ -55,5 +56,29 @@ describe('knownColumnsFor', () => {
   it('returns an empty list for a table the registry has never heard of', () => {
     const resolution = resolveDevinSchema(KNOWN_REFINERY_VERSION);
     expect(knownColumnsFor('not_a_real_table', resolution)).toEqual([]);
+  });
+});
+
+describe('detectUnknownColumns', () => {
+  it('flags the real, confirmed sessions.shell_last_seen_index gap (#298)', () => {
+    const realColumns = [...KNOWN_TABLE_COLUMNS.sessions, 'shell_last_seen_index'];
+    expect(detectUnknownColumns('sessions', realColumns)).toEqual(['shell_last_seen_index']);
+  });
+
+  it('returns empty when every real column is already known', () => {
+    expect(detectUnknownColumns('sessions', KNOWN_TABLE_COLUMNS.sessions)).toEqual([]);
+  });
+
+  it('never affects what reader.ts reads — informational only, never a filter', () => {
+    // KNOWN_TABLE_COLUMNS itself has no bearing on detectUnknownColumns's
+    // own output beyond the diff; this asserts the diff direction is
+    // "real minus known", not the reverse (which would instead flag
+    // columns reader.ts no longer needs to worry about).
+    const missingFromReal = KNOWN_TABLE_COLUMNS.sessions.slice(0, -1);
+    expect(detectUnknownColumns('sessions', missingFromReal)).toEqual([]);
+  });
+
+  it('treats a table the registry has never heard of as all-unknown', () => {
+    expect(detectUnknownColumns('not_a_real_table', ['a', 'b'])).toEqual(['a', 'b']);
   });
 });

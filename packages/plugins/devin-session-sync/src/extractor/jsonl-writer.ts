@@ -1,4 +1,6 @@
+import { mergeSessionHashes } from './session-watermark.js';
 import { buildSubagentSyntheticNodes } from './subagent-lines.js';
+import { mergeToolCallStateHashes } from './tool-call-watermark.js';
 import type {
   DevinExtractedTables,
   DevinJsonlLine,
@@ -17,8 +19,11 @@ import { EMPTY_WATERMARKS } from './types.js';
  * produces byte-identical output — no `Date.now()`/random values, every
  * sort is over a stable, fully-specified key (session id, then node_id via
  * `orderMessageNodes`, then rowid/id), and JSON field order is fixed
- * (`type`, `ts`, `order`, then the raw row's columns in their SQL SELECT
- * order — see `schema-registry.ts`'s `KNOWN_TABLE_COLUMNS`). Synthetic
+ * (`type`, `ts`, `order`, then the raw row's columns in SQLite's own table
+ * column order — reader.ts reads every table via `SELECT *`/dynamic column
+ * discovery as of #298, never a curated list, so this naturally includes
+ * any column not yet named in `schema-registry.ts`'s `KNOWN_TABLE_COLUMNS`,
+ * which is informational only). Synthetic
  * sub-agent prompt/result `message` lines (`subagent-lines.ts`, DS-B28
  * (#294)) are appended after every real message/tool_call line for a
  * session, deterministically derived from the same real, positive-only
@@ -84,13 +89,21 @@ function appendSessionLines(
 ): number {
   let next = order;
   if (session) {
-    // Sessions have no watermark (current-state, not append-only — see
-    // types.ts's DevinWatermarks): a `session` line is appended on every
-    // pass a session is present in `tables.sessions`, including repeated
-    // incremental passes with nothing new for it. This is intentional
-    // last-write-wins semantics for replay, but it means the caller's
-    // read cadence (e.g. a watcher polling sessions.db) directly controls
-    // how many `session` lines accumulate in the append-only output.
+    // Sessions have no row-order watermark (current-state, not
+    // append-only — see types.ts's DevinWatermarks): a `session` line is
+    // appended whenever a session is present in `tables.sessions`. As of
+    // #298, reader.ts's readSessions already drops a session from
+    // `tables.sessions` when its full-row content hash matches the prior
+    // watermark (session-watermark.ts) — deliberately not a
+    // last_activity_at comparison, since that field's coverage of every
+    // real mutation path (skill-only, effort-only changes) is unconfirmed
+    // — so an unchanged session is not re-appended on every incremental
+    // pass; a session with no prior watermark, or whose content genuinely
+    // changed, always is. This is intentional last-write-wins semantics
+    // for replay, but it means the caller's read cadence (e.g. a watcher
+    // polling sessions.db)
+    // still directly controls how many `session` lines accumulate in the
+    // append-only output.
     lines.push(sessionLine(session, next));
     next += 1;
   }
@@ -267,14 +280,12 @@ function computeWatermarks(tables: DevinExtractedTables, prior: DevinWatermarks)
       prior.messageNodesRowId,
       tables.messageNodes.map((m) => m.row_id),
     ),
-    toolCallStateRowId: mergeWatermark(
-      prior.toolCallStateRowId,
-      tables.toolCallStates.map((t) => t.row_id),
-    ),
+    toolCallStateHashes: mergeToolCallStateHashes(prior.toolCallStateHashes, tables.toolCallStates),
     promptHistoryId: mergeWatermark(
       prior.promptHistoryId,
       tables.promptHistory.map((p) => p.id),
     ),
+    sessionsContentHashes: mergeSessionHashes(prior.sessionsContentHashes, tables.sessions),
   };
 }
 
