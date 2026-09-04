@@ -248,6 +248,117 @@ describe('parseDevinJsonlLine — message metadata (compaction fields)', () => {
   });
 });
 
+describe('parseDevinJsonlLine — subagent/* chat_message extensions (DS-B28/#294)', () => {
+  function messageLineWithChatMessageMetadata(
+    chatMessageMetadata: unknown,
+  ): ReturnType<typeof parseDevinJsonlLine> {
+    return parseDevinJsonlLine(
+      line({
+        type: 'message',
+        ts: null,
+        order: 1,
+        row_id: 178,
+        session_id: 'shadow-collar',
+        node_id: 178,
+        parent_node_id: 177,
+        chat_message: JSON.stringify({
+          message_id: 'msg-178',
+          role: 'tool',
+          content: 'Subagent agent_id=44472e00 completed successfully:\n\nreport text',
+          metadata: chatMessageMetadata,
+        }),
+        created_at: null,
+        metadata: null,
+      }),
+      2,
+    );
+  }
+
+  it('parses all four subagent/* keys from chat_message.metadata.extensions', () => {
+    const result = messageLineWithChatMessageMetadata({
+      extensions: {
+        'subagent/profile_name': 'Explore',
+        'subagent/agent_id': '44472e00',
+        'subagent/model': 'Subagent Default',
+        'subagent/chain_node_id': 176,
+        'chisel/tool_call_timing': { started_at: 't0', finished_at: 't1', duration_ms: 81536 },
+      },
+    });
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({
+      subagent: {
+        agentId: '44472e00',
+        profileName: 'Explore',
+        model: 'Subagent Default',
+        chainNodeId: 176,
+      },
+    });
+  });
+
+  it('parses a partial set (background completion has no chain_node_id)', () => {
+    const result = messageLineWithChatMessageMetadata({
+      extensions: {
+        'subagent/agent_id': '55c47591',
+        'subagent/profile_name': 'Explore',
+        'subagent/model': 'Subagent Default',
+      },
+    });
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({
+      subagent: {
+        agentId: '55c47591',
+        profileName: 'Explore',
+        model: 'Subagent Default',
+        chainNodeId: null,
+      },
+    });
+  });
+
+  it('is null for an ordinary node with no chat_message.metadata at all', () => {
+    const result = messageLineWithChatMessageMetadata(undefined);
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({ subagent: null });
+  });
+
+  it('is null when chat_message.metadata.extensions carries no subagent/* keys', () => {
+    const result = messageLineWithChatMessageMetadata({
+      extensions: { 'compact/prior_node_ids': [1, 2, 3] },
+    });
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({ subagent: null });
+  });
+
+  it('never conflates chat_message.metadata with the row-level message_nodes.metadata column', () => {
+    const result = parseDevinJsonlLine(
+      line({
+        type: 'message',
+        ts: null,
+        order: 1,
+        row_id: 178,
+        session_id: 'shadow-collar',
+        node_id: 178,
+        parent_node_id: 177,
+        chat_message: JSON.stringify({
+          message_id: 'msg-178',
+          role: 'tool',
+          content: 'ok',
+          metadata: { extensions: { 'subagent/agent_id': '44472e00' } },
+        }),
+        created_at: null,
+        // Row-level metadata carries an unrelated compaction key, never the
+        // subagent/* keys -- proves the two namespaces are read independently.
+        metadata: JSON.stringify({ summarized_from: 57 }),
+      }),
+      2,
+    );
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({
+      subagent: { agentId: '44472e00' },
+      parsedMetadata: { summarizedFrom: 57 },
+    });
+  });
+});
+
 describe('parseDevinJsonlLine — tool_call', () => {
   it('parses a valid tool_call line preserving the ACP kind', () => {
     const callJson = JSON.stringify({ toolCallId: 'call-1', title: 'Edit file', kind: 'edit' });

@@ -4,6 +4,7 @@ import type { SourceIdentity, UnknownArtifactBundle } from '@lucasschirm/sal-tra
 import {
   componentsBundle,
   linearBundle,
+  subagentBundle,
 } from '../../../transformers/devin-transformer/tests/conformance/fixtures/index.js';
 import { createSha256ContentHasher } from '../../src/ingestion.js';
 import type { VerifiedManifestBundle } from '../../src/manifest.js';
@@ -109,6 +110,15 @@ export async function buildDevinManifestBundle(
      * metrics end-to-end (DS-F11 (#288)).
      */
     readonly useComponentsBundle?: boolean;
+    /**
+     * Use the `subagentBundle` fixture (DS-B28 (#294): a foreground and a
+     * background `run_subagent` invocation with real `subagent/*` tags and
+     * synthetic prompt/result lines, a duplicate `message_nodes` pair, and
+     * an orphaned sub-agent tree) instead of `linearBundle`, to exercise
+     * Sub Agent evidence capture and the ordering-corruption fixes
+     * end-to-end through real ingestion.
+     */
+    readonly useSubagentBundle?: boolean;
   } = {},
 ): Promise<DevinManifestFixture> {
   const projectId = options.projectId ?? 'devin-project';
@@ -116,7 +126,11 @@ export async function buildDevinManifestBundle(
   const sourceId = options.sourceId ?? 'default';
   const environmentId = options.environmentId ?? 'dev';
 
-  let sourceBundle = options.useComponentsBundle ? componentsBundle : linearBundle;
+  let sourceBundle = options.useComponentsBundle
+    ? componentsBundle
+    : options.useSubagentBundle
+      ? subagentBundle
+      : linearBundle;
   sourceBundle = cloneBundleWithNativeSessionId(sourceBundle, sessionId);
   if (options.corruptRootTranscript) {
     sourceBundle = cloneBundleWithRootTranscript(sourceBundle, '');

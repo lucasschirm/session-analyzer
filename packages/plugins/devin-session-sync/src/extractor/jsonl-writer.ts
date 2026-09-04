@@ -1,3 +1,4 @@
+import { buildSubagentSyntheticNodes } from './subagent-lines.js';
 import type {
   DevinExtractedTables,
   DevinJsonlLine,
@@ -17,7 +18,11 @@ import { EMPTY_WATERMARKS } from './types.js';
  * sort is over a stable, fully-specified key (session id, then node_id via
  * `orderMessageNodes`, then rowid/id), and JSON field order is fixed
  * (`type`, `ts`, `order`, then the raw row's columns in their SQL SELECT
- * order — see `schema-registry.ts`'s `KNOWN_TABLE_COLUMNS`).
+ * order — see `schema-registry.ts`'s `KNOWN_TABLE_COLUMNS`). Synthetic
+ * sub-agent prompt/result `message` lines (`subagent-lines.ts`, DS-B28
+ * (#294)) are appended after every real message/tool_call line for a
+ * session, deterministically derived from the same real, positive-only
+ * `node_id`/`tool_call_id` inputs — see `appendSubagentLines`.
  */
 
 export interface BuildDevinJsonlOptions {
@@ -90,7 +95,31 @@ function appendSessionLines(
     next += 1;
   }
   next = appendMessageAndToolCallLines(lines, next, buckets.nodes, buckets.toolCalls);
+  next = appendSubagentLines(lines, next, buckets.nodes, buckets.toolCalls);
   next = appendPromptLines(lines, next, buckets.prompts);
+  return next;
+}
+
+/**
+ * Appends the synthetic sub-agent prompt/result `message` lines (DS-B28
+ * (#294) design item 4), reusing `messageLine()` verbatim so their shape is
+ * byte-identical to a real `message_nodes` row's line — no bespoke format.
+ * Appended after every real message/tool_call line so real `order` values
+ * never shift; downstream (`orderMessages` in `devin-transformer`) is what
+ * segregates these (and any other non-main-root node) out of main
+ * `turnOrdinal` sequencing, not this extraction-order placement.
+ */
+function appendSubagentLines(
+  lines: DevinJsonlLine[],
+  order: number,
+  nodes: DevinMessageNodeRow[],
+  toolCalls: DevinToolCallStateRow[],
+): number {
+  let next = order;
+  for (const synthetic of buildSubagentSyntheticNodes(nodes, toolCalls)) {
+    lines.push(messageLine(synthetic, next));
+    next += 1;
+  }
   return next;
 }
 

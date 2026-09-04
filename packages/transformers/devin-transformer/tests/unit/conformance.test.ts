@@ -46,4 +46,85 @@ describe('DevinTransformer conformance', () => {
     expect(result.configurationSnapshot.completeness.agent).toBe('complete');
     expect(result.configurationSnapshot.temporalRole).toBe('runtime');
   });
+
+  it('DS-B28 (#294): the subagent-evidence fixture produces subagent_turn evidence for both the foreground and background invocation, with clean main-chain turnOrdinal', () => {
+    const fixture = devinConformanceFixtures.fixtures.find((f) => f.name === 'subagent-evidence');
+    expect(fixture).toBeDefined();
+    if (!fixture) return;
+    const result = DevinTransformer.transform(fixture.bundle, fixture.context);
+
+    const subagentTurns = result.evidence.filter(
+      (r) =>
+        r.recordType === 'normalized_event' &&
+        (r.payload as { category?: string }).category === 'subagent_turn',
+    );
+    expect(subagentTurns).toHaveLength(4); // 2 prompts + 2 results (foreground + background)
+
+    const byAgent = new Map<string, typeof subagentTurns>();
+    for (const record of subagentTurns) {
+      const payload = record.payload as { agentId: string };
+      byAgent.set(payload.agentId, [...(byAgent.get(payload.agentId) ?? []), record]);
+    }
+    expect(byAgent.get('44472e00')).toHaveLength(2);
+    expect(byAgent.get('55c47591')).toHaveLength(2);
+
+    const backgroundResult = subagentTurns.find((r) => {
+      const p = r.payload as { agentId: string; kind: string };
+      return p.agentId === '55c47591' && p.kind === 'result';
+    });
+    const backgroundPayload = backgroundResult?.payload as {
+      content?: string;
+      isBackground?: boolean;
+    };
+    // The real report, sourced from the untagged notification node -- not
+    // the "started" pointer text (finding #3).
+    expect(backgroundPayload.content).toBe(
+      '<subagent_completion_notification>\n[Background subagent with agent_id=55c47591 completed]\n\nfull background report',
+    );
+    expect(backgroundPayload.isBackground).toBe(true);
+
+    // No fabricated token/cache/cost/model-id fields anywhere.
+    for (const record of subagentTurns) {
+      const payload = record.payload as Record<string, unknown>;
+      expect(payload).not.toHaveProperty('tokens');
+      expect(payload).not.toHaveProperty('cost');
+      expect(payload).not.toHaveProperty('cachedTokens');
+    }
+
+    // The generic orphan tree (finding #5) is captured too, but never
+    // claims a subagent correlation it can't back up.
+    const detached = result.evidence.filter(
+      (r) =>
+        r.recordType === 'normalized_event' &&
+        (r.payload as { category?: string }).category === 'detached_conversation',
+    );
+    expect(detached).toHaveLength(1);
+    expect((detached[0].payload as { rootNodeId: number }).rootNodeId).toBe(317);
+
+    // Finding #4 (duplicate node pair) and finding #5 (orphan tree) do not
+    // corrupt main turnOrdinal: exactly one turn per real, deduped,
+    // main-chain node id, never inflated by the duplicate or the orphan.
+    const turnRecords = result.evidence.filter((r) => r.recordType === 'turn');
+    const ordinals = turnRecords.map((r) => (r.payload as { ordinal: number }).ordinal);
+    expect(new Set(ordinals).size).toBe(ordinals.length); // no duplicate ordinals
+    const turnNodeIds = turnRecords.map((r) => (r.payload as { nodeId: number }).nodeId);
+    expect(turnNodeIds).not.toContain(249); // the dropped duplicate
+    expect(turnNodeIds).not.toContain(317); // the orphan tree's root
+
+    // DS-B28 design item 1's "wherever present" acceptance criterion: the
+    // real foreground-tagged node (178) is naturally part of the MAIN
+    // chain (never detached), so it must surface its subagent/* tags on
+    // its own ordinary `message` record too -- not only via the synthetic
+    // subagent_turn records built from detachedMessages.
+    const messageRecords = result.evidence.filter((r) => r.recordType === 'message');
+    const taggedMainChainMessage = messageRecords.find(
+      (r) => (r.payload as { nodeId: number }).nodeId === 178,
+    );
+    expect(taggedMainChainMessage?.payload).toMatchObject({
+      subagentAgentId: '44472e00',
+      subagentProfileName: 'Explore',
+      subagentModel: 'Subagent Default',
+      subagentChainNodeId: 176,
+    });
+  });
 });

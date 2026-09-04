@@ -30,6 +30,7 @@ function node(
     createdAt,
     metadata: metadata ? JSON.stringify(metadata) : null,
     parsedMetadata,
+    subagent: null,
   };
 }
 

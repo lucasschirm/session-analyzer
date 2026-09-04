@@ -4,7 +4,19 @@ import {
   deriveComparabilityGroupId,
 } from '@lucasschirm/sal-transformer-shared';
 
-export const DEVIN_METRIC_DEFINITION_VERSION = '0.1.0';
+/**
+ * Bumped 0.1.0 -> 0.2.0 for DS-B28 (#294): `devin:turns:count` (and every
+ * other metric sharing this harness-wide definition-version stamp, per
+ * `.agents/rules/metric-meaning-versioning.md`) changed POPULATION —
+ * `orderMessages` (`parse-bundle.ts`) now dedups duplicate `message_nodes`
+ * pairs (finding #4) and excludes orphaned sub-agent trees (finding #5)
+ * from `orderedMessages`, both of which `devin:turns:count` derives from
+ * directly. A session containing either pattern now reports a genuinely
+ * different (correct, non-inflated) value than a pre-fix generation would
+ * have — the two must never be aggregated together, hence the bump rather
+ * than a silent in-place correction.
+ */
+export const DEVIN_METRIC_DEFINITION_VERSION = '0.2.0';
 export const DEVIN_NATIVE_MAPPING_VERSION = 'devin-0.1.0';
 export const DEVIN_STATISTICAL_POLICY_ID = 'devin-default';
 export const DEVIN_PROVENANCE_REQUIREMENT = 'source_artifact_event_field';

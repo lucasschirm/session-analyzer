@@ -79,6 +79,46 @@ export interface DevinMessageNodeMetadata {
   extensions?: Record<string, unknown>;
 }
 
+/**
+ * Parsed shape of the four `subagent/*` extension keys Devin CLI stamps on a
+ * sub-agent-related `message_nodes` row, read from
+ * `chat_message.metadata.extensions` (NOT the row-level `message_nodes.metadata`
+ * column parsed by `DevinMessageNodeMetadata` above — see that type's own
+ * doc comment on the two-namespace distinction). Confirmed real, populated
+ * data (DS-B28 (#294) finding #2); each field stays `null` when the source
+ * extensions bag doesn't carry it, never a fabricated default
+ * (`missing-is-never-zero`).
+ */
+export interface DevinSubagentExtensions {
+  /** `subagent/agent_id` — the sub-agent invocation's opaque id. Confirmed
+   * globally unique-in-practice across every sample checked during DS-B28's
+   * research, but Devin gives no structural uniqueness guarantee (it's an
+   * opaque short hex token) — this is a residual identity risk, not a
+   * guarantee, per `.agents/rules/manifest-backed-classification.md`. */
+  agentId: string | null;
+  /** `subagent/profile_name` — a display LABEL (e.g. `"Explore"`), never an
+   * identifier. Per `.agents/rules/component-identity-not-display-name.md`,
+   * pair it with the real `rawInput.profile` value (e.g. `"subagent_explore"`,
+   * already captured by DS-F11 (#288)) rather than keying on this alone. */
+  profileName: string | null;
+  /** `subagent/model` — always observed as a coarse label (e.g.
+   * `"Subagent Default"`), never a resolved model id. Must never be
+   * upgraded/guessed into a resolved model identifier
+   * (`.agents/rules/missing-is-never-zero.md`). */
+  model: string | null;
+  /**
+   * `subagent/chain_node_id`, captured raw. **Its exact semantics are NOT
+   * confirmed** (DS-B28 (#294) finding #2): on a real observed foreground
+   * result (node 178), this was `176` — neither the calling `run_subagent`
+   * node's id (`177`) nor that node's own parent (`90`). Do not treat this
+   * as a back-pointer, a parent reference, or any other load-bearing
+   * correlation without dedicated further verification; it is surfaced here
+   * as raw data only, per `missing-is-never-zero`'s spirit of never
+   * presenting a guess as fact.
+   */
+  chainNodeId: number | null;
+}
+
 /** A parsed `message_nodes` row line. */
 export interface DevinMessageLine {
   type: 'message';
@@ -99,6 +139,12 @@ export interface DevinMessageLine {
   metadata: string | null;
   /** `metadata`, parsed and typed; `null` if absent/unparseable/not an object. */
   parsedMetadata: DevinMessageNodeMetadata | null;
+  /**
+   * `chat_message.metadata.extensions`' four `subagent/*` keys, parsed
+   * wherever present (DS-B28 (#294) design item 1) — `null` when this node
+   * carries none of them (the overwhelming majority of ordinary nodes).
+   */
+  subagent: DevinSubagentExtensions | null;
 }
 
 /** A parsed `tool_call_state` row line: no timestamp column exists upstream. */
