@@ -36,7 +36,7 @@ describe('DevinTransformer conformance', () => {
     });
   }
 
-  it('DS-B27 (#285): the model-switch fixture emits one model_usage record per agent step with distinct models, and token totals still balance', () => {
+  it('DS-B25 (#285): the model-switch fixture emits one model_usage record per agent step with distinct models, and token totals still balance', () => {
     const fixture = devinConformanceFixtures.fixtures.find((f) => f.name === 'model-switch');
     expect(fixture).toBeDefined();
     if (!fixture) return;

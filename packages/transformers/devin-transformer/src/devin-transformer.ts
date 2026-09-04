@@ -66,7 +66,7 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // `deterministicGenerationId` (packages/db/src/ingestion.ts) alongside
 // `DEVIN_METRIC_DEFINITION_VERSION`, forcing a fresh generation on reprocess
 // rather than silently mixing pre-/post-fix output.
-// Bumped 0.3.0 -> 0.4.0 for DS-B27 (#285): `buildTokenUsageRecords`'s
+// Bumped 0.3.0 -> 0.4.0 for DS-B25 (#285): `buildTokenUsageRecords`'s
 // `model_usage` evidence-record shape changed (one record per ATIF
 // generation step instead of always one per session, per-turn `model`
 // attribution). No metric-version bump: `devin:tokens:total:*`'s formula,

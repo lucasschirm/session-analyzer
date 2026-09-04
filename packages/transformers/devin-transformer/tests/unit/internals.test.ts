@@ -51,7 +51,7 @@ describe('Internal token usage', () => {
     expect(result.records[0]?.payload).toMatchObject({ model: 'devin-default' });
   });
 
-  // DS-B27 (#285) repro: the real `shadow-collar` session's steps[8]/steps[10]
+  // DS-B25 (#285) repro: the real `shadow-collar` session's steps[8]/steps[10]
   // shape (findings 3a/3b) — two agent-generation steps, `glm-5-2` then
   // `swe-1-7`, whose per-step metrics sum exactly to `final_metrics`.
   // Mid-session model switch must yield 2 distinct model_usage records, not
@@ -97,6 +97,7 @@ describe('Internal token usage', () => {
       inputTokens: 18071,
       outputTokens: 59,
       cacheReadTokens: 11874,
+      tokenValuesExact: true,
     });
     expect(result.records[1]?.payload).toMatchObject({
       model: 'swe-1-7',
@@ -104,10 +105,52 @@ describe('Internal token usage', () => {
       inputTokens: 17033,
       outputTokens: 37,
       cacheReadTokens: 11136,
+      tokenValuesExact: true,
     });
+    // Each record's provenance must independently identify its own step —
+    // not collapse to one shared session-level pointer (mirrors
+    // claude-code-usage.ts's per-turn `entry.uuid` provenance).
+    expect(result.records[0]?.sourceEventId).not.toBe(result.records[1]?.sourceEventId);
+    expect(result.records[0]?.provenance.sourceEventId).toBe(result.records[0]?.sourceEventId);
     expect(result.prompt).toBe(35104);
     expect(result.completion).toBe(96);
     expect(result.cached).toBe(23010);
+  });
+
+  it('marks a step record inexact when any individual metrics field is missing', () => {
+    const session = {
+      id: 's1',
+      metadata: null,
+      model: 'swe-1-7',
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[1];
+    const atif = {
+      finalMetrics: {
+        totalPromptTokens: 100,
+        totalCompletionTokens: 50,
+        totalCachedTokens: 10,
+        totalSteps: 1,
+      },
+      steps: [
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 1,
+          generationModel: 'glm-5-2',
+          // cachedTokens individually missing — the whole `metrics` object
+          // is still present, so this step is NOT skipped, but it must not
+          // be certified `tokenValuesExact: true` (missing-is-never-zero).
+          metrics: { promptTokens: 100, completionTokens: 50, cachedTokens: null },
+        },
+      ],
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
+    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1');
+
+    expect(result.records.length).toBe(1);
+    expect(result.records[0]?.payload).toMatchObject({
+      cacheReadTokens: null,
+      tokenValuesExact: false,
+    });
   });
 
   it('falls back to a single aggregate record when no ATIF step has metrics', () => {

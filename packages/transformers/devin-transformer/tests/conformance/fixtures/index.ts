@@ -155,7 +155,7 @@ interface AtifTranscriptStep {
   timestamp: string;
   role: string;
   text: string;
-  /** ATIF-real `source: "agent"` step extras (findings 3a/3b of DS-B27
+  /** ATIF-real `source: "agent"` step extras (findings 3a/3b of DS-B25
    * (#285)): `generation_model` is the trustworthy per-step model signal. */
   extra?: { generation_model: string };
   metrics?: { prompt_tokens: number; completion_tokens: number; cached_tokens: number };
@@ -298,7 +298,7 @@ export const branchyBundle: UnknownArtifactBundle = bundle([
   artifact('native/models.json', modelsJson(), 'application/json'),
 ]);
 
-// DS-B27 (#285): a mid-session model switch (glm-5-2 -> swe-1-7) across two
+// DS-B25 (#285): a mid-session model switch (glm-5-2 -> swe-1-7) across two
 // ATIF agent-generation steps, using the exact token counts from the real
 // `shadow-collar` repro (findings 3a/3b) — exercises per-step `model_usage`
 // attribution instead of a single last-write-wins record. `final_metrics`
@@ -846,7 +846,7 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
       'model-switch',
       'A session with a mid-session model switch (glm-5-2 -> swe-1-7) across two ATIF ' +
         "agent-generation steps, using the real shadow-collar repro's token counts " +
-        '(DS-B27 (#285)) — exercises per-step model_usage attribution instead of a single ' +
+        '(DS-B25 (#285)) — exercises per-step model_usage attribution instead of a single ' +
         'last-write-wins record.',
       modelSwitchBundle,
       ['root', 'model-switch', 'tokens', 'deterministic'],

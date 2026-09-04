@@ -6,7 +6,7 @@ import type {
   DevinSessionLine,
 } from '@lucasschirm/sal-devin-session-parser';
 import type { NormalizedEvidenceRecord } from '@lucasschirm/sal-transformer-shared';
-import { stableId } from './session-spine.js';
+import { provenanceForArtifact, stableId } from './session-spine.js';
 
 export interface TokenUsageResult {
   readonly records: readonly NormalizedEvidenceRecord[];
@@ -145,11 +145,50 @@ function aggregateTokens(
 }
 
 /**
+ * A step's metrics are only certified "exact" when every field the payload
+ * reports is actually present — a step with `metrics: {}` or any
+ * individually-missing field (`AtifStepMetrics` fields are each
+ * independently nullable, see the parser) must not be marked exact, per
+ * `.agents/rules/missing-is-never-zero.md`'s "exact vs. estimated stays
+ * separable" invariant.
+ */
+function stepMetricsAreExact(metrics: NonNullable<AtifStep['metrics']>): boolean {
+  return (
+    metrics.promptTokens !== null &&
+    metrics.completionTokens !== null &&
+    metrics.cachedTokens !== null
+  );
+}
+
+/** Assembles a `model_usage` evidence record, sharing the provenance shape. */
+function usageRecord(
+  recordId: string,
+  sessionId: string,
+  sourceEventId: string,
+  sourceField: string,
+  rootArtifactId: string,
+  payload: NormalizedEvidenceRecord['payload'],
+): NormalizedEvidenceRecord {
+  return {
+    recordId,
+    recordType: 'model_usage',
+    sessionId,
+    sourceEventId,
+    sourceField,
+    provenance: provenanceForArtifact(rootArtifactId, sourceEventId, sourceField),
+    payload,
+  };
+}
+
+/**
  * Tier 1: one `model_usage` record per ATIF step carrying real `metrics`
  * (`source: "agent"` generation steps only — see `AtifStep` doc comment).
  * `requestOrder` prefers the step's own `stepId`, falling back to its
  * 1-based position in `atif.steps` when `stepId` is absent (older/degenerate
  * ATIF). Steps without `metrics` are skipped, not padded with zeros.
+ * Per-step, not per-session: `sourceEventId` independently identifies the
+ * step that produced each record (mirrors claude-code-usage.ts's per-turn
+ * `entry.uuid` provenance), rather than collapsing to one shared pointer.
  */
 function stepUsageRecord(
   sessionId: string,
@@ -161,32 +200,22 @@ function stepUsageRecord(
   rootArtifactId: string,
 ): NormalizedEvidenceRecord {
   const requestOrder = step.stepId ?? index + 1;
-  return {
-    recordId: stableId('model_usage', { session: sessionId, step: requestOrder }),
-    recordType: 'model_usage',
-    sessionId,
-    sourceEventId: session?.id ?? 'unknown',
-    sourceField: 'atif_step',
-    provenance: {
-      artifactId: rootArtifactId,
-      sourceEventId: session?.id ?? 'unknown',
-      sourceField: 'atif_step',
-      path: rootArtifactId,
-    },
-    payload: {
-      requestOrder,
-      requestId: `${sessionId}:step:${requestOrder}`,
-      model: resolveModelId(step.generationModel, models),
-      provider: 'unknown',
-      inputTokens: metrics.promptTokens,
-      outputTokens: metrics.completionTokens,
-      cacheCreationTokens: null,
-      cacheReadTokens: metrics.cachedTokens,
-      tokenValuesExact: true,
-      cost: null,
-      costExact: false,
-    },
+  const sourceEventId = `${session?.id ?? 'unknown'}:step:${requestOrder}`;
+  const payload = {
+    requestOrder,
+    requestId: `${sessionId}:step:${requestOrder}`,
+    model: resolveModelId(step.generationModel, models),
+    provider: 'unknown',
+    inputTokens: metrics.promptTokens,
+    outputTokens: metrics.completionTokens,
+    cacheCreationTokens: null,
+    cacheReadTokens: metrics.cachedTokens,
+    tokenValuesExact: stepMetricsAreExact(metrics),
+    cost: null,
+    costExact: false,
   };
+  const recordId = stableId('model_usage', { session: sessionId, step: requestOrder });
+  return usageRecord(recordId, sessionId, sourceEventId, 'atif_step', rootArtifactId, payload);
 }
 
 function buildStepRecords(
@@ -214,36 +243,26 @@ function sessionLevelRecord(
   rootArtifactId: string,
   aggregate: TokenAggregate,
 ): NormalizedEvidenceRecord {
-  return {
-    recordId: stableId('model_usage', { session: sessionId }),
-    recordType: 'model_usage',
-    sessionId,
-    sourceEventId: session?.id ?? 'unknown',
-    sourceField: 'final_metrics',
-    provenance: {
-      artifactId: rootArtifactId,
-      sourceEventId: session?.id ?? 'unknown',
-      sourceField: 'final_metrics',
-      path: rootArtifactId,
-    },
-    payload: {
-      requestOrder: 1,
-      requestId: session?.id ?? 'unknown',
-      model: resolveModel(session, models),
-      provider: 'unknown',
-      inputTokens: aggregate.prompt,
-      outputTokens: aggregate.completion,
-      cacheCreationTokens: null,
-      cacheReadTokens: aggregate.cached,
-      tokenValuesExact: aggregate.exact,
-      cost: null,
-      costExact: false,
-    },
+  const sourceEventId = session?.id ?? 'unknown';
+  const payload = {
+    requestOrder: 1,
+    requestId: sourceEventId,
+    model: resolveModel(session, models),
+    provider: 'unknown',
+    inputTokens: aggregate.prompt,
+    outputTokens: aggregate.completion,
+    cacheCreationTokens: null,
+    cacheReadTokens: aggregate.cached,
+    tokenValuesExact: aggregate.exact,
+    cost: null,
+    costExact: false,
   };
+  const recordId = stableId('model_usage', { session: sessionId });
+  return usageRecord(recordId, sessionId, sourceEventId, 'final_metrics', rootArtifactId, payload);
 }
 
 /**
- * Three-tier fallback (richest available source wins), per DS-B27's
+ * Three-tier fallback (richest available source wins), per DS-B25's
  * per-turn-model-attribution fix:
  * 1. Per-ATIF-step `model_usage` records when at least one step carries
  *    real `metrics` (a genuine agent-generation step) — attributes usage to
