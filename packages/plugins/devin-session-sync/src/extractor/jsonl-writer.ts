@@ -30,11 +30,41 @@ import { EMPTY_WATERMARKS } from './types.js';
  * `node_id`/`tool_call_id` inputs — see `appendSubagentLines`.
  */
 
+/**
+ * Opt-in full context for subagent synthetic-line derivation, independent of
+ * `tables`' own (possibly incrementally-filtered) rows — see
+ * `BuildDevinJsonlOptions.subagentContext` and `session-sync.ts`'s
+ * `materializeSessionTranscript`, which is the only current caller that
+ * supplies this. Fixes the cross-pass correlation regression: without it, a
+ * subagent's tagged node (written pass N) and its completion notification
+ * (arriving pass N+k) are never seen together, so the synthetic
+ * prompt/result pair is silently never generated.
+ */
+export interface SubagentSyntheticContext {
+  /** Full (not incrementally-filtered) message-node/tool-call rows, spanning
+   * every session present in a call — grouped internally by `session_id`. */
+  messageNodes: DevinMessageNodeRow[];
+  toolCallStates: DevinToolCallStateRow[];
+  /** `node_id`s of synthetic subagent lines already written to the
+   * transcript (see `deriveWatermarksFromExistingLines`'s `messageNodeIds`);
+   * a newly-derived synthetic node whose id is already here is skipped so a
+   * pair is never emitted twice. */
+  excludeNodeIds: ReadonlySet<number>;
+}
+
 export interface BuildDevinJsonlOptions {
   /** Starting value for the monotonic `order` counter (continues a prior run). */
   orderOffset?: number;
   /** Watermarks from the prior run, merged (never regressed) into the result. */
   priorWatermarks?: DevinWatermarks;
+  /**
+   * Opt-in: when provided, subagent synthetic prompt/result lines are
+   * derived from this context instead of `tables`' own nodes/toolCalls, and
+   * deduped against `excludeNodeIds`. Omitted entirely, behavior (including
+   * every other existing caller) is byte-identical to before this option
+   * existed — see `appendSubagentLines`.
+   */
+  subagentContext?: SubagentSyntheticContext;
 }
 
 export interface BuildDevinJsonlResult {
@@ -52,18 +82,61 @@ export function buildDevinJsonl(
   const nodesBySession = groupBy(tables.messageNodes, (m) => m.session_id);
   const promptsBySession = groupBy(tables.promptHistory, (p) => p.session_id);
   const toolCallsBySession = groupBy(tables.toolCallStates, (t) => t.session_id);
+  const subagentIndex = indexSubagentContext(options.subagentContext);
 
   let order = options.orderOffset ?? 0;
   const lines: DevinJsonlLine[] = [];
   for (const sessionId of collectSessionIds(tables)) {
-    order = appendSessionLines(lines, order, sessionsById.get(sessionId), {
-      nodes: nodesBySession.get(sessionId) ?? [],
-      prompts: promptsBySession.get(sessionId) ?? [],
-      toolCalls: toolCallsBySession.get(sessionId) ?? [],
-    });
+    order = appendSessionLines(
+      lines,
+      order,
+      sessionsById.get(sessionId),
+      {
+        nodes: nodesBySession.get(sessionId) ?? [],
+        prompts: promptsBySession.get(sessionId) ?? [],
+        toolCalls: toolCallsBySession.get(sessionId) ?? [],
+      },
+      subagentBucketsFor(subagentIndex, sessionId),
+    );
   }
   const prior = options.priorWatermarks ?? EMPTY_WATERMARKS;
   return { lines, text: serializeLines(lines), watermarks: computeWatermarks(tables, prior) };
+}
+
+interface SubagentContextBuckets {
+  nodes: DevinMessageNodeRow[];
+  toolCalls: DevinToolCallStateRow[];
+  excludeNodeIds: ReadonlySet<number>;
+}
+
+interface SubagentIndex {
+  nodesBySession: Map<string, DevinMessageNodeRow[]>;
+  toolCallsBySession: Map<string, DevinToolCallStateRow[]>;
+  excludeNodeIds: ReadonlySet<number>;
+}
+
+/** Groups an opt-in `SubagentSyntheticContext` by session, once per `buildDevinJsonl` call. */
+function indexSubagentContext(
+  context: SubagentSyntheticContext | undefined,
+): SubagentIndex | undefined {
+  if (!context) return undefined;
+  return {
+    nodesBySession: groupBy(context.messageNodes, (m) => m.session_id),
+    toolCallsBySession: groupBy(context.toolCallStates, (t) => t.session_id),
+    excludeNodeIds: context.excludeNodeIds,
+  };
+}
+
+function subagentBucketsFor(
+  index: SubagentIndex | undefined,
+  sessionId: string,
+): SubagentContextBuckets | undefined {
+  if (!index) return undefined;
+  return {
+    nodes: index.nodesBySession.get(sessionId) ?? [],
+    toolCalls: index.toolCallsBySession.get(sessionId) ?? [],
+    excludeNodeIds: index.excludeNodeIds,
+  };
 }
 
 function collectSessionIds(tables: DevinExtractedTables): string[] {
@@ -86,6 +159,7 @@ function appendSessionLines(
   order: number,
   session: DevinSessionRow | undefined,
   buckets: SessionBuckets,
+  subagentBuckets?: SubagentContextBuckets,
 ): number {
   let next = order;
   if (session) {
@@ -108,7 +182,13 @@ function appendSessionLines(
     next += 1;
   }
   next = appendMessageAndToolCallLines(lines, next, buckets.nodes, buckets.toolCalls);
-  next = appendSubagentLines(lines, next, buckets.nodes, buckets.toolCalls);
+  next = appendSubagentLines(
+    lines,
+    next,
+    subagentBuckets?.nodes ?? buckets.nodes,
+    subagentBuckets?.toolCalls ?? buckets.toolCalls,
+    subagentBuckets?.excludeNodeIds,
+  );
   next = appendPromptLines(lines, next, buckets.prompts);
   return next;
 }
@@ -121,15 +201,25 @@ function appendSessionLines(
  * never shift; downstream (`orderMessages` in `devin-transformer`) is what
  * segregates these (and any other non-main-root node) out of main
  * `turnOrdinal` sequencing, not this extraction-order placement.
+ *
+ * `nodes`/`toolCalls` are `subagentBuckets`' FULL context when the caller
+ * opted in (`BuildDevinJsonlOptions.subagentContext`), falling back to the
+ * (possibly incrementally-filtered) real-line buckets otherwise — see
+ * `appendSessionLines`. `excludeNodeIds`, when given, skips any derived
+ * synthetic node whose deterministic id was already written in a prior pass
+ * (dedup; `buildSubagentSyntheticNodes` is pure/deterministic so the same
+ * correlated pair always re-derives to the same ids).
  */
 function appendSubagentLines(
   lines: DevinJsonlLine[],
   order: number,
   nodes: DevinMessageNodeRow[],
   toolCalls: DevinToolCallStateRow[],
+  excludeNodeIds?: ReadonlySet<number>,
 ): number {
   let next = order;
   for (const synthetic of buildSubagentSyntheticNodes(nodes, toolCalls)) {
+    if (excludeNodeIds?.has(synthetic.node_id)) continue;
     lines.push(messageLine(synthetic, next));
     next += 1;
   }

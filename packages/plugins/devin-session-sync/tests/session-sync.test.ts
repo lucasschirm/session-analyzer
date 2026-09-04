@@ -12,7 +12,15 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DevinHarnessProfile } from '../src/devin-profile.js';
-import type { DevinExtractedTables, DevinSchemaDescriptor } from '../src/extractor/types.js';
+import { buildDevinJsonl } from '../src/extractor/jsonl-writer.js';
+import type {
+  DevinExtractedTables,
+  DevinMessageNodeRow,
+  DevinPromptHistoryRow,
+  DevinSchemaDescriptor,
+  DevinSessionRow,
+  DevinToolCallStateRow,
+} from '../src/extractor/types.js';
 import {
   applyHardBlocklist,
   buildSchemaDescriptorCandidate,
@@ -51,6 +59,94 @@ const SCHEMA_DESCRIPTOR: DevinSchemaDescriptor = {
   supported: true,
   warnings: [],
 };
+
+function sessionRow(overrides: Partial<DevinSessionRow> = {}): DevinSessionRow {
+  return {
+    id: 'sess-1',
+    working_directory: '/tmp',
+    backend_type: null,
+    model: null,
+    agent_mode: null,
+    created_at: null,
+    last_activity_at: 500,
+    title: null,
+    main_chain_id: null,
+    cogs_json: null,
+    workspace_dirs: null,
+    hidden: null,
+    metadata: null,
+    ...overrides,
+  };
+}
+
+function messageRow(overrides: Partial<DevinMessageNodeRow> = {}): DevinMessageNodeRow {
+  return {
+    row_id: 1,
+    session_id: 'sess-1',
+    node_id: 1,
+    parent_node_id: null,
+    chat_message: '{"role":"user","content":"hi"}',
+    created_at: 1,
+    metadata: null,
+    ...overrides,
+  };
+}
+
+function promptRow(overrides: Partial<DevinPromptHistoryRow> = {}): DevinPromptHistoryRow {
+  return { id: 1, content: 'hi', timestamp: 1, session_id: 'sess-1', is_shell: 0, ...overrides };
+}
+
+function toolCallRow(overrides: Partial<DevinToolCallStateRow> = {}): DevinToolCallStateRow {
+  return {
+    row_id: 1,
+    session_id: 'sess-1',
+    tool_call_id: 'call-1',
+    tool_call_json: '{}',
+    tool_call_update_json: null,
+    ...overrides,
+  };
+}
+
+function tablesOf(overrides: Partial<DevinExtractedTables> = {}): DevinExtractedTables {
+  return { sessions: [], messageNodes: [], promptHistory: [], toolCallStates: [], ...overrides };
+}
+
+// --- Subagent cross-pass correlation fixtures (regression: issue reported
+// alongside #286) -----------------------------------------------------------
+
+function subagentNode(
+  rowId: number,
+  nodeId: number,
+  parentNodeId: number | null,
+  chatMessage: Record<string, unknown>,
+): DevinMessageNodeRow {
+  return messageRow({
+    row_id: rowId,
+    node_id: nodeId,
+    parent_node_id: parentNodeId,
+    chat_message: JSON.stringify(chatMessage),
+  });
+}
+
+function runSubagentToolCall(toolCallId: string, task: string): DevinToolCallStateRow {
+  return toolCallRow({
+    row_id: 1,
+    tool_call_id: toolCallId,
+    tool_call_json: JSON.stringify({
+      toolCallId,
+      rawInput: { profile: 'subagent_explore', task },
+      _meta: { 'cognition.ai/inferenceToolName': 'run_subagent' },
+    }),
+  });
+}
+
+function syntheticMessageLines(content: string): Array<Record<string, unknown>> {
+  return content
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l))
+    .filter((l) => l.type === 'message' && l.row_id === -1);
+}
 
 describe('materializeSessionTranscript', () => {
   let dataDir: string;
@@ -108,6 +204,277 @@ describe('materializeSessionTranscript', () => {
     const content = await fsp.readFile(transcriptPath, 'utf8');
     expect(content).toContain('"sess-1"');
     expect(content).not.toContain('"sess-2"');
+  });
+
+  it("appends only newly-arrived rows on a second call, leaving the first call's content byte-for-byte untouched as a strict prefix", async () => {
+    const batch1 = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1, node_id: 1 })],
+    });
+    const transcriptPath = await materializeSessionTranscript(batch1, 'sess-1', dataDir);
+    const afterFirst = await fsp.readFile(transcriptPath, 'utf8');
+
+    const batch2 = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1, node_id: 1 }), messageRow({ row_id: 2, node_id: 2 })],
+    });
+    await materializeSessionTranscript(batch2, 'sess-1', dataDir);
+    const afterSecond = await fsp.readFile(transcriptPath, 'utf8');
+
+    expect(afterSecond.startsWith(afterFirst)).toBe(true);
+    const appendedLines = afterSecond.slice(afterFirst.length).trim().split('\n');
+    // Exactly the one new message row, plus one more re-appended session line.
+    expect(appendedLines).toHaveLength(2);
+    expect(appendedLines.some((l) => JSON.parse(l).node_id === 2)).toBe(true);
+    expect(appendedLines.filter((l) => JSON.parse(l).type === 'session')).toHaveLength(1);
+  });
+
+  it('a session synced twice with no new rows grows by exactly one line (the re-appended session line)', async () => {
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow()],
+      promptHistory: [promptRow()],
+      toolCallStates: [toolCallRow()],
+    });
+    const transcriptPath = await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const afterFirst = await fsp.readFile(transcriptPath, 'utf8');
+    const firstLineCount = afterFirst.trim().split('\n').length;
+
+    // Same tables again (simulating a re-sync with nothing new since the
+    // last pass) — this is the primary "we used to rewrite everything, now
+    // we don't" regression proof.
+    await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const afterSecond = await fsp.readFile(transcriptPath, 'utf8');
+
+    expect(afterSecond.startsWith(afterFirst)).toBe(true);
+    const secondLineCount = afterSecond.trim().split('\n').length;
+    expect(secondLineCount - firstLineCount).toBe(1);
+    const appended = afterSecond.slice(afterFirst.length).trim();
+    expect(JSON.parse(appended).type).toBe('session');
+  });
+
+  it('two concurrent syncs of the same session never duplicate rows (FileLock serializes the read-derive-append critical section)', async () => {
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1, node_id: 1 })],
+      promptHistory: [promptRow({ id: 1 })],
+      toolCallStates: [toolCallRow()],
+    });
+
+    // Two independent "processes" (e.g. a hook and the watcher poll loop)
+    // racing to sync the SAME session with the SAME source snapshot. Without
+    // FileLock, each would independently read "no existing file"/"no prior
+    // watermark" and each append its own full copy of every row — permanent
+    // duplication the old full-rewrite never risked (this issue found and
+    // fixed during PR review, since append-only isn't self-correcting under
+    // a race the way a full rewrite was).
+    const [pathA, pathB] = await Promise.all([
+      materializeSessionTranscript(tables, 'sess-1', dataDir),
+      materializeSessionTranscript(tables, 'sess-1', dataDir),
+    ]);
+    expect(pathA).toBe(pathB);
+
+    const content = await fsp.readFile(pathA, 'utf8');
+    const lines = content
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    // `session` lines are intentionally re-appended every call regardless of
+    // content (pre-existing last-write-wins replay semantics, unaffected by
+    // this fix) — two calls correctly produce two. What the lock actually
+    // guards is the watermark-filtered rows: exactly one of each real row,
+    // never duplicated by the second call racing the first.
+    expect(lines.filter((l) => l.type === 'session')).toHaveLength(2);
+    expect(lines.filter((l) => l.type === 'message')).toHaveLength(1);
+    expect(lines.filter((l) => l.type === 'prompt')).toHaveLength(1);
+    expect(lines.filter((l) => l.type === 'tool_call')).toHaveLength(1);
+  });
+
+  it('a legacy full-rewrite fixture file (no watermark tracking assumed) produces no duplicates on the next incremental call', async () => {
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1 }), messageRow({ row_id: 2, node_id: 2 })],
+      promptHistory: [promptRow({ id: 1 }), promptRow({ id: 2 })],
+    });
+    const transcriptPath = path.join(dataDir, 'devin', 'transcripts', 'sess-1.jsonl');
+    await fsp.mkdir(path.dirname(transcriptPath), { recursive: true });
+    // Seed the file exactly as the OLD full-rewrite code would have left it.
+    const { text } = buildDevinJsonl(tables);
+    await fsp.writeFile(transcriptPath, text, 'utf8');
+
+    await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const content = await fsp.readFile(transcriptPath, 'utf8');
+
+    const messageNodeIds = content
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+      .filter((l) => l.type === 'message')
+      .map((l) => l.node_id);
+    expect(messageNodeIds).toEqual([1, 2]); // no duplicates
+  });
+
+  it('handles a corrupted mid-file line by skipping it, without losing the rest of the derived watermark or crashing', async () => {
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1 })],
+    });
+    const transcriptPath = path.join(dataDir, 'devin', 'transcripts', 'sess-1.jsonl');
+    await fsp.mkdir(path.dirname(transcriptPath), { recursive: true });
+    const { text } = buildDevinJsonl(tables);
+    await fsp.writeFile(transcriptPath, `${text}{this is not valid json\n`, 'utf8');
+
+    const nextTables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1 }), messageRow({ row_id: 2, node_id: 2 })],
+    });
+    await expect(materializeSessionTranscript(nextTables, 'sess-1', dataDir)).resolves.toBe(
+      transcriptPath,
+    );
+
+    const content = await fsp.readFile(transcriptPath, 'utf8');
+    const messageNodeIds = content
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })
+      .filter((l): l is { type: string; node_id: number } => l !== null && l.type === 'message')
+      .map((l) => l.node_id);
+    // row_id:1 was already in the file (behind the derived watermark of 1),
+    // so only the genuinely-new row_id:2 is appended.
+    expect(messageNodeIds).toEqual([1, 2]);
+  });
+
+  it('round-trips chat_message.metadata.generation_model byte-for-byte into a newly-appended message line (Addendum regression)', async () => {
+    const chatMessage = JSON.stringify({
+      role: 'assistant',
+      content: 'done',
+      metadata: { generation_model: 'claude-opus-4', effort: 'high' },
+    });
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1, chat_message: chatMessage })],
+    });
+
+    const transcriptPath = await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const content = await fsp.readFile(transcriptPath, 'utf8');
+    const messageLine = content
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l))
+      .find((l) => l.type === 'message');
+
+    expect(messageLine.chat_message).toBe(chatMessage);
+    expect(JSON.parse(messageLine.chat_message).metadata.generation_model).toBe('claude-opus-4');
+  });
+
+  it(
+    'correlates a subagent completion notification arriving in a LATER sync pass with its ' +
+      "tagged node from an EARLIER pass (regression: #286's incremental filtering broke this)",
+    async () => {
+      const callSite = subagentNode(1, 1, null, { role: 'assistant', content: 'run it bg' });
+      const startedPointer = subagentNode(2, 2, 1, {
+        role: 'tool',
+        content: 'Background subagent started with agent_id=55c47591 running in the background.',
+        tool_call_id: 'functions.run_subagent:1',
+        metadata: { extensions: { 'subagent/agent_id': '55c47591' } },
+      });
+      const toolCalls = [
+        runSubagentToolCall('functions.run_subagent:1', 'Explore the billing module'),
+      ];
+
+      // Pass 1: the tagged "started" pointer and its run_subagent invocation
+      // arrive together. No completion yet — a background subagent still
+      // running. Only a synthetic prompt line can be produced this pass.
+      const pass1Tables = tablesOf({
+        sessions: [sessionRow()],
+        messageNodes: [callSite, startedPointer],
+        toolCallStates: toolCalls,
+      });
+      const transcriptPath = await materializeSessionTranscript(pass1Tables, 'sess-1', dataDir);
+      const afterPass1 = await fsp.readFile(transcriptPath, 'utf8');
+      const synthAfterPass1 = syntheticMessageLines(afterPass1);
+      expect(synthAfterPass1).toHaveLength(1);
+      expect(synthAfterPass1[0]?.chat_message).toContain('Explore the billing module');
+
+      // Pass 2: sessions.db is always read in FULL (per session-sync.ts's own
+      // doc comment) — so `tables` here again contains every row, including
+      // the pass-1 rows the file already absorbed, PLUS the completion
+      // notification that only just arrived. Before the fix, subagent
+      // synthetic-line derivation used the internally-filtered "genuinely
+      // new" batch (just the notification, missing the tagged node) and
+      // silently produced nothing, forever.
+      const notification = subagentNode(3, 3, 2, {
+        role: 'system',
+        content:
+          '<subagent_completion_notification>\n[Background subagent with agent_id=55c47591 ' +
+          'completed]\n\nfull background report',
+      });
+      const pass2Tables = tablesOf({
+        sessions: [sessionRow()],
+        messageNodes: [callSite, startedPointer, notification],
+        toolCallStates: toolCalls,
+      });
+      await materializeSessionTranscript(pass2Tables, 'sess-1', dataDir);
+      const afterPass2 = await fsp.readFile(transcriptPath, 'utf8');
+
+      const synthAfterPass2 = syntheticMessageLines(afterPass2);
+      // Exactly the original prompt plus the newly-correlated result — the
+      // prompt is never duplicated, and a result now exists at all.
+      expect(synthAfterPass2).toHaveLength(2);
+      const resultLine = synthAfterPass2.find((l) => {
+        const bookkeeping = JSON.parse(l.metadata as string);
+        return bookkeeping['sal/synthetic_subagent_kind'] === 'result';
+      });
+      expect(resultLine).toBeDefined();
+      const resultContent = JSON.parse(resultLine?.chat_message as string).content;
+      expect(resultContent).toBe(
+        '<subagent_completion_notification>\n[Background subagent with agent_id=55c47591 ' +
+          'completed]\n\nfull background report',
+      );
+      // The result correlates back to the SAME prompt node minted in pass 1
+      // — not a second, duplicate prompt/result pair.
+      const promptLine = synthAfterPass2.find((l) => {
+        const bookkeeping = JSON.parse(l.metadata as string);
+        return bookkeeping['sal/synthetic_subagent_kind'] === 'prompt';
+      });
+      expect(resultLine?.parent_node_id).toBe(promptLine?.node_id);
+      expect(promptLine?.node_id).toBe(synthAfterPass1[0]?.node_id);
+    },
+  );
+
+  it('does not re-emit an already-written synthetic subagent prompt/result pair on a second sync of unchanged data', async () => {
+    const callSite = subagentNode(1, 1, null, {
+      role: 'assistant',
+      content: 'calling run_subagent',
+    });
+    const taggedResult = subagentNode(2, 2, 1, {
+      role: 'tool',
+      content: 'Subagent agent_id=44472e00 completed successfully:\n\nfull foreground report',
+      tool_call_id: 'functions.run_subagent:1',
+      metadata: { extensions: { 'subagent/agent_id': '44472e00' } },
+    });
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [callSite, taggedResult],
+      toolCallStates: [runSubagentToolCall('functions.run_subagent:1', 'Explore the auth module')],
+    });
+
+    const transcriptPath = await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const afterFirst = await fsp.readFile(transcriptPath, 'utf8');
+    expect(syntheticMessageLines(afterFirst)).toHaveLength(2); // one prompt + one result
+
+    // Same (unchanged) full tables synced again — simulating the next poll
+    // with nothing genuinely new.
+    await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const afterSecond = await fsp.readFile(transcriptPath, 'utf8');
+
+    expect(syntheticMessageLines(afterSecond)).toHaveLength(2); // still exactly one pair, not two
   });
 });
 

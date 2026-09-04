@@ -15,13 +15,23 @@
  *
  * Scoping decision: every sync pass reads `sessions.db` in full (via
  * `devin-snapshot.ts`'s `EMPTY_WATERMARKS` read), not incrementally against
- * the extractor's watermark mechanism. This is simpler and always correct —
- * content-hash dedup in `processDelta` means a full re-extraction that
- * produces byte-identical output is skipped, not re-uploaded — at the cost
- * of re-reading the whole database on every sync rather than only new rows.
- * Wiring true incremental extraction (persisting `DevinWatermarks` per
- * session in `StateStore`) is a documented follow-up, not required by this
- * issue's acceptance criteria.
+ * the extractor's watermark mechanism. This is required by `watcher.ts`'s
+ * `computeSessionWatermarkSignature`, which needs the full current
+ * high-water state of every session's tables on every poll to detect which
+ * sessions changed (see that file's doc comment) — making the SQL read
+ * incremental would make quiet sessions look falsely "changed" (or mask
+ * real changes) whenever they fall outside a given poll's incremental
+ * window.
+ *
+ * What *is* incremental (#286) is how `materializeSessionTranscript`
+ * decides what to **write**: it derives prior watermarks from the existing
+ * transcript file's own tail (`deriveWatermarksFromExistingLines`) and
+ * appends only genuinely-new rows, instead of rewriting the whole file
+ * every pass. No separate watermark state is persisted anywhere — the
+ * transcript file's own content is the only durable state this relies on,
+ * self-healing across process restarts/crashes and automatically absorbing
+ * every pre-existing transcript written by the old full-rewrite code with
+ * no migration step.
  */
 import * as fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -35,6 +45,7 @@ import {
   type CandidateResult,
   type DiscoveryResult,
   discover,
+  FileLock,
   type HarnessProfile,
   hashCandidate,
   processDelta,
@@ -49,7 +60,14 @@ import {
 import { DEVIN_HARD_BLOCKLIST_PATTERNS, DevinHarnessProfile } from './devin-profile.js';
 import { buildDevinJsonl } from './extractor/jsonl-writer.js';
 import { resolveDevinPaths } from './extractor/paths.js';
-import type { DevinExtractedTables, DevinSchemaDescriptor } from './extractor/types.js';
+import { filterChangedToolCallStates } from './extractor/tool-call-watermark.js';
+import type {
+  DevinExtractedTables,
+  DevinSchemaDescriptor,
+  DevinWatermarks,
+} from './extractor/types.js';
+import { EMPTY_WATERMARKS } from './extractor/types.js';
+import { deriveWatermarksFromExistingLines } from './extractor/watermark-derivation.js';
 import { buildDevinModelCandidates, type CaptureDevinModelsOptions } from './models/capture.js';
 
 export interface DevinSyncProgressEvent {
@@ -139,23 +157,135 @@ function filterTablesForSession(
   };
 }
 
+/** Reads an existing transcript file's content, or `undefined` if it does
+ * not exist yet (a brand-new session's first sync). Any other read error
+ * (e.g. a permissions problem) is not swallowed — only absence is expected
+ * and handled here. */
+async function readExistingTranscript(transcriptPath: string): Promise<string | undefined> {
+  try {
+    return await fsp.readFile(transcriptPath, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
+  }
+}
+
 /**
- * Extracts one session's rows and writes them as `devin-session-jsonl/v1`
- * text to `<dataDir>/devin/transcripts/<sessionId>.jsonl`, returning the
- * path. The generic discovery pipeline (`discover()`/`runSessionDiscovery`)
- * requires an existing on-disk file at `transcriptPath` — Devin has no such
- * file natively, so this plugin creates one on every sync pass.
+ * Filters one session's freshly-read `sessionTables` down to rows genuinely
+ * newer than what the transcript file's own tail already shows.
+ *
+ * `messageNodes`/`promptHistory` are genuinely insert-only (#298 Phase 1),
+ * so a simple `row_id`/`id` watermark comparison is sound, mirroring
+ * `reader.ts`'s own `WHERE row_id > ?` / `WHERE id > ?`. `toolCallStates`
+ * cannot use that same comparison — #298 found Devin rewrites a session's
+ * entire `tool_call_state` row set (including untouched rows) under a new
+ * rowid on every persist, so a rowid-based filter here would incorrectly
+ * treat an already-written, unchanged row as new and duplicate it. The
+ * content-hash comparison (`filterChangedToolCallStates`, the same function
+ * `reader.ts` itself uses) is reused instead, fed by the hashes this
+ * pass's `deriveWatermarksFromExistingLines` reconstructed from the file.
+ *
+ * `sessions` is deliberately never filtered here — unchanged, intentional
+ * "last-write-wins" replay semantics (`jsonl-writer.ts`'s `appendSessionLines`
+ * doc comment): a `session` line is re-appended every pass the session is
+ * touched, regardless of whether its content-hash changed. Applying the
+ * file-derived `sessionsContentHashes` to skip re-appending here would be a
+ * behavior change this issue's Out-of-scope section explicitly rules out,
+ * not a correctness fix — so it is not applied, even though the hash is
+ * available.
+ */
+function filterNewRows(
+  sessionTables: DevinExtractedTables,
+  prior: DevinWatermarks,
+): DevinExtractedTables {
+  return {
+    sessions: sessionTables.sessions,
+    messageNodes: sessionTables.messageNodes.filter(
+      (m) => m.row_id > (prior.messageNodesRowId ?? -1),
+    ),
+    promptHistory: sessionTables.promptHistory.filter((p) => p.id > (prior.promptHistoryId ?? -1)),
+    toolCallStates: filterChangedToolCallStates(
+      sessionTables.toolCallStates,
+      prior.toolCallStateHashes,
+    ),
+  };
+}
+
+/**
+ * Extracts one session's genuinely-new rows and appends them as
+ * `devin-session-jsonl/v1` text to `<dataDir>/devin/transcripts/<sessionId>.jsonl`,
+ * returning the path. The generic discovery pipeline
+ * (`discover()`/`runSessionDiscovery`) requires an existing on-disk file at
+ * `transcriptPath` — Devin has no such file natively, so this plugin
+ * creates/grows one on every sync pass.
+ *
+ * Append-only (#286): prior watermarks are derived from the existing
+ * file's own tail (`deriveWatermarksFromExistingLines`), never from a
+ * separately persisted record — see that function's doc comment for why.
+ * `fsp.appendFile` creates the file if absent, so a brand-new session needs
+ * no special-casing versus an incremental resync of an existing one.
+ *
+ * Subagent synthetic-line regression fix: real message/tool_call/prompt
+ * lines are still built from `newTables` (genuinely-new rows only, #286's
+ * append-only behavior, unchanged). Subagent synthetic prompt/result lines
+ * are derived separately, from the session's FULL current
+ * `messageNodes`/`toolCallStates` (`sessionTables`, before the new-rows
+ * filter) via `buildDevinJsonl`'s opt-in `subagentContext` — so a tagged
+ * node written in an earlier pass always correlates with its completion
+ * notification arriving in a later pass, regardless of which pass carried
+ * which half. Cross-pass duplication is prevented by
+ * `excludeNodeIds: derived.messageNodeIds` (the file-derived set of
+ * `node_id`s already written), since `buildSubagentSyntheticNodes` is
+ * deterministic — a previously-emitted pair always re-derives to the same
+ * ids and is skipped, never re-appended.
+ *
+ * Concurrency (found in review): `runDevinSessionSync` is invoked
+ * independently from three separate processes for the same session —
+ * `cli/sync-command.ts` (manual sync), `hook-common.ts` (session-start/
+ * session-end/hook events), and `watcher.ts`'s poll loop. Unlike the old
+ * full-rewrite (idempotent under a race — last writer wins, no duplication),
+ * append-only writing is NOT self-correcting under a race: two concurrent
+ * passes reading the same prior-watermark state would each independently
+ * append the same "new" rows, permanently duplicating lines. Guarded with
+ * the same per-resource `FileLock` pattern `models/capture.ts` already
+ * uses for its own cache file, keyed to the transcript path itself so
+ * concurrent syncs of *different* sessions never contend.
  */
 export async function materializeSessionTranscript(
   tables: DevinExtractedTables,
   sessionId: string,
   dataDir: string,
 ): Promise<string> {
-  const sessionTables = filterTablesForSession(tables, sessionId);
-  const { text } = buildDevinJsonl(sessionTables);
   const transcriptPath = path.join(dataDir, 'devin', 'transcripts', `${sessionId}.jsonl`);
+  const lock = new FileLock(`${transcriptPath}.lock`);
+  return lock.withLock(() => appendNewSessionRows(tables, sessionId, transcriptPath));
+}
+
+/** The locked critical section of `materializeSessionTranscript`: read the
+ * existing file's tail, derive prior state from it, filter+append. Never
+ * called outside a held `FileLock` — see caller. */
+async function appendNewSessionRows(
+  tables: DevinExtractedTables,
+  sessionId: string,
+  transcriptPath: string,
+): Promise<string> {
+  const sessionTables = filterTablesForSession(tables, sessionId);
+  const existing = await readExistingTranscript(transcriptPath);
+  const derived = existing
+    ? deriveWatermarksFromExistingLines(existing)
+    : { watermarks: EMPTY_WATERMARKS, lineCount: 0, messageNodeIds: new Set<number>() };
+  const newTables = filterNewRows(sessionTables, derived.watermarks);
+  const { text } = buildDevinJsonl(newTables, {
+    orderOffset: derived.lineCount,
+    priorWatermarks: derived.watermarks,
+    subagentContext: {
+      messageNodes: sessionTables.messageNodes,
+      toolCallStates: sessionTables.toolCallStates,
+      excludeNodeIds: derived.messageNodeIds,
+    },
+  });
   await fsp.mkdir(path.dirname(transcriptPath), { recursive: true });
-  await fsp.writeFile(transcriptPath, text, 'utf8');
+  await fsp.appendFile(transcriptPath, text, 'utf8');
   return transcriptPath;
 }
 
