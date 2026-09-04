@@ -29,6 +29,17 @@ import { EMPTY_WATERMARKS } from './types.js';
 export interface DerivedWatermarkState {
   watermarks: DevinWatermarks;
   lineCount: number;
+  /**
+   * `node_id` of every `message`-type line already present in the file —
+   * real rows and synthetic sub-agent prompt/result rows alike (their id
+   * ranges never collide, see `subagent-lines.ts`'s
+   * `SYNTHETIC_NODE_ID_CEILING`). Used to dedup synthetic sub-agent lines
+   * across sync passes: `buildSubagentSyntheticNodes` is deterministic, so a
+   * synthetic node whose id is already in this set was already written and
+   * must not be re-emitted (the regression fixed alongside #286 — see
+   * `session-sync.ts`'s `materializeSessionTranscript`).
+   */
+  messageNodeIds: Set<number>;
 }
 
 /**
@@ -36,17 +47,30 @@ export interface DerivedWatermarkState {
  * `lineCount`, so a later `orderOffset` never collides with a slot the bad
  * line already occupied. Only when the file yields *zero* usable lines
  * (empty content, or content that doesn't parse as JSONL at all) does this
- * fail safe to `{ watermarks: EMPTY_WATERMARKS, lineCount: 0 }` — a `0`-ish
- * watermark is never fabricated for "no data recoverable" any other way
- * (`missing-is-never-zero`).
+ * fail safe to `{ watermarks: EMPTY_WATERMARKS, lineCount: 0, messageNodeIds:
+ * new Set() }` — a `0`-ish watermark is never fabricated for "no data
+ * recoverable" any other way (`missing-is-never-zero`).
  */
 export function deriveWatermarksFromExistingLines(text: string): DerivedWatermarkState {
   const rawLines = text.split('\n').filter((line) => line.length > 0);
   const validLines = rawLines.map(parseJsonlLine).filter(isRecord);
   if (validLines.length === 0) {
-    return { watermarks: EMPTY_WATERMARKS, lineCount: 0 };
+    return { watermarks: EMPTY_WATERMARKS, lineCount: 0, messageNodeIds: new Set() };
   }
-  return { watermarks: foldLines(validLines), lineCount: rawLines.length };
+  return {
+    watermarks: foldLines(validLines),
+    lineCount: rawLines.length,
+    messageNodeIds: collectMessageNodeIds(validLines),
+  };
+}
+
+/** Every `node_id` carried by an already-written `message`-type line. */
+function collectMessageNodeIds(lines: Record<string, unknown>[]): Set<number> {
+  const ids = new Set<number>();
+  for (const line of lines) {
+    if (line.type === 'message' && typeof line.node_id === 'number') ids.add(line.node_id);
+  }
+  return ids;
 }
 
 function parseJsonlLine(raw: string): unknown {

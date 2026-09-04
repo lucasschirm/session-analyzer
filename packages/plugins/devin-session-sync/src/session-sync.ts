@@ -223,6 +223,20 @@ function filterNewRows(
  * separately persisted record — see that function's doc comment for why.
  * `fsp.appendFile` creates the file if absent, so a brand-new session needs
  * no special-casing versus an incremental resync of an existing one.
+ *
+ * Subagent synthetic-line regression fix: real message/tool_call/prompt
+ * lines are still built from `newTables` (genuinely-new rows only, #286's
+ * append-only behavior, unchanged). Subagent synthetic prompt/result lines
+ * are derived separately, from the session's FULL current
+ * `messageNodes`/`toolCallStates` (`sessionTables`, before the new-rows
+ * filter) via `buildDevinJsonl`'s opt-in `subagentContext` — so a tagged
+ * node written in an earlier pass always correlates with its completion
+ * notification arriving in a later pass, regardless of which pass carried
+ * which half. Cross-pass duplication is prevented by
+ * `excludeNodeIds: derived.messageNodeIds` (the file-derived set of
+ * `node_id`s already written), since `buildSubagentSyntheticNodes` is
+ * deterministic — a previously-emitted pair always re-derives to the same
+ * ids and is skipped, never re-appended.
  */
 export async function materializeSessionTranscript(
   tables: DevinExtractedTables,
@@ -232,11 +246,19 @@ export async function materializeSessionTranscript(
   const sessionTables = filterTablesForSession(tables, sessionId);
   const transcriptPath = path.join(dataDir, 'devin', 'transcripts', `${sessionId}.jsonl`);
   const existing = await readExistingTranscript(transcriptPath);
-  const { watermarks: prior, lineCount } = existing
+  const derived = existing
     ? deriveWatermarksFromExistingLines(existing)
-    : { watermarks: EMPTY_WATERMARKS, lineCount: 0 };
-  const newTables = filterNewRows(sessionTables, prior);
-  const { text } = buildDevinJsonl(newTables, { orderOffset: lineCount, priorWatermarks: prior });
+    : { watermarks: EMPTY_WATERMARKS, lineCount: 0, messageNodeIds: new Set<number>() };
+  const newTables = filterNewRows(sessionTables, derived.watermarks);
+  const { text } = buildDevinJsonl(newTables, {
+    orderOffset: derived.lineCount,
+    priorWatermarks: derived.watermarks,
+    subagentContext: {
+      messageNodes: sessionTables.messageNodes,
+      toolCallStates: sessionTables.toolCallStates,
+      excludeNodeIds: derived.messageNodeIds,
+    },
+  });
   await fsp.mkdir(path.dirname(transcriptPath), { recursive: true });
   await fsp.appendFile(transcriptPath, text, 'utf8');
   return transcriptPath;

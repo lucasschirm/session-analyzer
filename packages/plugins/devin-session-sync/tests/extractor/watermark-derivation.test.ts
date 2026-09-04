@@ -71,12 +71,30 @@ describe('deriveWatermarksFromExistingLines', () => {
     expect(
       filterChangedSessions(tables.sessions, derived.watermarks.sessionsContentHashes),
     ).toEqual([]);
+    expect(derived.messageNodeIds).toEqual(new Set([1]));
   });
 
-  it('returns EMPTY_WATERMARKS/lineCount:0 for empty input', () => {
+  it('collects node_ids from both real and synthetic message lines uniformly', () => {
+    const real = { type: 'message', ts: null, order: 0, row_id: 3, node_id: 1, session_id: 's1' };
+    const synthetic = {
+      type: 'message',
+      ts: null,
+      order: 1,
+      row_id: -1,
+      node_id: 9_007_199_254_740_990,
+    };
+    const nonMessage = { type: 'prompt', ts: 1, order: 2, id: 1, session_id: 's1' };
+    const text = `${[real, synthetic, nonMessage].map((l) => JSON.stringify(l)).join('\n')}\n`;
+
+    const derived = deriveWatermarksFromExistingLines(text);
+    expect(derived.messageNodeIds).toEqual(new Set([1, 9_007_199_254_740_990]));
+  });
+
+  it('returns EMPTY_WATERMARKS/lineCount:0/empty messageNodeIds for empty input', () => {
     expect(deriveWatermarksFromExistingLines('')).toEqual({
       watermarks: EMPTY_WATERMARKS,
       lineCount: 0,
+      messageNodeIds: new Set(),
     });
   });
 
@@ -92,9 +110,13 @@ describe('deriveWatermarksFromExistingLines', () => {
     expect(derived.watermarks.promptHistoryId).toBe(7);
   });
 
-  it('falls back to EMPTY_WATERMARKS/lineCount:0 when nothing in the file parses as JSONL at all', () => {
+  it('falls back to EMPTY_WATERMARKS/lineCount:0/empty messageNodeIds when nothing in the file parses as JSONL at all', () => {
     const derived = deriveWatermarksFromExistingLines('not json\nalso not json\n');
-    expect(derived).toEqual({ watermarks: EMPTY_WATERMARKS, lineCount: 0 });
+    expect(derived).toEqual({
+      watermarks: EMPTY_WATERMARKS,
+      lineCount: 0,
+      messageNodeIds: new Set(),
+    });
   });
 
   it("ignores a synthetic sub-agent line's row_id:-1 sentinel when computing the message watermark", () => {

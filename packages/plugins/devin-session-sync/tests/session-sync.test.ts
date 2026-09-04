@@ -111,6 +111,43 @@ function tablesOf(overrides: Partial<DevinExtractedTables> = {}): DevinExtracted
   return { sessions: [], messageNodes: [], promptHistory: [], toolCallStates: [], ...overrides };
 }
 
+// --- Subagent cross-pass correlation fixtures (regression: issue reported
+// alongside #286) -----------------------------------------------------------
+
+function subagentNode(
+  rowId: number,
+  nodeId: number,
+  parentNodeId: number | null,
+  chatMessage: Record<string, unknown>,
+): DevinMessageNodeRow {
+  return messageRow({
+    row_id: rowId,
+    node_id: nodeId,
+    parent_node_id: parentNodeId,
+    chat_message: JSON.stringify(chatMessage),
+  });
+}
+
+function runSubagentToolCall(toolCallId: string, task: string): DevinToolCallStateRow {
+  return toolCallRow({
+    row_id: 1,
+    tool_call_id: toolCallId,
+    tool_call_json: JSON.stringify({
+      toolCallId,
+      rawInput: { profile: 'subagent_explore', task },
+      _meta: { 'cognition.ai/inferenceToolName': 'run_subagent' },
+    }),
+  });
+}
+
+function syntheticMessageLines(content: string): Array<Record<string, unknown>> {
+  return content
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l))
+    .filter((l) => l.type === 'message' && l.row_id === -1);
+}
+
 describe('materializeSessionTranscript', () => {
   let dataDir: string;
 
@@ -297,6 +334,110 @@ describe('materializeSessionTranscript', () => {
 
     expect(messageLine.chat_message).toBe(chatMessage);
     expect(JSON.parse(messageLine.chat_message).metadata.generation_model).toBe('claude-opus-4');
+  });
+
+  it(
+    'correlates a subagent completion notification arriving in a LATER sync pass with its ' +
+      "tagged node from an EARLIER pass (regression: #286's incremental filtering broke this)",
+    async () => {
+      const callSite = subagentNode(1, 1, null, { role: 'assistant', content: 'run it bg' });
+      const startedPointer = subagentNode(2, 2, 1, {
+        role: 'tool',
+        content: 'Background subagent started with agent_id=55c47591 running in the background.',
+        tool_call_id: 'functions.run_subagent:1',
+        metadata: { extensions: { 'subagent/agent_id': '55c47591' } },
+      });
+      const toolCalls = [
+        runSubagentToolCall('functions.run_subagent:1', 'Explore the billing module'),
+      ];
+
+      // Pass 1: the tagged "started" pointer and its run_subagent invocation
+      // arrive together. No completion yet — a background subagent still
+      // running. Only a synthetic prompt line can be produced this pass.
+      const pass1Tables = tablesOf({
+        sessions: [sessionRow()],
+        messageNodes: [callSite, startedPointer],
+        toolCallStates: toolCalls,
+      });
+      const transcriptPath = await materializeSessionTranscript(pass1Tables, 'sess-1', dataDir);
+      const afterPass1 = await fsp.readFile(transcriptPath, 'utf8');
+      const synthAfterPass1 = syntheticMessageLines(afterPass1);
+      expect(synthAfterPass1).toHaveLength(1);
+      expect(synthAfterPass1[0]?.chat_message).toContain('Explore the billing module');
+
+      // Pass 2: sessions.db is always read in FULL (per session-sync.ts's own
+      // doc comment) — so `tables` here again contains every row, including
+      // the pass-1 rows the file already absorbed, PLUS the completion
+      // notification that only just arrived. Before the fix, subagent
+      // synthetic-line derivation used the internally-filtered "genuinely
+      // new" batch (just the notification, missing the tagged node) and
+      // silently produced nothing, forever.
+      const notification = subagentNode(3, 3, 2, {
+        role: 'system',
+        content:
+          '<subagent_completion_notification>\n[Background subagent with agent_id=55c47591 ' +
+          'completed]\n\nfull background report',
+      });
+      const pass2Tables = tablesOf({
+        sessions: [sessionRow()],
+        messageNodes: [callSite, startedPointer, notification],
+        toolCallStates: toolCalls,
+      });
+      await materializeSessionTranscript(pass2Tables, 'sess-1', dataDir);
+      const afterPass2 = await fsp.readFile(transcriptPath, 'utf8');
+
+      const synthAfterPass2 = syntheticMessageLines(afterPass2);
+      // Exactly the original prompt plus the newly-correlated result — the
+      // prompt is never duplicated, and a result now exists at all.
+      expect(synthAfterPass2).toHaveLength(2);
+      const resultLine = synthAfterPass2.find((l) => {
+        const bookkeeping = JSON.parse(l.metadata as string);
+        return bookkeeping['sal/synthetic_subagent_kind'] === 'result';
+      });
+      expect(resultLine).toBeDefined();
+      const resultContent = JSON.parse(resultLine?.chat_message as string).content;
+      expect(resultContent).toBe(
+        '<subagent_completion_notification>\n[Background subagent with agent_id=55c47591 ' +
+          'completed]\n\nfull background report',
+      );
+      // The result correlates back to the SAME prompt node minted in pass 1
+      // — not a second, duplicate prompt/result pair.
+      const promptLine = synthAfterPass2.find((l) => {
+        const bookkeeping = JSON.parse(l.metadata as string);
+        return bookkeeping['sal/synthetic_subagent_kind'] === 'prompt';
+      });
+      expect(resultLine?.parent_node_id).toBe(promptLine?.node_id);
+      expect(promptLine?.node_id).toBe(synthAfterPass1[0]?.node_id);
+    },
+  );
+
+  it('does not re-emit an already-written synthetic subagent prompt/result pair on a second sync of unchanged data', async () => {
+    const callSite = subagentNode(1, 1, null, {
+      role: 'assistant',
+      content: 'calling run_subagent',
+    });
+    const taggedResult = subagentNode(2, 2, 1, {
+      role: 'tool',
+      content: 'Subagent agent_id=44472e00 completed successfully:\n\nfull foreground report',
+      tool_call_id: 'functions.run_subagent:1',
+      metadata: { extensions: { 'subagent/agent_id': '44472e00' } },
+    });
+    const tables = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [callSite, taggedResult],
+      toolCallStates: [runSubagentToolCall('functions.run_subagent:1', 'Explore the auth module')],
+    });
+
+    const transcriptPath = await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const afterFirst = await fsp.readFile(transcriptPath, 'utf8');
+    expect(syntheticMessageLines(afterFirst)).toHaveLength(2); // one prompt + one result
+
+    // Same (unchanged) full tables synced again — simulating the next poll
+    // with nothing genuinely new.
+    await materializeSessionTranscript(tables, 'sess-1', dataDir);
+    const afterSecond = await fsp.readFile(transcriptPath, 'utf8');
+
+    expect(syntheticMessageLines(afterSecond)).toHaveLength(2); // still exactly one pair, not two
   });
 });
 
