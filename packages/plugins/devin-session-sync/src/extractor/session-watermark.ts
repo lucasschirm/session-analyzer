@@ -20,8 +20,17 @@ import type { DevinSessionRow } from './types.js';
  * told to watch for), changes the hash. `sessions` is still always read in
  * full (`SELECT *`, every pass, every session, per reader.ts) — this
  * module only decides which already-read rows are worth re-emitting.
+ *
+ * Exported (#340) so `watcher.ts`'s `computeSessionWatermarkSignature` can
+ * share this exact, already-verified mechanism instead of independently
+ * trusting `last_activity_at` for its own composite signature — the same
+ * skill-only/effort-only gap applies one layer up: a mutation that adds no
+ * row anywhere and never advances `last_activity_at` left the watcher with
+ * no signal at all that a session needed re-syncing. One hash function,
+ * two callers, never two independently-reasoned-about implementations of
+ * "did this session's row really change".
  */
-function sessionContentHash(row: DevinSessionRow): string {
+export function sessionContentHash(row: DevinSessionRow): string {
   return createHash('sha256').update(JSON.stringify(row)).digest('hex');
 }
 
