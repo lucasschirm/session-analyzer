@@ -309,7 +309,7 @@ describe('ingestion to portfolio pipeline', () => {
       (m) => m.metricId === 'devin:tokens:total:inclusive',
     );
     expect(devinTotal).toBeDefined();
-    expect(devinTotal?.value).toBe(160);
+    expect(devinTotal?.value).toBe(150);
     expect(devinTotal?.unit).toBe('token');
     expect(devinTotal?.eligibleN).toBeGreaterThanOrEqual(1);
     expect(devinTotal?.knownN).toBeGreaterThanOrEqual(1);
@@ -332,7 +332,7 @@ describe('ingestion to portfolio pipeline', () => {
     const trends = await dataSource.portfolio.getTrends({});
     const devinTrend = trends.series.find((s) => s.metricId.startsWith('devin:tokens:total:'));
     expect(devinTrend).toBeDefined();
-    expect(devinTrend?.value).toBe(160);
+    expect(devinTrend?.value).toBe(150);
     expect(trends.token.eligibleN).toBeGreaterThanOrEqual(1);
 
     const sessionSummary = await dataSource.session.getSummary(receipt.sessionId, {});
@@ -341,7 +341,7 @@ describe('ingestion to portfolio pipeline', () => {
       m.metricId.startsWith('devin:tokens:total:'),
     );
     expect(sessionTotal).toBeDefined();
-    expect(sessionTotal?.value).toBe(160);
+    expect(sessionTotal?.value).toBe(150);
     expect(sessionTotal?.eligibleN).toBeGreaterThanOrEqual(1);
   });
 });

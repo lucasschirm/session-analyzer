@@ -251,6 +251,9 @@ describe('PR #295 review finding #3: version bump forces a clean, non-mixed gene
       'SELECT metric_version FROM transformation_generations WHERE id = ?',
       [gen2.generationId],
     );
-    expect(genRows[0]?.metric_version).toBe('0.2.0');
+    // 0.3.0 since #323 (devin:tokens:total formula fix) — this literal
+    // deliberately pins comparability.ts's DEVIN_METRIC_DEFINITION_VERSION
+    // so an unpropagated bump is caught here.
+    expect(genRows[0]?.metric_version).toBe('0.3.0');
   });
 });

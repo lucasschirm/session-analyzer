@@ -106,7 +106,7 @@ export function getDevinMetricDefinitions(): readonly MetricDefinition[] {
       metricDefinition(
         `devin:tokens:total:${scope}`,
         `Total tokens (${scopeLabel})`,
-        `Sum of prompt, completion, and cached tokens from ATIF final_metrics. Scope: ${scopeLabel}.`,
+        `Sum of prompt and completion tokens (cached is a subset of prompt, never re-added — #323). Scope: ${scopeLabel}.`,
         'tokens',
         'token',
         'integer',

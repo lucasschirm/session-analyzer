@@ -173,14 +173,15 @@ function resolveModel(
   return resolveModelId(session?.model ?? null, models);
 }
 
-function totalFromParts(
-  prompt: number | null,
-  completion: number | null,
-  cached: number | null,
-): number | null {
-  return prompt !== null && completion !== null && cached !== null
-    ? prompt + completion + cached
-    : null;
+/**
+ * `devin:tokens:total` = prompt + completion (#323). `cached` is a SUBSET of
+ * prompt in every sourcing tier — ATIF's spec defines `cached_tokens` as
+ * "Subset of prompt_tokens that were cache hits" (real store: 8.89M cached
+ * of 9.41M prompt), and tier 3 constructs prompt as input + cached (#322) —
+ * so adding it again double-counted cache-heavy sessions by up to ~2x.
+ */
+function totalFromParts(prompt: number | null, completion: number | null): number | null {
+  return prompt !== null && completion !== null ? prompt + completion : null;
 }
 
 interface TokenAggregate {
@@ -368,7 +369,7 @@ export function buildTokenUsageRecords(
 ): TokenUsageResult {
   const metadata = parseMetadata(session?.metadata ?? null);
   const aggregate = aggregateTokens(atif, metadata);
-  const total = totalFromParts(aggregate.prompt, aggregate.completion, aggregate.cached);
+  const total = totalFromParts(aggregate.prompt, aggregate.completion);
 
   const stepRecords = atif ? buildStepRecords(sessionId, atif.steps, models, rootArtifactId) : [];
   const records =
