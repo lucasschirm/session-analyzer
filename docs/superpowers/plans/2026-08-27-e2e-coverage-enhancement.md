@@ -178,6 +178,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | SYNC-009 | Devin CAS sync progress heartbeat advances during a throttled file download | `devin-sync-heartbeat.spec.ts` | `assertHeartbeat` (sync-flow.ts) with `syncProgressFilesParser` | 4 | 4 | 4 | 64 | P0 | GREEN |
 | SYNC-010 | Devin models-list capture failure (`devin` binary unavailable) never fails the sync; real session artifacts still upload and the failure surfaces as a distinguishable warning, never as `[fail]` output | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest-upload success + `Warnings:` visibility + absence of `[fail]` output assertion | 4 | 4 | 4 | 64 | P0 | GREEN |
 | SYNC-011 | Devin watcher daemon (`bin/watcher`, the sole sync path for Cloud sessions) poll loop: heartbeat lines advance (monotonic, timestamped, distinct per poll, in a bounded window), a mid-run `sessions.db` change triggers a re-sync (including a `cogs_json`-only mutation that advances no row and not `last_activity_at` — #340), an unreadable `sessions.db` after startup surfaces per-poll stderr failure lines, and a per-session sync failure (`outcome.errors` non-empty, e.g. a manifest upload failure) is never advanced past as a false-success signature — the next poll retries until it clears (#339) — never a silent stall or a false-success heartbeat | `packages/plugins/devin-session-sync/tests/pipeline/watcher-heartbeat.test.ts` | `parseWatcherHeartbeats`/`assertMonotonicHeartbeats` heartbeat assertion + `poll #N failed` stderr visibility assertion + fail→retry→stable manifest-retry-count assertion (#339) + `cogs_json`-only mutation re-sync assertion (#340) | 4 | 5 | 4 | 80 | P0 | GREEN |
+| SYNC-012 | `FileLock`'s stale-lock takeover (`packages/sync/src/state/lock.ts`) is atomic across any number of concurrent contenders — never silently defeats mutual exclusion, which would re-enable the concurrent-duplicate-append transcript corruption `materializeSessionTranscript`'s append-only guard (#303) exists to prevent (a Devin hook write racing the watcher's poll on the same session) (#327) | `packages/sync/tests/unit/lock-stale-takeover.test.ts` + `packages/sync/tests/unit/lock-reclaim-mismatch.test.ts` + `packages/sync/tests/integration/lock-cross-process.test.ts` | black-box N-contender stress assertion (max-concurrent-holders == 1) + deterministic forced-interleaving mismatch/restore-failure assertions + real-cross-process no-duplicate-append assertion | 3 | 5 | 5 | 75 | P0 | GREEN |
 
 ## 7. Infrastructure prerequisites
 
@@ -262,6 +263,20 @@ content-hash watermark for `message_nodes`, replacing the unsound
 `row_id` watermark) shipped without a catalog mapping, flagged as a
 blocker in that PR's review, so the row and its pipeline test were added
 in the same PR rather than deferred as a follow-up.
+
+SYNC-012 (issue #327) is the first Tier C entry whose surface is a
+shared, harness-agnostic primitive (`packages/sync`'s `FileLock`) rather
+than a specific harness's sync flow — admitted on the same basis SYNC-004
+and SYNC-005 already established (a `tests/unit/`-located test can back a
+Tier C row; the tier is about the *surface*, not the test directory).
+`FileLock`'s stale-takeover TOCTOU race, if it fires, silently defeats
+the exact mutual-exclusion guarantee `materializeSessionTranscript`'s
+append-only guard (#303) depends on — wrong/duplicated transcript data
+with no user-visible signal, undetectable by any other test layer — so it
+was registered and its three tests (black-box stress, deterministic
+forced-interleaving, real cross-process) implemented in the same PR
+rather than deferred, per the same "flagged as a blocker, fixed with a
+catalog mapping in the same PR" precedent as SYNC-011 and PIPE-019 above.
 
 ## 10. Maintenance model
 
