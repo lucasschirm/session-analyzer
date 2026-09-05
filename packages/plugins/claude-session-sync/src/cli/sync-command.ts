@@ -10,7 +10,6 @@ import {
   contentTypeFor,
   type DiscoveryResult,
   discover,
-  discoverSession,
   getDataDir,
   type HarnessProfile,
   type HookInput,
