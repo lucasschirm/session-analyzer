@@ -157,10 +157,17 @@ function findPlan(artifacts: readonly Artifact<unknown>[]): string | undefined {
 }
 
 function sessionLine(lines: DevinJsonlParseResult['lines']): DevinSessionLine | undefined {
+  // The sync plugin re-appends a `session` line on EVERY pass, unfiltered —
+  // deliberate "last-write-wins replay semantics" (devin-session-sync's
+  // `filterNewRows` doc comment) — so a transcript synced N times carries N
+  // session lines, oldest first. The LAST line is the session's current
+  // state (#320): taking the first froze title/model/metadata/cogs at
+  // whatever the first sync observed.
+  let latest: DevinSessionLine | undefined;
   for (const line of lines) {
-    if (line.type === 'session') return line;
+    if (line.type === 'session') latest = line;
   }
-  return undefined;
+  return latest;
 }
 
 function messageLines(lines: DevinJsonlParseResult['lines']): DevinMessageLine[] {

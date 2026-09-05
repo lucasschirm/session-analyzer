@@ -5,6 +5,7 @@ import {
   linearBundle,
   noRootBundle,
   partialTokensBundle,
+  sessionReplayBundle,
   unknownSchemaBundle,
 } from '../conformance/fixtures/index.js';
 
@@ -31,6 +32,23 @@ describe('DevinTransformer.transform', () => {
     expect(findMetric(result, 'devin:tokens:completion:root_only')?.value).toBe(50);
     expect(findMetric(result, 'devin:tokens:cached:root_only')?.value).toBe(10);
     expect(findMetric(result, 'devin:tokens:total:root_only')?.value).toBe(160);
+  });
+
+  it('resolves session-level state from the LAST session line, not the first (#320)', () => {
+    const result = DevinTransformer.transform(sessionReplayBundle, defaultContext);
+    expect(result.errors).toEqual([]);
+    const sessionRecords = result.evidence.filter((r) => r.recordType === 'session');
+    expect(sessionRecords.length).toBe(1);
+    const payload = sessionRecords[0]?.payload as {
+      title?: string;
+      model?: string;
+      endTime?: string;
+    };
+    expect(payload.title).toBe('Fresh replayed title');
+    expect(payload.model).toBe('devin-updated');
+    // last_activity_at from the SECOND session line (1722524500s), not the
+    // first-pass value (1722520900s).
+    expect(payload.endTime).toBe(new Date(1722524500 * 1000).toISOString());
   });
 
   it('counts turns from the message main chain', () => {

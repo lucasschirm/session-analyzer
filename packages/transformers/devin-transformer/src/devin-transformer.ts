@@ -85,7 +85,18 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // not a coverage extension of `CLAUDE_CODE_TRANSFORMER_VERSION`'s own bump
 // for the same concept). Forces a fresh generation on reprocess so no
 // analysis mixes pre-/post-#290 `model_usage`/metric output.
-export const DEVIN_TRANSFORMER_VERSION = '0.5.0';
+// Bumped 0.5.0 -> 0.6.0 for #320: `parse-bundle.ts`'s `sessionLine` now
+// selects the LAST `session` line in the transcript instead of the first,
+// matching the sync plugin's deliberate last-write-wins replay semantics
+// (`filterNewRows` re-appends the session line every pass). Session-level
+// fields (title, model, agent_mode, last_activity_at, metadata/
+// response_dimensions, cogs_json) previously froze at first-sync state for
+// every session synced more than once. No metric-version bump: formulas,
+// populations, and comparability groups are unchanged — the same fields are
+// read, now from the current rather than the stale row (same attribution-
+// correction class as DS-B25's 0.3.0 -> 0.4.0). Forces a fresh generation
+// on reprocess so no analysis mixes pre-/post-fix session-level output.
+export const DEVIN_TRANSFORMER_VERSION = '0.6.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly
