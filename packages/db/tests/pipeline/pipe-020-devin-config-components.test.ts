@@ -22,7 +22,7 @@ async function setupPipeline() {
   return { harness, orchestrator };
 }
 
-describe('PIPE-019: devin file-backed skill/agent/rule config components (#342)', () => {
+describe('PIPE-020: devin file-backed skill/agent/rule config components (#342)', () => {
   it('classifies .devin/skills|agents|rules/** and surfaces resolved component labels through the Component Ecosystem view', async () => {
     const { harness, orchestrator } = await setupPipeline();
     const { bundle } = await buildDevinManifestBundle({ useConfigComponentsBundle: true });

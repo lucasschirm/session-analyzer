@@ -149,6 +149,16 @@ export async function buildDevinManifestBundle(
      * measured-zero case end-to-end through real ingestion.
      */
     readonly useSingleTierBundle?: boolean;
+    /**
+     * Use a caller-supplied fixture bundle directly instead of the
+     * `useXBundle` flag cascade below — for a fixture that's only needed by
+     * one pipeline test (e.g. PIPE-019's `idleResyncPass1Bundle`/
+     * `idleResyncPass2Bundle`, two DIFFERENT transcripts for the SAME
+     * session across two manifest versions), adding another dedicated
+     * boolean flag here would just accumulate one-off cases. Takes
+     * precedence over every `useXBundle` flag when provided.
+     */
+    readonly sourceBundle?: UnknownArtifactBundle;
   } = {},
 ): Promise<DevinManifestFixture> {
   const projectId = options.projectId ?? 'devin-project';
@@ -156,17 +166,19 @@ export async function buildDevinManifestBundle(
   const sourceId = options.sourceId ?? 'default';
   const environmentId = options.environmentId ?? 'dev';
 
-  let sourceBundle = options.useComponentsBundle
-    ? componentsBundle
-    : options.useConfigComponentsBundle
-      ? configComponentsBundle
-      : options.useSubagentBundle
-        ? subagentBundle
-        : options.useModelSwitchBundle
-          ? modelSwitchBundle
-          : options.useSingleTierBundle
-            ? singleTierBundle
-            : linearBundle;
+  let sourceBundle =
+    options.sourceBundle ??
+    (options.useComponentsBundle
+      ? componentsBundle
+      : options.useConfigComponentsBundle
+        ? configComponentsBundle
+        : options.useSubagentBundle
+          ? subagentBundle
+          : options.useModelSwitchBundle
+            ? modelSwitchBundle
+            : options.useSingleTierBundle
+              ? singleTierBundle
+              : linearBundle);
   sourceBundle = cloneBundleWithNativeSessionId(sourceBundle, sessionId);
   if (options.corruptRootTranscript) {
     sourceBundle = cloneBundleWithRootTranscript(sourceBundle, '');

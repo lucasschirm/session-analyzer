@@ -1,7 +1,9 @@
+import { mergeMessageNodeHashes } from './message-node-watermark.js';
 import { mergeSessionHashes } from './session-watermark.js';
 import { mergeToolCallStateHashes } from './tool-call-watermark.js';
 import type {
   DevinJsonlLine,
+  DevinMessageNodeRow,
   DevinSessionRow,
   DevinToolCallStateRow,
   DevinWatermarks,
@@ -111,6 +113,26 @@ function isSessionRow(row: Record<string, unknown>): row is DevinSessionRow {
   return typeof row.id === 'string';
 }
 
+/**
+ * A real `message_nodes` row, as opposed to a synthetic sub-agent
+ * prompt/result line (`subagent-lines.ts`'s `buildSyntheticNodeRow`, always
+ * stamped `row_id: -1` — never a real sessions.db row_id, which is always
+ * positive). Synthetic lines are deliberately excluded here: they have no
+ * underlying DB row to content-hash-watermark, and their own dedup already
+ * happens via `messageNodeIds`/`excludeNodeIds` (see this file's
+ * `collectMessageNodeIds`) — mirrors the pre-existing `raw < 0` guard in
+ * `maxRowId` below, which excluded the same sentinel from the old
+ * rowid-based watermark.
+ */
+function isMessageNodeRow(row: Record<string, unknown>): row is DevinMessageNodeRow {
+  return (
+    typeof row.row_id === 'number' &&
+    row.row_id >= 0 &&
+    typeof row.session_id === 'string' &&
+    typeof row.node_id === 'number'
+  );
+}
+
 function foldToolCallLine(state: DevinWatermarks, line: Record<string, unknown>): DevinWatermarks {
   const row = stripLineWrapper(line);
   if (!isToolCallRow(row)) return state;
@@ -129,10 +151,25 @@ function foldSessionLine(state: DevinWatermarks, line: Record<string, unknown>):
   };
 }
 
+/** Folds a real `message`-type line into `messageNodesContentHashes`
+ * (#341); a synthetic sub-agent line (`isMessageNodeRow` false) leaves
+ * `state` untouched — see that function's doc comment. */
+function foldMessageNodeLine(
+  state: DevinWatermarks,
+  line: Record<string, unknown>,
+): DevinWatermarks {
+  const row = stripLineWrapper(line);
+  if (!isMessageNodeRow(row)) return state;
+  return {
+    ...state,
+    messageNodesContentHashes: mergeMessageNodeHashes(state.messageNodesContentHashes, [row]),
+  };
+}
+
 function foldLine(state: DevinWatermarks, line: Record<string, unknown>): DevinWatermarks {
   switch (line.type as DevinJsonlLine['type'] | undefined) {
     case 'message':
-      return { ...state, messageNodesRowId: maxRowId(state.messageNodesRowId, line.row_id) };
+      return foldMessageNodeLine(state, line);
     case 'prompt':
       return { ...state, promptHistoryId: maxRowId(state.promptHistoryId, line.id) };
     case 'tool_call':

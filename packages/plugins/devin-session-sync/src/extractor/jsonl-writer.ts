@@ -1,3 +1,4 @@
+import { mergeMessageNodeHashes } from './message-node-watermark.js';
 import { mergeSessionHashes } from './session-watermark.js';
 import { buildSubagentSyntheticNodes } from './subagent-lines.js';
 import { mergeToolCallStateHashes } from './tool-call-watermark.js';
@@ -366,9 +367,9 @@ function groupBy<T>(rows: T[], keyFn: (row: T) => string): Map<string, T[]> {
 
 function computeWatermarks(tables: DevinExtractedTables, prior: DevinWatermarks): DevinWatermarks {
   return {
-    messageNodesRowId: mergeWatermark(
-      prior.messageNodesRowId,
-      tables.messageNodes.map((m) => m.row_id),
+    messageNodesContentHashes: mergeMessageNodeHashes(
+      prior.messageNodesContentHashes,
+      tables.messageNodes,
     ),
     toolCallStateHashes: mergeToolCallStateHashes(prior.toolCallStateHashes, tables.toolCallStates),
     promptHistoryId: mergeWatermark(

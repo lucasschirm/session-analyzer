@@ -59,6 +59,7 @@ import {
 } from '@lucasschirm/sal-sync';
 import { DEVIN_HARD_BLOCKLIST_PATTERNS, DevinHarnessProfile } from './devin-profile.js';
 import { buildDevinJsonl } from './extractor/jsonl-writer.js';
+import { filterChangedMessageNodes } from './extractor/message-node-watermark.js';
 import { resolveDevinPaths } from './extractor/paths.js';
 import { filterChangedToolCallStates } from './extractor/tool-call-watermark.js';
 import type {
@@ -105,8 +106,8 @@ export interface DevinSessionSyncOutcome {
   /**
    * Failures in the actual session artifact pipeline (discovery, upload,
    * manifest record/upload). Non-empty `errors` (or `failed > 0`) is what
-   * gates `hasFailure` — this is reserved for problems that mean "this
-   * session's real data failed to sync".
+   * `hasSyncFailure()` below gates on — this is reserved for problems that
+   * mean "this session's real data failed to sync".
    */
   errors: string[];
   /**
@@ -117,6 +118,20 @@ export interface DevinSessionSyncOutcome {
    * whether the real session artifacts uploaded, not on this side-channel.
    */
   warnings: string[];
+}
+
+/**
+ * The single, shared success/failure gate for a `DevinSessionSyncOutcome`:
+ * `failed > 0` (real artifact-pipeline failures) OR `errors` non-empty
+ * (e.g. a manifest-upload failure, which can occur with `failed === 0`).
+ * `warnings` never participates — see `DevinSessionSyncOutcome.warnings`'s
+ * doc comment. Exported so `watcher.ts` shares this exact predicate rather
+ * than hand-maintaining a second copy — the divergence risk of two copies
+ * is exactly what caused #339 (the watcher's copy had silently drifted to
+ * `failed > 0` alone).
+ */
+export function hasSyncFailure(outcome: DevinSessionSyncOutcome): boolean {
+  return outcome.failed > 0 || outcome.errors.length > 0;
 }
 
 function emitProgress(
@@ -137,6 +152,7 @@ function summarizeOutcome(outcome: DevinSessionSyncOutcome): string {
   if (outcome.uploaded > 0) parts.push(`${outcome.uploaded} uploaded`);
   if (outcome.skipped > 0) parts.push(`${outcome.skipped} skipped`);
   if (outcome.failed > 0) parts.push(`${outcome.failed} failed`);
+  if (outcome.errors.length > 0) parts.push(`${outcome.errors.length} error(s)`);
   if (outcome.warnings.length > 0) parts.push(`${outcome.warnings.length} warning(s)`);
   return `session ${outcome.sessionId}: ${parts.length > 0 ? parts.join(', ') : 'no changes'}`;
 }
@@ -174,16 +190,18 @@ async function readExistingTranscript(transcriptPath: string): Promise<string | 
  * Filters one session's freshly-read `sessionTables` down to rows genuinely
  * newer than what the transcript file's own tail already shows.
  *
- * `messageNodes`/`promptHistory` are genuinely insert-only (#298 Phase 1),
- * so a simple `row_id`/`id` watermark comparison is sound, mirroring
- * `reader.ts`'s own `WHERE row_id > ?` / `WHERE id > ?`. `toolCallStates`
- * cannot use that same comparison — #298 found Devin rewrites a session's
- * entire `tool_call_state` row set (including untouched rows) under a new
- * rowid on every persist, so a rowid-based filter here would incorrectly
- * treat an already-written, unchanged row as new and duplicate it. The
- * content-hash comparison (`filterChangedToolCallStates`, the same function
- * `reader.ts` itself uses) is reused instead, fed by the hashes this
- * pass's `deriveWatermarksFromExistingLines` reconstructed from the file.
+ * `promptHistory` is genuinely insert-only (#298 Phase 1), so a simple
+ * `id` watermark comparison is sound, mirroring `reader.ts`'s own
+ * `WHERE id > ?`. `messageNodes` and `toolCallStates` cannot use that same
+ * row-id-based comparison — #298 (tool_call_state) and #341 (message_nodes)
+ * each found Devin rewrites a session's entire row set for that table
+ * (including untouched rows) under fresh row ids on every persist, so a
+ * rowid-based filter here would incorrectly treat an already-written,
+ * unchanged row as new and duplicate it. The content-hash comparison
+ * (`filterChangedToolCallStates` / `filterChangedMessageNodes`, the same
+ * functions `reader.ts` itself uses) is reused instead for both, fed by the
+ * hashes this pass's `deriveWatermarksFromExistingLines` reconstructed from
+ * the file.
  *
  * `sessions` is deliberately never filtered here — unchanged, intentional
  * "last-write-wins" replay semantics (`jsonl-writer.ts`'s `appendSessionLines`
@@ -200,8 +218,9 @@ function filterNewRows(
 ): DevinExtractedTables {
   return {
     sessions: sessionTables.sessions,
-    messageNodes: sessionTables.messageNodes.filter(
-      (m) => m.row_id > (prior.messageNodesRowId ?? -1),
+    messageNodes: filterChangedMessageNodes(
+      sessionTables.messageNodes,
+      prior.messageNodesContentHashes,
     ),
     promptHistory: sessionTables.promptHistory.filter((p) => p.id > (prior.promptHistoryId ?? -1)),
     toolCallStates: filterChangedToolCallStates(
@@ -695,7 +714,6 @@ export async function runDevinSessionSync(
   // never alone flip the whole sync to failed. Its failure is still fully
   // visible: it already emitted its own 'failure' progress event above and
   // is recorded in `outcome.warnings` (never silently dropped).
-  const hasFailure = outcome.failed > 0 || outcome.errors.length > 0;
-  emitProgress(options, hasFailure ? 'failure' : 'success', summarizeOutcome(outcome));
+  emitProgress(options, hasSyncFailure(outcome) ? 'failure' : 'success', summarizeOutcome(outcome));
   return outcome;
 }
