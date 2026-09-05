@@ -982,6 +982,55 @@ export const noRootBundle: UnknownArtifactBundle = bundle([
   artifact('.devin/config.json', JSON.stringify({ project: 'test' }), 'application/json'),
 ]);
 
+// The devin 'complete' fixture (#308): every invocation domain (tool, skill,
+// agent), transform-time components from cogs (skill + MCP wrapper tools)
+// and tool_call_state (agent), inline Sub Agent evidence (a detached
+// conversation subtree), and ATIF final metrics whose token identity
+// reconciles exactly (prompt 100 incl. 10 cached + completion 50 = total
+// 150 = the session-level model_usage inputTokens + outputTokens). Enables
+// toolSkillAgentSubAgentDistinct and rootOnlyAndInclusiveNoDoubleCount to
+// actually run for devin instead of reporting `unverified`.
+const completeSessionTranscript = [
+  sessionLine(sessionId, 3, undefined, [mcpAllowListCog, skillCog]),
+  messageLine(sessionId, 1, null, 'user', 'Invoke a skill and a subagent'),
+  messageLine(sessionId, 2, 1, 'assistant', 'On it'),
+  messageLine(sessionId, 3, 2, 'assistant', 'Done'),
+  messageLine(sessionId, 40, 999, 'user', 'Detached subagent task prompt'),
+  messageLine(sessionId, 41, 40, 'assistant', 'Detached subagent result'),
+  toolCallLine(sessionId, 'tc-skill-1', 'execute', 'Invoked skill add-e2e-test', 'success', {
+    inferenceToolName: 'skill',
+    rawInput: { command: 'invoke', skill: 'add-e2e-test' },
+  }),
+  toolCallLine(sessionId, 'tc-agent-1', 'execute', 'Ran pr-review subagent', 'success', {
+    inferenceToolName: 'run_subagent',
+    rawInput: { profile: 'pr-review', title: 'Review PR #264', task: 'Review the pull request' },
+  }),
+  toolCallLine(sessionId, 'tc-tool-1', 'edit', 'EditFile', 'success'),
+].join('\n');
+
+export const completeSessionBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', completeSessionTranscript, 'application/jsonl'),
+  artifact('native/atif-transcript.json', linearAtif, 'application/json'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+  artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
+]);
+
+// The devin 'classification' fixture (#308): an artifact no path rule
+// covers — partialSnapshotsDoNotImplyRemovals asserts the unclassified
+// artifact degrades completeness (never a `complete` claim) instead of
+// implying removal.
+const partialClassificationTranscript = [
+  sessionLine(sessionId, 2),
+  messageLine(sessionId, 1, null, 'user', 'Hello'),
+  messageLine(sessionId, 2, 1, 'assistant', 'Hi'),
+].join('\n');
+
+export const partialClassificationBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', partialClassificationTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+  artifact('mystery/unknown-artifact.bin', 'opaque-bytes', 'application/octet-stream'),
+]);
+
 export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle> = {
   fixtures: [
     // Listed first: `runTransformerConformanceSuite`'s provenance/formula
@@ -1094,6 +1143,23 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
         'evidence capture and the ordering-corruption fixes together.',
       subagentBundle,
       ['root', 'subagent', 'deterministic'],
+    ),
+    fixture(
+      'complete-session',
+      'The devin complete fixture (#308): tool/skill/agent invocations, cogs- and ' +
+        'tool_call_state-derived components, inline Sub Agent evidence (detached ' +
+        'conversation), and exactly-reconciling ATIF token totals — makes ' +
+        'toolSkillAgentSubAgentDistinct and rootOnlyAndInclusiveNoDoubleCount run for devin.',
+      completeSessionBundle,
+      ['root', 'subagent', 'complete', 'deterministic'],
+    ),
+    fixture(
+      'partial-classification',
+      'A bundle containing an artifact no path rule covers (#308): ' +
+        'partialSnapshotsDoNotImplyRemovals asserts unclassified artifacts degrade ' +
+        'completeness without implying removal or claiming complete.',
+      partialClassificationBundle,
+      ['root', 'classification', 'unavailable', 'deterministic'],
     ),
   ],
 };

@@ -153,11 +153,129 @@ function hasProvenance(record: NormalizedEvidenceRecord): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Harness conformance profiles (#308/#248)
+// ---------------------------------------------------------------------------
+
+/**
+ * Harness-specific expectations for the shared invariants (#308, root cause
+ * #248): metric ids are prefixed per harness, "complete" fixtures exhibit
+ * different component/evidence surfaces, and token identities differ
+ * (claude's `inputTokens` EXCLUDES cache reads; devin's prompt INCLUDES
+ * them). Invariants 1/4/7 read these instead of hardcoding claude shapes,
+ * so a second harness is actually verified rather than silently skipped.
+ */
+export interface ConformanceProfile {
+  /** Metric-id prefix, e.g. `claude` or `devin`. */
+  readonly metricPrefix: string;
+  /** Component kinds a 'complete' fixture's transform must exhibit. */
+  readonly completeComponentKinds: readonly ComponentSummary['kind'][];
+  /**
+   * Component kinds a 'classification' fixture must retain. Empty means the
+   * harness derives components at transform time only — the invariant then
+   * asserts partial-snapshot semantics (unclassified artifacts never yield
+   * a `complete` claim) without per-kind presence checks.
+   */
+  readonly classificationComponentKinds: readonly ComponentSummary['kind'][];
+  /**
+   * How the harness models Sub Agent evidence: distinct child sessions with
+   * `session_relation` records, or inline normalized events on the root.
+   */
+  readonly subagentEvidence: 'child-sessions' | 'inline-events';
+  /** Inline-events: normalized_event categories that prove Sub Agent evidence. */
+  readonly inlineSubagentCategories: readonly string[];
+  /** Invocation-payload field carrying a skill invocation's name. */
+  readonly skillNameField: string;
+  /** Invocation-payload field carrying an agent invocation's type/name. */
+  readonly agentNameField: string;
+  /**
+   * `model_usage` payload fields whose per-session sum must equal
+   * `<prefix>:tokens:total:*` — the harness's token identity.
+   */
+  readonly totalTokenFields: readonly string[];
+  /** [unprefixed metric base, evidence recordType] reconciliation families. */
+  readonly countMetricFamilies: readonly (readonly [string, string])[];
+}
+
+/** The default profile — the shapes this suite historically hardcoded. */
+export const CLAUDE_CONFORMANCE_PROFILE: ConformanceProfile = {
+  metricPrefix: 'claude',
+  completeComponentKinds: ['skill', 'agent', 'rule', 'mcp', 'settings'],
+  classificationComponentKinds: ['skill', 'agent', 'rule', 'mcp', 'settings'],
+  subagentEvidence: 'child-sessions',
+  inlineSubagentCategories: [],
+  skillNameField: 'skillName',
+  agentNameField: 'agentType',
+  totalTokenFields: ['inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens'],
+  countMetricFamilies: [
+    ['turns:count', 'turn'],
+    ['file_operations:count', 'file_operation'],
+    ['commands:count', 'command_execution'],
+    ['validations:count', 'validation'],
+  ],
+};
+
+/** Options for `runTransformerConformanceSuite` (#308). */
+export interface ConformanceRunOptions {
+  /** Harness expectations; defaults to `CLAUDE_CONFORMANCE_PROFILE`. */
+  readonly profile?: ConformanceProfile;
+  /**
+   * When true, `unverified` invariants fail the run instead of passing
+   * silently — a harness gate should always set this (#308: the devin run
+   * passed with 3 of 10 invariants never executing).
+   */
+  readonly strict?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // 1. Tool, Skill, Agent, and Sub Agent remain distinct
 // ---------------------------------------------------------------------------
 
+/** child-sessions harnesses: Sub Agents are distinct sessions with relations. */
+function assertChildSessionSubAgentEvidence(
+  result: TransformResult,
+  agentInvocations: readonly NormalizedEvidenceRecord[],
+): void {
+  for (const inv of agentInvocations) {
+    const payload = inv.payload as { childSessionId?: string };
+    assert.ok(
+      payload.childSessionId,
+      'Agent invocation must link to a distinct Sub Agent session.',
+    );
+  }
+  const relations = result.evidence.filter((r) => r.recordType === 'session_relation');
+  assert.ok(relations.length > 0, 'Expected a session_relation record for the Sub Agent.');
+  for (const relation of relations) {
+    const payload = relation.payload as { nativeInclusionSemantics?: string };
+    assert.equal(payload.nativeInclusionSemantics, 'subagent');
+  }
+}
+
+/** Profile-dependent Sub Agent evidence assertions for invariant 1. */
+function assertSubAgentEvidence(
+  result: TransformResult,
+  agentInvocations: readonly NormalizedEvidenceRecord[],
+  profile: ConformanceProfile,
+): void {
+  if (profile.subagentEvidence !== 'inline-events') {
+    assertChildSessionSubAgentEvidence(result, agentInvocations);
+    return;
+  }
+  const subagentEvents = result.evidence.filter(
+    (r) =>
+      r.recordType === 'normalized_event' &&
+      profile.inlineSubagentCategories.includes(
+        (r.payload as { category?: string }).category ?? '',
+      ),
+  );
+  assert.ok(
+    subagentEvents.length > 0,
+    'Expected inline Sub Agent evidence (subagent normalized events) in the complete fixture.',
+  );
+}
+
 function checkToolSkillAgentSubAgentDistinct<TBundle extends UnknownArtifactBundle>(
   results: FixtureResult<TBundle>[],
+  profile: ConformanceProfile,
 ): InvariantReport {
   const complete = findByTag(results, 'complete');
   if (!complete || !isSuccess(complete.result)) {
@@ -198,62 +316,48 @@ function checkToolSkillAgentSubAgentDistinct<TBundle extends UnknownArtifactBund
   }
 
   for (const inv of byKind.get('skill') ?? []) {
-    const payload = inv.payload as { skillName?: string };
+    const payload = inv.payload as Record<string, unknown>;
     assert.ok(
-      payload.skillName,
+      payload[profile.skillNameField],
       'Skill invocation must retain its skill name, not be classified as a generic tool.',
     );
   }
 
   for (const inv of byKind.get('agent') ?? []) {
-    const payload = inv.payload as { agentType?: string; childSessionId?: string };
+    const payload = inv.payload as Record<string, unknown>;
     assert.ok(
-      payload.agentType,
+      payload[profile.agentNameField],
       'Agent invocation must retain its agent type, not be classified as a generic tool.',
     );
-    assert.ok(
-      payload.childSessionId,
-      'Agent invocation must link to a distinct Sub Agent session.',
-    );
   }
 
-  const relations = result.evidence.filter((r) => r.recordType === 'session_relation');
-  assert.ok(relations.length > 0, 'Expected a session_relation record for the Sub Agent.');
-  for (const relation of relations) {
-    const payload = relation.payload as { nativeInclusionSemantics?: string };
-    assert.equal(payload.nativeInclusionSemantics, 'subagent');
-  }
+  assertSubAgentEvidence(result, byKind.get('agent') ?? [], profile);
 
   const componentKinds = new Set(result.componentSummaries.map((c) => c.kind));
-  for (const kind of ['skill', 'agent', 'rule', 'mcp', 'settings']) {
-    assert.ok(
-      componentKinds.has(kind as ComponentSummary['kind']),
-      `Expected a ${kind} component in the complete fixture.`,
-    );
+  for (const kind of profile.completeComponentKinds) {
+    assert.ok(componentKinds.has(kind), `Expected a ${kind} component in the complete fixture.`);
   }
 
   const { rootSessionId } = rootAndChildSessionIds(result);
   assert.ok(rootSessionId, 'Expected a root session id');
 
   for (const kind of ['tool', 'skill', 'agent'] as const) {
-    const root = metricValue(result, `claude:invocations:${kind}:root_only`);
-    const inclusive = metricValue(result, `claude:invocations:${kind}:inclusive`);
-    assert.ok(root, `Expected claude:invocations:${kind}:root_only metric`);
-    assert.ok(inclusive, `Expected claude:invocations:${kind}:inclusive metric`);
+    const rootId = `${profile.metricPrefix}:invocations:${kind}:root_only`;
+    const inclusiveId = `${profile.metricPrefix}:invocations:${kind}:inclusive`;
+    const root = metricValue(result, rootId);
+    const inclusive = metricValue(result, inclusiveId);
+    assert.ok(root, `Expected ${rootId} metric`);
+    assert.ok(inclusive, `Expected ${inclusiveId} metric`);
     const rootCount: number = result.evidence.filter(
       (r) =>
         r.recordType === 'invocation' &&
         r.sessionId === rootSessionId &&
         (r.payload as { kind?: string }).kind === kind,
     ).length;
-    assert.equal(
-      root.value,
-      rootCount,
-      `claude:invocations:${kind}:root_only must match root invocation records.`,
-    );
+    assert.equal(root.value, rootCount, `${rootId} must match root invocation records.`);
     assert.ok(
       (inclusive.value as number) >= (root.value as number),
-      `claude:invocations:${kind}:inclusive must include root count.`,
+      `${inclusiveId} must include root count.`,
     );
   }
 
@@ -442,8 +546,22 @@ function checkEffortRoundTrips<TBundle extends UnknownArtifactBundle>(
 // 4. root-only and inclusive values cannot double-count descendants
 // ---------------------------------------------------------------------------
 
+/** Per-session sum of the profile's token-identity fields (#308). */
+function sumTotalTokenFields(
+  result: TransformResult,
+  profile: ConformanceProfile,
+  sessionId: string,
+): number {
+  let sum = 0;
+  for (const field of profile.totalTokenFields) {
+    sum += sumRecordFieldBySession(result, 'model_usage', field, sessionId);
+  }
+  return sum;
+}
+
 function checkRootOnlyAndInclusiveNoDoubleCount<TBundle extends UnknownArtifactBundle>(
   results: FixtureResult<TBundle>[],
+  profile: ConformanceProfile,
 ): InvariantReport {
   const complete = findByTag(results, 'complete');
   if (!complete || !isSuccess(complete.result)) {
@@ -456,12 +574,9 @@ function checkRootOnlyAndInclusiveNoDoubleCount<TBundle extends UnknownArtifactB
   const { rootSessionId, childSessionIds } = rootAndChildSessionIds(result);
   assert.ok(rootSessionId, 'Expected a root session');
 
-  const countMetrics = [
-    ['claude:turns:count', 'turn'],
-    ['claude:file_operations:count', 'file_operation'],
-    ['claude:commands:count', 'command_execution'],
-    ['claude:validations:count', 'validation'],
-  ] as const;
+  const countMetrics = profile.countMetricFamilies.map(
+    ([base, recordType]) => [`${profile.metricPrefix}:${base}`, recordType] as const,
+  );
 
   for (const [prefix, recordType] of countMetrics) {
     const root = metricValue(result, `${prefix}:root_only`);
@@ -513,8 +628,10 @@ function checkRootOnlyAndInclusiveNoDoubleCount<TBundle extends UnknownArtifactB
   }
 
   for (const kind of ['tool', 'skill', 'agent'] as const) {
-    const root = metricValue(result, `claude:invocations:${kind}:root_only`);
-    const inclusive = metricValue(result, `claude:invocations:${kind}:inclusive`);
+    const rootId = `${profile.metricPrefix}:invocations:${kind}:root_only`;
+    const inclusiveId = `${profile.metricPrefix}:invocations:${kind}:inclusive`;
+    const root = metricValue(result, rootId);
+    const inclusive = metricValue(result, inclusiveId);
     if (!root || !inclusive) continue;
     const rootCount: number = result.evidence.filter(
       (r) =>
@@ -531,43 +648,33 @@ function checkRootOnlyAndInclusiveNoDoubleCount<TBundle extends UnknownArtifactB
           (r.payload as { kind?: string }).kind === kind,
       ).length;
     }
-    assert.equal(
-      root.value,
-      rootCount,
-      `claude:invocations:${kind}:root_only should equal root invocation records.`,
-    );
+    assert.equal(root.value, rootCount, `${rootId} should equal root invocation records.`);
     assert.equal(
       inclusive.value,
       rootCount + childCount,
-      `claude:invocations:${kind}:inclusive should equal root + child invocation records.`,
+      `${inclusiveId} should equal root + child invocation records.`,
     );
   }
 
-  const tokenTotalRoot = metricValue(result, 'claude:tokens:total:root_only');
-  const tokenTotalInclusive = metricValue(result, 'claude:tokens:total:inclusive');
-  if (tokenTotalRoot && tokenTotalInclusive) {
-    const rootSum =
-      sumRecordFieldBySession(result, 'model_usage', 'inputTokens', rootSessionId) +
-      sumRecordFieldBySession(result, 'model_usage', 'outputTokens', rootSessionId) +
-      sumRecordFieldBySession(result, 'model_usage', 'cacheCreationTokens', rootSessionId) +
-      sumRecordFieldBySession(result, 'model_usage', 'cacheReadTokens', rootSessionId);
+  const tokenTotalRoot = metricValue(result, `${profile.metricPrefix}:tokens:total:root_only`);
+  const tokenTotalInclusive = metricValue(result, `${profile.metricPrefix}:tokens:total:inclusive`);
+  // Null-valued (unavailable) totals are excluded: asserting null against a
+  // 0 record sum would conflate missing with measured zero.
+  if (tokenTotalRoot?.value != null && tokenTotalInclusive?.value != null) {
+    const rootSum = sumTotalTokenFields(result, profile, rootSessionId);
     let childSum = 0;
     for (const childId of childSessionIds) {
-      childSum +=
-        sumRecordFieldBySession(result, 'model_usage', 'inputTokens', childId) +
-        sumRecordFieldBySession(result, 'model_usage', 'outputTokens', childId) +
-        sumRecordFieldBySession(result, 'model_usage', 'cacheCreationTokens', childId) +
-        sumRecordFieldBySession(result, 'model_usage', 'cacheReadTokens', childId);
+      childSum += sumTotalTokenFields(result, profile, childId);
     }
     assert.equal(
       tokenTotalRoot.value,
       rootSum,
-      'claude:tokens:total:root_only must equal the sum of root model usage tokens.',
+      `${profile.metricPrefix}:tokens:total:root_only must equal the sum of root model usage tokens (${profile.totalTokenFields.join('+')}).`,
     );
     assert.equal(
       tokenTotalInclusive.value,
       rootSum + childSum,
-      'claude:tokens:total:inclusive must equal root + child model usage tokens.',
+      `${profile.metricPrefix}:tokens:total:inclusive must equal root + child model usage tokens.`,
     );
   }
 
@@ -671,6 +778,7 @@ function checkReplayedEventsDeduplicate<TBundle extends UnknownArtifactBundle>(
 
 function checkPartialSnapshotsDoNotImplyRemovals<TBundle extends UnknownArtifactBundle>(
   results: FixtureResult<TBundle>[],
+  profile: ConformanceProfile,
 ): InvariantReport {
   const classification = results.find((r) => r.fixture.tags.includes('classification'));
   if (!classification) {
@@ -686,9 +794,9 @@ function checkPartialSnapshotsDoNotImplyRemovals<TBundle extends UnknownArtifact
   assert.ok(unclassified.length > 0, 'Expected an unclassified artifact to test partial semantics');
 
   const componentKinds = new Set(cls.components.map((c) => c.kind));
-  for (const kind of ['skill', 'agent', 'rule', 'mcp', 'settings']) {
+  for (const kind of profile.classificationComponentKinds) {
     assert.ok(
-      componentKinds.has(kind as ComponentSummary['kind']),
+      componentKinds.has(kind),
       `Partial snapshot should still contain ${kind} components, not remove them.`,
     );
     const completeness = cls.configurationSnapshot.completeness[kind];
@@ -697,6 +805,19 @@ function checkPartialSnapshotsDoNotImplyRemovals<TBundle extends UnknownArtifact
       `Partial snapshot with unclassified artifacts must mark present ${kind} as partial or complete, got ${completeness}.`,
     );
     details.push(`${kind}: completeness=${completeness}`);
+  }
+  if (profile.classificationComponentKinds.length === 0) {
+    // Transform-time-component harnesses (e.g. devin): the invariant still
+    // holds — a snapshot containing unclassified artifacts must never claim
+    // any kind `complete` (absence-of-classification is not evidence of
+    // removal or of completeness).
+    for (const [kind, completeness] of Object.entries(cls.configurationSnapshot.completeness)) {
+      assert.ok(
+        completeness !== 'complete',
+        `Partial snapshot with unclassified artifacts must not claim complete ${kind}.`,
+      );
+      details.push(`${kind}: completeness=${completeness}`);
+    }
   }
 
   const partial = findByTag(results, 'partial');
@@ -949,7 +1070,9 @@ function checkEveryAggregateRetainsProvenance<TBundle extends UnknownArtifactBun
 export function runTransformerConformanceSuite<TBundle extends UnknownArtifactBundle>(
   transformer: SessionTransformer<TBundle>,
   fixtures: TransformerFixtures<TBundle>,
+  options?: ConformanceRunOptions,
 ): ConformanceRunResult {
+  const profile = options?.profile ?? CLAUDE_CONFORMANCE_PROFILE;
   const results: FixtureResult<TBundle>[] = [];
   for (const fixture of fixtures.fixtures) {
     const classification = transformer.classifyArtifacts(fixture.bundle);
@@ -959,23 +1082,30 @@ export function runTransformerConformanceSuite<TBundle extends UnknownArtifactBu
   }
 
   const reports: InvariantReport[] = [
-    checkToolSkillAgentSubAgentDistinct(results),
+    checkToolSkillAgentSubAgentDistinct(results, profile),
     checkUnknownIsNotZero(results),
     checkExactAndEstimatedSeparable(results),
-    checkRootOnlyAndInclusiveNoDoubleCount(results),
+    checkRootOnlyAndInclusiveNoDoubleCount(results, profile),
     checkStartsAndResultsCorrelateBySourceId(results),
     checkReplayedEventsDeduplicate(results, transformer),
-    checkPartialSnapshotsDoNotImplyRemovals(results),
+    checkPartialSnapshotsDoNotImplyRemovals(results, profile),
     checkUnavailableMetricsIncludeReason(results),
     checkOutputIsDeterministic(results, transformer),
     checkEveryAggregateRetainsProvenance(results),
   ];
 
-  const passed = !reports.some((r) => r.status === 'failed');
+  const failed = reports.filter((r) => r.status === 'failed');
+  // #308: an `unverified` invariant means the check never executed. A
+  // harness gate that accepts that is not a gate — strict mode turns
+  // unverified into failure so a missing fixture cannot silently disable
+  // an invariant.
+  const unverified = options?.strict ? reports.filter((r) => r.status === 'unverified') : [];
+  const passed = failed.length === 0 && unverified.length === 0;
   if (!passed) {
-    const failed = reports.filter((r) => r.status === 'failed');
+    const failedCodes = failed.map((r) => r.code);
+    const unverifiedCodes = unverified.map((r) => `${r.code} (unverified under strict mode)`);
     assert.fail(
-      `Transformer conformance suite failed for invariants: ${failed.map((r) => r.code).join(', ')}`,
+      `Transformer conformance suite failed for invariants: ${[...failedCodes, ...unverifiedCodes].join(', ')}`,
     );
   }
 

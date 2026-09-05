@@ -4,14 +4,21 @@ import { ClaudeCodeTransformer } from '../../src/index.js';
 import { claudeConformanceFixtures } from '../conformance/fixtures/index.js';
 
 describe('ClaudeCodeTransformer conformance', () => {
-  it('passes the shared transformer conformance suite', () => {
-    const report = runTransformerConformanceSuite(ClaudeCodeTransformer, claudeConformanceFixtures);
+  it('passes the shared transformer conformance suite (strict: unverified fails)', () => {
+    // Default profile is the claude one; strict mode (#308) turns any
+    // silently-skipped (`unverified`) invariant into a failure.
+    const report = runTransformerConformanceSuite(
+      ClaudeCodeTransformer,
+      claudeConformanceFixtures,
+      { strict: true },
+    );
     for (const inv of report.invariants) {
       if (inv.status !== 'passed') {
         console.log(`[${inv.status}] ${inv.code}: ${inv.details.join('; ')}`);
       }
     }
     expect(report.passed).toBe(true);
+    expect(report.invariants.filter((i) => i.status === 'unverified')).toEqual([]);
   });
 
   it.each(claudeConformanceFixtures.fixtures)(
