@@ -1,10 +1,20 @@
 # src/
 
 Devin CLI plugin adapter for the `@lucasschirm/sal-sync` session data sync
-engine. Today this package hosts only the `extractor/` module (DS-F2,
-issue #157); the plugin manifest, hooks, `devin-sync` CLI, and esbuild bin
-wiring land with DS-F3 (issue #158) — see `../build.mjs` for the placeholder
-that `pnpm -r build` currently runs.
+engine. This doc predates the plugin manifest/hooks/`devin-sync` CLI/esbuild
+bin wiring landing (DS-F3, issue #158) and still only documents the
+`extractor/` module below; see `cli/AGENTS.md` for the CLI surface.
+
+**#354 update:** `devin-cli-adapter.ts` (new) is this plugin's
+`CliHarnessAdapter`, parameterizing `@lucasschirm/sal-sync`'s shared CLI
+implementation (hoisted out of this plugin and `claude-session-sync`, which
+had copy-pasted ~1.5-2k lines of this plugin's CLI) with Devin's binary/
+package naming, `.devin`/`~/.config/devin` config paths, help text, and the
+`migrateManifestHarness` field (correctly `DevinHarnessProfile.harness` —
+see that file's doc comment). `cli/env.ts`, `cli/config.ts`, `cli/logger.ts`,
+`cli/remove-command.ts`, `cli/download-command.ts`, `cli/list-command.ts`,
+`cli/migrate-command.ts`, `cli.ts`, and `is-main-module.ts` are now thin
+wrappers around that shared implementation — see `cli/AGENTS.md`.
 
 ## extractor/
 
