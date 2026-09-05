@@ -122,6 +122,71 @@ function knownModelBundle(): UnknownArtifactBundle {
   return bundle([artifact('transcript.jsonl', jsonl, 'application/jsonl')]);
 }
 
+/**
+ * Two requests against a recognized/priced model; the second is missing
+ * `cache_read_input_tokens` entirely (#377). Used to assert that a
+ * recognized model with incomplete token data is reported distinctly from
+ * a genuinely unrecognized model, and that per-class token sums stay
+ * correct when a null field flows through this file for the first time.
+ */
+function partialUsageKnownModelBundle(): UnknownArtifactBundle {
+  const sessionId = 'synth-partial-cost';
+  const jsonl = [
+    JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId }),
+    JSON.stringify({
+      parentUuid: null,
+      type: 'user',
+      uuid: `u1-${sessionId}`,
+      timestamp: '2026-08-01T10:00:00.000Z',
+      sessionId,
+      message: { role: 'user', content: 'Hello' },
+    }),
+    JSON.stringify({
+      parentUuid: `u1-${sessionId}`,
+      type: 'assistant',
+      uuid: `a1-${sessionId}`,
+      timestamp: '2026-08-01T10:00:01.000Z',
+      sessionId,
+      requestId: `req1-${sessionId}`,
+      message: {
+        model: 'claude-3-5-sonnet-20241022',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Hi' }],
+        usage: {
+          input_tokens: 1_000,
+          output_tokens: 200,
+          cache_creation_input_tokens: 150,
+          cache_read_input_tokens: 50,
+        },
+      },
+    }),
+    JSON.stringify({
+      parentUuid: `a1-${sessionId}`,
+      type: 'user',
+      uuid: `u2-${sessionId}`,
+      timestamp: '2026-08-01T10:00:02.000Z',
+      sessionId,
+      message: { role: 'user', content: 'Continue' },
+    }),
+    JSON.stringify({
+      parentUuid: `u2-${sessionId}`,
+      type: 'assistant',
+      uuid: `a2-${sessionId}`,
+      timestamp: '2026-08-01T10:00:03.000Z',
+      sessionId,
+      requestId: `req2-${sessionId}`,
+      message: {
+        model: 'claude-3-5-sonnet-20241022',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Done' }],
+        // cache_read_input_tokens omitted entirely.
+        usage: { input_tokens: 1_200, output_tokens: 40, cache_creation_input_tokens: 0 },
+      },
+    }),
+  ].join('\n');
+  return bundle([artifact('transcript.jsonl', jsonl, 'application/jsonl')]);
+}
+
 function effortTurns(
   sessionId: string,
   efforts: (string | undefined)[],
@@ -480,6 +545,41 @@ describe('claude-code-metrics', () => {
       const cost = findMetric(result, 'claude:cost:total:root_only');
       expect(cost?.value).toBeGreaterThan(0);
       expect(cost?.exact).toBe(false);
+    });
+
+    it('reports incomplete token usage, not an unrecognized model, when a recognized model has a partial-usage record (#377)', () => {
+      const result = ClaudeCodeTransformer.transform(
+        partialUsageKnownModelBundle(),
+        defaultContext,
+      );
+      const cost = findMetric(result, 'claude:cost:total:root_only');
+      expect(cost?.value).toBeNull();
+      const reason = result.unavailableReasons.find(
+        (r) => r.metricId === 'claude:cost:total:root_only',
+      );
+      expect(reason?.reason).toContain('incomplete token usage');
+      expect(reason?.reason).not.toContain('unrecognized model');
+    });
+
+    it('sums per-class tokens correctly and downgrades exactness when one record has a partial-usage field (#377)', () => {
+      const result = ClaudeCodeTransformer.transform(
+        partialUsageKnownModelBundle(),
+        defaultContext,
+      );
+      // input/output/cache_creation are known on both records; cache_read
+      // is known only on the first (50) — the second's absence must not
+      // contribute a phantom 0 that would be indistinguishable here, but it
+      // must also not throw, corrupt the sum, or silently drop the known
+      // contribution from the other record.
+      expect(findMetric(result, 'claude:tokens:input:root_only')?.value).toBe(2_200);
+      expect(findMetric(result, 'claude:tokens:output:root_only')?.value).toBe(240);
+      expect(findMetric(result, 'claude:tokens:cache_creation:root_only')?.value).toBe(150);
+      expect(findMetric(result, 'claude:tokens:cache_read:root_only')?.value).toBe(50);
+      // A partial record in the population downgrades exactness for every
+      // token-class metric (current, documented behavior — see #377 review
+      // notes on coarse-grained exactness for a possible future refinement).
+      expect(findMetric(result, 'claude:tokens:input:root_only')?.exact).toBe(false);
+      expect(findMetric(result, 'claude:tokens:cache_read:root_only')?.exact).toBe(false);
     });
 
     it('counts turns and invocations', () => {

@@ -381,7 +381,15 @@ export function getClaudeCodeMetricDefinitions(): readonly MetricDefinition[] {
         ['currency'],
         scope,
         'sum',
-        { allocationMethod: 'direct_sum' },
+        {
+          allocationMethod: 'direct_sum',
+          // Version 2 (#377): a recognized model's record with incomplete
+          // token usage is now excluded from the cost sum instead of
+          // silently pricing a phantom-zero token count for the missing
+          // field — a different result for the same underlying session
+          // than v1 could ever produce.
+          version: 2,
+        },
       ),
     );
     defs.push(
@@ -1040,6 +1048,7 @@ export function deriveClaudeCodeMetrics(
       let sum = 0;
       let anyMissing = false;
       let allPriced = true;
+      let anyIncompleteTokens = false;
       costRecordIds = records.map((r) => r.recordId);
       for (const record of records) {
         const payload = record.payload as ModelUsagePayload;
@@ -1047,6 +1056,12 @@ export function deriveClaudeCodeMetrics(
           anyMissing = true;
           if (!isRecognizedForCost(payload.model)) {
             allPriced = false;
+          } else if (!payload.tokenValuesExact) {
+            // The model is priced, but claude-code-usage.ts's cost guard
+            // (#377) didn't compute a cost because this record's token
+            // fields were incomplete — distinct from "no pricing data",
+            // which must not claim the model itself is unrecognized.
+            anyIncompleteTokens = true;
           }
         } else {
           sum += payload.cost;
@@ -1054,6 +1069,8 @@ export function deriveClaudeCodeMetrics(
       }
       if (!allPriced) {
         costReason = 'some model usage records have no pricing';
+      } else if (anyIncompleteTokens) {
+        costReason = 'some model usage records have incomplete token usage';
       } else if (anyMissing) {
         costReason = 'some model usage records have an unrecognized model';
       } else {

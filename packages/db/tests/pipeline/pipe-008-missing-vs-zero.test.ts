@@ -189,10 +189,13 @@ async function setupContext(): Promise<TestContext> {
 
   const receipts = await ingestAllFixtures(orchestrator, hasher);
   const projectId = await findProjectId(executor, receipts[1].sessionId);
+  // Version 2 (#377): claude:cost:total now excludes a recognized model's
+  // record from the cost sum when its token usage is incomplete, instead of
+  // silently pricing a phantom-zero token count for the missing field.
   const definition = await MetricDefinitionStore.getByMetricIdAndVersion(
     executor,
     COST_METRIC_ID,
-    1,
+    2,
   );
   if (!definition) throw new Error(`Metric definition not found: ${COST_METRIC_ID}`);
 

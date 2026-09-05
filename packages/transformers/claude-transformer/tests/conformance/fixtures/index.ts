@@ -64,6 +64,7 @@ const settingsJson = loadParserFixture('e2e-settings-project.json');
 const happyJsonl = loadParserFixture('t2-happy-path.jsonl');
 const replayedJsonl = loadConformanceData('replayed.jsonl');
 const effortMultiTierJsonl = loadConformanceData('effort-multi-tier.jsonl');
+const partialTokenUsageJsonl = loadConformanceData('partial-token-usage.jsonl');
 
 const commonConfigArtifacts: Artifact<string>[] = [
   artifact('.claude/skills/csv-wrangler/SKILL.md', skillMd, 'text/markdown'),
@@ -178,6 +179,14 @@ export const claudeConformanceFixtures: TransformerFixtures<UnknownArtifactBundl
       bundle: bundle([artifact('transcript.jsonl', effortMultiTierJsonl, 'application/jsonl')]),
       context: testContext,
       tags: ['root', 'root-only', 'effort', 'deterministic'],
+    },
+    {
+      name: 'partial-token-usage',
+      description:
+        'A root session with a fully-populated request, a request whose usage object is entirely empty, and a request missing only cache_read_input_tokens — for missing-vs-zero token conformance (#377).',
+      bundle: bundle([artifact('transcript.jsonl', partialTokenUsageJsonl, 'application/jsonl')]),
+      context: testContext,
+      tags: ['root', 'root-only', 'partial', 'token-usage', 'missing-is-never-zero'],
     },
   ],
 };

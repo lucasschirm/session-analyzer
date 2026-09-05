@@ -85,6 +85,13 @@ function knownModelSession(): ClaudeCodeSession {
 function knownModelSessionWithId(
   sessionId: string,
   model = 'claude-3-5-sonnet-20241022',
+  usage: Record<string, unknown> = {
+    input_tokens: 1_000,
+    output_tokens: 200,
+    cache_creation_input_tokens: 150,
+    cache_read_input_tokens: 50,
+    output_tokens_details: { thinking_tokens: 10 },
+  },
 ): ClaudeCodeSession {
   const jsonl = [
     JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId }),
@@ -111,13 +118,7 @@ function knownModelSessionWithId(
         model,
         role: 'assistant',
         content: [{ type: 'text', text: 'Hi' }],
-        usage: {
-          input_tokens: 1_000,
-          output_tokens: 200,
-          cache_creation_input_tokens: 150,
-          cache_read_input_tokens: 50,
-          output_tokens_details: { thinking_tokens: 10 },
-        },
+        usage,
       },
     }),
   ].join('\n');
@@ -162,6 +163,29 @@ describe('claude-code-usage normalizers', () => {
       expect(payload.costExact).toBe(false);
       expect(payload.pricingVersionId).toBeDefined();
       expect(payload.currency).toBe('USD');
+    });
+
+    it('marks tokenValuesExact false and leaves cost undefined for a partial-usage entry (#377)', () => {
+      // cache_read_input_tokens is entirely absent from this usage object —
+      // the parser propagates it as null, not 0 (missing-is-never-zero).
+      const session = knownModelSessionWithId('synth-partial', 'claude-3-5-sonnet-20241022', {
+        input_tokens: 1_000,
+        output_tokens: 200,
+        cache_creation_input_tokens: 150,
+      });
+      const records = normalizeModelUsage(session, bundle([]), defaultContext, artifactId);
+
+      expect(records.length).toBe(1);
+      const payload = records[0].payload as ModelUsagePayload;
+      expect(payload.inputTokens).toBe(1_000);
+      expect(payload.outputTokens).toBe(200);
+      expect(payload.cacheCreationTokens).toBe(150);
+      expect(payload.cacheReadTokens).toBeNull();
+      expect(payload.tokenValuesExact).toBe(false);
+      // A partial record must not silently compute a cost from a missing
+      // field treated as zero — cost stays unset, same as an unknown model.
+      expect(payload.cost).toBeUndefined();
+      expect(payload.pricingVersionId).toBeUndefined();
     });
 
     it('leaves cost undefined for unknown models', () => {

@@ -257,6 +257,169 @@ function contextAndCacheBundle(): UnknownArtifactBundle {
   return bundle([artifact('transcript.jsonl', contextAndCacheJsonl(), 'application/jsonl')]);
 }
 
+function assistantTurn(opts: {
+  uuid: string;
+  parentUuid: string;
+  ts: string;
+  tsMs: number;
+  line: number;
+  text: string;
+  usage: Record<string, unknown>;
+}): string {
+  return JSON.stringify({
+    parentUuid: opts.parentUuid,
+    type: 'assistant',
+    uuid: opts.uuid,
+    timestamp: opts.ts,
+    timestampMs: opts.tsMs,
+    sessionId: 'synth-partial',
+    lineNumber: opts.line,
+    requestId: `req-${opts.uuid}`,
+    message: {
+      model: 'claude-3-5-sonnet-20241022',
+      role: 'assistant',
+      content: [{ type: 'text', text: opts.text }],
+      usage: opts.usage,
+    },
+  });
+}
+
+function userTurn(opts: {
+  uuid: string;
+  parentUuid: string | null;
+  ts: string;
+  tsMs: number;
+  line: number;
+}): string {
+  return JSON.stringify({
+    parentUuid: opts.parentUuid,
+    type: 'user',
+    uuid: opts.uuid,
+    timestamp: opts.ts,
+    timestampMs: opts.tsMs,
+    sessionId: 'synth-partial',
+    lineNumber: opts.line,
+    message: { role: 'user', content: 'continue' },
+  });
+}
+
+/** First (anchor) request has a `usage` object missing `cache_read_input_tokens`. */
+function partialAnchorJsonl(): string {
+  return [
+    JSON.stringify({
+      type: 'permission-mode',
+      permissionMode: 'normal',
+      sessionId: 'synth-partial',
+    }),
+    userTurn({
+      uuid: 'u-pa-1',
+      parentUuid: null,
+      ts: '2026-08-01T10:00:00.000Z',
+      tsMs: 1_722_506_400_000,
+      line: 2,
+    }),
+    assistantTurn({
+      uuid: 'a-pa-1',
+      parentUuid: 'u-pa-1',
+      ts: '2026-08-01T10:00:01.000Z',
+      tsMs: 1_722_506_401_000,
+      line: 3,
+      text: 'Hi',
+      usage: { input_tokens: 1_000, output_tokens: 50, cache_creation_input_tokens: 100 },
+    }),
+    userTurn({
+      uuid: 'u-pa-2',
+      parentUuid: 'a-pa-1',
+      ts: '2026-08-01T10:00:02.000Z',
+      tsMs: 1_722_506_402_000,
+      line: 4,
+    }),
+    assistantTurn({
+      uuid: 'a-pa-2',
+      parentUuid: 'u-pa-2',
+      ts: '2026-08-01T10:00:03.000Z',
+      tsMs: 1_722_506_403_000,
+      line: 5,
+      text: 'Done',
+      usage: {
+        input_tokens: 1_200,
+        output_tokens: 40,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 100,
+      },
+    }),
+  ].join('\n');
+}
+
+/** Middle request's `usage` is missing `cache_creation_input_tokens`; anchor and last request are fully known. */
+function partialMiddleTurnJsonl(): string {
+  return [
+    JSON.stringify({
+      type: 'permission-mode',
+      permissionMode: 'normal',
+      sessionId: 'synth-partial',
+    }),
+    userTurn({
+      uuid: 'u-pm-1',
+      parentUuid: null,
+      ts: '2026-08-01T10:00:00.000Z',
+      tsMs: 1_722_506_400_000,
+      line: 2,
+    }),
+    assistantTurn({
+      uuid: 'a-pm-1',
+      parentUuid: 'u-pm-1',
+      ts: '2026-08-01T10:00:01.000Z',
+      tsMs: 1_722_506_401_000,
+      line: 3,
+      text: 'Hi',
+      usage: {
+        input_tokens: 1_000,
+        output_tokens: 50,
+        cache_creation_input_tokens: 100,
+        cache_read_input_tokens: 50,
+      },
+    }),
+    userTurn({
+      uuid: 'u-pm-2',
+      parentUuid: 'a-pm-1',
+      ts: '2026-08-01T10:00:02.000Z',
+      tsMs: 1_722_506_402_000,
+      line: 4,
+    }),
+    assistantTurn({
+      uuid: 'a-pm-2',
+      parentUuid: 'u-pm-2',
+      ts: '2026-08-01T10:00:03.000Z',
+      tsMs: 1_722_506_403_000,
+      line: 5,
+      text: 'Mid',
+      usage: { input_tokens: 5_000, output_tokens: 10, cache_read_input_tokens: 5_000 },
+    }),
+    userTurn({
+      uuid: 'u-pm-3',
+      parentUuid: 'a-pm-2',
+      ts: '2026-08-01T10:00:04.000Z',
+      tsMs: 1_722_506_404_000,
+      line: 6,
+    }),
+    assistantTurn({
+      uuid: 'a-pm-3',
+      parentUuid: 'u-pm-3',
+      ts: '2026-08-01T10:00:05.000Z',
+      tsMs: 1_722_506_405_000,
+      line: 7,
+      text: 'Done',
+      usage: {
+        input_tokens: 1_200,
+        output_tokens: 40,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 100,
+      },
+    }),
+  ].join('\n');
+}
+
 function latencyAndParallelismJsonl(): string {
   const lines = [
     JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId: 'synth-lat' }),
@@ -624,6 +787,64 @@ describe('claude-code-optimization-metrics', () => {
       // cache_creation = 100 + 0 + 0 + 0 = 100
       expect(hitRate?.value).toBeCloseTo(150 / 3_350, 6);
       expect(writeRate?.value).toBeCloseTo(100 / 3_350, 6);
+    });
+
+    it('marks first_request/growth metrics unavailable when the anchor is incomplete, but still computes hit/write rate from later complete requests (#377)', () => {
+      const b = bundle([artifact('transcript.jsonl', partialAnchorJsonl(), 'application/jsonl')]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+
+      // These three are defined relative to the anchor specifically, so an
+      // incomplete anchor makes them unavailable regardless of later turns.
+      for (const metricId of [
+        'claude:context:first_request_tokens:root_only',
+        'claude:context:growth_max_tokens:root_only',
+        'claude:context:growth_mean_tokens:root_only',
+      ]) {
+        const metric = findMetric(result, metricId);
+        expect(metric?.value).toBeNull();
+        expect(metric?.unavailableReason).toContain('incomplete');
+      }
+
+      // hit_rate/write_rate have no dependency on the anchor specifically —
+      // turn 2 alone (1_200+0+100 = 1_300 total, cache_read 100, cache
+      // creation 0) is a complete record, so these must still compute,
+      // excluding only the incomplete anchor turn from the sum.
+      const hitRate = findMetric(result, 'claude:cache:hit_rate:root_only');
+      const writeRate = findMetric(result, 'claude:cache:write_rate:root_only');
+      expect(hitRate?.value).toBeCloseTo(100 / 1_300, 6);
+      expect(writeRate?.value).toBe(0);
+    });
+
+    it('excludes a mid-session request with incomplete usage from sums instead of zero-filling it (#377)', () => {
+      const b = bundle([
+        artifact('transcript.jsonl', partialMiddleTurnJsonl(), 'application/jsonl'),
+      ]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      const first = findMetric(result, 'claude:context:first_request_tokens:root_only');
+      const growthMax = findMetric(result, 'claude:context:growth_max_tokens:root_only');
+      const growthMean = findMetric(result, 'claude:context:growth_mean_tokens:root_only');
+      const hitRate = findMetric(result, 'claude:cache:hit_rate:root_only');
+      const writeRate = findMetric(result, 'claude:cache:write_rate:root_only');
+
+      // Anchor (turn 1) = 1_000+100+50 = 1_150; turn 2 is unknown (excluded,
+      // never zero-filled); turn 3 = 1_200+0+100 = 1_300 -> delta 150.
+      expect(first?.value).toBe(1_150);
+      expect(first?.exact).toBe(false); // a partial record exists in-session
+      expect(growthMax?.value).toBe(150);
+      expect(growthMean?.value).toBeCloseTo(75, 6); // (0 + 150) / 2 known deltas
+      // total input = 1_150 + 1_300 = 2_450 (turn 2 excluded wholesale, not
+      // partially folded in); cache_read = 50+100 = 150; cache_creation = 100+0 = 100.
+      expect(hitRate?.value).toBeCloseTo(150 / 2_450, 6);
+      expect(writeRate?.value).toBeCloseTo(100 / 2_450, 6);
+
+      // Evidence must cite only the records that actually contributed to
+      // each computation (#377) — turn 2 didn't contribute to growth_max,
+      // growth_mean, hit_rate, or write_rate and must not be cited as
+      // evidence for them, even though it's a real model_usage record.
+      expect(growthMax?.evidenceRecordIds.length).toBe(2);
+      expect(growthMean?.evidenceRecordIds.length).toBe(2);
+      expect(hitRate?.evidenceRecordIds.length).toBe(2);
+      expect(writeRate?.evidenceRecordIds.length).toBe(2);
     });
   });
 
