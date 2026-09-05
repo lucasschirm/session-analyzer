@@ -32,18 +32,19 @@ function sessionLine(
   mainChainId: number | undefined,
   metadata?: Record<string, unknown>,
   cogsJson?: unknown[],
+  overrides?: { title?: string; model?: string; lastActivityAt?: number; order?: number },
 ): string {
   return devinJsonlLine('session', {
     ts: 1722520800,
-    order: 1,
+    order: overrides?.order ?? 1,
     id,
     working_directory: '/workspace/test',
     backend_type: 'devin',
-    model: 'devin-default',
+    model: overrides?.model ?? 'devin-default',
     agent_mode: 'auto',
     created_at: 1722520800,
-    last_activity_at: 1722520900,
-    title: 'Devin fixture session',
+    last_activity_at: overrides?.lastActivityAt ?? 1722520900,
+    title: overrides?.title ?? 'Devin fixture session',
     main_chain_id: mainChainId === undefined ? undefined : String(mainChainId),
     metadata: metadata ? JSON.stringify(metadata) : undefined,
     cogs_json: cogsJson ? JSON.stringify(cogsJson) : undefined,
@@ -283,6 +284,32 @@ const linearAtif = atifTranscript(
 export const linearBundle: UnknownArtifactBundle = bundle([
   artifact('transcript.jsonl', linearTranscript, 'application/jsonl'),
   artifact('native/atif-transcript.json', linearAtif, 'application/json'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+  artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
+]);
+
+// The real materialized-transcript shape after two sync passes: the sync
+// plugin re-appends the `session` line on EVERY pass ("last-write-wins
+// replay semantics", devin-session-sync `filterNewRows`), so a session
+// synced twice carries two session lines — the stale first-pass row first,
+// the current row last. The reader must resolve session-level state from
+// the LAST line (#320).
+const sessionReplayTranscript = [
+  sessionLine(sessionId, 4),
+  messageLine(sessionId, 1, null, 'user', 'Hello'),
+  messageLine(sessionId, 2, 1, 'assistant', 'Hi there'),
+  messageLine(sessionId, 3, 2, 'user', 'Edit a file'),
+  messageLine(sessionId, 4, 3, 'assistant', 'Done'),
+  sessionLine(sessionId, 4, undefined, undefined, {
+    title: 'Fresh replayed title',
+    model: 'devin-updated',
+    lastActivityAt: 1722524500,
+    order: 6,
+  }),
+].join('\n');
+
+export const sessionReplayBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', sessionReplayTranscript, 'application/jsonl'),
   artifact('native/models.json', modelsJson(), 'application/json'),
   artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
 ]);
@@ -926,6 +953,14 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
       'A session containing a replayed source event to test deterministic deduplication.',
       replayedBundle,
       ['root', 'replayed', 'deterministic'],
+    ),
+    fixture(
+      'session-replay',
+      'A transcript with two session lines (stale first-pass row, then the current row) — ' +
+        'the real shape after two sync passes; session-level state must resolve from the ' +
+        'LAST line (#320).',
+      sessionReplayBundle,
+      ['root', 'deterministic'],
     ),
     fixture('no-root', 'Configuration artifacts without a root transcript.', noRootBundle, [
       'no-root',
