@@ -3,6 +3,7 @@ import { DevinTransformer } from '../../src/index.js';
 import {
   defaultContext,
   linearBundle,
+  metadataTokensBundle,
   noRootBundle,
   partialTokensBundle,
   sessionReplayBundle,
@@ -66,6 +67,24 @@ describe('DevinTransformer.transform', () => {
     // ingestion.
     const ids = result.evidence.map((r) => r.recordId);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('derives tier-3 tokens from the real response_dimensions shape (#322)', () => {
+    const result = DevinTransformer.transform(metadataTokensBundle, defaultContext);
+    expect(result.errors).toEqual([]);
+    // prompt = input_tokens + cached_input_tokens: the uid `input_tokens`
+    // excludes cache reads, while devin:tokens:prompt means total input
+    // incl. cache (ATIF final_metrics semantics).
+    expect(findMetric(result, 'devin:tokens:prompt:root_only')?.value).toBe(3265287 + 37556736);
+    expect(findMetric(result, 'devin:tokens:completion:root_only')?.value).toBe(136906);
+    expect(findMetric(result, 'devin:tokens:cached:root_only')?.value).toBe(37556736);
+    expect(findMetric(result, 'devin:tokens:prompt:root_only')?.exact).toBe(true);
+    // The non-cumulative `model` dimension is skipped, and the session-level
+    // model_usage record carries the aggregate.
+    const usage = result.evidence.filter((r) => r.recordType === 'model_usage');
+    expect(usage.length).toBe(1);
+    const usagePayload = usage[0]?.payload as { inputTokens?: number | null } | undefined;
+    expect(usagePayload?.inputTokens).toBe(3265287 + 37556736);
   });
 
   it('counts turns from the message main chain', () => {

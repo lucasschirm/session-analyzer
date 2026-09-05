@@ -106,7 +106,19 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // tool/skill/agent invocations) is unchanged — duplicates were a defect,
 // not a population definition. Forces a fresh generation on reprocess so
 // no analysis mixes pre-/post-fix invocation counts.
-export const DEVIN_TRANSFORMER_VERSION = '0.7.0';
+// Bumped 0.7.0 -> 0.8.0 for #322: `token-usage.ts`'s tier-3 fallback now
+// parses the REAL `sessions.metadata.response_dimensions[]` shape
+// (`{ uid, kind: { CumulativeMetric: { value } } }` with uids
+// `input_tokens`/`output_tokens`/`cached_input_tokens`) instead of flat
+// keys that never existed — 20 of 28 sessions in the reviewed live store
+// had exact totals and surfaced nothing. `devin:tokens:prompt` keeps ONE
+// meaning across tiers (total input incl. cache reads): tier 3 reports
+// input + cached because its `input_tokens` uid excludes cache reads,
+// while ATIF's `totalPromptTokens` already includes its cached subset. No
+// metric-version bump: formulas and comparability groups are unchanged —
+// this makes an always-null source term actually resolve (availability
+// fix, same class as DS-B25). Forces a fresh generation on reprocess.
+export const DEVIN_TRANSFORMER_VERSION = '0.8.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly
