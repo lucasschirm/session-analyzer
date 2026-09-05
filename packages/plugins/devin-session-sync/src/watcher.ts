@@ -192,7 +192,8 @@ async function pollOnce(
       deps.env,
       stdout,
     );
-    if (outcome.failed > 0) {
+    const hasFailure = outcome.failed > 0 || outcome.errors.length > 0;
+    if (hasFailure) {
       failed += 1;
     } else {
       signatures[session.id] = signature;

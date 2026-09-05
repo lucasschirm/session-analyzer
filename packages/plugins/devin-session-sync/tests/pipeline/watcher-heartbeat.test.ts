@@ -12,12 +12,13 @@
  *              surfaces per-poll stderr failure lines — never a silent
  *              stall and never a false-success heartbeat.
  *
- * Known bugs #339 (success signature advancing despite outcome errors)
- * and #340 (signature trusting `last_activity_at`) are tracked
- * separately; these assertions deliberately avoid both areas — the
- * re-sync trigger is a new `message_nodes` row (a row-id watermark, not
- * `last_activity_at`), and the failure path is a whole-poll snapshot
- * read error, not a per-session sync outcome error.
+ * Issue #340 (signature trusting `last_activity_at`) is tracked
+ * separately; the heartbeat/re-sync and startup-failure assertions above
+ * deliberately avoid that area — the re-sync trigger used there is a new
+ * `message_nodes` row (a row-id watermark, not `last_activity_at`).
+ * Issue #339 (success signature advancing despite per-session
+ * `outcome.errors`, e.g. a failed manifest upload) is fixed and covered
+ * directly below by a dedicated fail→retry→stable regression sequence.
  */
 import { rmSync } from 'node:fs';
 import * as fsp from 'node:fs/promises';
@@ -45,6 +46,29 @@ class RecordingStorageAdapter implements StorageAdapter {
     const key = buildObjectKey(input);
     const sha256 = input.contentSha256 ?? sha256Hex(Buffer.from(input.body).toString('utf8'));
     this.calls.push(input);
+    return { key, sha256, etag: `"${sha256}"` };
+  }
+}
+
+/**
+ * Fails only the manifest `putObject` call (`scope: 'manifest'`, unique to
+ * the one manifest.json upload per sync, per `session-sync.test.ts`'s own
+ * manifest-failure fixture) while `failManifest` is `true`, succeeding
+ * normally (mirroring `RecordingStorageAdapter`) otherwise. Toggling
+ * `failManifest` between polls simulates a transient manifest-upload
+ * failure clearing — the #339 regression scenario.
+ */
+class ManifestFlakyStorageAdapter implements StorageAdapter {
+  readonly calls: PutObjectInput[] = [];
+  failManifest = true;
+
+  async putObject(input: PutObjectInput): Promise<PutObjectResult> {
+    this.calls.push(input);
+    if (input.scope === 'manifest' && this.failManifest) {
+      throw new Error('manifest upload failed');
+    }
+    const key = buildObjectKey(input);
+    const sha256 = input.contentSha256 ?? sha256Hex(Buffer.from(input.body).toString('utf8'));
     return { key, sha256, etag: `"${sha256}"` };
   }
 }
@@ -271,5 +295,52 @@ describe('Devin watcher daemon poll loop: heartbeat + failure visibility (SYNC-0
     const beats = parseWatcherHeartbeats(stdoutLines);
     assertMonotonicHeartbeats(beats, [1]);
     expect(storage.calls.filter((c) => c.scope === 'manifest')).toHaveLength(1);
+  }, 15000);
+
+  it('withholds the signature on a manifest-upload failure, retries next poll, and stabilizes once cleared (#339)', async () => {
+    const storage = new ManifestFlakyStorageAdapter();
+    const stdoutLines: string[] = [];
+    // The manifest upload fails on poll #1. As soon as poll #1's heartbeat
+    // is written, clear the failure so poll #2's retry of the very same
+    // (still un-stored) session succeeds.
+    const stdout = collectingStream(
+      stdoutLines,
+      onHeartbeat(1, () => {
+        storage.failManifest = false;
+      }),
+    );
+
+    const exitCode = await runDevinWatcher({
+      env: watcherEnv(),
+      dataDir,
+      homeDir,
+      sessionsDbPath: fixture.path,
+      storageAdapter: storage,
+      profile: harnessProfile,
+      maxPolls: 3,
+      pollIntervalMs: 5,
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    const beats = parseWatcherHeartbeats(stdoutLines);
+    assertMonotonicHeartbeats(beats, [1, 2, 3]);
+    // Poll 1: the manifest upload fails (`outcome.errors` non-empty even
+    // though `outcome.failed === 0`) — the signature must be withheld, not
+    // advanced past a false success.
+    // Poll 2: the signature was never stored, so the unchanged session is
+    // seen as still-changed and retried — this time the manifest upload
+    // succeeds, so the signature is finally stored.
+    // Poll 3: the now-stored signature matches — stable, no re-sync.
+    expect(beats.map((b) => b.changed)).toEqual([1, 1, 0]);
+    expect(beats.map((b) => b.failed)).toEqual([1, 0, 0]);
+    // Exactly 2 manifest attempts total (poll 1's failed attempt + poll 2's
+    // successful retry) — a 3rd would mean poll 3 wrongly re-synced a
+    // session whose signature had already stabilized.
+    expect(storage.calls.filter((c) => c.scope === 'manifest')).toHaveLength(2);
+    // The failure must be visible in the watcher's own stdout output, not
+    // just in telemetry/outcome.errors — per the issue's acceptance
+    // criteria and `.agents/rules/sync-progress-observability.md`.
+    expect(stdoutLines.join('')).toContain('1 error(s)');
   }, 15000);
 });

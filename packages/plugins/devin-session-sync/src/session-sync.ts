@@ -137,6 +137,7 @@ function summarizeOutcome(outcome: DevinSessionSyncOutcome): string {
   if (outcome.uploaded > 0) parts.push(`${outcome.uploaded} uploaded`);
   if (outcome.skipped > 0) parts.push(`${outcome.skipped} skipped`);
   if (outcome.failed > 0) parts.push(`${outcome.failed} failed`);
+  if (outcome.errors.length > 0) parts.push(`${outcome.errors.length} error(s)`);
   if (outcome.warnings.length > 0) parts.push(`${outcome.warnings.length} warning(s)`);
   return `session ${outcome.sessionId}: ${parts.length > 0 ? parts.join(', ') : 'no changes'}`;
 }
