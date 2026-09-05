@@ -17,4 +17,3 @@ export * from './storage/fetch-client.js';
 export * from './storage/object-key.js';
 export * from './sync-run.js';
 export * from './versions.js';
-// no-op: verifying #344 CI trigger paths
