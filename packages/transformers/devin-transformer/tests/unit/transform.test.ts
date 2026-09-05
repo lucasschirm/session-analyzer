@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DevinTransformer } from '../../src/index.js';
 import {
+  authoritativeChainBundle,
   defaultContext,
   linearBundle,
   metadataTokensBundle,
@@ -92,6 +93,19 @@ describe('DevinTransformer.transform', () => {
     expect(usage.length).toBe(1);
     const usagePayload = usage[0]?.payload as { inputTokens?: number | null } | undefined;
     expect(usagePayload?.inputTokens).toBe(3265287 + 37556736);
+  });
+
+  it('anchors the main chain on the INTEGER main_chain_id, beating a larger orphan tree (#324)', () => {
+    const result = DevinTransformer.transform(authoritativeChainBundle, defaultContext);
+    expect(result.errors).toEqual([]);
+    // Pre-#324 the parser nulled the INTEGER main_chain_id, so the
+    // biggest-subtree heuristic promoted the 5-node orphan tree (#309's
+    // failure case) and the real 2-turn conversation was dropped.
+    expect(findMetric(result, 'devin:turns:count:root_only')?.value).toBe(2);
+    const turnNodeIds = result.evidence
+      .filter((r) => r.recordType === 'turn')
+      .map((r) => (r.payload as { nodeId?: number }).nodeId);
+    expect(turnNodeIds).toEqual([1, 2]);
   });
 
   it('counts turns from the message main chain', () => {

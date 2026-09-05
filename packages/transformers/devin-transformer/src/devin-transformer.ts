@@ -124,7 +124,12 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // every sourcing tier), which double-counted cache-heavy sessions by up to
 // ~2x. Forces a fresh generation on reprocess; the definition-version bump
 // keeps pre-/post-fix totals in disjoint comparability entities.
-export const DEVIN_TRANSFORMER_VERSION = '0.9.0';
+// Bumped 0.9.0 -> 0.10.0 for #324, together with
+// `DEVIN_METRIC_DEFINITION_VERSION` 0.3.0 -> 0.4.0 (see comparability.ts):
+// the parser now surfaces the INTEGER `main_chain_id` (previously nulled
+// by string coercion), so `buildMainChain` anchors on the authoritative
+// leaf instead of always falling back to the biggest-subtree heuristic.
+export const DEVIN_TRANSFORMER_VERSION = '0.10.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly

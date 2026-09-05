@@ -45,7 +45,9 @@ function sessionLine(
     created_at: 1722520800,
     last_activity_at: overrides?.lastActivityAt ?? 1722520900,
     title: overrides?.title ?? 'Devin fixture session',
-    main_chain_id: mainChainId === undefined ? undefined : String(mainChainId),
+    // The real schema stores main_chain_id as INTEGER (#324) — emit the
+    // number, matching what the extractor spreads from node:sqlite rows.
+    main_chain_id: mainChainId,
     metadata: metadata ? JSON.stringify(metadata) : undefined,
     cogs_json: cogsJson ? JSON.stringify(cogsJson) : undefined,
   });
@@ -373,6 +375,28 @@ const metadataTokensTranscript = [
 
 export const metadataTokensBundle: UnknownArtifactBundle = bundle([
   artifact('transcript.jsonl', metadataTokensTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+  artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
+]);
+
+// The #309/#324 scenario the heuristic gets wrong: an orphaned sub-agent
+// tree (root's parent missing) LARGER than the true conversation. With the
+// INTEGER main_chain_id signal live (#324), the authoritative chain must
+// win; the biggest-subtree heuristic remains only a fallback for sessions
+// genuinely lacking main_chain_id.
+const authoritativeChainTranscript = [
+  sessionLine(sessionId, 2),
+  messageLine(sessionId, 1, null, 'user', 'Real question'),
+  messageLine(sessionId, 2, 1, 'assistant', 'Real answer'),
+  messageLine(sessionId, 10, 999, 'user', 'Orphan subagent prompt'),
+  messageLine(sessionId, 11, 10, 'assistant', 'Orphan reply 1'),
+  messageLine(sessionId, 12, 11, 'user', 'Orphan follow-up'),
+  messageLine(sessionId, 13, 12, 'assistant', 'Orphan reply 2'),
+  messageLine(sessionId, 14, 13, 'assistant', 'Orphan reply 3'),
+].join('\n');
+
+export const authoritativeChainBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', authoritativeChainTranscript, 'application/jsonl'),
   artifact('native/models.json', modelsJson(), 'application/json'),
   artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
 ]);
@@ -1040,6 +1064,14 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
         'includes a non-cumulative model dimension that must be skipped.',
       metadataTokensBundle,
       ['root', 'deterministic', 'exact-estimated'],
+    ),
+    fixture(
+      'authoritative-main-chain',
+      'A session whose INTEGER main_chain_id points at a 2-node conversation while a ' +
+        'LARGER 5-node orphan tree is present — the authoritative signal must beat the ' +
+        'biggest-subtree heuristic (#324, the #309 failure case).',
+      authoritativeChainBundle,
+      ['root', 'deterministic'],
     ),
     fixture('no-root', 'Configuration artifacts without a root transcript.', noRootBundle, [
       'no-root',

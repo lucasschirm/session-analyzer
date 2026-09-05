@@ -27,7 +27,10 @@ export interface DevinSessionRow {
   created_at: number | null;
   last_activity_at: number | null;
   title: string | null;
-  main_chain_id: string | null;
+  // INTEGER in every observed sessions.db schema (#324) — node:sqlite
+  // yields it as a JS number; the prior `string | null` typing never
+  // matched real rows.
+  main_chain_id: number | null;
   cogs_json: string | null;
   workspace_dirs: string | null;
   hidden: number | null;

@@ -220,10 +220,8 @@ function promptLines(lines: DevinJsonlParseResult['lines']): DevinPromptLine[] {
   return result;
 }
 
-function mainChainIdNumber(value: string | null): number | undefined {
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) ? parsed : undefined;
+function mainChainIdNumber(value: number | null): number | undefined {
+  return value !== null && Number.isInteger(value) ? value : undefined;
 }
 
 function buildMessageTree(messages: readonly DevinMessageLine[]): Map<number, DevinMessageLine[]> {

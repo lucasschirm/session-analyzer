@@ -26,7 +26,17 @@ import {
  * per `.agents/rules/metric-meaning-versioning.md` they must never be
  * aggregated with post-fix totals, hence the bump.
  */
-export const DEVIN_METRIC_DEFINITION_VERSION = '0.3.0';
+/**
+ * Bumped 0.3.0 -> 0.4.0 for #324: `main_chain_id` (INTEGER in every
+ * observed sessions.db) was nulled by the parser's string coercion, so the
+ * authoritative main-chain signal was dead and `selectMainRoot`'s
+ * biggest-subtree heuristic ran on EVERY real session. With the signal
+ * live, sessions where the heuristic mispicked (e.g. an orphan/sub-agent
+ * tree larger than the true conversation, #309) report genuinely different
+ * turn/message populations — pre-/post-fix values must never aggregate
+ * together (the #294 precedent).
+ */
+export const DEVIN_METRIC_DEFINITION_VERSION = '0.4.0';
 export const DEVIN_NATIVE_MAPPING_VERSION = 'devin-0.1.0';
 export const DEVIN_STATISTICAL_POLICY_ID = 'devin-default';
 export const DEVIN_PROVENANCE_REQUIREMENT = 'source_artifact_event_field';
