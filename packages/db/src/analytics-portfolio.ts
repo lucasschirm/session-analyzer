@@ -39,6 +39,26 @@ type Queryable = SqliteExecutor | SqliteTransaction;
 const DEFAULT_LIMIT = 50;
 
 /**
+ * Per-harness total-inclusive token metric ids feeding the portfolio
+ * headline `totalTokens` KPI (#325). The headline is a harness-neutral
+ * surface, so every harness's total-inclusive metric must be listed here —
+ * a future harness adds its `<harness>:tokens:total:inclusive` id in this
+ * one place and the KPI picks it up.
+ */
+const TOTAL_TOKENS_METRIC_IDS = [
+  'claude:tokens:total:inclusive',
+  'devin:tokens:total:inclusive',
+] as const;
+
+/**
+ * Normalized-event types carrying a `$.payload.model` field, feeding the
+ * portfolio headline `modelCount` KPI (#325). Claude Code emits
+ * `model_request` records; the Devin transformer emits `model_usage`
+ * records instead — both count toward distinct models.
+ */
+const MODEL_EVENT_TYPES = ['model_request', 'model_usage'] as const;
+
+/**
  * Maps a stored component kind to its display-friendly form.
  * `configuration.ts` canonicalises `mcp` → `mcp_server` and `settings` →
  * `setting` for storage; we reverse that for display so the chart shows
@@ -498,19 +518,20 @@ async function sumTotalTokensInPortfolio(
   query: AnalyticsQuery,
 ): Promise<number> {
   const generationId = query.generationId;
+  const metricIn = TOTAL_TOKENS_METRIC_IDS.map(() => '?').join(', ');
   const sql = generationId
     ? `SELECT COALESCE(SUM(r.value_sum), 0) AS total
        FROM portfolio_daily_rollups r
        JOIN metric_definitions d ON d.id = r.metric_definition_id
        WHERE r.portfolio_id = ? AND r.generation_id = ?
-         AND d.metric_id = 'claude:tokens:total:inclusive'`
+         AND d.metric_id IN (${metricIn})`
     : `SELECT COALESCE(SUM(r.value_sum), 0) AS total
        FROM portfolio_daily_rollups r
        JOIN metric_definitions d ON d.id = r.metric_definition_id
        WHERE r.portfolio_id = ?
-         AND d.metric_id = 'claude:tokens:total:inclusive'`;
-  const params = generationId ? [portfolioId, generationId] : [portfolioId];
-  const { rows } = await queryable.exec(sql, params);
+         AND d.metric_id IN (${metricIn})`;
+  const base = generationId ? [portfolioId, generationId] : [portfolioId];
+  const { rows } = await queryable.exec(sql, [...base, ...TOTAL_TOKENS_METRIC_IDS]);
   return asNumber(rows[0]?.total);
 }
 
@@ -520,23 +541,24 @@ async function countDistinctModelsInPortfolio(
   query: AnalyticsQuery,
 ): Promise<number> {
   const generationId = query.generationId;
+  const typeIn = MODEL_EVENT_TYPES.map(() => '?').join(', ');
   const sql = generationId
     ? `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
        FROM normalized_events e
        JOIN sessions s ON s.id = e.session_id
        JOIN projects p ON p.id = s.project_id
        WHERE p.portfolio_id = ? AND s.current_generation_id = ?
-         AND e.event_type = 'model_request'
+         AND e.event_type IN (${typeIn})
          AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL`
     : `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
        FROM normalized_events e
        JOIN sessions s ON s.id = e.session_id
        JOIN projects p ON p.id = s.project_id
        WHERE p.portfolio_id = ?
-         AND e.event_type = 'model_request'
+         AND e.event_type IN (${typeIn})
          AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL`;
-  const params = generationId ? [portfolioId, generationId] : [portfolioId];
-  const { rows } = await queryable.exec(sql, params);
+  const base = generationId ? [portfolioId, generationId] : [portfolioId];
+  const { rows } = await queryable.exec(sql, [...base, ...MODEL_EVENT_TYPES]);
   return asNumber(rows[0]?.c);
 }
 

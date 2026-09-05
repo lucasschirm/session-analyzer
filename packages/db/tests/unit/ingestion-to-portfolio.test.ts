@@ -6,7 +6,7 @@ import { MANIFEST_SCHEMA_VERSION } from '@lucasschirm/sal-sync-core';
 import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
-import { createAnalyticsDataSource } from '../../src/analytics.js';
+import { createAnalyticsDataSource, type PortfolioOverview } from '../../src/analytics.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';
 import type { VerifiedManifestBundle } from '../../src/manifest.js';
 import { buildDevinManifestBundle } from '../fixtures/devin-manifest.js';
@@ -65,6 +65,20 @@ async function ingestFixture(
     projectId,
     sessionId,
   });
+}
+
+/**
+ * Reads a harness's `<harness>:tokens:total:inclusive` headline metric
+ * value from a portfolio overview, failing when it is absent or non-positive.
+ */
+function headlineTokenTotal(
+  metrics: PortfolioOverview['headlineMetrics'],
+  harness: string,
+): number {
+  const metric = metrics.find((m) => m.metricId === `${harness}:tokens:total:inclusive`);
+  expect(metric).toBeDefined();
+  expect(metric?.value).toBeGreaterThan(0);
+  return metric?.value ?? 0;
 }
 
 describe('ingestion to portfolio pipeline', () => {
@@ -316,6 +330,15 @@ describe('ingestion to portfolio pipeline', () => {
     expect(devinTotal?.unknownCount).toBe(0);
     expect(devinTotal?.evidenceLinks.length).toBeGreaterThan(0);
 
+    // #325: the headline totalTokens/modelCount KPIs must include devin.
+    // Asserting totalTokens against the devin headline metric (not a
+    // literal) keeps this stable when #323 corrects devin's total formula.
+    expect(overview.totalTokens).toBeGreaterThan(0);
+    expect(overview.totalTokens).toBe(devinTotal?.value);
+    // The devin fixture's single session-level model_usage record resolves
+    // to the catalog model `devin-default`.
+    expect(overview.modelCount).toBe(1);
+
     const projectList = await dataSource.portfolio.getProjectList({});
     expect(projectList.items).toHaveLength(1);
     expect(projectList.items[0]?.harness).toBe('devin');
@@ -343,5 +366,43 @@ describe('ingestion to portfolio pipeline', () => {
     expect(sessionTotal).toBeDefined();
     expect(sessionTotal?.value).toBe(160);
     expect(sessionTotal?.eligibleN).toBeGreaterThanOrEqual(1);
+  });
+
+  /**
+   * #325: the headline totalTokens/modelCount KPIs previously filtered on
+   * `claude:tokens:total:inclusive` / `model_request` only, silently going
+   * Claude-only in a mixed portfolio. A mixed portfolio's totals must equal
+   * the sum across both harnesses, and devin's `model_usage`-typed model
+   * must count toward distinct models.
+   */
+  it('reports cross-harness totalTokens and modelCount for a mixed claude+devin portfolio', async () => {
+    const executor = await createExecutor();
+    const { orchestrator, hasher } = await setupIngestion(executor);
+
+    const claudeReceipt = await ingestFixture(
+      orchestrator,
+      hasher,
+      't2-happy-path.jsonl',
+      'project-mixed-claude',
+      'sess-mixed-claude',
+    );
+    expect(claudeReceipt.status).toBe('committed');
+    const { bundle } = await buildDevinManifestBundle();
+    const devinReceipt = await orchestrator.ingestManifest(bundle);
+    expect(devinReceipt.status).toBe('committed');
+
+    const dataSource = createAnalyticsDataSource(executor);
+    const overview = await dataSource.portfolio.getOverview({});
+    expect(overview.sessionCount).toBeGreaterThanOrEqual(2);
+    expect(overview.harnessCount).toBe(2);
+
+    const claudeTotal = headlineTokenTotal(overview.headlineMetrics, 'claude');
+    const devinTotal = headlineTokenTotal(overview.headlineMetrics, 'devin');
+    // Asserting against the per-harness headline metrics (not literals)
+    // keeps this stable when #323 corrects devin's total formula.
+    expect(overview.totalTokens).toBe(claudeTotal + devinTotal);
+    // `model-a` (claude `model_request`) + `devin-default` (devin
+    // `model_usage`) are the only models across both fixtures.
+    expect(overview.modelCount).toBe(2);
   });
 });
