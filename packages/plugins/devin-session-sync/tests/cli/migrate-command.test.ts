@@ -113,6 +113,28 @@ describe('runMigrateCommand', () => {
     expect(lines.join('')).toContain('Migration complete');
   });
 
+  it('backfills manifests with harness sourced from DevinHarnessProfile.harness (#354)', async () => {
+    // Devin correctly sources the backfilled manifest's `harness` field from
+    // `DevinHarnessProfile.harness` (the DS-B5 #143 pattern), unlike
+    // claude-session-sync's deliberate `'claude-code'` literal (see that
+    // plugin's `migrate-command.test.ts`). This test pins the *value*
+    // ('devin') directly in the persisted manifest body so a hoist/refactor
+    // that accidentally unifies the two adapters' sourcing patterns fails
+    // loudly here.
+    const adapter = buildAdapter();
+    const { stream: stdout } = writable();
+    const code = await runMigrateCommand(['--yes'], {
+      env: fakeConfigEnv(),
+      storageAdapter: adapter,
+      stdout,
+    });
+    expect(code).toBe(0);
+    const manifestPut = adapter.puts.find((p) => p.scope === 'manifest');
+    if (!manifestPut) throw new Error('expected a manifest put');
+    const body = JSON.parse(Buffer.from(manifestPut.body as Uint8Array).toString('utf8'));
+    expect(body.harness).toBe('devin');
+  });
+
   it('reports nothing to migrate for a clean bucket', async () => {
     const adapter: StorageAdapter = {
       putObject: async () => {
