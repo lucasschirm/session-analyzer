@@ -24,6 +24,25 @@ describe('filterChangedMessageNodes', () => {
     expect(filterChangedMessageNodes(rows, {})).toEqual(rows);
   });
 
+  it(
+    'never hashes anything when priorHashes is empty -- proven by an observable side effect, ' +
+      'not a spy (PR #374 review: this path runs on every watcher poll, every 15s, forever, ' +
+      'across every message_nodes row in the whole db, so it must not pay for a hash whose ' +
+      'result is guaranteed to always be "included" anyway)',
+    () => {
+      // A BigInt field makes JSON.stringify throw ("Do not know how to
+      // serialize a BigInt") -- DevinMessageNodeRow's index signature
+      // allows it. If filterChangedMessageNodes ever called
+      // messageNodeContentHash on this row, this would throw. It must not,
+      // because every row is unconditionally included when priorHashes is
+      // empty, so the short-circuit must skip hashing entirely rather than
+      // hash first and discover the (foregone) answer afterwards.
+      const poisoned = { ...messageNode(), poison: 10n } as unknown as DevinMessageNodeRow;
+      expect(() => filterChangedMessageNodes([poisoned], {})).not.toThrow();
+      expect(filterChangedMessageNodes([poisoned], {})).toEqual([poisoned]);
+    },
+  );
+
   it('drops a row whose content is byte-identical to the prior hash, regardless of row_id (core churn regression, #341)', () => {
     const first = messageNode({ row_id: 100 });
     const prior = mergeMessageNodeHashes({}, [first]);

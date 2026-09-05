@@ -160,6 +160,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | PIPE-016 | Effort-change metric: per-message raw+normalized capture, message_effort backfill on reprocess, rollup reconciliation | `pipe-016-effort-change-metric.test.ts` | `message_effort` row-presence + `claude:effort:changes:*` sample-size/measured-zero-vs-unavailable assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
 | PIPE-017 | Devin sub-agent evidence (DS-B28/#294): foreground/background subagent_turn capture, duplicate message_nodes dedup, orphaned sub-agent tree exclusion, reach normalized_events end-to-end | `pipe-017-devin-subagent-evidence.test.ts` | `normalized_events` `subagent_turn`/`detached_conversation` row-presence + `devin:turns:count` non-inflation assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
 | PIPE-018 | Devin effort-change metric (DS-B31/#290): catalog-`label`-derived tier extraction (never `model_uid` alone), `message_effort` backfill via the unmodified #289 shared writer, `devin:effort:changes:*` reconciliation | `pipe-018-devin-effort-change-metric.test.ts` | catalog-driven tier resolution + `message_effort` row-presence + `devin:effort:changes:*` sample-size/measured-zero-vs-unavailable assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-019 | Devin `message_nodes` rewrite-churn watermark (#341): a session synced twice while idle (Devin's whole-forest delete+reinsert at fresh `row_id`s, content unchanged) must not inflate turn/message evidence, even though a new generation is genuinely created for the session-level delta | `pipe-019-devin-idle-resync.test.ts` | `devin:turns:count:root_only` non-inflation assertion across two sequential manifest generations of the same session, per-generation `metric_values` row check | 3 | 4 | 4 | 48 | P1 | GREEN |
 
 ### 6.3 Tier C — Sync Lifecycle (`SYNC-###`)
 
@@ -249,6 +250,12 @@ pipeline test implemented in the same PR. Known watcher bug #339
 covered by SYNC-011's fail→retry→stable regression sequence. #340
 (signature trusts `last_activity_at`) remains open and tracked
 separately; SYNC-011's assertions deliberately avoid that area.
+
+PIPE-019 (issue #341) follows the same precedent again: the fix (a
+content-hash watermark for `message_nodes`, replacing the unsound
+`row_id` watermark) shipped without a catalog mapping, flagged as a
+blocker in that PR's review, so the row and its pipeline test were added
+in the same PR rather than deferred as a follow-up.
 
 ## 10. Maintenance model
 

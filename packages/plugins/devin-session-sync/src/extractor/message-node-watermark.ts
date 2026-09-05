@@ -63,13 +63,35 @@ function messageNodeContentHash(row: DevinMessageNodeRow): string {
   return createHash('sha256').update(JSON.stringify(content)).digest('hex');
 }
 
-/** New or genuinely-changed message node rows only — a row whose content
+/**
+ * New or genuinely-changed message node rows only — a row whose content
  * hash matches the prior sync's hash for the same `(session_id, node_id)`
- * is dropped, no matter what its current `row_id` is. */
+ * is dropped, no matter what its current `row_id` is.
+ *
+ * Short-circuits without hashing anything when `priorHashes` is empty: an
+ * empty map means "nothing has ever been seen for any key", so every row
+ * is unconditionally included regardless of its content — hashing first
+ * would produce the exact same result at a real, non-trivial CPU cost.
+ * This is not a hypothetical case: `reader.ts`'s `readMessageNodes` is
+ * production-called with `EMPTY_WATERMARKS` on EVERY invocation (via
+ * `devin-snapshot.ts`'s `readDevinSnapshot`, the only real call site —
+ * `watcher.ts`'s poll loop alone calls this every
+ * `DEFAULT_WATCHER_POLL_INTERVAL_MS` (15s), forever). Without this guard,
+ * every poll would hash every `message_nodes` row across every session's
+ * entire history — unbounded, ever-growing, wasted work with a
+ * guaranteed-always-pass outcome (PR #374 review finding). The real
+ * incremental gate, fed genuine non-empty prior hashes from the
+ * transcript file's own tail, is `session-sync.ts`'s `filterNewRows` —
+ * that path is untouched by this guard and continues to hash and filter
+ * normally.
+ */
 export function filterChangedMessageNodes(
   rows: readonly DevinMessageNodeRow[],
   priorHashes: Readonly<Record<string, string>>,
 ): DevinMessageNodeRow[] {
+  if (Object.keys(priorHashes).length === 0) {
+    return [...rows];
+  }
   return rows.filter((row) => priorHashes[messageNodeKey(row)] !== messageNodeContentHash(row));
 }
 

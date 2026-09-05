@@ -316,6 +316,42 @@ export const sessionReplayBundle: UnknownArtifactBundle = bundle([
   artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
 ]);
 
+// #341 (PIPE-019): the exact artifact shape devin-session-sync's fixed
+// message_nodes content-hash watermark guarantees for an IDLE session
+// synced twice -- message_nodes rewritten at fresh row_ids by Devin's own
+// whole-forest persist churn, but content genuinely unchanged, so the
+// extractor appends nothing for them (`filterChangedMessageNodes`); only
+// the session's own last-write-wins line legitimately re-appears one line
+// later (`jsonl-writer.ts`'s `appendSessionLines` doc comment), exactly
+// mirroring devin-session-sync's own `session-sync.test.ts` proof at the
+// extractor-unit level. `idleResyncPass1Bundle`/`idleResyncPass2Bundle`
+// are two DIFFERENT transcripts for the SAME session (pass 2 = pass 1 +
+// one appended session line, no repeated message lines) so a pipeline
+// test can ingest both as two sequential manifest versions and prove the
+// db/analytics layer doesn't inflate turn/message evidence from the
+// churn, even though the raw transcript.jsonl artifact legitimately grew.
+const idleResyncPass1Transcript = [
+  sessionLine(sessionId, 2, undefined, undefined, { lastActivityAt: 1722520900 }),
+  messageLine(sessionId, 1, null, 'user', 'Check on the deployment'),
+  messageLine(sessionId, 2, 1, 'assistant', 'Deployment looks healthy'),
+  toolCallLine(sessionId, 'tc-idle-1', 'execute', 'CheckStatus', 'success'),
+].join('\n');
+
+const idleResyncPass2Transcript = [
+  idleResyncPass1Transcript,
+  sessionLine(sessionId, 2, undefined, undefined, { lastActivityAt: 1722524500, order: 5 }),
+].join('\n');
+
+export const idleResyncPass1Bundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', idleResyncPass1Transcript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
+export const idleResyncPass2Bundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', idleResyncPass2Transcript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
 // A tool call whose state changed across sync passes: the extractor's
 // content-hash watermark re-emits the row per state change, so the
 // materialized transcript legitimately carries the SAME toolCallId more
@@ -565,11 +601,19 @@ export const replayedBundle: UnknownArtifactBundle = bundle([
 // Unlike `replayedBundle` above (a byte-identical duplicate, same row_id),
 // this reproduces a real in-place-update replay: same node_id, DIFFERENT
 // row_id, DIFFERENT content. Regression-lock for devin-transformer: proves
-// the pre-existing Map/Set-based dedup in `parse-bundle.ts` (`byId`'s
-// last-write-wins `Map` construction; `visited`'s single-visitation guard
-// in `visitSubtree`) already resolves this to exactly ONE message/turn
-// record carrying the LATEST content -- no production transformer change
-// needed to support #341's extractor fix.
+// the pre-existing Map/Set-based dedup in `parse-bundle.ts` already
+// resolves this to exactly ONE message/turn record carrying the LATEST
+// content -- no production transformer change needed to support #341's
+// extractor fix. Both replayed lines share the SAME node_id, so they also
+// collapse to the same synthetic `messageId()` (`msg-1`, derived from the
+// shared node_id) and both pass through `dedupeByMessageId`'s grouping
+// step -- but since its own `keepNodeIds` check is nodeId-keyed, and both
+// entries share that one nodeId, it lets both through unchanged here (it
+// only actually drops an entry when two DIFFERENT node_ids collide on one
+// messageId, e.g. the `subagentBundle` fixture's 249/250 pair below). The
+// actual collapse to one record is `byId`'s last-write-wins `Map`
+// construction plus `visited`'s single-visitation guard in `visitSubtree`,
+// both operating on `dedupeByMessageId`'s (here, unchanged) output.
 const messageNodeReplayTranscript = [
   sessionLine(sessionId, 2),
   messageLine(sessionId, 1, null, 'user', 'Run the build', { rowId: 10 }),
@@ -1130,6 +1174,22 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
         'the real shape after two sync passes; session-level state must resolve from the ' +
         'LAST line (#320).',
       sessionReplayBundle,
+      ['root', 'deterministic'],
+    ),
+    fixture(
+      'idle-resync-pass-1',
+      'PIPE-019 (#341) pass 1 of two: a minimal idle-session transcript (2 messages, 1 tool ' +
+        'call) that pass 2 below extends with exactly one re-appended session line and no ' +
+        'repeated message lines, matching the fixed message_nodes content-hash watermark.',
+      idleResyncPass1Bundle,
+      ['root', 'deterministic'],
+    ),
+    fixture(
+      'idle-resync-pass-2',
+      'PIPE-019 (#341) pass 2 of two: idle-resync-pass-1 plus one re-appended session line ' +
+        '(message_nodes churned at fresh row_ids but content unchanged, so nothing else is ' +
+        're-emitted) — the real artifact shape after a second sync of an idle session.',
+      idleResyncPass2Bundle,
       ['root', 'deterministic'],
     ),
     fixture(
