@@ -2,6 +2,15 @@
 
 Claude Code plugin adapter for the `@lucasschirm/sal-sync` session data sync engine.
 
+**#354 update:** `cli/env.ts`, `cli/config.ts`, `cli/logger.ts`,
+`cli/remove-command.ts`, `cli/download-command.ts`, `cli/list-command.ts`,
+`cli/migrate-command.ts`, and `cli.ts` are now thin wrappers around
+`@lucasschirm/sal-sync`'s shared, harness-parameterized CLI implementation
+(hoisted out of this plugin and `devin-session-sync`, which had copy-pasted
+~1.5-2k lines of it), bound to this file's new `claude-cli-adapter.ts`. The
+behavior documented below is unchanged; see `cli/AGENTS.md` and
+`packages/sync/src/cli/AGENTS.md` for where the logic now actually lives.
+
 ## Environment Resolution
 
 All entry points in this plugin resolve environment variables through a single
@@ -42,8 +51,10 @@ behavior, the blocklist, and regression prevention notes.
 
 ## Files
 
-- **claude.ts** — Claude Code hook input parsing (`parseClaudeHookInput`), harness session mapping (`toHarnessSession`), and sync trigger mapping (`claudeEventToSyncTrigger`). Defines `ClaudeHookInput` with `session_id`, `transcript_path`, `cwd`, `hook_event_name`, etc.
-- **cli.ts** — Standalone `claude-sync` CLI entry point: dispatches to `sync`, `list`, `download`, `remove`, `migrate` subcommands.
+- **claude.ts** — Claude Code hook input parsing (`parseClaudeHookInput`), harness session mapping (`toHarnessSession`), and sync trigger mapping (`claudeEventToSyncTrigger`). Defines `ClaudeHookInput` with `session_id`, `transcript_path`, `cwd`, `hook_event_name`, etc. `readStdin` is re-exported here from `@lucasschirm/sal-sync` (hoisted, #354; zero Claude-specific content).
+- **claude-cli-adapter.ts** — `ClaudeCliAdapter`: this plugin's `CliHarnessAdapter` (#354), parameterizing the shared CLI with Claude's binary/package naming, `.claude/settings*.json` config paths, help text, and — most importantly — the `migrateManifestHarness` literal `'claude-code'` (deliberately NOT `ClaudeHarnessProfile.harness`; see this file's doc comment).
+- **cli.ts** — Standalone `claude-sync` CLI entry point: dispatches to `sync`, `list`, `download`, `remove`, `migrate` subcommands. Thin wrapper (#354) around `@lucasschirm/sal-sync`'s `createCliMain(ClaudeCliAdapter, ...)`.
+- **is-main-module.ts** — Re-exports `isMainModule` from `@lucasschirm/sal-sync` (hoisted, #354; zero Claude-specific content).
 - **cli/env.ts** — `resolveCliEnv(cwd, processEnv)`: the single shared environment resolver. Reads `~/.claude/settings.json`, `.claude/settings.json`, `.claude/settings.local.json` (in that order), then overlays `processEnv` on top. Used by every entry point in the plugin. See `cli/AGENTS.md` for full documentation.
 - **cli/AGENTS.md** — Detailed documentation of the env resolution behavior, precedence ladder, security blocklist, and regression prevention notes.
 - **cli/config.ts** — `validateCliConfig` / `validateStorageConfig`: validate the merged environment and produce a `SyncConfig` or a human-readable error with `export` examples for missing variables.
