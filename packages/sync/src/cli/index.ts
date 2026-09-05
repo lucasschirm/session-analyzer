@@ -1,5 +1,6 @@
 export * from './capture.js';
 export * from './commands/download-command.js';
+export * from './commands/list-command.js';
 export * from './commands/remove-command.js';
 export * from './common.js';
 export * from './config.js';
