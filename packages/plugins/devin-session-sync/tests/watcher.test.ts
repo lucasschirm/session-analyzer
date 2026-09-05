@@ -110,6 +110,23 @@ describe('computeSessionWatermarkSignature', () => {
     expect(missingSig1).not.toBe(computeSessionWatermarkSignature(tables, 'sess-1'));
   });
 
+  it('distinguishes a present session with last_activity_at: null from an absent session (#340)', () => {
+    // The old code's `session?.last_activity_at ?? null` collapsed exactly
+    // these two cases onto the identical value `null`: a session absent
+    // from tables.sessions, and a session present but whose
+    // last_activity_at column is genuinely null. Hashing the full row
+    // (rather than reading one column) fixes this as a side effect —
+    // this test asserts that fix directly, not just the absent-session
+    // sentinel's own stability.
+    const nullActivityTables: DevinExtractedTables = {
+      ...EMPTY_TABLES,
+      sessions: [{ ...session('sess-1', 0), last_activity_at: null }],
+    };
+    const presentNullSig = computeSessionWatermarkSignature(nullActivityTables, 'sess-1');
+    const absentSig = computeSessionWatermarkSignature(EMPTY_TABLES, 'sess-1');
+    expect(presentNullSig).not.toBe(absentSig);
+  });
+
   function session(id: string, lastActivityAt: number) {
     return {
       id,
