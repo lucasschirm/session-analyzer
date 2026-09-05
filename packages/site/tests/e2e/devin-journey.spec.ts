@@ -22,8 +22,9 @@ test.describe('Devin session upload → drill-down journey', () => {
     await expect(page.getByText('Harness: devin')).toBeVisible();
 
     // The total token headline metric is rendered with a value and sample size.
-    // The devin fixture produces 160 tokens from the ATIF final_metrics.
-    const totalTokensCard = page.getByRole('button', { name: /160 token/ });
+    // The devin fixture produces 150 tokens from the ATIF final_metrics
+    // (prompt 100 + completion 50 — cached is a subset of prompt, #323).
+    const totalTokensCard = page.getByRole('button', { name: /150 token/ });
     await expect(totalTokensCard).toBeVisible();
     await expect(totalTokensCard).toContainText('n=1');
 
