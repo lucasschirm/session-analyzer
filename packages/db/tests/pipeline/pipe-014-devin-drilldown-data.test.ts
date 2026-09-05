@@ -42,7 +42,7 @@ describe('PIPE-014: devin drill-down data presence and missing-data reporting', 
       m.metricId.startsWith('devin:tokens:total:'),
     );
     expect(tokenMetric).toBeDefined();
-    expect(tokenMetric?.value).toBe(160);
+    expect(tokenMetric?.value).toBe(150);
     expect(tokenMetric?.unit).toBe('token');
     expect(tokenMetric?.eligibleN).toBeGreaterThanOrEqual(1);
     expect(tokenMetric?.knownN).toBeGreaterThanOrEqual(1);

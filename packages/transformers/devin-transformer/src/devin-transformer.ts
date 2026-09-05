@@ -118,7 +118,13 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // metric-version bump: formulas and comparability groups are unchanged —
 // this makes an always-null source term actually resolve (availability
 // fix, same class as DS-B25). Forces a fresh generation on reprocess.
-export const DEVIN_TRANSFORMER_VERSION = '0.8.0';
+// Bumped 0.8.0 -> 0.9.0 for #323, together with
+// `DEVIN_METRIC_DEFINITION_VERSION` 0.2.0 -> 0.3.0 (see comparability.ts):
+// `devin:tokens:total:*` no longer re-adds `cached` (a subset of prompt in
+// every sourcing tier), which double-counted cache-heavy sessions by up to
+// ~2x. Forces a fresh generation on reprocess; the definition-version bump
+// keeps pre-/post-fix totals in disjoint comparability entities.
+export const DEVIN_TRANSFORMER_VERSION = '0.9.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly

@@ -43,7 +43,7 @@ describe('PIPE-013: devin manifest end-to-end ingestion', () => {
       (m) => m.metricId === 'devin:tokens:total:inclusive',
     );
     expect(devinTotal).toBeDefined();
-    expect(devinTotal?.value).toBe(160);
+    expect(devinTotal?.value).toBe(150);
     expect(devinTotal?.unit).toBe('token');
     expect(devinTotal?.eligibleN).toBeGreaterThanOrEqual(1);
     expect(devinTotal?.knownN).toBeGreaterThanOrEqual(1);
@@ -78,7 +78,7 @@ describe('PIPE-013: devin manifest end-to-end ingestion', () => {
     const trends = await dataSource.portfolio.getTrends({});
     const devinTrend = trends.series.find((s) => s.metricId.startsWith('devin:tokens:total:'));
     expect(devinTrend).toBeDefined();
-    expect(devinTrend?.value).toBe(160);
+    expect(devinTrend?.value).toBe(150);
     expect(trends.token.eligibleN).toBeGreaterThanOrEqual(1);
 
     const sessionSummary = await dataSource.session.getSummary(receipt.sessionId, {});
@@ -87,7 +87,7 @@ describe('PIPE-013: devin manifest end-to-end ingestion', () => {
       m.metricId.startsWith('devin:tokens:total:'),
     );
     expect(sessionTotal).toBeDefined();
-    expect(sessionTotal?.value).toBe(160);
+    expect(sessionTotal?.value).toBe(150);
     expect(sessionTotal?.eligibleN).toBeGreaterThanOrEqual(1);
   });
 

@@ -33,7 +33,9 @@ describe('DevinTransformer.transform', () => {
     expect(findMetric(result, 'devin:tokens:prompt:root_only')?.value).toBe(100);
     expect(findMetric(result, 'devin:tokens:completion:root_only')?.value).toBe(50);
     expect(findMetric(result, 'devin:tokens:cached:root_only')?.value).toBe(10);
-    expect(findMetric(result, 'devin:tokens:total:root_only')?.value).toBe(160);
+    // total = prompt + completion (#323): cached is a subset of prompt,
+    // never re-added.
+    expect(findMetric(result, 'devin:tokens:total:root_only')?.value).toBe(150);
   });
 
   it('resolves session-level state from the LAST session line, not the first (#320)', () => {
@@ -78,6 +80,11 @@ describe('DevinTransformer.transform', () => {
     expect(findMetric(result, 'devin:tokens:prompt:root_only')?.value).toBe(3265287 + 37556736);
     expect(findMetric(result, 'devin:tokens:completion:root_only')?.value).toBe(136906);
     expect(findMetric(result, 'devin:tokens:cached:root_only')?.value).toBe(37556736);
+    // total = prompt + completion (#323); the true tokens processed, not
+    // the ~2x sum the old formula produced on cache-heavy sessions.
+    expect(findMetric(result, 'devin:tokens:total:root_only')?.value).toBe(
+      3265287 + 37556736 + 136906,
+    );
     expect(findMetric(result, 'devin:tokens:prompt:root_only')?.exact).toBe(true);
     // The non-cumulative `model` dimension is skipped, and the session-level
     // model_usage record carries the aggregate.
