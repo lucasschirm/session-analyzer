@@ -50,6 +50,17 @@ describe('PIPE-013: devin manifest end-to-end ingestion', () => {
     expect(devinTotal?.unknownCount).toBe(0);
     expect(devinTotal?.evidenceLinks.length).toBeGreaterThan(0);
 
+    // #325: the headline totalTokens/modelCount KPIs previously filtered on
+    // `claude:tokens:total:inclusive` / `model_request` only, reporting a
+    // devin-only portfolio as 0 tokens / 0 models. Asserting totalTokens
+    // against the devin headline metric (not a literal) keeps this stable
+    // when #323 corrects devin's total formula.
+    expect(overview.totalTokens).toBeGreaterThan(0);
+    expect(overview.totalTokens).toBe(devinTotal?.value);
+    // The fixture's single session-level `model_usage` record resolves to
+    // the catalog model `devin-default`.
+    expect(overview.modelCount).toBe(1);
+
     const projectList = await dataSource.portfolio.getProjectList({});
     expect(projectList.items).toHaveLength(1);
     expect(projectList.items[0]?.harness).toBe('devin');
