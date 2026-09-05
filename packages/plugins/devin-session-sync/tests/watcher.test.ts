@@ -64,6 +64,52 @@ describe('computeSessionWatermarkSignature', () => {
     );
   });
 
+  it('changes when only cogs_json changes, with last_activity_at and row counts unchanged (#340)', () => {
+    const before: DevinExtractedTables = {
+      ...EMPTY_TABLES,
+      sessions: [{ ...session('sess-1', 100), cogs_json: '{"skill":"a"}' }],
+    };
+    const after: DevinExtractedTables = {
+      ...EMPTY_TABLES,
+      sessions: [{ ...session('sess-1', 100), cogs_json: '{"skill":"b"}' }],
+    };
+    expect(computeSessionWatermarkSignature(before, 'sess-1')).not.toBe(
+      computeSessionWatermarkSignature(after, 'sess-1'),
+    );
+  });
+
+  it('changes when only metadata.response_dimensions changes, with last_activity_at and row counts unchanged (#340)', () => {
+    const before: DevinExtractedTables = {
+      ...EMPTY_TABLES,
+      sessions: [
+        {
+          ...session('sess-1', 100),
+          metadata: JSON.stringify({ response_dimensions: { effort: 'low' } }),
+        },
+      ],
+    };
+    const after: DevinExtractedTables = {
+      ...EMPTY_TABLES,
+      sessions: [
+        {
+          ...session('sess-1', 100),
+          metadata: JSON.stringify({ response_dimensions: { effort: 'high' } }),
+        },
+      ],
+    };
+    expect(computeSessionWatermarkSignature(before, 'sess-1')).not.toBe(
+      computeSessionWatermarkSignature(after, 'sess-1'),
+    );
+  });
+
+  it('hashes a session absent from tables.sessions to a stable sentinel, distinct from any present-row hash (#340)', () => {
+    const tables: DevinExtractedTables = { ...EMPTY_TABLES, sessions: [session('sess-1', 100)] };
+    const missingSig1 = computeSessionWatermarkSignature(EMPTY_TABLES, 'sess-absent');
+    const missingSig2 = computeSessionWatermarkSignature(EMPTY_TABLES, 'sess-absent');
+    expect(missingSig1).toBe(missingSig2);
+    expect(missingSig1).not.toBe(computeSessionWatermarkSignature(tables, 'sess-1'));
+  });
+
   function session(id: string, lastActivityAt: number) {
     return {
       id,

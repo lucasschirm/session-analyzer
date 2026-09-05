@@ -249,8 +249,13 @@ blocker in the PR #304 review), so the row was registered and its
 pipeline test implemented in the same PR. Known watcher bug #339
 (success signature advances despite outcome errors) is now fixed and
 covered by SYNC-011's fail→retry→stable regression sequence. #340
-(signature trusts `last_activity_at`) remains open and tracked
-separately; SYNC-011's assertions deliberately avoid that area.
+(signature trusted `last_activity_at` for the `sessions` row component,
+missing skill-only/effort-only mutations) is now fixed — the signature
+shares the extractor's verified full-row content-hash mechanism instead
+(`session-watermark.ts`'s `sessionContentHash`) — and is covered by a
+dedicated `cogs_json`-only mutation regression in the same file, plus
+direct unit coverage of `computeSessionWatermarkSignature` in
+`watcher.test.ts`.
 
 PIPE-019 (issue #341) follows the same precedent again: the fix (a
 content-hash watermark for `message_nodes`, replacing the unsound

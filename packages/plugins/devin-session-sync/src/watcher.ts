@@ -7,11 +7,15 @@
  * by `SessionStart`, tailing one transcript file via `fs.watch`), this
  * watcher is a single long-running, global process: it polls the shared
  * `sessions.db` on an interval, computes a composite watermark signature per
- * session (`sessions.last_activity_at` + the high-water `row_id`/`id` across
- * `message_nodes`/`tool_call_state`/`prompt_history`), and re-syncs only the
- * sessions whose signature changed since the previous poll. It is started
- * independently (not spawned by a hook), since the hook that would spawn it
- * (`SessionStart`) is exactly the one Cloud sessions never fire.
+ * session (the `sessions` row's own full-row content hash, shared with the
+ * extractor's `session-watermark.ts` mechanism — NOT `last_activity_at`,
+ * which #298/#340 found does not reliably advance for skill-only or
+ * effort-only mutations — plus the high-water `row_id`/`id` across
+ * `message_nodes`/`tool_call_state`/`prompt_history` as cheap additive
+ * signals), and re-syncs only the sessions whose signature changed since
+ * the previous poll. It is started independently (not spawned by a hook),
+ * since the hook that would spawn it (`SessionStart`) is exactly the one
+ * Cloud sessions never fire.
  */
 import * as fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -29,6 +33,7 @@ import { validateCliConfig } from './cli/config.js';
 import { resolveCliEnv } from './cli/env.js';
 import { DevinHarnessProfile } from './devin-profile.js';
 import { type DevinSnapshot, readDevinSnapshot } from './devin-snapshot.js';
+import { sessionContentHash } from './extractor/session-watermark.js';
 import type { DevinExtractedTables, DevinSessionRow } from './extractor/types.js';
 import { isMainModule } from './is-main-module.js';
 import { captureDevinModels } from './models/capture.js';
@@ -76,6 +81,15 @@ function maxRowId(rows: ReadonlyArray<{ row_id: number }>): number {
  * watermarks" mechanism the mandatory watcher must use (Part A3), never a
  * file-tail. Comparing this against the prior poll's stored value determines
  * whether a session needs re-syncing this tick.
+ *
+ * The `sessions` row component is `sessionContentHash` (#340), imported
+ * from `extractor/session-watermark.ts` rather than reimplemented here —
+ * the same full-row hash the extractor's own incremental-fetch skip signal
+ * uses, not a `last_activity_at` comparison (see that function's doc
+ * comment for why). A session absent from `tables.sessions` this poll
+ * hashes to `null`, kept distinct from every real hash (always a
+ * 64-hex-char string) so "row not found" can never collide with "row
+ * found, all-null columns".
  */
 export function computeSessionWatermarkSignature(
   tables: DevinExtractedTables,
@@ -87,7 +101,8 @@ export function computeSessionWatermarkSignature(
   const promptMax = tables.promptHistory
     .filter((p) => p.session_id === sessionId)
     .reduce((max, p) => Math.max(max, p.id), -1);
-  return JSON.stringify([session?.last_activity_at ?? null, messageMax, toolMax, promptMax]);
+  const sessionHash = session ? sessionContentHash(session) : null;
+  return JSON.stringify([sessionHash, messageMax, toolMax, promptMax]);
 }
 
 export interface RunDevinWatcherOptions {
