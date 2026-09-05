@@ -83,20 +83,26 @@ Claude Code plugin that bundles the sync engine.
 │   │   ├── vitest.config.ts      # Vitest test configuration (coverage thresholds)
 │   │   └── playwright.config.ts  # Playwright E2E configuration (chromium)
 │   ├── parsers/
-│   │   └── claude-session-parser/  # @lucasschirm/sal-claude-session-parser
-│   │       ├── src/                # Pure, dependency-free Claude Code parser
-│   │       └── tests/              # Parser unit tests
+│   │   ├── claude-session-parser/  # @lucasschirm/sal-claude-session-parser
+│   │   │   ├── src/                # Pure, dependency-free Claude Code parser
+│   │   │   └── tests/              # Parser unit tests
+│   │   └── devin-session-parser/   # @lucasschirm/sal-devin-session-parser
+│   │       └── src/                # Pure, dependency-free Devin CLI parser (jsonl/atif/models/schema-descriptor), tests colocated
 │   ├── sync/                       # @lucasschirm/sal-sync
 │   │   ├── src/                    # Session data sync engine (harness-agnostic)
 │   │   └── tests/                  # Sync engine unit tests
 │   └── plugins/
-│       └── claude-session-sync/    # @lucasschirm/claude-session-sync
-│           ├── .claude-plugin/     # Claude Code plugin manifest
-│           ├── bin/                # Single-file esbuild bundles (generated)
-│           ├── hooks/              # Claude Code hooks/hooks.json
-│           ├── src/                # Plugin entry points and Claude-specific mapping
-│           ├── build.mjs           # esbuild bundling script
-│           └── tests/              # Plugin unit tests (including packaging)
+│       ├── claude-session-sync/    # @lucasschirm/claude-session-sync
+│       │   ├── .claude-plugin/     # Claude Code plugin manifest
+│       │   ├── bin/                # Single-file esbuild bundles (generated)
+│       │   ├── hooks/              # Claude Code hooks/hooks.json
+│       │   ├── src/                # Plugin entry points and Claude-specific mapping
+│       │   ├── build.mjs           # esbuild bundling script
+│       │   └── tests/              # Plugin unit tests (including packaging)
+│       └── devin-session-sync/     # @lucasschirm/devin-session-sync
+│           ├── src/extractor/      # sessions.db (node:sqlite) -> devin-session-jsonl/v1 extractor
+│           ├── build.mjs           # placeholder build (esbuild bin wiring lands with the plugin manifest/CLI)
+│           └── tests/extractor/    # Extractor unit + fixture-DB pipeline tests
 ├── .github/workflows/    # GitHub Actions CI/CD
 ├── package.json          # Root workspace package (private, passthrough scripts, husky)
 ├── pnpm-workspace.yaml    # Workspace package globs
@@ -122,10 +128,15 @@ The monorepo also contains the analytics data platform packages:
 
 - `packages/db-core/` (`@lucasschirm/sal-db-core`) — Runtime-independent SQLite schema, migrations, stores, and generation control.
 - `packages/db/` (`@lucasschirm/sal-db`) — Application-facing ingestion, aggregation, reprocessing, and analytics data-source facade.
-- `packages/transformer/` (`@lucasschirm/sal-transformer`) — Pure, deterministic transformer plugin registry and conformance suite.
+- `packages/transformers/transformer-shared/` (`@lucasschirm/sal-transformer-shared`) — Harness-agnostic transformer contract layer, registry, and conformance suite (public `/conformance` subpath).
+- `packages/transformers/claude-transformer/` (`@lucasschirm/sal-claude-transformer`) — Claude Code transformer plugin: artifact classification and metric derivation.
+- `packages/transformers/devin-transformer/` (`@lucasschirm/sal-devin-transformer`) — Devin CLI transformer plugin: artifact classification, session spine, token usage, and Phase 1 metric derivation.
+- `packages/transformers/registry/` (`@lucasschirm/sal-transformer-registry`) — Default `TransformerRegistry` composition root wiring every transformer plugin package together.
 - `packages/sync-core/` (`@lucasschirm/sal-sync-core`) — Shared manifest and sync contract types.
 - `packages/parsers/claude-session-parser/` (`@lucasschirm/sal-claude-session-parser`) — Pure Claude Code session parser.
+- `packages/parsers/devin-session-parser/` (`@lucasschirm/sal-devin-session-parser`) — Pure, dependency-free Devin CLI parser: `devin-session-jsonl/v1` lines, ATIF v1.7 native transcripts, `models.json` (DS-F4-forward-compatible three-state pricing), and `schema-descriptor.json`. No SQLite/SQL; never depends on `db-core`/`db`/`packages/plugins/*`.
 - `packages/plugins/claude-session-sync/` (`@lucasschirm/claude-session-sync`) — Claude Code plugin bundles for the sync engine.
+- `packages/plugins/devin-session-sync/` (`@lucasschirm/devin-session-sync`) — Devin CLI plugin adapter; currently hosts the `sessions.db` -> `devin-session-jsonl/v1` extractor (`src/extractor/`), read-only via `node:sqlite` (see the `sql-only-in-db-core` carve-out). Plugin manifest/hooks/CLI land separately.
 
 See the per-package `AGENTS.md` files for source maps and invariants.
 

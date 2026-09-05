@@ -1,0 +1,194 @@
+/**
+ * Shared row and output types for the Devin `sessions.db` extractor.
+ *
+ * Column shapes mirror the schema captured at refinery migration version 16
+ * (devin 3000.6.7, see `schema-registry.ts`). All timestamp-shaped fields are
+ * `number | null` (unix seconds) — a source row that does not populate a
+ * timestamp column carries `null`, never `0` (`missing-is-never-zero`).
+ */
+
+/**
+ * A row from the `sessions` table (current-state, not append-only).
+ *
+ * The index signature is load-bearing, not decoration: `reader.ts` reads
+ * this table via `SELECT *` (#298) so a column this interface doesn't yet
+ * name (e.g. `shell_last_seen_index`, confirmed real and previously
+ * silently dropped by a curated `SELECT` column list) still flows through
+ * to the JSONL output unfiltered — extraction never gets to decide a
+ * column is irrelevant. Every other row interface below carries the same
+ * signature for the same reason.
+ */
+export interface DevinSessionRow {
+  id: string;
+  working_directory: string | null;
+  backend_type: string | null;
+  model: string | null;
+  agent_mode: string | null;
+  created_at: number | null;
+  last_activity_at: number | null;
+  title: string | null;
+  // INTEGER in every observed sessions.db schema (#324) — node:sqlite
+  // yields it as a JS number; the prior `string | null` typing never
+  // matched real rows.
+  main_chain_id: number | null;
+  cogs_json: string | null;
+  workspace_dirs: string | null;
+  hidden: number | null;
+  metadata: string | null;
+  [column: string]: unknown;
+}
+
+/**
+ * A row from the `message_nodes` table.
+ *
+ * `created_at` is intentionally typed as present but MUST NOT be used for
+ * ordering, OR for change detection: it is not per-message — verified
+ * empirically, every row of a session shares one value equal to
+ * `sessions.last_activity_at`, because the node forest is rewritten on each
+ * persist. `node_id` / `parent_node_id` drive ordering (see
+ * `orderMessageNodes` in `jsonl-writer.ts`).
+ *
+ * `row_id` is NOT this table's incremental-fetch identity, despite being a
+ * real `AUTOINCREMENT` column (see `message-node-watermark.ts`): #341's live
+ * evidence overturned #298 Phase 1's original "confirmed insert-only"
+ * finding — Devin deletes and reinserts a session's entire node forest at
+ * fresh `row_id`s on every persist (~5.3x row churn measured live), exactly
+ * the "rewritten on each persist" behavior already documented for
+ * `tool_call_state`. The real identity is `(session_id, node_id)`; `row_id`
+ * is carried only for stable tie-break ordering downstream
+ * (`jsonl-writer.ts`).
+ */
+export interface DevinMessageNodeRow {
+  row_id: number;
+  session_id: string;
+  node_id: number;
+  parent_node_id: number | null;
+  chat_message: string | null;
+  created_at: number | null;
+  metadata: string | null;
+  [column: string]: unknown;
+}
+
+/** A row from the `prompt_history` table. `timestamp` is real per-prompt. */
+export interface DevinPromptHistoryRow {
+  id: number;
+  content: string | null;
+  timestamp: number | null;
+  session_id: string;
+  is_shell: number | null;
+  [column: string]: unknown;
+}
+
+/**
+ * A row from the `tool_call_state` table. There is no explicit
+ * autoincrement column, so `row_id` here is SQLite's implicit `rowid`,
+ * read explicitly (`SELECT rowid AS row_id, ...`).
+ *
+ * `row_id` is deliberately NOT this table's incremental-fetch identity
+ * (see `tool-call-watermark.ts`): #298's Phase-1 investigation confirmed,
+ * against a real live `sessions.db`, that this rowid is not stable across
+ * a row's lifetime — Devin rewrites a session's entire `tool_call_state`
+ * row set (delete+reinsert, including untouched already-completed calls)
+ * on every persist, so the same `(session_id, tool_call_id)` reappears
+ * under a new rowid with byte-identical content. Combined with this
+ * table's composite `(session_id, tool_call_id)` primary key (no
+ * `INTEGER PRIMARY KEY AUTOINCREMENT`), SQLite's implicit rowid is also
+ * structurally eligible for reuse after a delete. The real identity is
+ * `(session_id, tool_call_id)`; `row_id` is carried only for stable
+ * tie-break ordering downstream (`jsonl-writer.ts`).
+ */
+export interface DevinToolCallStateRow {
+  row_id: number;
+  session_id: string;
+  tool_call_id: string;
+  tool_call_json: string | null;
+  tool_call_update_json: string | null;
+  [column: string]: unknown;
+}
+
+/** Raw table reads passed into the JSONL writer for one extraction pass. */
+export interface DevinExtractedTables {
+  sessions: DevinSessionRow[];
+  messageNodes: DevinMessageNodeRow[];
+  promptHistory: DevinPromptHistoryRow[];
+  toolCallStates: DevinToolCallStateRow[];
+}
+
+/**
+ * Incremental watermarks. Persistence is owned by the sync engine's
+ * `StateStore` (`packages/sync/src/state/`) — this package only
+ * accepts/emits values. Each field's shape is dictated by #298's Phase-1
+ * investigation (and #341's follow-up correction below) into how that
+ * table's rows actually change, not a uniform default:
+ *
+ * - `promptHistoryId`: `null` means "no prior watermark" (full extract).
+ *   Confirmed live to be genuinely insert-only (never a same-`id` in-place
+ *   update), so a monotonic-key watermark remains correct and cheap.
+ * - `messageNodesContentHashes`: NOT a monotonic position, despite
+ *   `message_nodes` having a real `AUTOINCREMENT` `row_id` column — #298
+ *   Phase 1 originally reported this table as "confirmed insert-only", but
+ *   #341's live evidence overturned that: Devin deletes and reinserts a
+ *   session's entire node forest at fresh `row_id`s on every persist
+ *   (~5.3x row churn measured live). See `message-node-watermark.ts` for
+ *   why a rowid watermark is unsound for this table and what replaces it
+ *   (mirrors `toolCallStateHashes` below).
+ * - `toolCallStateHashes`: NOT a monotonic position — see
+ *   `tool-call-watermark.ts` for why a rowid watermark is unsound for this
+ *   table and what replaces it.
+ * - `sessionsContentHashes`: NOT a watermark on read order either —
+ *   `sessions` is a current-state (mutate-in-place) table with no
+ *   append-only column at all; this is a cheap "did anything relevant
+ *   change" skip signal. Deliberately a full-row content hash, not a
+ *   `last_activity_at` comparison — #298 Phase 1 confirmed
+ *   `last_activity_at` advances on ordinary tool-call and subagent
+ *   persists, but left skill-only/effort-only mutations unverified
+ *   against that one field specifically, so a hash of the whole row is
+ *   used instead of trusting a single column to represent "anything
+ *   changed" (see `session-watermark.ts`). A session id absent from this
+ *   map is always treated as changed.
+ */
+export interface DevinWatermarks {
+  messageNodesContentHashes: Record<string, string>;
+  toolCallStateHashes: Record<string, string>;
+  promptHistoryId: number | null;
+  sessionsContentHashes: Record<string, string>;
+}
+
+export const EMPTY_WATERMARKS: DevinWatermarks = {
+  messageNodesContentHashes: {},
+  toolCallStateHashes: {},
+  promptHistoryId: null,
+  sessionsContentHashes: {},
+};
+
+/** One line of `devin-session-jsonl/v1` output. */
+export interface DevinJsonlLine {
+  type: 'session' | 'message' | 'tool_call' | 'prompt';
+  ts: number | null;
+  order: number;
+  [rawField: string]: unknown;
+}
+
+/** One applied migration from the `refinery_schema_history` ledger. */
+export interface DevinRefineryMigration {
+  version: number;
+  name: string;
+  appliedOn: string;
+  checksum: string;
+}
+
+/**
+ * Records which Devin CLI/schema version an extraction ran against.
+ * `devinCliVersion` is supplied by the caller (this extractor never shells
+ * out to `devin --version` itself) and is `null` when unknown — never a
+ * placeholder string, per `missing-is-never-zero`.
+ */
+export interface DevinSchemaDescriptor {
+  devinCliVersion: string | null;
+  refineryVersion: number;
+  refineryMigrations: DevinRefineryMigration[];
+  /** Per-table DDL checksum (sha256 of `sqlite_master.sql`); `null` if the table is absent. */
+  tableChecksums: Record<string, string | null>;
+  supported: boolean;
+  warnings: string[];
+}

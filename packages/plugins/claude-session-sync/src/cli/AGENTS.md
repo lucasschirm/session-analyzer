@@ -2,6 +2,19 @@
 
 CLI subcommands and shared helpers for the `claude-sync` plugin.
 
+**#354 update:** the actual command/env/config/logger/dispatch
+*implementations* now live in `@lucasschirm/sal-sync`'s
+`packages/sync/src/cli/` (shared with `devin-session-sync`, and any future
+harness plugin). Every file in this directory is now a **thin wrapper**: it
+imports the shared, harness-parameterized function and binds it to
+`../claude-cli-adapter.js`'s `ClaudeCliAdapter`, re-exporting under the exact
+same name/signature (minus the leading `adapter` parameter) this plugin's own
+tests assert on directly. This directory's own doc content below describes
+*this plugin's specific behavior* (Claude's config paths, its
+`migrateManifestHarness` literal, its blocklist) — see
+`packages/sync/src/cli/AGENTS.md` for the shared implementation and the
+regression-prevention testing strategy that now spans both plugins.
+
 ## Environment Resolution — Single Source of Truth
 
 **`resolveCliEnv`** in `env.ts` is the **only** function that reads Claude Code
@@ -10,6 +23,14 @@ plugin — every CLI command and every Claude Code hook — MUST call it before
 passing configuration to the sync engine. Never bypass it by passing raw
 `process.env` to `@lucasschirm/sal-sync` helpers; that would silently skip
 user-configured `SAL_*` variables from settings files.
+
+As of #354, this plugin's `env.ts` is a thin wrapper around
+`@lucasschirm/sal-sync`'s shared `resolveCliEnv(adapter, cwd, processEnv,
+blocklist)`, bound to `ClaudeCliAdapter` (whose `resolveConfigPaths` returns
+this plugin's `.claude/settings*.json` paths and whose `profile` is
+`ClaudeHarnessProfile`, supplying the default blocklist below). The
+precedence ladder and blocklist behavior described in this file are
+unchanged — only the implementation's location moved.
 
 ### Precedence Ladder (highest → lowest)
 
@@ -69,40 +90,66 @@ function:
 
 ## Files
 
-- **env.ts** — `resolveCliEnv(cwd, processEnv)`: the single shared environment
-  resolver. Reads settings files in precedence order (local → project → global),
-  applies the security blocklist to committed files, then overlays `processEnv`.
-  This is the ONLY place settings files are read.
-- **config.ts** — `validateCliConfig` / `validateStorageConfig`: validate the
-  merged environment and produce a `SyncConfig` or a human-readable error with
-  `export` examples for missing variables.
-- **logger.ts** — Error log writer for unhandled command aborts. Resolves the
-  log folder from `CLAUDE_SYNC_LOG_PATH_FOLDER` (default: the `logs/`
-  subdirectory of the sync data dir resolved by the shared `getDataDir` helper
-  from `@lucasschirm/sal-sync`, i.e. `SAL_DATA_DIR/logs` defaulting to
-  `~/.sal-sync/logs`), writes a timestamped
-  `<command>-log-<YYYYMMDD-HHMMSS>.log` file with the full error name,
-  message, stack trace, and any chained `cause` chain, and produces the
-  user-facing abort message (`claude-sync: aborted. Check log in <path>`).
-  Used by the top-level catch handler in `cli.ts`. Not a sensitive variable —
-  `CLAUDE_SYNC_LOG_PATH_FOLDER` is read from `process.env` directly (not via
-  `resolveCliEnv`) so logging still works when settings-file resolution itself
-  is what aborted.
+All of the following (except `project.ts`, which is Claude-specific local
+session discovery, and `sync-command.ts`, which has genuinely different
+business logic from Devin's) are now thin wrappers around
+`@lucasschirm/sal-sync`'s shared implementation, bound to `../claude-cli-adapter.js`'s
+`ClaudeCliAdapter`. See `packages/sync/src/cli/AGENTS.md` for what each
+shared function actually does.
+
+- **env.ts** — `resolveCliEnv(cwd, processEnv, blocklist?)`: wraps the shared
+  `resolveCliEnv(adapter, ...)`. This is still the ONLY place this plugin
+  reads settings files.
+- **config.ts** — `validateCliConfig` / `validateStorageConfig`: wraps the
+  shared `validateCliConfig`/`validateStorageConfig(adapter, ...)`, which use
+  `ClaudeCliAdapter.packageName` (`@lucasschirm/claude-session-sync`) and
+  `ClaudeCliAdapter.localConfigDisplayPath` (`.claude/settings.local.json`)
+  in the generated error text.
+- **logger.ts** — Error log writer for unhandled command aborts. Wraps the
+  shared logger, bound to `ClaudeCliAdapter.logFolderEnvVar`
+  (`CLAUDE_SYNC_LOG_PATH_FOLDER`) and `ClaudeCliAdapter.binName`
+  (`claude-sync`, used in the `<command>-log-<timestamp>.log` filename and
+  the `claude-sync: aborted...` abort message). Used by the top-level catch
+  handler in `cli.ts`. Not a sensitive variable — the log-folder env var is
+  read from `process.env` directly (not via `resolveCliEnv`) so logging still
+  works when settings-file resolution itself is what aborted.
 - **sync-command.ts** — `claude-sync sync` command: full capture + upload.
+  Genuinely Claude-specific business logic — NOT part of the #354 hoist.
 - **list-command.ts** — `claude-sync list` command: list projects/sessions/files.
-- **download-command.ts** — `claude-sync download` command: download sessions.
+- **download-command.ts** — `claude-sync download` command: download
+  sessions, including the path-traversal guard (`buildLocalPath` in the
+  shared implementation).
 - **remove-command.ts** — `claude-sync remove` command: remove project/session objects.
-- **migrate-command.ts** — `claude-sync migrate` command: migrate old-format S3 keys.
-- **project.ts** — `resolveClaudeProjectDir`, `listLocalSessions`, project folder helpers.
+- **migrate-command.ts** — `claude-sync migrate` command: migrate old-format
+  S3 keys and backfill missing manifests with `harness: 'claude-code'` (the
+  `ClaudeCliAdapter.migrateManifestHarness` literal — see
+  `../claude-cli-adapter.ts`'s doc comment for why this is deliberately NOT
+  `ClaudeHarnessProfile.harness`).
+- **project.ts** — `resolveClaudeProjectDir`, `listLocalSessions`, project
+  folder helpers. Claude-specific — NOT part of the #354 hoist.
+
+`../cli.ts` (the `claude-sync` bin entry point) is likewise now a thin
+wrapper around `@lucasschirm/sal-sync`'s `createCliMain`, supplying
+`ClaudeCliAdapter` (for `HELP_TEXT`), this directory's command wrappers, and
+its own `readPackageVersion()` (which must stay here — it resolves this
+plugin's own `package.json`).
 
 ## Regression Prevention
 
-This is the second time the env resolution has regressed. To prevent a third:
+This is the second time the env resolution has regressed. To prevent a
+third — now made structurally harder by #354, since the actual
+precedence/blocklist logic has a single implementation shared with every
+harness plugin (`packages/sync/src/cli/env.ts`) rather than one copy per
+plugin that could each drift independently:
 
 1. **All settings reading goes through `resolveCliEnv`** — no exceptions.
-2. **The blocklist is tested** in `tests/unit/env.test.ts` — if the blocklist
-   is removed, tests fail.
-3. **This AGENTS.md documents the full behavior** — refactors must preserve
-   both the precedence ladder and the blocklist.
-4. **The HELP_TEXT in `cli.ts` documents the precedence** — users can see
-   where variables are read from.
+2. **The blocklist is tested** in `tests/unit/env.test.ts` (this plugin,
+   unchanged call signature) and in
+   `packages/sync/tests/unit/cli/env.test.ts` (shared, parameterized across
+   both harnesses' config-path shapes) — if the blocklist is removed from the
+   shared implementation, both fail.
+3. **This AGENTS.md and `packages/sync/src/cli/AGENTS.md` document the full
+   behavior** — refactors must preserve both the precedence ladder and the
+   blocklist.
+4. **The HELP_TEXT in `../claude-cli-adapter.ts` documents the precedence** —
+   users can see where variables are read from.

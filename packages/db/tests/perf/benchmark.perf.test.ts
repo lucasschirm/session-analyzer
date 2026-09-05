@@ -3,7 +3,7 @@ import {
   type SqliteExecutor,
   type SqliteTransaction,
 } from '@lucasschirm/sal-db-core';
-import { TransformerRegistry } from '@lucasschirm/sal-transformer';
+import { TransformerRegistry } from '@lucasschirm/sal-transformer-shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import { createAnalyticsDataSource } from '../../src/analytics.js';

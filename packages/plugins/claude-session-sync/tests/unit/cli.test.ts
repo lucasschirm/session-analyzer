@@ -1,10 +1,11 @@
 import * as fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { ListObjectEntry, StorageAdapter } from '@lucasschirm/sal-sync';
+import type { HarnessProfile, ListObjectEntry, StorageAdapter } from '@lucasschirm/sal-sync';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  ClaudeHarnessProfile,
   decodeProjectFolder,
   encodeProjectFolder,
   listLocalSessions,
@@ -1228,5 +1229,107 @@ describe('runSyncCommand', () => {
     });
     expect(result).toBe(1);
     expect(io.stderrStr()).toContain('reserved');
+  });
+
+  // DS-B5 (#143) regression: sync-command.ts:356-357 used to hardcode
+  // `harness: 'claude', harness_version: '0.1.0'` regardless of which
+  // HarnessProfile was in play. Assert the uploaded manifest's harness
+  // fields come from the injected profile end-to-end, using a profile whose
+  // values differ from Claude's so a regression to the old hardcode would
+  // be caught (not masked by both happening to be 'claude').
+  it('DS-B5: manifest harness/harnessVersion come from the injected HarnessProfile', async () => {
+    const tmpDir = makeTmpDir();
+    const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
+    await fsp.mkdir(claudeDir, { recursive: true });
+    await fsp.writeFile(
+      path.join(claudeDir, 'sess-profile.jsonl'),
+      '{"type":"message_start","message":{"id":"1","model":"claude","content":[]}}\n',
+    );
+
+    let manifestBody: string | undefined;
+    const adapter: StorageAdapter = {
+      putObject: vi.fn(async (input: { body: Uint8Array; relativePath: string; scope: string }) => {
+        if (input.scope === 'manifest' && input.relativePath === 'manifest.json') {
+          manifestBody = Buffer.from(input.body).toString('utf8');
+        }
+        return { key: `proj-1/sess-profile/${input.relativePath}` };
+      }),
+      listObjects: vi.fn().mockResolvedValue({ objects: [] }),
+    } as unknown as StorageAdapter;
+
+    const syntheticProfile: HarnessProfile = {
+      ...ClaudeHarnessProfile,
+      harness: 'synthetic-harness',
+      harnessVersion: '42.0.0',
+    };
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    try {
+      const io = makeStdio();
+      const result = await runSyncCommand({
+        cwd: tmpDir,
+        env: { ...validEnv, SAL_DATA_DIR: path.join(tmpDir, 'sal-data') },
+        storageAdapter: adapter,
+        harnessProfile: syntheticProfile,
+        ...io,
+      });
+
+      expect(result).toBe(0);
+      expect(manifestBody).toBeDefined();
+      const manifest = JSON.parse(manifestBody as string) as {
+        harness: string;
+        harnessVersion: string;
+      };
+      expect(manifest.harness).toBe('synthetic-harness');
+      expect(manifest.harnessVersion).toBe('42.0.0');
+      expect(manifest.harness).not.toBe('claude');
+      expect(manifest.harnessVersion).not.toBe('0.1.0');
+    } finally {
+      process.env.HOME = oldHome;
+    }
+  });
+
+  it('defaults to ClaudeHarnessProfile when no harnessProfile option is given', async () => {
+    const tmpDir = makeTmpDir();
+    const claudeDir = path.join(tmpDir, '.claude', 'projects', encodeProjectFolder(tmpDir));
+    await fsp.mkdir(claudeDir, { recursive: true });
+    await fsp.writeFile(
+      path.join(claudeDir, 'sess-default.jsonl'),
+      '{"type":"message_start","message":{"id":"1","model":"claude","content":[]}}\n',
+    );
+
+    let manifestBody: string | undefined;
+    const adapter: StorageAdapter = {
+      putObject: vi.fn(async (input: { body: Uint8Array; relativePath: string; scope: string }) => {
+        if (input.scope === 'manifest' && input.relativePath === 'manifest.json') {
+          manifestBody = Buffer.from(input.body).toString('utf8');
+        }
+        return { key: `proj-1/sess-default/${input.relativePath}` };
+      }),
+      listObjects: vi.fn().mockResolvedValue({ objects: [] }),
+    } as unknown as StorageAdapter;
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tmpDir;
+    try {
+      const io = makeStdio();
+      const result = await runSyncCommand({
+        cwd: tmpDir,
+        env: { ...validEnv, SAL_DATA_DIR: path.join(tmpDir, 'sal-data') },
+        storageAdapter: adapter,
+        ...io,
+      });
+
+      expect(result).toBe(0);
+      const manifest = JSON.parse(manifestBody as string) as {
+        harness: string;
+        harnessVersion: string;
+      };
+      expect(manifest.harness).toBe(ClaudeHarnessProfile.harness);
+      expect(manifest.harnessVersion).toBe(ClaudeHarnessProfile.harnessVersion);
+    } finally {
+      process.env.HOME = oldHome;
+    }
   });
 });

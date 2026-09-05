@@ -3,12 +3,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FRESH_SCHEMA_SQL } from '@lucasschirm/sal-db-core';
 import { MANIFEST_SCHEMA_VERSION } from '@lucasschirm/sal-sync-core';
-import { createDefaultRegistry } from '@lucasschirm/sal-transformer';
+import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
-import { createAnalyticsDataSource } from '../../src/analytics.js';
+import { createAnalyticsDataSource, type PortfolioOverview } from '../../src/analytics.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';
 import type { VerifiedManifestBundle } from '../../src/manifest.js';
+import { buildDevinManifestBundle } from '../fixtures/devin-manifest.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, '../../../parsers/claude-session-parser/tests/fixtures');
@@ -64,6 +65,20 @@ async function ingestFixture(
     projectId,
     sessionId,
   });
+}
+
+/**
+ * Reads a harness's `<harness>:tokens:total:inclusive` headline metric
+ * value from a portfolio overview, failing when it is absent or non-positive.
+ */
+function headlineTokenTotal(
+  metrics: PortfolioOverview['headlineMetrics'],
+  harness: string,
+): number {
+  const metric = metrics.find((m) => m.metricId === `${harness}:tokens:total:inclusive`);
+  expect(metric).toBeDefined();
+  expect(metric?.value).toBeGreaterThan(0);
+  return metric?.value ?? 0;
 }
 
 describe('ingestion to portfolio pipeline', () => {
@@ -285,5 +300,109 @@ describe('ingestion to portfolio pipeline', () => {
     const overview = await dataSource.portfolio.getOverview({});
     expect(overview.sessionCount).toBeGreaterThanOrEqual(1);
     expect(overview.headlineMetrics.length).toBeGreaterThan(0);
+  });
+
+  it('ingests a devin manifest and exposes it via the analytics data source with sample sizes', async () => {
+    const executor = await createExecutor();
+    const { orchestrator } = await setupIngestion(executor);
+    const { bundle } = await buildDevinManifestBundle();
+
+    const receipt = await orchestrator.ingestManifest(bundle);
+    expect(receipt.status).toBe('committed');
+    expect(receipt.issueIds).toEqual([]);
+
+    const dataSource = createAnalyticsDataSource(executor);
+
+    const overview = await dataSource.portfolio.getOverview({});
+    expect(overview.sessionCount).toBe(1);
+    expect(overview.projectCount).toBe(1);
+    expect(overview.harnessCount).toBe(1);
+    expect(overview.headlineMetrics.length).toBeGreaterThan(0);
+
+    const devinTotal = overview.headlineMetrics.find(
+      (m) => m.metricId === 'devin:tokens:total:inclusive',
+    );
+    expect(devinTotal).toBeDefined();
+    expect(devinTotal?.value).toBe(150);
+    expect(devinTotal?.unit).toBe('token');
+    expect(devinTotal?.eligibleN).toBeGreaterThanOrEqual(1);
+    expect(devinTotal?.knownN).toBeGreaterThanOrEqual(1);
+    expect(devinTotal?.unknownCount).toBe(0);
+    expect(devinTotal?.evidenceLinks.length).toBeGreaterThan(0);
+
+    // #325: the headline totalTokens/modelCount KPIs must include devin.
+    // Asserting totalTokens against the devin headline metric (not a
+    // literal) keeps this stable when #323 corrects devin's total formula.
+    expect(overview.totalTokens).toBeGreaterThan(0);
+    expect(overview.totalTokens).toBe(devinTotal?.value);
+    // The devin fixture's single session-level model_usage record resolves
+    // to the catalog model `devin-default`.
+    expect(overview.modelCount).toBe(1);
+
+    const projectList = await dataSource.portfolio.getProjectList({});
+    expect(projectList.items).toHaveLength(1);
+    expect(projectList.items[0]?.harness).toBe('devin');
+    expect(projectList.items[0]?.sessionCount).toBe(1);
+    expect(projectList.items[0]?.token.eligibleN).toBeGreaterThanOrEqual(1);
+
+    const cohorts = await dataSource.portfolio.getModelHarnessCohorts({});
+    const devinCohort = cohorts.items.find((c) => c.harness === 'devin');
+    expect(devinCohort).toBeDefined();
+    expect(devinCohort?.sessionCount).toBe(1);
+    expect(devinCohort?.token.eligibleN).toBe(1);
+    expect(devinCohort?.token.knownN).toBe(1);
+
+    const trends = await dataSource.portfolio.getTrends({});
+    const devinTrend = trends.series.find((s) => s.metricId.startsWith('devin:tokens:total:'));
+    expect(devinTrend).toBeDefined();
+    expect(devinTrend?.value).toBe(150);
+    expect(trends.token.eligibleN).toBeGreaterThanOrEqual(1);
+
+    const sessionSummary = await dataSource.session.getSummary(receipt.sessionId, {});
+    expect(sessionSummary.harness).toBe('devin');
+    const sessionTotal = sessionSummary.headlineMetrics.find((m) =>
+      m.metricId.startsWith('devin:tokens:total:'),
+    );
+    expect(sessionTotal).toBeDefined();
+    expect(sessionTotal?.value).toBe(150);
+    expect(sessionTotal?.eligibleN).toBeGreaterThanOrEqual(1);
+  });
+
+  /**
+   * #325: the headline totalTokens/modelCount KPIs previously filtered on
+   * `claude:tokens:total:inclusive` / `model_request` only, silently going
+   * Claude-only in a mixed portfolio. A mixed portfolio's totals must equal
+   * the sum across both harnesses, and devin's `model_usage`-typed model
+   * must count toward distinct models.
+   */
+  it('reports cross-harness totalTokens and modelCount for a mixed claude+devin portfolio', async () => {
+    const executor = await createExecutor();
+    const { orchestrator, hasher } = await setupIngestion(executor);
+
+    const claudeReceipt = await ingestFixture(
+      orchestrator,
+      hasher,
+      't2-happy-path.jsonl',
+      'project-mixed-claude',
+      'sess-mixed-claude',
+    );
+    expect(claudeReceipt.status).toBe('committed');
+    const { bundle } = await buildDevinManifestBundle();
+    const devinReceipt = await orchestrator.ingestManifest(bundle);
+    expect(devinReceipt.status).toBe('committed');
+
+    const dataSource = createAnalyticsDataSource(executor);
+    const overview = await dataSource.portfolio.getOverview({});
+    expect(overview.sessionCount).toBeGreaterThanOrEqual(2);
+    expect(overview.harnessCount).toBe(2);
+
+    const claudeTotal = headlineTokenTotal(overview.headlineMetrics, 'claude');
+    const devinTotal = headlineTokenTotal(overview.headlineMetrics, 'devin');
+    // Asserting against the per-harness headline metrics (not literals)
+    // keeps this stable when #323 corrects devin's total formula.
+    expect(overview.totalTokens).toBe(claudeTotal + devinTotal);
+    // `model-a` (claude `model_request`) + `devin-default` (devin
+    // `model_usage`) are the only models across both fixtures.
+    expect(overview.modelCount).toBe(2);
   });
 });

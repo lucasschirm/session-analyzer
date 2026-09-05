@@ -8,6 +8,7 @@
 
 # Coding
  - Every function should be kept with the maximum 20 lines of code with a hardcap of 30 lines.
+ - Duplicate code should be avoided. If the same logic (e.g. a path/env resolution helper, a validation rule, a formatting function) is needed in more than one place, extract it into a single shared implementation and import it, rather than reimplementing it independently in each location.
 
 # Testing
  - All packages should keep the test coverage above 80% at all time.

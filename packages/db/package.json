@@ -37,11 +37,13 @@
   "dependencies": {
     "@lucasschirm/sal-db-core": "workspace:*",
     "@lucasschirm/sal-sync-core": "workspace:*",
-    "@lucasschirm/sal-transformer": "workspace:*"
+    "@lucasschirm/sal-transformer-shared": "workspace:*"
   },
   "devDependencies": {
     "@lucasschirm/claude-session-sync": "workspace:*",
+    "@lucasschirm/sal-claude-transformer": "workspace:*",
     "@lucasschirm/sal-sync": "workspace:*",
+    "@lucasschirm/sal-transformer-registry": "workspace:*",
     "@sqlite.org/sqlite-wasm": "3.53.0-build1",
     "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "^4.1.10",

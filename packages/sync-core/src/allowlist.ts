@@ -24,13 +24,29 @@ export const WORKSPACE_ALLOWLIST_PATTERNS: readonly string[] = [
   '.claude/rules/**',
 ];
 
+/**
+ * `{configDir}/...` patterns are resolved against `HarnessProfile.configDir(env)`
+ * (Claude's default: `~/.claude`, overridable via `CLAUDE_CONFIG_DIR`); a plain
+ * `~/...` pattern is always resolved against the home directory regardless of
+ * the harness's config directory. See `expandAllowlistPattern` in
+ * `packages/sync/src/discovery/glob.ts`.
+ */
 export const GLOBAL_ALLOWLIST_PATTERNS: readonly string[] = [
-  '~/.claude/settings.json',
-  '~/.claude/CLAUDE.md',
-  '~/.claude/agents/**',
+  '{configDir}/settings.json',
+  '{configDir}/CLAUDE.md',
+  '{configDir}/agents/**',
   '~/.claude.json',
 ];
 
+/**
+ * @deprecated Claude Code's capture allowlist, kept as a top-level export so
+ * published `@lucasschirm/claude-session-sync` versions that import it
+ * directly do not break. New code should use `ClaudeHarnessProfile.captureAllowlist`
+ * (`packages/plugins/claude-session-sync`) — or, for a different harness, that
+ * harness's own `HarnessProfile.captureAllowlist` — instead of importing this
+ * constant, since it is Claude-specific and no longer the implicit default
+ * used by `packages/sync`'s discovery functions.
+ */
 export const CAPTURE_ALLOWLIST: CaptureAllowlist = {
   version: CAPTURE_ALLOWLIST_VERSION,
   // Session discovery is handled directly by discoverSession() using the exact

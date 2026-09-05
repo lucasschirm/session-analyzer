@@ -1,5 +1,5 @@
 ---
-globs: "packages/db/**,packages/transformer/**,packages/plugins/**"
+globs: "packages/db/**,packages/transformers/**,packages/plugins/**"
 ---
 
 # Manifest-Backed Classification Uses Harness, Scope, Path, and Hash

@@ -8,6 +8,7 @@ import type {
   ArtifactIdentity,
   ArtifactScope,
   ArtifactStatus,
+  HarnessProfile,
   ManifestArtifact,
   PutObjectInput,
   SessionData,
@@ -27,6 +28,7 @@ import {
   UNKNOWN_HARNESS_VERSION,
 } from '@lucasschirm/sal-sync-core';
 import { loadConfig } from '../config/index.js';
+import { DEFAULT_HARNESS_PROFILE } from '../discovery/default-profile.js';
 import { type DiscoveryResult, discover } from '../discovery/index.js';
 import {
   type ArtifactCandidate,
@@ -86,6 +88,14 @@ export interface CliOptions {
   spawnWatcher?: WatcherSpawner;
   watcher?: WatcherFn;
   watcherTerminator?: WatcherTerminator;
+  /**
+   * Parameterizes discovery (config dir, capture allowlist, session layout)
+   * for a specific harness. Defaults to `DEFAULT_HARNESS_PROFILE` (Claude
+   * Code's behavior) so existing callers that predate the harness-profile
+   * abstraction keep working unchanged; new integrations should pass their
+   * own `HarnessProfile` explicitly.
+   */
+  harnessProfile?: HarnessProfile;
 }
 
 export type WatcherFn = (options: {
@@ -526,6 +536,8 @@ export interface RunFullSyncOptions {
   uploadTimeoutMs: number;
   session?: SessionData;
   pluginVersion?: string;
+  /** See `CliOptions.harnessProfile`. Defaults to `DEFAULT_HARNESS_PROFILE`. */
+  harnessProfile?: HarnessProfile;
 }
 
 export interface RunFullSyncResult {
@@ -537,14 +549,17 @@ export async function runFullSync(options: RunFullSyncOptions): Promise<RunFullS
   const start = Date.now();
 
   const discoveryStart = Date.now();
-  const discovery = await discover({
-    projectId: options.config.projectId,
-    sessionId: options.hookInput.session_id,
-    workspaceRoot: options.hookInput.cwd,
-    transcriptPath: options.hookInput.transcript_path,
-    captureTranscripts: options.config.captureTranscripts,
-    limits: options.config.limits,
-  });
+  const discovery = await discover(
+    {
+      projectId: options.config.projectId,
+      sessionId: options.hookInput.session_id,
+      workspaceRoot: options.hookInput.cwd,
+      transcriptPath: options.hookInput.transcript_path,
+      captureTranscripts: options.config.captureTranscripts,
+      limits: options.config.limits,
+    },
+    options.harnessProfile ?? DEFAULT_HARNESS_PROFILE,
+  );
   const discoveryDuration = Date.now() - discoveryStart;
 
   const sanitizationStart = Date.now();
@@ -798,7 +813,7 @@ export async function runSessionEndUploadLoop(options: {
 
 export function getWatchScriptPath(): string {
   const currentDir = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(currentDir, 'watch.js');
+  return path.resolve(currentDir, 'watch-entry.js');
 }
 
 export function defaultSpawnWatcher(args: string[]): WatcherHandle {

@@ -1,0 +1,294 @@
+# E2E Coverage Enhancement Plan
+
+Status: living document. Owner: `e2e-test-planner` (catalog), `e2e-test-maintainer`
+(green/quarantine lifecycle). Created 2026-08-27; backfilled 2026-09-02 by
+issue #160 after the file was found to be referenced by
+`.agents/rules/e2e-coverage-required.md` and several skills/agents without
+ever having been created.
+
+## 1. Purpose & scope
+
+This plan is the single source of truth for end-to-end coverage of the
+session-analyzer dashboard: which user-facing risks are guarded by a
+browser or pipeline test, how those tests are scored, and how coverage
+gaps are closed. `.agents/rules/e2e-coverage-required.md` requires every
+user-facing change to register a mapped entry in §6 before merge.
+
+Out of scope: unit-level coverage (parsers, metric math, router params) —
+those are guaranteed by package-level `verify` scripts, not this catalog.
+
+## 2. Tiers & catalog ID format
+
+| Tier | Prefix | Layer | Location |
+|---|---|---|---|
+| A — Browser UX | `UX-###` | Playwright, full browser | `packages/site/tests/e2e/*.spec.ts` |
+| B — Analytics Pipeline | `PIPE-###` | Vitest, in-memory SQLite, no browser | `packages/db/tests/pipeline/*.test.ts` |
+| C — Sync Lifecycle | `SYNC-###` | Vitest/Playwright, watcher/manifest/CAS seams | `packages/plugins/claude-session-sync/tests/e2e/`, `packages/plugins/devin-session-sync/tests/pipeline/`, `packages/sync/tests/e2e/`, `packages/site/tests/unit/` |
+
+IDs are assigned sequentially within a tier and never reused, even if a
+test is deleted (see §10). Cite the ID in the test name/`describe` block
+(e.g. `test('UX-003: ...')`) so `grep` and CI output stay traceable to
+this table.
+
+## 3. Why L×U×D
+
+A flat backlog invites recency bias — the last incident always feels most
+urgent. Scoring risk uniformly (§5) before triage keeps prioritization
+defensible and keeps `e2e-test-planner` from boosting a familiar pain
+point over an equally severe unfamiliar one.
+
+## 4. Existing coverage
+
+### 4.1 Existing E2E coverage (Tier A, browser)
+
+All 13 spec files currently under `packages/site/tests/e2e/*.spec.ts`,
+backfilled into §6.1 by this plan:
+
+| Spec file | Covers |
+|---|---|
+| `app.spec.ts` | Project CRUD, manual import, session evidence, OPFS persistence, export, routing, drag-drop (UX-012), unknown-harness rejection (UX-013), chart geometry (UX-001) |
+| `chart-content.spec.ts` | Helper smoke tests for chart geometry (UX-001) and empty/error affordance (UX-002) helpers |
+| `design-fixes.spec.ts` | Header nav active state (UX-017), left-nav Projects section (UX-018), sync-confirm modal (UX-019), data-sources URL hash (UX-020), pre-ready loading state (UX-021) |
+| `opfs-fallback.spec.ts` | OPFS-unavailable in-memory storage warning (UX-014) |
+| `passkey.spec.ts` | Locked-vault passkey prompt and "Forgot" vault deletion (UX-016) |
+| `portfolio-refresh.spec.ts` | Live portfolio metric/chart refresh after a second upload (UX-003) |
+| `sessions-filter.spec.ts` | Scope filter URL sync and reload persistence (UX-010) |
+| `sync.spec.ts` | Full CAS sync journey, retry, cancel, offline, reload reconciliation, second-tab follower, plus catalog entries UX-004 (ingestion seam), UX-005 (heartbeat), UX-006 (export content), UX-008 (S3 5xx affordance) |
+| `transcript-xss.spec.ts` | Transcript XSS sanitization (UX-011) |
+| `ux-002-empty-error.spec.ts` | Empty vs. error state disambiguation (UX-002) |
+| `ux-007-import-failure.spec.ts` | Manual import failure-class specificity (UX-007) |
+| `ux-009-query-hang.spec.ts` | Bounded timeout on a blocked analytics query (UX-009) |
+| `ux-015-delete-confirmation.spec.ts` | Delete-confirmation focus trap / keyboard contract (UX-015) |
+
+`packages/site/tests/e2e/helpers/heartbeat.spec.ts` is infrastructure —
+a regression spec for the `assertHeartbeat` helper itself (§7.3), not a
+numbered catalog entry.
+
+### 4.2 Silent-failure map (browser)
+
+Known ways a browser regression can hide behind an apparently-passing
+test, guarded by the tests in §6.1:
+
+- Empty chart rendered instead of an error banner (UX-001/UX-002).
+- Generic "Import failed" masking a specific failure class (UX-007/UX-013).
+- Progress bar visible but not advancing — a silent stall (UX-005).
+- Sync completing in the control DB without reaching analytics ingestion
+  (UX-004).
+- Unsanitized transcript content executing as markup (UX-011).
+
+### 4.3 Silent-failure map (pipeline)
+
+- Rollup served from a stale generation without a freshness signal
+  (PIPE-002).
+- A metric dimension the transformer doesn't recognize silently dropped
+  instead of surfaced (PIPE-003).
+- A commit that fails partway leaves a partial write visible to queries
+  (PIPE-004).
+- A missing signal aggregated as a measured zero (PIPE-008, rule
+  `missing-is-never-zero`).
+- Re-sync or reprocessing produces duplicate or non-superseded
+  contributions (PIPE-006, PIPE-007).
+
+## 5. Scoring model
+
+Applied uniformly by `e2e-test-planner` — no boosting for recent or
+familiar pain points:
+
+- **L (Likelihood, 1–5):** 5 = shipped broken repeatedly / has a known
+  regression incident; 1 = theoretical.
+- **U (UX impact, 1–5):** 5 = wrong or absent data with no user-visible
+  signal; 1 = cosmetic.
+- **D (Detectability, 1–5):** 5 = no other test layer (unit, type check,
+  lint) would catch it.
+- **Score = L × U × D.** Priority: **P0 ≥ 60**, **P1 30–59**, **P2 < 30**.
+
+Status values used in §6: `PROPOSED`, `IMPLEMENTING`, `GREEN`,
+`FAILING-PRODUCT-BUG`. Every entry below is `GREEN` — all are backed by
+an existing, currently-passing test found at the time this catalog was
+created (issue #160); none are proposed-but-unimplemented.
+
+## 6. Catalog
+
+### 6.1 Tier A — Browser UX (`UX-###`)
+
+| ID | Surface | Mapped test file | Helper assertions | L | U | D | Score | Priority | Status |
+|---|---|---|---|---|---|---|---|---|---|
+| UX-001 | Analytics/portfolio chart renders non-zero geometry | `app.spec.ts`, `chart-content.spec.ts` | `expectRenderedGeometry` (chart-content.ts) | 4 | 5 | 5 | 100 | P0 | GREEN |
+| UX-002 | Empty vs. error affordances are structurally distinct | `ux-002-empty-error.spec.ts`, `chart-content.spec.ts` | chart-content.ts empty/error helper | 4 | 5 | 4 | 80 | P0 | GREEN |
+| UX-003 | Portfolio metrics/chart refresh live after a second upload | `portfolio-refresh.spec.ts` | `expectRenderedGeometry` | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-004 | Sync completion reaches analytics ingestion, not just the control DB | `sync.spec.ts` | `expectChartContains` | 5 | 5 | 5 | 125 | P0 | GREEN |
+| UX-005 | Sync progress heartbeat advances during a throttled download | `sync.spec.ts` | `assertHeartbeat` (heartbeat.ts) | 4 | 4 | 5 | 80 | P0 | GREEN |
+| UX-006 | Export after sync includes synced session rows | `sync.spec.ts` | `verifyExportContents` (export-verify.ts) | 3 | 3 | 4 | 36 | P1 | GREEN |
+| UX-007 | Manual import failure surfaces a specific class, not a generic message | `ux-007-import-failure.spec.ts` | manual-import-state.ts phase/badge assertions | 4 | 4 | 4 | 64 | P0 | GREEN |
+| UX-008 | Mocked S3 5xx mid-sync surfaces a distinct terminal error affordance | `sync.spec.ts` | progress bar + toast state assertions | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-009 | Blocked analytics query reaches a bounded timeout, not an infinite spinner | `ux-009-query-hang.spec.ts` | timeout/error affordance assertion | 3 | 5 | 5 | 75 | P0 | GREEN |
+| UX-010 | Scope filter state persists across a page reload | `sessions-filter.spec.ts` | URL/hash state assertion | 3 | 3 | 3 | 27 | P2 | GREEN |
+| UX-011 | Transcript content is sanitized against XSS | `transcript-xss.spec.ts` | DOM sanitization assertion | 3 | 5 | 5 | 75 | P0 | GREEN |
+| UX-012 | Rapid repeated drag-drop preserves every dropped file | `app.spec.ts` | file count assertion | 2 | 3 | 4 | 24 | P2 | GREEN |
+| UX-013 | Unrecognized file produces a distinct unsupported-harness message | `app.spec.ts` | manual-import-state.ts phase assertion | 3 | 3 | 3 | 27 | P2 | GREEN |
+| UX-014 | OPFS-unavailable warns with an in-memory storage indicator | `opfs-fallback.spec.ts` | warning banner assertion | 2 | 3 | 4 | 24 | P2 | GREEN |
+| UX-015 | Delete confirmation traps focus and restores it on cancel | `ux-015-delete-confirmation.spec.ts` | focus-trap/keyboard assertion | 3 | 3 | 4 | 36 | P1 | GREEN |
+| UX-016 | Passkey "Forgot" deletes the vault; locked vault prompts before sync | `passkey.spec.ts` | vault/passkey dialog assertions | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-017 | Header nav shows the active-route state | `design-fixes.spec.ts` | active-class assertion | 2 | 2 | 3 | 12 | P2 | GREEN |
+| UX-018 | Left-nav Projects section collapses/expands by route | `design-fixes.spec.ts` | section-state assertion | 2 | 2 | 3 | 12 | P2 | GREEN |
+| UX-019 | Sync-confirm modal appears when syncing a saved connection | `design-fixes.spec.ts` | modal visibility assertion | 3 | 3 | 3 | 27 | P2 | GREEN |
+| UX-020 | Data-sources edit updates the URL hash | `design-fixes.spec.ts` | URL/hash assertion | 2 | 2 | 3 | 12 | P2 | GREEN |
+| UX-021 | Loading state is visible before the app is ready | `design-fixes.spec.ts` | loading-indicator assertion | 2 | 3 | 3 | 18 | P2 | GREEN |
+| UX-022 | Manual upload of a Devin bundle is detected, ingested, and reaches the session dashboard | `devin-journey.spec.ts` | `importDevinSession` (devin-manual-import.ts) | 4 | 4 | 4 | 64 | P0 | GREEN |
+| UX-023 | Devin transcript drill-down and pagination are visible; missing evidence rows are reported | `devin-journey.spec.ts` | `switchSessionEvidenceTab` (devin-manual-import.ts) | 4 | 4 | 4 | 64 | P0 | GREEN |
+| UX-024 | Devin drill-down empty states are structurally distinct from error states | `devin-journey.spec.ts` | empty/error affordance assertions | 4 | 4 | 4 | 64 | P0 | GREEN |
+
+### 6.2 Tier B — Analytics Pipeline (`PIPE-###`)
+
+| ID | Surface | Mapped test file | Helper assertions | L | U | D | Score | Priority | Status |
+|---|---|---|---|---|---|---|---|---|---|
+| PIPE-001 | Full pipeline baseline with freshness token | `pipe-001-full-pipeline-baseline.test.ts` | freshness/generation token assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-002 | Generation/freshness token detects stale rollups | `pipe-002-stale-rollup-freshness.test.ts` | staleness token assertion | 4 | 5 | 4 | 80 | P0 | GREEN |
+| PIPE-003 | Unknown metric dimension is never silently skipped | `pipe-003-unknown-metric-dimension.test.ts` | `IngestionIssue` signal assertion | 3 | 5 | 4 | 60 | P0 | GREEN |
+| PIPE-004 | Commit failure boundary leaves no partial write visible | `pipe-004-commit-failure.test.ts` | harness `pre-commit`/`mid-commit` injection | 3 | 5 | 5 | 75 | P0 | GREEN |
+| PIPE-005 | Reprocess interruption recovery | `pipe-005-reprocess-interruption.test.ts` | harness `reprocess` stage injection | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-006 | Re-sync same session produces no duplicate contributions | `pipe-006-resync-no-duplicate.test.ts` | contribution-uniqueness assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-007 | Generation supersede semantics | `pipe-007-generation-supersede.test.ts` | generation-version assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-008 | Missing-vs-zero in aggregates | `pipe-008-missing-vs-zero.test.ts` | explicit missingness (`eligibleN`/`unknownCount`) assertion | 4 | 5 | 4 | 80 | P0 | GREEN |
+| PIPE-009 | Cross-package pipeline (plugin bundle → parser → transformer → db) | `pipe-009-cross-package.test.ts` | full-span assertion | 3 | 4 | 3 | 36 | P1 | GREEN |
+| PIPE-010 | Schema drift guard | `pipe-010-schema-drift-guard.test.ts` | archived-fixture ingest assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-011 | Large-session boundedness | `pipe-011-large-session-bounded.test.ts` | resource-bound assertion | 2 | 3 | 4 | 24 | P2 | GREEN |
+| PIPE-012 | `pricing_version` evidence record id is session-scoped | `pipe-012-pricing-version-collision.test.ts` | record-id collision assertion | 2 | 3 | 3 | 18 | P2 | GREEN |
+|| PIPE-013 | Devin manifest ingestion, portfolio visibility, and sample-size token contract | `pipe-013-devin-ingest.test.ts` | `devin:tokens:total:inclusive` headline metric, failure injection, missing-vs-zero | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-014 | Devin drill-down data: transcript messages present, evidence/component facts report missing data | `pipe-014-devin-drilldown-data.test.ts` | `getTranscriptPages`/`getEvidencePages`/`getComponentFacts` assertions | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-015 | Devin `cogs_json`/`tool_call_state`-derived skill/tool/agent components and skill/agent invocation metrics reach session summaries and portfolio Component Ecosystem utilization, with stable componentIds across sessions | `pipe-015-devin-skill-agent-components.test.ts` | `devin:invocations:skill\|agent` headline metric, `getComponentUtilization` label/kind assertions, cross-session componentId stability | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-016 | Effort-change metric: per-message raw+normalized capture, message_effort backfill on reprocess, rollup reconciliation | `pipe-016-effort-change-metric.test.ts` | `message_effort` row-presence + `claude:effort:changes:*` sample-size/measured-zero-vs-unavailable assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-017 | Devin sub-agent evidence (DS-B28/#294): foreground/background subagent_turn capture, duplicate message_nodes dedup, orphaned sub-agent tree exclusion, reach normalized_events end-to-end | `pipe-017-devin-subagent-evidence.test.ts` | `normalized_events` `subagent_turn`/`detached_conversation` row-presence + `devin:turns:count` non-inflation assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-018 | Devin effort-change metric (DS-B31/#290): catalog-`label`-derived tier extraction (never `model_uid` alone), `message_effort` backfill via the unmodified #289 shared writer, `devin:effort:changes:*` reconciliation | `pipe-018-devin-effort-change-metric.test.ts` | catalog-driven tier resolution + `message_effort` row-presence + `devin:effort:changes:*` sample-size/measured-zero-vs-unavailable assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-019 | Devin `message_nodes` rewrite-churn watermark (#341): a session synced twice while idle (Devin's whole-forest delete+reinsert at fresh `row_id`s, content unchanged) must not inflate turn/message evidence, even though a new generation is genuinely created for the session-level delta | `pipe-019-devin-idle-resync.test.ts` | `devin:turns:count:root_only` non-inflation assertion across two sequential manifest generations of the same session, per-generation `metric_values` row check | 3 | 4 | 4 | 48 | P1 | GREEN |
+| PIPE-020 | Devin file-backed skill/agent/rule config components (`.devin/skills\|agents\|rules/**`, #342) reach real ingestion and portfolio Component Ecosystem utilization with human-readable resolved display names and stable cross-session componentIds | `pipe-020-devin-config-components.test.ts` | `getComponentUtilization` label/kind assertions (resolved display name, never raw id per `never-display-raw-ids.md`), cross-session `componentId` stability, exact-count assertion against bogus/duplicate entries. (`configurationSnapshot.completeness` no longer degrading to `partial` for a fully-classified bundle is verified separately at the transformer-conformance level — `conformance.test.ts`'s AC3 case — not by this pipeline test.) | 3 | 4 | 4 | 48 | P1 | GREEN |
+
+### 6.3 Tier C — Sync Lifecycle (`SYNC-###`)
+
+| ID | Surface | Mapped test file | Helper assertions | L | U | D | Score | Priority | Status |
+|---|---|---|---|---|---|---|---|---|---|
+| SYNC-001 | Watcher mid-session crash visibility | `packages/plugins/claude-session-sync/tests/e2e/watcher-crash.test.ts` | crash-visibility signal assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| SYNC-002 | Manifest upload failure mid-session | `packages/sync/tests/e2e/manifest-failure.test.ts` | failure-signal assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| SYNC-003 | Retry drives to a known terminal state | `packages/sync/tests/e2e/retry-terminal-state.test.ts` | terminal-state assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| SYNC-004 | Monotonic progress events for a multi-file session | `packages/site/tests/unit/session-sync.worker.test.ts` | monotonic progress-event assertion | 3 | 4 | 3 | 36 | P1 | GREEN |
+| SYNC-005 | Browser CAS `FixtureBucket` ↔ plugin `StorageAdapter` mock parity | `packages/site/tests/unit/sync-cas-mock-parity.test.ts` | mock-transport parity assertion | 2 | 3 | 4 | 24 | P2 | GREEN |
+| SYNC-006 | Devin hook-triggered sync (SessionStart→Stop→SessionEnd) produces a manifest with the full expected artifact set (transcript, workspace/global config, schema descriptor) | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest artifact-set / classification-key assertion | 4 | 5 | 4 | 80 | P0 | GREEN |
+| SYNC-007 | Devin Cloud-session mitigation: sync completes via `Stop` alone + bulk `devin-sync sync`, with `SessionStart`/`SessionEnd` simulated as never firing (verified Part A3 caveat) | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest/transcript presence assertion without a SessionStart/SessionEnd call | 5 | 5 | 5 | 125 | P0 | GREEN |
+| SYNC-008 | `devin-sync sync`/`list`/`download`/`remove`/`migrate` CLI verb smoke pipeline round-trips one session | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | end-to-end CLI verb chain assertion | 3 | 4 | 3 | 36 | P1 | GREEN |
+| SYNC-009 | Devin CAS sync progress heartbeat advances during a throttled file download | `devin-sync-heartbeat.spec.ts` | `assertHeartbeat` (sync-flow.ts) with `syncProgressFilesParser` | 4 | 4 | 4 | 64 | P0 | GREEN |
+| SYNC-010 | Devin models-list capture failure (`devin` binary unavailable) never fails the sync; real session artifacts still upload and the failure surfaces as a distinguishable warning, never as `[fail]` output | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest-upload success + `Warnings:` visibility + absence of `[fail]` output assertion | 4 | 4 | 4 | 64 | P0 | GREEN |
+| SYNC-011 | Devin watcher daemon (`bin/watcher`, the sole sync path for Cloud sessions) poll loop: heartbeat lines advance (monotonic, timestamped, distinct per poll, in a bounded window), a mid-run `sessions.db` change triggers a re-sync (including a `cogs_json`-only mutation that advances no row and not `last_activity_at` — #340), an unreadable `sessions.db` after startup surfaces per-poll stderr failure lines, and a per-session sync failure (`outcome.errors` non-empty, e.g. a manifest upload failure) is never advanced past as a false-success signature — the next poll retries until it clears (#339) — never a silent stall or a false-success heartbeat | `packages/plugins/devin-session-sync/tests/pipeline/watcher-heartbeat.test.ts` | `parseWatcherHeartbeats`/`assertMonotonicHeartbeats` heartbeat assertion + `poll #N failed` stderr visibility assertion + fail→retry→stable manifest-retry-count assertion (#339) + `cogs_json`-only mutation re-sync assertion (#340) | 4 | 5 | 4 | 80 | P0 | GREEN |
+| SYNC-012 | `FileLock`'s stale-lock takeover (`packages/sync/src/state/lock.ts`) is atomic across any number of concurrent contenders — never silently defeats mutual exclusion, which would re-enable the concurrent-duplicate-append transcript corruption `materializeSessionTranscript`'s append-only guard (#303) exists to prevent (a Devin hook write racing the watcher's poll on the same session) (#327) | `packages/sync/tests/unit/lock-stale-takeover.test.ts` + `packages/sync/tests/unit/lock-reclaim-mismatch.test.ts` + `packages/sync/tests/integration/lock-cross-process.test.ts` | black-box N-contender stress assertion (max-concurrent-holders == 1) + deterministic forced-interleaving mismatch/restore-failure assertions + real-cross-process no-duplicate-append assertion | 3 | 5 | 5 | 75 | P0 | GREEN |
+
+## 7. Infrastructure prerequisites
+
+Shared helpers under `packages/site/tests/e2e/helpers/` (see that
+directory's `AGENTS.md`):
+
+### 7.1 Helper 1 — `chart-content.ts`
+
+Shadow-piercing assertions for rendered chart geometry
+(`expectRenderedGeometry`) and empty-vs-error affordance disambiguation.
+Self-tested by `chart-content.spec.ts` (UX-001/UX-002 smoke).
+
+### 7.2 Helper 2 — `export-verify.ts`
+
+Opens a downloaded `.sqlite` export with the app's own WASM SQLite driver
+and returns row counts per table (`verifyExportContents`); throws on
+corrupt/invalid files.
+
+### 7.3 Helper 3 — `heartbeat.ts`
+
+`assertHeartbeat`/`pollHeartbeat` poll a progress locator and assert
+monotonic, distinct advancement within a bounded window. Self-tested by
+`helpers/heartbeat.spec.ts` (throttled advancement, stall detection,
+non-monotonic rejection).
+
+### 7.4 Helper 4 — `manual-import-state.ts`
+
+Shadow-piercing state assertions for `manual-import-state`: reads the
+semantic `phase`, badge class/text, and hint copy to distinguish
+Unsupported/Unavailable/Integrity Error affordances from each other and
+from the idle state.
+
+### 7.5 Pipeline failure-injection harness
+
+`packages/db/tests/pipeline/harness.ts` wraps the SQLite executor/stores
+and throws at a named `InjectionStage`
+(`pre-commit` | `mid-commit` | `mid-rollup` | `post-ingest` | `reprocess`
+| `query`), used by PIPE-004/PIPE-005 to assert explicit failure signals
+rather than silent partial state. Self-tested by
+`packages/db/tests/pipeline/harness.test.ts`.
+
+## 8. Rollout & task prep
+
+New surfaces move `PROPOSED` → `IMPLEMENTING` → `GREEN` (or
+`FAILING-PRODUCT-BUG` if the guard proves a real defect — see
+`triage-e2e-failure`). `e2e-test-planner` registers the entry and hands
+it to `e2e-test-implementer`. A PR touching a user-facing surface must
+cite the catalog ID(s) it implements or invokes; a PR that introduces a
+new surface without a corresponding `PROPOSED`/`IMPLEMENTING` row is
+blocked by `.agents/rules/e2e-coverage-required.md`.
+
+## 9. Open gaps / backlog
+
+No entries are currently `PROPOSED`. As of this backfill (issue #160),
+every ID in §6 corresponds to a pre-existing, currently-passing test;
+none were newly written by this change. New candidate surfaces (e.g. from
+the devin-sync feature, #138) register here first as `PROPOSED` with a
+score, then move through §8.
+
+SYNC-006/007/008 (DS-F3, issue #158) were registered and implemented in
+the same PR — the Devin plugin's sync→manifest→artifact-set journey and
+the Devin-Cloud `Stop`-hook-only mitigation are new user-observable
+surfaces introduced by that PR, so `GREEN` reflects the pipeline test
+landing alongside the feature rather than a backfill.
+
+SYNC-011 (issue #326) follows the same precedent: the mandatory
+`bin/watcher` daemon shipped without a catalog mapping (flagged as a
+blocker in the PR #304 review), so the row was registered and its
+pipeline test implemented in the same PR. Known watcher bug #339
+(success signature advances despite outcome errors) is now fixed and
+covered by SYNC-011's fail→retry→stable regression sequence. #340
+(signature trusted `last_activity_at` for the `sessions` row component,
+missing skill-only/effort-only mutations) is now fixed — the signature
+shares the extractor's verified full-row content-hash mechanism instead
+(`session-watermark.ts`'s `sessionContentHash`) — and is covered by a
+dedicated `cogs_json`-only mutation regression in the same file, plus
+direct unit coverage of `computeSessionWatermarkSignature` in
+`watcher.test.ts`.
+
+PIPE-019 (issue #341) follows the same precedent again: the fix (a
+content-hash watermark for `message_nodes`, replacing the unsound
+`row_id` watermark) shipped without a catalog mapping, flagged as a
+blocker in that PR's review, so the row and its pipeline test were added
+in the same PR rather than deferred as a follow-up.
+
+SYNC-012 (issue #327) is the first Tier C entry whose surface is a
+shared, harness-agnostic primitive (`packages/sync`'s `FileLock`) rather
+than a specific harness's sync flow — admitted on the same basis SYNC-004
+and SYNC-005 already established (a `tests/unit/`-located test can back a
+Tier C row; the tier is about the *surface*, not the test directory).
+`FileLock`'s stale-takeover TOCTOU race, if it fires, silently defeats
+the exact mutual-exclusion guarantee `materializeSessionTranscript`'s
+append-only guard (#303) depends on — wrong/duplicated transcript data
+with no user-visible signal, undetectable by any other test layer — so it
+was registered and its three tests (black-box stress, deterministic
+forced-interleaving, real cross-process) implemented in the same PR
+rather than deferred, per the same "flagged as a blocker, fixed with a
+catalog mapping in the same PR" precedent as SYNC-011 and PIPE-019 above.
+
+## 10. Maintenance model
+
+- Failures are triaged with `triage-e2e-failure` before any fix
+  (product bug / test bug / flake).
+- Quarantines (`test.fixme()` / `describe.skip`) are time-boxed (30
+  days), linked to a bug, and tracked in this table's Status column as
+  `FAILING-PRODUCT-BUG` until resolved — never a silent skip.
+- Breaking an existing mapping is never resolved by deleting the catalog
+  row or the test; IDs are retired (marked, not reused) only if the
+  guarded surface itself is removed from the product.
+- Post-triage records are appended to
+  `docs/superpowers/discoveries/2026-08-27-e2e-coverage-enhancement.md`.
+- `e2e-test-planner` re-scores periodically; re-scoring must stay uniform
+  across all entries (§5) — no boosting recent incidents.

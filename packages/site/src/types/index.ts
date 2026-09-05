@@ -25,7 +25,14 @@ export interface DashboardSession {
   cost_usd?: number;
   model?: string;
   models: ModelTokenUsage[];
-  context_compactions: number;
+  /**
+   * Count of context-compaction events for this session, when known. `null`
+   * means "no compaction capability recorded for this harness/session yet"
+   * (e.g. a sync stub written before parsed content lands) - distinct from
+   * a confirmed `0` compactions. Never coerce a missing count to `0` here;
+   * render it as "—"/"N/A", per `missing-is-never-zero`.
+   */
+  context_compactions: number | null;
   total_turns: number;
   files_read: number;
   files_written: number;

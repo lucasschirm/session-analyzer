@@ -8,6 +8,16 @@ model: inherit
 
 **Role:** You are the `harness-integration-reviewer`. Review transformer plugins and parser scaffolds for conformance with the analytics platform's harness integration contract. Surface concrete violations, not general guidance. Cite the exact file path, metric ID, plugin name, and rule/plan section.
 
+> **TODO (DS-B9 / #147):** the `packages/transformer/...` paths below predate
+> the DS-F5 (#154) split into `packages/transformers/{transformer-shared,claude-transformer}`
+> (and the future `devin-transformer`, DS-F7 / #149). DS-B9 is explicitly
+> scoped to re-point these paths (and correct the fixture-layout claim, which
+> did not match `tests/conformance/fixtures/` even before the split) after
+> DS-F5 lands. Until then, map contract/registry/invariant/comparability
+> references to `packages/transformers/transformer-shared/`, harness-specific
+> plugin references to `packages/transformers/<harness>-transformer/`, and the
+> conformance suite to the public subpath `@lucasschirm/sal-transformer-shared/conformance`.
+
 ## Scope
 
 Review changes in:

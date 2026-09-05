@@ -1,0 +1,84 @@
+import { createHash } from 'node:crypto';
+import type { DevinToolCallStateRow } from './types.js';
+
+/**
+ * `tool_call_state`'s incremental-fetch strategy — deliberately NOT a rowid
+ * watermark, kept in its own named module per the "own named, documented
+ * function per table" rule (#296/PR #297) since this table's reasoning is
+ * genuinely different from `message_nodes`/`prompt_history`'s.
+ *
+ * #298's Phase-1 investigation (live `devin` CLI, real `sessions.db`, two
+ * separate CLI invocations resuming one session) found:
+ *
+ * 1. A single tool call's row (`functions.exec:0`) was observed at rowid
+ *    1980897 immediately after completion. After a second, later CLI
+ *    invocation resumed the same session (a `run_subagent` call, unrelated
+ *    to that tool call), the SAME `(session_id, tool_call_id)` reappeared
+ *    at rowid 1980900 — with byte-identical `tool_call_json` and
+ *    `tool_call_update_json` content. The row was not updated in place;
+ *    it was deleted and reinserted.
+ * 2. That second invocation rewrote ALL THREE of the session's
+ *    `tool_call_state` rows (rowids 1980916-1980918) — including the
+ *    already-completed, untouched `exec:0` from the first invocation —
+ *    even though only one of the three was new. Devin appears to rewrite
+ *    a session's entire `tool_call_state` row set on every persist, the
+ *    same "rewritten on each persist" behavior already documented for
+ *    `message_nodes`'s node forest.
+ *
+ * A `rowid > watermark` filter is therefore unsound as a change-detection
+ * mechanism: real content can reappear at a rowid the watermark already
+ * passed (case 1), even though, in both live observations here, the
+ * reinsert happened to land at a *higher* rowid than before. That's not
+ * guaranteed: this table has no `INTEGER PRIMARY KEY AUTOINCREMENT`
+ * column — its PK is the composite `(session_id, tool_call_id)` — so
+ * SQLite's implicit rowid is structurally eligible for reuse after a
+ * delete (SQLite's own documented rowid-assignment behavior: a fresh
+ * insert gets `max(existing rowid) + 1`, and a deleted high-water rowid
+ * can be reused once nothing higher remains).
+ *
+ * The fix: track a content hash per the table's REAL identity
+ * `(session_id, tool_call_id)` instead of a monotonic position.
+ * `readToolCallStates` (reader.ts) always reads the full table — the same
+ * justification `sessions` already uses: no cheap native change-tracking
+ * column exists here either (no `updated_at`) — and this module filters
+ * that full read down to rows whose content actually changed since the
+ * last sync, then folds the result back into the watermark.
+ */
+
+function toolCallStateKey(row: DevinToolCallStateRow): string {
+  return `${row.session_id}\0${row.tool_call_id}`;
+}
+
+/**
+ * Hashes every column except `row_id` — SQLite's implicit rowid, which
+ * churns on every session persist per finding 2 above and carries no
+ * content identity of its own; including it would make every row look
+ * "changed" on every pass, defeating the whole point of this module.
+ */
+function toolCallStateContentHash(row: DevinToolCallStateRow): string {
+  const { row_id: _rowId, ...content } = row;
+  return createHash('sha256').update(JSON.stringify(content)).digest('hex');
+}
+
+/** New or genuinely-changed tool call rows only — a row whose content hash
+ * matches the prior sync's hash for the same `(session_id, tool_call_id)`
+ * is dropped, no matter what its current rowid is. */
+export function filterChangedToolCallStates(
+  rows: readonly DevinToolCallStateRow[],
+  priorHashes: Readonly<Record<string, string>>,
+): DevinToolCallStateRow[] {
+  return rows.filter((row) => priorHashes[toolCallStateKey(row)] !== toolCallStateContentHash(row));
+}
+
+/** Folds this pass's already-filtered rows into the watermark map for the
+ * next incremental pass; never drops a previously-seen key. */
+export function mergeToolCallStateHashes(
+  prior: Readonly<Record<string, string>>,
+  changedRows: readonly DevinToolCallStateRow[],
+): Record<string, string> {
+  const merged = { ...prior };
+  for (const row of changedRows) {
+    merged[toolCallStateKey(row)] = toolCallStateContentHash(row);
+  }
+  return merged;
+}
