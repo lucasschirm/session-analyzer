@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { ArtifactIdentity, ArtifactScope, SessionData } from '@lucasschirm/sal-sync-core';
 import { SYNC_ERROR_CATALOG, type SyncErrorCode } from '@lucasschirm/sal-sync-core';
 import { FileLock, type LockOptions, SyncStateError } from './lock.js';
+import { uniqueSuffix } from './unique-id.js';
 
 export const STATE_SCHEMA_VERSION = 1;
 
@@ -78,7 +79,7 @@ export async function writeFileAtomic(filePath: string, data: string): Promise<v
 
   // Use a unique temp file per call so concurrent writes to the same target
   // do not clobber each other's temp file (which would cause ENOENT on rename).
-  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+  const tempPath = `${filePath}.${uniqueSuffix()}.tmp`;
   let handle: fsp.FileHandle | undefined;
   try {
     handle = await fsp.open(tempPath, 'w', 0o644);
