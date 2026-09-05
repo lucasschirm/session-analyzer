@@ -163,16 +163,36 @@ describe('DEVIN_KINDS: #342 config artifact classification coverage', () => {
     expect(ids.size).toBe(2);
   });
 
-  it('extracts one rule component titled from the first heading, else description, else basename', () => {
+  it('extracts one rule component per file, keyed on the stable basename regardless of heading/frontmatter content', () => {
     const result = classify([
       { relativePath: '.devin/rules/heading.md', content: '# My Heading\nBody' },
       { relativePath: '.devin/rules/desc-only.md', content: RULE_MD },
       { relativePath: '.devin/rules/plain.md', content: 'no frontmatter, no heading' },
     ]);
     const byNative = new Map(result.components.map((c) => [c.identity.nativeId, c]));
-    expect(byNative.get('My Heading')?.kind).toBe('rule');
-    expect(byNative.get('a rule')?.kind).toBe('rule');
+    expect(byNative.get('heading')?.kind).toBe('rule');
+    expect(byNative.get('desc-only')?.kind).toBe('rule');
     expect(byNative.get('plain')?.kind).toBe('rule');
+  });
+
+  it('a rule componentId stays stable when only its heading/description content changes (PR #375 review, second round)', () => {
+    // .agents/rules/component-identity-not-display-name.md: identity is
+    // never keyed on something display/content-derived. Same path -> same
+    // componentId, even though the heading and description text differ.
+    const before = classify([
+      { relativePath: '.devin/rules/style.md', content: '# Original Heading\nBody v1' },
+    ]);
+    const after = classify([
+      {
+        relativePath: '.devin/rules/style.md',
+        content:
+          '---\ndescription: a totally different description\n---\n# A Different Heading\nBody v2',
+      },
+    ]);
+    expect(before.components).toHaveLength(1);
+    expect(after.components).toHaveLength(1);
+    expect(after.components[0].componentId).toBe(before.components[0].componentId);
+    expect(after.components[0].identity.nativeId).toBe('style');
   });
 
   it('documents the known scope-collision limitation: .devin/rules/** always defaults to workspace scope', () => {

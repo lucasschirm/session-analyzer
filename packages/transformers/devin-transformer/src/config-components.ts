@@ -42,7 +42,6 @@ interface ExtractionCtx {
 
 const FRONTMATTER_BLOCK = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 const FRONTMATTER_LINE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
-const HEADING = /^#{1,6}[ \t]+(.+?)\s*$/m;
 
 function unquote(value: string): string {
   const isQuoted =
@@ -88,18 +87,6 @@ function basenameNoExt(relativePath: string): string {
     .filter((s) => s.length > 0);
   const last = segments[segments.length - 1] ?? relativePath;
   return last.replace(/\.[^./]+$/, '');
-}
-
-/** Title precedence mirrors `claude-session-parser`'s `deriveTitle`: first
- * markdown heading, else the rule's `description` frontmatter field, else
- * the file's basename — never a raw path or hash. */
-function deriveRuleTitle(
-  fields: Readonly<Record<string, string>>,
-  body: string,
-  path: string,
-): string {
-  const heading = HEADING.exec(body)?.[1]?.trim();
-  return heading || fields.description || basenameNoExt(path);
 }
 
 function fileComponentId(kind: string, ctx: ExtractionCtx, name: string): string {
@@ -156,7 +143,19 @@ export function extractAgentFileComponents(ctx: ExtractionCtx): ComponentSummary
 /**
  * One component per rule file (`.devin/rules/**`, `.devin/global_rules.md`,
  * `.windsurf/rules/**`, and the root `AGENTS.md`/`AGENT.md`/`AGENTS.local.md`
- * memory files), titled via `deriveRuleTitle`.
+ * memory files), keyed on the file's own STABLE basename — NOT a
+ * content-derived title. An earlier revision used a content-derived title
+ * (first markdown heading, else `description` frontmatter, else basename)
+ * for identity, which meant editing a rule's heading or description text
+ * alone — no rename, no move — minted a brand-new `componentId` for the
+ * structurally same file: a direct violation of `.agents/rules/component-
+ * identity-not-display-name.md`'s core principle (never key identity on
+ * something display/content-derived), the exact class of bug that rule
+ * exists to prevent (PR #375 review, second round). `basenameNoExt` mirrors
+ * `extractIdentityFileComponent` (skill/agent)'s use of the STABLE parent
+ * directory name rather than any content-derived value — `path` is already
+ * part of the `stableId` tuple below and already disambiguates distinct
+ * files, so `name` only needs to be stable, never pretty.
  *
  * `.devin/rules/**` and `.devin/global_rules.md` carry a deeper risk than
  * the already-documented scope-mislabeling limitation
@@ -165,21 +164,18 @@ export function extractAgentFileComponents(ctx: ExtractionCtx): ComponentSummary
  * `stableId('rule', {source, scope, path, name})`, and a truly-global
  * `~/.devin/rules/x.md` and a truly-workspace `.devin/rules/x.md` normalize
  * to the IDENTICAL `relativePath`, both default to the same `scope:
- * 'workspace'`, AND — if they also happen to derive the same title (no
- * distinguishing heading/description, both falling back to the shared
- * basename `x`) — the SAME `name`. All four `stableId` inputs coincide, so
- * this doesn't just mislabel one file's scope: it silently merges two
- * logically distinct rule files from two different machines/scopes into
- * ONE Component Ecosystem entry (whichever `sourceArtifactIds` last wins).
- * PR #375 review finding 4: same root cause as the scope-collision
- * limitation (`Artifact` has no `scope` field), same fix required
- * (sync-side, out of scope for #342) — documented here so the risk isn't
- * understated as "just a scope label".
+ * 'workspace'`, AND share the SAME basename `x` — all four `stableId`
+ * inputs coincide, so this doesn't just mislabel one file's scope: it
+ * silently merges two logically distinct rule files from two different
+ * machines/scopes into ONE Component Ecosystem entry (whichever
+ * `sourceArtifactIds` last wins). PR #375 review finding 4 (first round):
+ * same root cause as the scope-collision limitation (`Artifact` has no
+ * `scope` field), same fix required (sync-side, out of scope for #342) —
+ * documented here so the risk isn't understated as "just a scope label".
  */
-export function extractRuleFileComponents(ctx: ExtractionCtx, content: string): ComponentSummary[] {
-  const { fields, body } = parseFlatFrontmatter(content);
-  const title = deriveRuleTitle(fields, body, ctx.artifact.relativePath);
-  return [makeFileComponent('rule', ctx, fileComponentId('rule', ctx, title), title)];
+export function extractRuleFileComponents(ctx: ExtractionCtx): ComponentSummary[] {
+  const name = basenameNoExt(ctx.artifact.relativePath);
+  return [makeFileComponent('rule', ctx, fileComponentId('rule', ctx, name), name)];
 }
 
 function safeJsonParse(content: string): unknown {
@@ -286,7 +282,7 @@ function dispatch(ctx: ExtractionCtx, content: string): ComponentSummary[] {
   const { kind, role } = ctx.classified;
   if (kind === 'skill') return extractSkillFileComponents(ctx);
   if (kind === 'agent') return extractAgentFileComponents(ctx);
-  if (kind === 'rule') return extractRuleFileComponents(ctx, content);
+  if (kind === 'rule') return extractRuleFileComponents(ctx);
   if (kind === 'settings' && role === 'hooks') return extractHookComponents(ctx, content);
   if (kind === 'settings' && role === 'discovered-catalog') {
     return extractDiscoveredCatalogComponents(ctx, content);

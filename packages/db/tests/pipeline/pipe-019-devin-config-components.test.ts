@@ -57,12 +57,14 @@ describe('PIPE-019: devin file-backed skill/agent/rule config components (#342)'
     expect(agentItems[0]?.name).toBe('agent/changelog-curator');
     expect(agentItems[0]?.name).not.toBe(agentItems[0]?.componentId);
 
-    // The rule file carries no markdown heading, so its title (and native
-    // id) resolves from its `description` frontmatter field instead of a
-    // raw path or hash.
+    // The rule component is keyed on its file's stable basename, not a
+    // content-derived title (PR #375 review, second round) — a raw path or
+    // hash would violate never-display-raw-ids.md, but a title derived from
+    // heading/description text would violate component-identity-not-
+    // display-name.md by churning the componentId on ordinary content edits.
     const ruleItems = byKind.get('rule') ?? [];
     expect(ruleItems).toHaveLength(1);
-    expect(ruleItems[0]?.name).toBe('rule/Keep changelog entries terse.');
+    expect(ruleItems[0]?.name).toBe('rule/changelog-style');
     expect(ruleItems[0]?.name).not.toBe(ruleItems[0]?.componentId);
   });
 
