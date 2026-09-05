@@ -72,19 +72,27 @@ const DEVIN_KINDS: Readonly<
   '^\\.devin/rules/': { kind: 'rule', scope: 'workspace' },
   '^\\.devin/global_rules\\.md$': { kind: 'rule', scope: 'workspace', role: 'global-rules' },
   // Devin-native skills/agents (workspace): the identity file's pattern
-  // precedes its directory's supporting-file catch-all.
+  // precedes its directory's supporting-file catch-all, which in turn
+  // precedes the loose-file catch-all (a file with no name subdirectory at
+  // all, e.g. `.devin/skills/README.md` — `packages/sync/src/discovery/
+  // glob.ts`'s `walkRecursive` recurses from the base directory itself, so
+  // sync captures this shape too; PR #375 review finding 1).
   '^\\.devin/skills/[^/]+/skill\\.md$': { kind: 'skill', scope: 'workspace' },
   '^\\.devin/skills/[^/]+/': { kind: 'skill', scope: 'workspace', role: 'supporting-file' },
+  '^\\.devin/skills/[^/]+$': { kind: 'skill', scope: 'workspace', role: 'loose-file' },
   '^\\.devin/agents/[^/]+/agent\\.md$': { kind: 'agent', scope: 'workspace' },
   '^\\.devin/agents/[^/]+/': { kind: 'agent', scope: 'workspace', role: 'supporting-file' },
+  '^\\.devin/agents/[^/]+$': { kind: 'agent', scope: 'workspace', role: 'loose-file' },
   // Cross-harness `.agents/` convention. `.agents/agents/**` is
   // workspace-only (no global pattern shares its prefix); `.agents/skills/**`
   // is the THIRD structurally-ambiguous family (shared with
   // `~/.agents/skills/**`), same documented best-effort default as above.
   '^\\.agents/agents/[^/]+/agent\\.md$': { kind: 'agent', scope: 'workspace' },
   '^\\.agents/agents/[^/]+/': { kind: 'agent', scope: 'workspace', role: 'supporting-file' },
+  '^\\.agents/agents/[^/]+$': { kind: 'agent', scope: 'workspace', role: 'loose-file' },
   '^\\.agents/skills/[^/]+/skill\\.md$': { kind: 'skill', scope: 'workspace' },
   '^\\.agents/skills/[^/]+/': { kind: 'skill', scope: 'workspace', role: 'supporting-file' },
+  '^\\.agents/skills/[^/]+$': { kind: 'skill', scope: 'workspace', role: 'loose-file' },
   // Devin-native skills/agents (global): `.config/devin/`-prefixed,
   // unambiguous (distinct from the workspace `.devin/skills|agents/**` prefix).
   '^\\.config/devin/skills/[^/]+/skill\\.md$': { kind: 'skill', scope: 'global' },
@@ -93,12 +101,14 @@ const DEVIN_KINDS: Readonly<
     scope: 'global',
     role: 'supporting-file',
   },
+  '^\\.config/devin/skills/[^/]+$': { kind: 'skill', scope: 'global', role: 'loose-file' },
   '^\\.config/devin/agents/[^/]+/agent\\.md$': { kind: 'agent', scope: 'global' },
   '^\\.config/devin/agents/[^/]+/': {
     kind: 'agent',
     scope: 'global',
     role: 'supporting-file',
   },
+  '^\\.config/devin/agents/[^/]+$': { kind: 'agent', scope: 'global', role: 'loose-file' },
 };
 
 const ALL_COMPONENT_KINDS: readonly string[] = [

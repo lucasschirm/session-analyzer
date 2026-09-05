@@ -102,6 +102,37 @@ describe('DEVIN_KINDS: #342 config artifact classification coverage', () => {
     expect(result.components).toEqual([]);
   });
 
+  it('a loose file directly under .devin/skills/ (no name subdirectory) still classifies via the loose-file catch-all, with no component (PR #375 review finding 1)', () => {
+    // packages/sync/src/discovery/glob.ts's walkRecursive recurses from the
+    // base directory itself, so a file with no name subdirectory at all
+    // (e.g. a stray README) is captured by sync too, not just the nested
+    // `<name>/SKILL.md` shape.
+    const result = classify([{ relativePath: '.devin/skills/README.md', content: '# Readme' }]);
+    const classified = kindOf(result, '.devin/skills/README.md');
+    expect(classified?.kind).toBe('skill');
+    expect(classified?.scope).toBe('workspace');
+    expect(classified?.role).toBe('loose-file');
+    expect(result.components).toEqual([]);
+  });
+
+  it('a loose file directly under every skill/agent directory family (workspace, global, cross-harness) classifies without a component', () => {
+    const paths = [
+      '.devin/skills/loose.md',
+      '.devin/agents/loose.md',
+      '.agents/skills/loose.md',
+      '.agents/agents/loose.md',
+      '.config/devin/skills/loose.md',
+      '.config/devin/agents/loose.md',
+    ];
+    const result = classify(paths.map((relativePath) => ({ relativePath, content: 'x' })));
+    for (const path of paths) {
+      const classified = kindOf(result, path);
+      expect(classified?.kind, path).not.toBe('unclassified');
+      expect(classified?.role, path).toBe('loose-file');
+    }
+    expect(result.components).toEqual([]);
+  });
+
   it('extracts one agent component per AGENT.md, keyed on the parent directory name', () => {
     const result = classify([
       { relativePath: '.devin/agents/my-agent/AGENT.md', content: AGENT_MD },

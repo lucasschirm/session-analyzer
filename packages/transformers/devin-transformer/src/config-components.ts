@@ -128,16 +128,19 @@ function makeFileComponent(
 /**
  * One component per `SKILL.md`/`AGENT.md` identity file, keyed on the
  * PARENT DIRECTORY name (Devin's real identity convention — unlike Claude's
- * flat files, unrelated to the file's own basename). A non-identity
- * supporting file under the same directory (`classified.role ===
- * 'supporting-file'`) still classifies but never yields its own component,
- * so a skill's reference docs don't fabricate duplicate identities.
+ * flat files, unrelated to the file's own basename). Only the genuine
+ * identity file (no `role` set) yields a component: a non-identity
+ * supporting file under a named skill/agent directory (`role:
+ * 'supporting-file'`) or a loose file with no name subdirectory at all
+ * (`role: 'loose-file'`, PR #375 review finding 1) still classify but never
+ * yield their own component — a supporting file would fabricate a duplicate
+ * identity, and a loose file has no directory name to derive one from.
  */
 function extractIdentityFileComponent(
   kind: 'skill' | 'agent',
   ctx: ExtractionCtx,
 ): ComponentSummary[] {
-  if (ctx.classified.role === 'supporting-file') return [];
+  if (ctx.classified.role !== undefined) return [];
   const name = parentDirName(ctx.artifact.relativePath);
   return [makeFileComponent(kind, ctx, fileComponentId(kind, ctx, name), name)];
 }
@@ -150,9 +153,29 @@ export function extractAgentFileComponents(ctx: ExtractionCtx): ComponentSummary
   return extractIdentityFileComponent('agent', ctx);
 }
 
-/** One component per rule file (`.devin/rules/**`, `.devin/global_rules.md`,
+/**
+ * One component per rule file (`.devin/rules/**`, `.devin/global_rules.md`,
  * `.windsurf/rules/**`, and the root `AGENTS.md`/`AGENT.md`/`AGENTS.local.md`
- * memory files), titled via `deriveRuleTitle`. */
+ * memory files), titled via `deriveRuleTitle`.
+ *
+ * `.devin/rules/**` and `.devin/global_rules.md` carry a deeper risk than
+ * the already-documented scope-mislabeling limitation
+ * (`classification.ts`'s `DEVIN_KINDS` comment,
+ * `.agents/rules/manifest-backed-classification.md`): `componentId` is
+ * `stableId('rule', {source, scope, path, name})`, and a truly-global
+ * `~/.devin/rules/x.md` and a truly-workspace `.devin/rules/x.md` normalize
+ * to the IDENTICAL `relativePath`, both default to the same `scope:
+ * 'workspace'`, AND — if they also happen to derive the same title (no
+ * distinguishing heading/description, both falling back to the shared
+ * basename `x`) — the SAME `name`. All four `stableId` inputs coincide, so
+ * this doesn't just mislabel one file's scope: it silently merges two
+ * logically distinct rule files from two different machines/scopes into
+ * ONE Component Ecosystem entry (whichever `sourceArtifactIds` last wins).
+ * PR #375 review finding 4: same root cause as the scope-collision
+ * limitation (`Artifact` has no `scope` field), same fix required
+ * (sync-side, out of scope for #342) — documented here so the risk isn't
+ * understated as "just a scope label".
+ */
 export function extractRuleFileComponents(ctx: ExtractionCtx, content: string): ComponentSummary[] {
   const { fields, body } = parseFlatFrontmatter(content);
   const title = deriveRuleTitle(fields, body, ctx.artifact.relativePath);
