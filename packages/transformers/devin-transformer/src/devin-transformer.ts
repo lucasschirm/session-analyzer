@@ -96,7 +96,17 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // read, now from the current rather than the stale row (same attribution-
 // correction class as DS-B25's 0.3.0 -> 0.4.0). Forces a fresh generation
 // on reprocess so no analysis mixes pre-/post-fix session-level output.
-export const DEVIN_TRANSFORMER_VERSION = '0.6.0';
+// Bumped 0.6.0 -> 0.7.0 for #321: `parse-bundle.ts` now dedupes `tool_call`
+// lines by `toolCallId` (prefer the last update-bearing line). A call whose
+// state changed across sync passes was captured once per pass by design
+// (content-hash watermark), and the duplicates produced identical
+// `stableId` invocation/payload recordIds — a PK violation at ingestion —
+// and inflated `devin:invocations:*` counts where ids differed. No
+// metric-version bump: the invocation metrics' meaning (count of distinct
+// tool/skill/agent invocations) is unchanged — duplicates were a defect,
+// not a population definition. Forces a fresh generation on reprocess so
+// no analysis mixes pre-/post-fix invocation counts.
+export const DEVIN_TRANSFORMER_VERSION = '0.7.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly

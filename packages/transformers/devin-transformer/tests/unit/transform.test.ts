@@ -6,6 +6,7 @@ import {
   noRootBundle,
   partialTokensBundle,
   sessionReplayBundle,
+  toolCallReplayBundle,
   unknownSchemaBundle,
 } from '../conformance/fixtures/index.js';
 
@@ -49,6 +50,22 @@ describe('DevinTransformer.transform', () => {
     // last_activity_at from the SECOND session line (1722524500s), not the
     // first-pass value (1722520900s).
     expect(payload.endTime).toBe(new Date(1722524500 * 1000).toISOString());
+  });
+
+  it('dedupes tool_call lines replayed across sync passes by toolCallId (#321)', () => {
+    const result = DevinTransformer.transform(toolCallReplayBundle, defaultContext);
+    expect(result.errors).toEqual([]);
+    const invocations = result.evidence.filter((r) => r.recordType === 'invocation');
+    expect(invocations.length).toBe(1);
+    // The update-bearing (completed) line wins, even though a regressed
+    // no-update duplicate was appended after it.
+    const invocationPayload = invocations[0]?.payload as { status?: string } | undefined;
+    expect(invocationPayload?.status).toBe('success');
+    expect(findMetric(result, 'devin:invocations:tool:root_only')?.value).toBe(1);
+    // No duplicate recordIds anywhere — duplicates were a PK violation at
+    // ingestion.
+    const ids = result.evidence.map((r) => r.recordId);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it('counts turns from the message main chain', () => {
