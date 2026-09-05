@@ -340,6 +340,43 @@ export const toolCallReplayBundle: UnknownArtifactBundle = bundle([
   artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
 ]);
 
+// The REAL `sessions.metadata.response_dimensions` shape (verified on every
+// session of a live Devin CLI 3000.6.x store, #322): entries carry
+// `{ group_title, uid, kind: { CumulativeMetric: { value } } }`, with
+// `input_tokens` EXCLUDING cache reads (note cached >> input, real ratios),
+// plus a non-cumulative `model` dimension that must be skipped. No ATIF
+// artifact — this is the tier-3 path 20 of 28 real sessions take.
+const metadataTokensTranscript = [
+  sessionLine(sessionId, 2, {
+    response_dimensions: [
+      {
+        group_title: 'Tokens',
+        uid: 'input_tokens',
+        kind: { CumulativeMetric: { value: 3265287 } },
+      },
+      {
+        group_title: 'Tokens',
+        uid: 'output_tokens',
+        kind: { CumulativeMetric: { value: 136906 } },
+      },
+      {
+        group_title: 'Tokens',
+        uid: 'cached_input_tokens',
+        kind: { CumulativeMetric: { value: 37556736 } },
+      },
+      { group_title: 'Model', uid: 'model', kind: { Metric: { value: 'GLM-5.2 High' } } },
+    ],
+  }),
+  messageLine(sessionId, 1, null, 'user', 'Hello'),
+  messageLine(sessionId, 2, 1, 'assistant', 'Hi there'),
+].join('\n');
+
+export const metadataTokensBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', metadataTokensTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+  artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
+]);
+
 const branchyTranscript = [
   sessionLine(sessionId, 4),
   messageLine(sessionId, 1, null, 'user', 'Hello'),
@@ -995,6 +1032,14 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
         'completed invocation with unique recordIds (#321).',
       toolCallReplayBundle,
       ['root', 'deterministic'],
+    ),
+    fixture(
+      'metadata-tokens',
+      'An ATIF-less session whose metadata carries the REAL response_dimensions shape ' +
+        '({ uid, kind: { CumulativeMetric: { value } } }) — the tier-3 token path (#322); ' +
+        'includes a non-cumulative model dimension that must be skipped.',
+      metadataTokensBundle,
+      ['root', 'deterministic', 'exact-estimated'],
     ),
     fixture('no-root', 'Configuration artifacts without a root transcript.', noRootBundle, [
       'no-root',

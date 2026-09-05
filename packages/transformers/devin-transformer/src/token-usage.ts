@@ -31,7 +31,44 @@ function parseMetadata(metadata: string | null): Record<string, unknown> {
   }
 }
 
-function sumResponseDimensions(dimensions: unknown[]): {
+/**
+ * Extracts the numeric value of one real `response_dimensions[]` entry:
+ * `{ group_title, uid, kind: { CumulativeMetric: { value } } }` (the shape
+ * observed on every session in a live Devin CLI 3000.6.x store — #322).
+ * Non-cumulative dimensions (e.g. `uid: "model"` carrying a label string)
+ * return null and are skipped by the caller.
+ */
+function cumulativeMetricValue(d: Record<string, unknown>): number | null {
+  const kind = d.kind;
+  if (!kind || typeof kind !== 'object') return null;
+  const metric = (kind as Record<string, unknown>).CumulativeMetric;
+  if (!metric || typeof metric !== 'object') return null;
+  const value = (metric as Record<string, unknown>).value;
+  return typeof value === 'number' ? value : null;
+}
+
+function sumUidDimensions(dimensions: unknown[]): {
+  input: number | null;
+  output: number | null;
+  cachedInput: number | null;
+} {
+  let input: number | null = null;
+  let output: number | null = null;
+  let cachedInput: number | null = null;
+  for (const dim of dimensions) {
+    if (!dim || typeof dim !== 'object') continue;
+    const d = dim as Record<string, unknown>;
+    const value = cumulativeMetricValue(d);
+    if (value === null) continue;
+    if (d.uid === 'input_tokens') input = (input ?? 0) + value;
+    else if (d.uid === 'output_tokens') output = (output ?? 0) + value;
+    else if (d.uid === 'cached_input_tokens') cachedInput = (cachedInput ?? 0) + value;
+  }
+  return { input, output, cachedInput };
+}
+
+/** The pre-#322 flat-key probe, kept only as a fallback for unobserved shapes. */
+function sumFlatKeyDimensions(dimensions: unknown[]): {
   prompt: number | null;
   completion: number | null;
   cached: number | null;
@@ -60,6 +97,31 @@ function sumResponseDimensions(dimensions: unknown[]): {
     }
   }
   return any ? { prompt, completion, cached } : { prompt: null, completion: null, cached: null };
+}
+
+/**
+ * Real `response_dimensions[]` uids are `input_tokens` / `output_tokens` /
+ * `cached_input_tokens`, where `input_tokens` EXCLUDES cache reads (observed
+ * cached ≫ input on real sessions, e.g. 37.5M cached vs 3.2M input). ATIF
+ * `final_metrics.totalPromptTokens` INCLUDES its cached subset ("Subset of
+ * prompt_tokens that were cache hits"), so to keep ONE meaning for
+ * `devin:tokens:prompt` across sourcing tiers, prompt here is
+ * input + cached when both are present. When only `input_tokens` was
+ * reported, prompt carries it as-is and `cached: null` flags the missing
+ * cache dimension (never coerced to 0 — missing-is-never-zero).
+ */
+function sumResponseDimensions(dimensions: unknown[]): {
+  prompt: number | null;
+  completion: number | null;
+  cached: number | null;
+} {
+  const uid = sumUidDimensions(dimensions);
+  if (uid.input === null && uid.output === null && uid.cachedInput === null) {
+    return sumFlatKeyDimensions(dimensions);
+  }
+  const prompt =
+    uid.input !== null ? uid.input + (uid.cachedInput ?? 0) : (uid.cachedInput ?? null);
+  return { prompt, completion: uid.output, cached: uid.cachedInput };
 }
 
 function tokensFromAtif(finalMetrics: AtifFinalMetrics): {
