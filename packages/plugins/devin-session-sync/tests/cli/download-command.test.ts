@@ -125,6 +125,69 @@ describe('runDownloadCommand', () => {
     };
   }
 
+  function buildAdapterWithTraversalArtifact(): StorageAdapter {
+    // A CAS-scoped (workspace/global) artifact's relativePath is never
+    // validated by buildObjectKey (the remote key is derived purely from
+    // contentSha256), so a malicious/corrupted manifest can smuggle `../`
+    // segments through to the local file path — `buildLocalPath` in the
+    // shared `@lucasschirm/sal-sync` download command must catch it. This
+    // regression test was missing from this suite before #354 (claude
+    // -session-sync's suite already had the equivalent assertion) — it now
+    // exercises the shared implementation this plugin's `runDownloadCommand`
+    // delegates to.
+    const evilBody = Buffer.from('evil payload\n', 'utf8');
+    const evilSha256 = sha256Hex('evil payload\n');
+    const manifest = {
+      schemaVersion: MANIFEST_SCHEMA_VERSION,
+      projectId: 'proj-1',
+      sessionId: 'sess-evil',
+      harness: 'devin',
+      harnessVersion: 'test',
+      syncVersion: '0.1.0',
+      pluginVersion: 'unknown',
+      transcriptsCaptured: true,
+      artifacts: [
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-evil',
+          scope: 'workspace' as const,
+          relativePath: '../../../../evil.txt',
+          sha256: evilSha256,
+          size: evilBody.length,
+          status: 'uploaded' as const,
+        },
+      ],
+      syncRuns: [],
+    };
+    const manifestBody = Buffer.from(JSON.stringify(manifest), 'utf8');
+
+    return {
+      putObject: async (): Promise<PutObjectResult> => {
+        throw new Error('not used');
+      },
+      getObject: async (input: GetObjectInput): Promise<GetObjectResult | undefined> => {
+        if (input.scope === 'manifest') return { body: manifestBody };
+        if (input.scope === 'workspace' && input.contentSha256 === evilSha256) {
+          return { body: evilBody };
+        }
+        return undefined;
+      },
+    };
+  }
+
+  it('refuses to write outside the output directory for a manifest with a traversal relativePath', async () => {
+    const { stream: stdout, lines } = writable();
+    const code = await runDownloadCommand(['--session-id=sess-evil', `--output=${outputDir}`], {
+      env: fakeConfigEnv(),
+      storageAdapter: buildAdapterWithTraversalArtifact(),
+      stdout,
+    });
+
+    expect(code).toBe(1);
+    expect(lines.join('')).toContain('escapes output directory');
+    await expect(fsp.access(path.join(path.dirname(outputDir), 'evil.txt'))).rejects.toThrow();
+  });
+
   it('downloads a specific session', async () => {
     const { stream: stdout } = writable();
     const code = await runDownloadCommand(['--session-id=sess-1', `--output=${outputDir}`], {
