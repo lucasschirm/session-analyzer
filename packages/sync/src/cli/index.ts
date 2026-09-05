@@ -1,4 +1,5 @@
 export * from './capture.js';
+export * from './commands/remove-command.js';
 export * from './common.js';
 export * from './config.js';
 export * from './env.js';
