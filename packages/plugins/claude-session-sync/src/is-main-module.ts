@@ -1,19 +1,6 @@
-import { realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
-/**
- * True when this module was invoked directly as the entry script (not
- * imported for testing). Resolves process.argv[1] through symlinks first,
- * since global npm installs run bin scripts via a symlink while
- * import.meta.url always reflects the real, resolved file path.
- */
-export function isMainModule(moduleUrl: string): boolean {
-  if (!moduleUrl.startsWith('file:') || !process.argv[1]) {
-    return false;
-  }
-  try {
-    return realpathSync(process.argv[1]) === fileURLToPath(moduleUrl);
-  } catch {
-    return false;
-  }
-}
+// Hoisted to `packages/sync/src/cli/is-main-module.ts` (#354) — this logic
+// has zero Claude-specific content, so this file is now a thin re-export
+// that preserves the plugin's public import path
+// (`../../src/is-main-module.js`, asserted on directly by
+// `tests/unit/is-main-module.test.ts`).
+export { isMainModule } from '@lucasschirm/sal-sync';

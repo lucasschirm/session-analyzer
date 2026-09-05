@@ -1,5 +1,7 @@
 export * from './capture.js';
 export * from './common.js';
+export * from './is-main-module.js';
+export * from './read-stdin.js';
 export * from './session-end.js';
 export * from './session-start.js';
 export * from './status.js';
