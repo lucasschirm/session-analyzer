@@ -32,7 +32,11 @@ import { type DevinSnapshot, readDevinSnapshot } from './devin-snapshot.js';
 import type { DevinExtractedTables, DevinSessionRow } from './extractor/types.js';
 import { isMainModule } from './is-main-module.js';
 import { captureDevinModels } from './models/capture.js';
-import { type DevinSessionSyncOutcome, runDevinSessionSync } from './session-sync.js';
+import {
+  type DevinSessionSyncOutcome,
+  hasSyncFailure,
+  runDevinSessionSync,
+} from './session-sync.js';
 
 export const DEFAULT_WATCHER_POLL_INTERVAL_MS = 15_000;
 
@@ -192,8 +196,7 @@ async function pollOnce(
       deps.env,
       stdout,
     );
-    const hasFailure = outcome.failed > 0 || outcome.errors.length > 0;
-    if (hasFailure) {
+    if (hasSyncFailure(outcome)) {
       failed += 1;
     } else {
       signatures[session.id] = signature;
