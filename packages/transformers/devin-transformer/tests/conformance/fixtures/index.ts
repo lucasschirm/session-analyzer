@@ -314,6 +314,32 @@ export const sessionReplayBundle: UnknownArtifactBundle = bundle([
   artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
 ]);
 
+// A tool call whose state changed across sync passes: the extractor's
+// content-hash watermark re-emits the row per state change, so the
+// materialized transcript legitimately carries the SAME toolCallId more
+// than once (#321) — here pending (no update), then completed, then a
+// torn-snapshot regression that re-appended the pending shape after the
+// completed one (PR #304 review, extractor finding F8). The reader must
+// resolve one invocation, in the completed state.
+const toolCallReplayTranscript = [
+  sessionLine(sessionId, 2),
+  messageLine(sessionId, 1, null, 'user', 'Run the build'),
+  messageLine(sessionId, 2, 1, 'assistant', 'Running it now'),
+  interruptedToolCallLine(sessionId, 'tc-replay-1', 'execute', 'RunCommand', 'RunCommand', {
+    command: 'pnpm build',
+  }),
+  toolCallLine(sessionId, 'tc-replay-1', 'execute', 'RunCommand', 'completed'),
+  interruptedToolCallLine(sessionId, 'tc-replay-1', 'execute', 'RunCommand', 'RunCommand', {
+    command: 'pnpm build',
+  }),
+].join('\n');
+
+export const toolCallReplayBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', toolCallReplayTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+  artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
+]);
+
 const branchyTranscript = [
   sessionLine(sessionId, 4),
   messageLine(sessionId, 1, null, 'user', 'Hello'),
@@ -960,6 +986,14 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
         'the real shape after two sync passes; session-level state must resolve from the ' +
         'LAST line (#320).',
       sessionReplayBundle,
+      ['root', 'deterministic'],
+    ),
+    fixture(
+      'tool-call-replay',
+      'A tool call captured three times across sync passes (pending, completed, then a ' +
+        'torn-snapshot pending regression) under one toolCallId — must dedupe to a single ' +
+        'completed invocation with unique recordIds (#321).',
+      toolCallReplayBundle,
       ['root', 'deterministic'],
     ),
     fixture('no-root', 'Configuration artifacts without a root transcript.', noRootBundle, [

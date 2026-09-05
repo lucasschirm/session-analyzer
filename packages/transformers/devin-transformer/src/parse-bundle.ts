@@ -183,7 +183,33 @@ function toolCallLines(lines: DevinJsonlParseResult['lines']): DevinToolCallLine
   for (const line of lines) {
     if (line.type === 'tool_call') result.push(line);
   }
-  return result;
+  return dedupeToolCallLines(result);
+}
+
+/**
+ * A tool call whose state changes across sync passes is captured once per
+ * pass (the extractor's content-hash watermark re-emits the row whenever
+ * `tool_call_update_json` changes — e.g. pending on pass 1, completed on
+ * pass 2), so a materialized transcript legitimately carries multiple
+ * `tool_call` lines for the same `toolCallId` (#321). Without dedupe those
+ * duplicates produced identical `stableId` invocation/payload recordIds —
+ * a PK violation at ingestion — and inflated `devin:invocations:*`.
+ *
+ * Resolution per id: prefer the LAST line that carries an `update` (the
+ * newest completed state); a line without an update never displaces one
+ * with it, so a torn-snapshot pass that re-appended a regressed pending
+ * row after the completed one (PR #304 review, extractor finding F8)
+ * cannot roll the call's state back. First-appearance order is kept.
+ */
+function dedupeToolCallLines(lines: readonly DevinToolCallLine[]): DevinToolCallLine[] {
+  const byId = new Map<string, DevinToolCallLine>();
+  for (const line of lines) {
+    const existing = byId.get(line.toolCallId);
+    if (!existing || line.update !== null || existing.update === null) {
+      byId.set(line.toolCallId, line);
+    }
+  }
+  return [...byId.values()];
 }
 
 function promptLines(lines: DevinJsonlParseResult['lines']): DevinPromptLine[] {
