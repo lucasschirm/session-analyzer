@@ -558,6 +558,30 @@ export const replayedBundle: UnknownArtifactBundle = bundle([
   artifact('native/models.json', modelsJson(), 'application/json'),
 ]);
 
+// #341: devin-session-sync's fixed message_nodes content-hash watermark
+// means a genuine in-place edit to an existing node is captured as a
+// SECOND `message` line under the SAME node_id, at a fresh (later) row_id
+// -- the extractor only ever appends, never rewrites history in place.
+// Unlike `replayedBundle` above (a byte-identical duplicate, same row_id),
+// this reproduces a real in-place-update replay: same node_id, DIFFERENT
+// row_id, DIFFERENT content. Regression-lock for devin-transformer: proves
+// the pre-existing Map/Set-based dedup in `parse-bundle.ts` (`byId`'s
+// last-write-wins `Map` construction; `visited`'s single-visitation guard
+// in `visitSubtree`) already resolves this to exactly ONE message/turn
+// record carrying the LATEST content -- no production transformer change
+// needed to support #341's extractor fix.
+const messageNodeReplayTranscript = [
+  sessionLine(sessionId, 2),
+  messageLine(sessionId, 1, null, 'user', 'Run the build', { rowId: 10 }),
+  messageLine(sessionId, 1, null, 'user', 'Run the build (edited)', { rowId: 255 }),
+  messageLine(sessionId, 2, 1, 'assistant', 'Done'),
+].join('\n');
+
+export const messageNodeReplayBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', messageNodeReplayTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
 // Reproduces (anonymized) the real `shadow-collar` session's node 45-63
 // shape from DS-B27 (#287) Research Finding 2: a linear pre-compaction chain
 // 45->...->49->...->55->57, a dead sibling branch (56, sharing parent 55
@@ -1088,6 +1112,16 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
       'replayed-events',
       'A session containing a replayed source event to test deterministic deduplication.',
       replayedBundle,
+      ['root', 'replayed', 'deterministic'],
+    ),
+    fixture(
+      'message-node-replay',
+      'A message_nodes row replayed under the SAME node_id at a fresh row_id with genuinely ' +
+        'different content (#341: the extractor now captures in-place node edits as an appended ' +
+        'line rather than rewriting history) -- regression-lock proving the pre-existing ' +
+        'Map/Set-based dedup in parse-bundle.ts resolves to one record with the latest content, ' +
+        'with no production transformer change required.',
+      messageNodeReplayBundle,
       ['root', 'replayed', 'deterministic'],
     ),
     fixture(

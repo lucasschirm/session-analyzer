@@ -253,6 +253,77 @@ describe('materializeSessionTranscript', () => {
     expect(JSON.parse(appended).type).toBe('session');
   });
 
+  it(
+    'a node rewritten at a FRESH row_id with unchanged content grows the transcript by exactly ' +
+      'one line, the re-appended session line (#341 AC1: the whole-forest delete+reinsert churn ' +
+      'must not re-append message history)',
+    async () => {
+      const firstPass = tablesOf({
+        sessions: [sessionRow()],
+        messageNodes: [messageRow({ row_id: 1, node_id: 1 })],
+      });
+      const transcriptPath = await materializeSessionTranscript(firstPass, 'sess-1', dataDir);
+      const afterFirst = await fsp.readFile(transcriptPath, 'utf8');
+      const firstLineCount = afterFirst.trim().split('\n').length;
+
+      // Reproduces #341's live evidence: Devin deletes and reinserts the
+      // ENTIRE node forest on every persist, so the identical node (same
+      // node_id, byte-identical content) reappears at a brand-new, HIGHER
+      // row_id. A `row_id > watermark` strategy (the pre-fix behavior)
+      // would see this as new and re-append it every single pass.
+      const secondPass = tablesOf({
+        sessions: [sessionRow()],
+        messageNodes: [messageRow({ row_id: 250, node_id: 1 })],
+      });
+      await materializeSessionTranscript(secondPass, 'sess-1', dataDir);
+      const afterSecond = await fsp.readFile(transcriptPath, 'utf8');
+
+      expect(afterSecond.startsWith(afterFirst)).toBe(true);
+      const secondLineCount = afterSecond.trim().split('\n').length;
+      expect(secondLineCount - firstLineCount).toBe(1);
+      const appended = afterSecond.slice(afterFirst.length).trim();
+      expect(JSON.parse(appended).type).toBe('session');
+      // No second `message` line for node_id 1 anywhere in the file.
+      const messageLines = afterSecond
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l))
+        .filter((l) => l.type === 'message');
+      expect(messageLines).toHaveLength(1);
+    },
+  );
+
+  it('an in-place content change to an existing node is emitted as a new message line on the next pass (#341 AC2)', async () => {
+    const firstPass = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 1, node_id: 1, chat_message: '{"content":"draft"}' })],
+    });
+    const transcriptPath = await materializeSessionTranscript(firstPass, 'sess-1', dataDir);
+    const afterFirst = await fsp.readFile(transcriptPath, 'utf8');
+
+    // The SAME node_id, reappearing (as every node does, per #341) at a
+    // fresh row_id, but this time with genuinely different content -- a
+    // real in-place edit. Before this fix, nothing ever compared content
+    // across passes for this table, so this mutation was invisible forever.
+    const secondPass = tablesOf({
+      sessions: [sessionRow()],
+      messageNodes: [messageRow({ row_id: 250, node_id: 1, chat_message: '{"content":"final"}' })],
+    });
+    await materializeSessionTranscript(secondPass, 'sess-1', dataDir);
+    const afterSecond = await fsp.readFile(transcriptPath, 'utf8');
+
+    expect(afterSecond.startsWith(afterFirst)).toBe(true);
+    const appendedLines = afterSecond
+      .slice(afterFirst.length)
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    const newMessageLine = appendedLines.find((l) => l.type === 'message');
+    expect(newMessageLine).toBeDefined();
+    expect(newMessageLine.node_id).toBe(1);
+    expect(newMessageLine.chat_message).toBe('{"content":"final"}');
+  });
+
   it('two concurrent syncs of the same session never duplicate rows (FileLock serializes the read-derive-append critical section)', async () => {
     const tables = tablesOf({
       sessions: [sessionRow()],

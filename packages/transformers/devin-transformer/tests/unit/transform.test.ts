@@ -4,6 +4,7 @@ import {
   authoritativeChainBundle,
   defaultContext,
   linearBundle,
+  messageNodeReplayBundle,
   metadataTokensBundle,
   noRootBundle,
   partialTokensBundle,
@@ -71,6 +72,36 @@ describe('DevinTransformer.transform', () => {
     const ids = result.evidence.map((r) => r.recordId);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it(
+    'resolves a message_nodes row replayed under the same node_id (fresh row_id, changed ' +
+      'content) to exactly one message/turn record carrying the LATEST content -- no ' +
+      "production transformer change needed for #341's extractor fix",
+    () => {
+      const result = DevinTransformer.transform(messageNodeReplayBundle, defaultContext);
+      expect(result.errors).toEqual([]);
+
+      const messages = result.evidence.filter((r) => r.recordType === 'message');
+      const turns = result.evidence.filter((r) => r.recordType === 'turn');
+      // Exactly one message/turn pair per real node_id (1 and 2) -- the
+      // replayed duplicate of node_id 1 never produces a second record.
+      expect(messages.length).toBe(2);
+      expect(turns.length).toBe(2);
+
+      const nodeOnePayload = messages.find((r) => (r.payload as { nodeId?: number }).nodeId === 1)
+        ?.payload as { content?: string } | undefined;
+      // The transformer's Map-based last-write-wins (parse-bundle.ts's
+      // `byId`) resolves to the LATER transcript line's content, matching
+      // what an in-place edit replay actually means.
+      expect(nodeOnePayload?.content).toBe('Run the build (edited)');
+
+      // No duplicate recordIds anywhere -- a replayed node_id must never
+      // reach ingestion as a PK violation (mirrors the tool-call-replay
+      // guard above).
+      const ids = result.evidence.map((r) => r.recordId);
+      expect(new Set(ids).size).toBe(ids.length);
+    },
+  );
 
   it('derives tier-3 tokens from the real response_dimensions shape (#322)', () => {
     const result = DevinTransformer.transform(metadataTokensBundle, defaultContext);

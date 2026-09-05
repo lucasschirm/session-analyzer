@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildDevinJsonl } from '../../src/extractor/jsonl-writer.js';
+import { filterChangedMessageNodes } from '../../src/extractor/message-node-watermark.js';
 import { filterChangedSessions } from '../../src/extractor/session-watermark.js';
 import { filterChangedToolCallStates } from '../../src/extractor/tool-call-watermark.js';
 import type { DevinExtractedTables } from '../../src/extractor/types.js';
@@ -61,10 +62,13 @@ describe('deriveWatermarksFromExistingLines', () => {
     const derived = deriveWatermarksFromExistingLines(text);
 
     expect(derived.lineCount).toBe(lineCountOf(text));
-    expect(derived.watermarks.messageNodesRowId).toBe(5);
     expect(derived.watermarks.promptHistoryId).toBe(7);
     // The reconstructed hash maps must round-trip: re-hashing the SAME live
-    // rows against the derived hashes recognizes them as already-seen.
+    // rows against the derived hashes recognizes them as already-seen --
+    // parity with tool-call-watermark/session-watermark behavior (#341).
+    expect(
+      filterChangedMessageNodes(tables.messageNodes, derived.watermarks.messageNodesContentHashes),
+    ).toEqual([]);
     expect(
       filterChangedToolCallStates(tables.toolCallStates, derived.watermarks.toolCallStateHashes),
     ).toEqual([]);
@@ -106,7 +110,9 @@ describe('deriveWatermarksFromExistingLines', () => {
     const derived = deriveWatermarksFromExistingLines(withGarbage);
 
     expect(derived.lineCount).toBe(lineCountOf(text) + 1);
-    expect(derived.watermarks.messageNodesRowId).toBe(5);
+    expect(
+      filterChangedMessageNodes(tables.messageNodes, derived.watermarks.messageNodesContentHashes),
+    ).toEqual([]);
     expect(derived.watermarks.promptHistoryId).toBe(7);
   });
 
@@ -119,11 +125,8 @@ describe('deriveWatermarksFromExistingLines', () => {
     });
   });
 
-  it("ignores a synthetic sub-agent line's row_id:-1 sentinel when computing the message watermark", () => {
-    const real = {
-      type: 'message',
-      ts: null,
-      order: 0,
+  it("ignores a synthetic sub-agent line's row_id:-1 sentinel when computing the message-node content-hash watermark (#341)", () => {
+    const realRow = {
       row_id: 3,
       session_id: 's1',
       node_id: 1,
@@ -132,9 +135,25 @@ describe('deriveWatermarksFromExistingLines', () => {
       created_at: null,
       metadata: null,
     };
+    const real = { type: 'message', ts: null, order: 0, ...realRow };
     const synthetic = { ...real, order: 1, row_id: -1, node_id: 2 };
     const text = `${JSON.stringify(real)}\n${JSON.stringify(synthetic)}\n`;
 
-    expect(deriveWatermarksFromExistingLines(text).watermarks.messageNodesRowId).toBe(3);
+    const derived = deriveWatermarksFromExistingLines(text);
+    // The real row_id:3 node folds into the hash map (exactly one entry --
+    // the synthetic row_id:-1 sentinel never contributes a second one, even
+    // though it is also a `type: 'message'` line: it has no underlying
+    // sessions.db row to content-hash-watermark, see
+    // watermark-derivation.ts's `isMessageNodeRow`). Round-trips via the
+    // real function (fed the bare row, stripped of the line wrapper, the
+    // same shape `foldMessageNodeLine` itself hashes) rather than
+    // hardcoding the key's internal delimiter.
+    expect(Object.keys(derived.watermarks.messageNodesContentHashes)).toHaveLength(1);
+    expect(
+      filterChangedMessageNodes([realRow], derived.watermarks.messageNodesContentHashes),
+    ).toEqual([]);
+    // Both node ids are still tracked for subagent-line dedup purposes,
+    // which is a separate, unrelated mechanism (`messageNodeIds`).
+    expect(derived.messageNodeIds).toEqual(new Set([1, 2]));
   });
 });

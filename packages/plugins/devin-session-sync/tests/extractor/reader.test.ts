@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
+import { mergeMessageNodeHashes } from '../../src/extractor/message-node-watermark.js';
 import {
   assertSqliteAvailable,
   computeSchemaDescriptor,
@@ -121,7 +122,10 @@ describe('readDevinTables', () => {
     const first = readDevinTables(fixture.db, EMPTY_WATERMARKS);
     const firstWatermark = {
       ...EMPTY_WATERMARKS,
-      messageNodesRowId: first.tables.messageNodes[0].row_id,
+      // message_nodes is a content-hash watermark (#341), not a row_id one
+      // -- only the row already seen (node_id 0) is folded in, so node_id 1
+      // remains "new" on the second read.
+      messageNodesContentHashes: mergeMessageNodeHashes({}, [first.tables.messageNodes[0]]),
       promptHistoryId: first.tables.promptHistory[0].id,
     };
     const second = readDevinTables(fixture.db, firstWatermark);
@@ -272,6 +276,107 @@ describe('tool_call_state incremental strategy (#298 Phase 1 fix)', () => {
       toolCallStateHashes: priorHashes,
     });
     expect(second.tables.toolCallStates).toEqual([]);
+  });
+});
+
+describe('message_nodes incremental strategy (#341 fix)', () => {
+  it('catches a real content mutation that reappears at a fresh, higher row_id (in-place-update capture, #341 AC2)', () => {
+    // message_nodes' row_id is a REAL `AUTOINCREMENT` column (unlike
+    // tool_call_state's implicit, reusable rowid): SQLite guarantees a
+    // fresh insert always gets a row_id strictly greater than any row_id
+    // ever used in the table before, even after every row is deleted. So
+    // Devin's whole-forest delete+reinsert churn (#341's live evidence)
+    // always pushes row_id upward, never down or into reuse -- which is
+    // exactly why a plain `row_id > watermark` filter unconditionally
+    // re-included EVERY row on every pass (the bug this issue fixes), not
+    // just occasionally missing one. The content-hash strategy must still
+    // correctly single out the one row whose content genuinely changed.
+    const fixture = buildFixtureDb({
+      messageNodes: [
+        messageNode('s1', 0, null),
+        { ...messageNode('s1', 1, 0), chat_message: '{"role":"assistant","content":"draft"}' },
+      ],
+    });
+    cleanup = fixture.close;
+
+    const first = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    expect(first.tables.messageNodes).toHaveLength(2);
+    const priorHashes = mergeMessageNodeHashes({}, first.tables.messageNodes);
+
+    // Delete the whole forest, then reinsert both nodes -- node 1 with
+    // genuinely new content. AUTOINCREMENT means both reinserted rows get
+    // row_ids higher than either original row.
+    fixture.db.prepare('DELETE FROM message_nodes WHERE session_id = ?').run('s1');
+    fixture.db
+      .prepare(
+        'INSERT INTO message_nodes (session_id, node_id, parent_node_id, chat_message) VALUES (?, ?, ?, ?)',
+      )
+      .run('s1', 0, null, null);
+    fixture.db
+      .prepare(
+        'INSERT INTO message_nodes (session_id, node_id, parent_node_id, chat_message) VALUES (?, ?, ?, ?)',
+      )
+      .run('s1', 1, 0, '{"role":"assistant","content":"final"}');
+
+    const second = readDevinTables(fixture.db, {
+      ...EMPTY_WATERMARKS,
+      messageNodesContentHashes: priorHashes,
+    });
+    expect(second.tables.messageNodes.map((m) => m.node_id)).toEqual([1]);
+    expect(second.tables.messageNodes[0].chat_message).toBe(
+      '{"role":"assistant","content":"final"}',
+    );
+  });
+
+  it('does not re-emit an unchanged node even after its row_id churns (no duplication, the core #341 bug)', () => {
+    const fixture = buildFixtureDb({
+      messageNodes: [messageNode('s1', 0, null)],
+    });
+    cleanup = fixture.close;
+
+    const first = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    const priorHashes = mergeMessageNodeHashes({}, first.tables.messageNodes);
+
+    // Simulate Devin's observed whole-forest rewrite: same content, new row_id.
+    fixture.db.prepare('DELETE FROM message_nodes WHERE session_id = ?').run('s1');
+    fixture.db
+      .prepare(
+        'INSERT INTO message_nodes (session_id, node_id, parent_node_id, chat_message) VALUES (?, ?, ?, ?)',
+      )
+      .run('s1', 0, null, null);
+
+    const second = readDevinTables(fixture.db, {
+      ...EMPTY_WATERMARKS,
+      messageNodesContentHashes: priorHashes,
+    });
+    expect(second.tables.messageNodes).toEqual([]);
+  });
+
+  it('ignores a created_at-only difference introduced by a wholesale rewrite (deliberate exclusion, #341)', () => {
+    const fixture = buildFixtureDb({
+      messageNodes: [{ ...messageNode('s1', 0, null), created_at: 100 }],
+    });
+    cleanup = fixture.close;
+
+    const first = readDevinTables(fixture.db, EMPTY_WATERMARKS);
+    const priorHashes = mergeMessageNodeHashes({}, first.tables.messageNodes);
+
+    // Every row of a session shares one created_at, stamped fresh on every
+    // wholesale rewrite (DevinMessageNodeRow's doc comment) -- a rewrite
+    // that only advances this shared timestamp must not look like a
+    // content change.
+    fixture.db.prepare('DELETE FROM message_nodes WHERE session_id = ?').run('s1');
+    fixture.db
+      .prepare(
+        'INSERT INTO message_nodes (session_id, node_id, parent_node_id, created_at) VALUES (?, ?, ?, ?)',
+      )
+      .run('s1', 0, null, 200);
+
+    const second = readDevinTables(fixture.db, {
+      ...EMPTY_WATERMARKS,
+      messageNodesContentHashes: priorHashes,
+    });
+    expect(second.tables.messageNodes).toEqual([]);
   });
 });
 

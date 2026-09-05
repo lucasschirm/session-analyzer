@@ -55,8 +55,11 @@ describe('watermark-based incremental extraction', () => {
     expect(incrementalMessages.map((l) => l.node_id)).toEqual(
       byType(fullResult.lines, 'message').map((l) => l.node_id),
     );
-    expect(secondResult.watermarks.messageNodesRowId).toBeGreaterThan(
-      firstResult.watermarks.messageNodesRowId ?? -1,
+    // message_nodes is a content-hash watermark (#341), not a monotonic
+    // position: resuming with a genuinely new node grows the hash map by
+    // one entry, never dropping what was already there.
+    expect(Object.keys(secondResult.watermarks.messageNodesContentHashes).length).toBeGreaterThan(
+      Object.keys(firstResult.watermarks.messageNodesContentHashes).length,
     );
   });
 

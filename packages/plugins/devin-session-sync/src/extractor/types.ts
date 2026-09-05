@@ -42,12 +42,21 @@ export interface DevinSessionRow {
  * A row from the `message_nodes` table.
  *
  * `created_at` is intentionally typed as present but MUST NOT be used for
- * ordering: it is not per-message — verified empirically, every row of a
- * session shares one value equal to `sessions.last_activity_at`, because the
- * node forest is rewritten on each persist. `row_id` (global monotonic
- * write order, `AUTOINCREMENT`) is the incremental watermark; `node_id` /
- * `parent_node_id` drive ordering (see `orderMessageNodes` in
- * `jsonl-writer.ts`).
+ * ordering, OR for change detection: it is not per-message — verified
+ * empirically, every row of a session shares one value equal to
+ * `sessions.last_activity_at`, because the node forest is rewritten on each
+ * persist. `node_id` / `parent_node_id` drive ordering (see
+ * `orderMessageNodes` in `jsonl-writer.ts`).
+ *
+ * `row_id` is NOT this table's incremental-fetch identity, despite being a
+ * real `AUTOINCREMENT` column (see `message-node-watermark.ts`): #341's live
+ * evidence overturned #298 Phase 1's original "confirmed insert-only"
+ * finding — Devin deletes and reinserts a session's entire node forest at
+ * fresh `row_id`s on every persist (~5.3x row churn measured live), exactly
+ * the "rewritten on each persist" behavior already documented for
+ * `tool_call_state`. The real identity is `(session_id, node_id)`; `row_id`
+ * is carried only for stable tie-break ordering downstream
+ * (`jsonl-writer.ts`).
  */
 export interface DevinMessageNodeRow {
   row_id: number;
@@ -109,15 +118,20 @@ export interface DevinExtractedTables {
  * Incremental watermarks. Persistence is owned by the sync engine's
  * `StateStore` (`packages/sync/src/state/`) — this package only
  * accepts/emits values. Each field's shape is dictated by #298's Phase-1
- * investigation into how that table's rows actually change, not a uniform
- * default:
+ * investigation (and #341's follow-up correction below) into how that
+ * table's rows actually change, not a uniform default:
  *
- * - `messageNodesRowId` / `promptHistoryId`: `null` means "no prior
- *   watermark" (full extract). Both tables were confirmed live to be
- *   genuinely insert-only (never a same-`row_id`/`id` in-place update —
- *   even Devin's own "duplicate node pair" re-persist behavior always
- *   lands on a brand-new `row_id`), so a monotonic-key watermark remains
- *   correct and cheap.
+ * - `promptHistoryId`: `null` means "no prior watermark" (full extract).
+ *   Confirmed live to be genuinely insert-only (never a same-`id` in-place
+ *   update), so a monotonic-key watermark remains correct and cheap.
+ * - `messageNodesContentHashes`: NOT a monotonic position, despite
+ *   `message_nodes` having a real `AUTOINCREMENT` `row_id` column — #298
+ *   Phase 1 originally reported this table as "confirmed insert-only", but
+ *   #341's live evidence overturned that: Devin deletes and reinserts a
+ *   session's entire node forest at fresh `row_id`s on every persist
+ *   (~5.3x row churn measured live). See `message-node-watermark.ts` for
+ *   why a rowid watermark is unsound for this table and what replaces it
+ *   (mirrors `toolCallStateHashes` below).
  * - `toolCallStateHashes`: NOT a monotonic position — see
  *   `tool-call-watermark.ts` for why a rowid watermark is unsound for this
  *   table and what replaces it.
@@ -134,14 +148,14 @@ export interface DevinExtractedTables {
  *   map is always treated as changed.
  */
 export interface DevinWatermarks {
-  messageNodesRowId: number | null;
+  messageNodesContentHashes: Record<string, string>;
   toolCallStateHashes: Record<string, string>;
   promptHistoryId: number | null;
   sessionsContentHashes: Record<string, string>;
 }
 
 export const EMPTY_WATERMARKS: DevinWatermarks = {
-  messageNodesRowId: null,
+  messageNodesContentHashes: {},
   toolCallStateHashes: {},
   promptHistoryId: null,
   sessionsContentHashes: {},

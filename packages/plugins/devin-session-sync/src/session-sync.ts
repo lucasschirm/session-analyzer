@@ -59,6 +59,7 @@ import {
 } from '@lucasschirm/sal-sync';
 import { DEVIN_HARD_BLOCKLIST_PATTERNS, DevinHarnessProfile } from './devin-profile.js';
 import { buildDevinJsonl } from './extractor/jsonl-writer.js';
+import { filterChangedMessageNodes } from './extractor/message-node-watermark.js';
 import { resolveDevinPaths } from './extractor/paths.js';
 import { filterChangedToolCallStates } from './extractor/tool-call-watermark.js';
 import type {
@@ -189,16 +190,18 @@ async function readExistingTranscript(transcriptPath: string): Promise<string | 
  * Filters one session's freshly-read `sessionTables` down to rows genuinely
  * newer than what the transcript file's own tail already shows.
  *
- * `messageNodes`/`promptHistory` are genuinely insert-only (#298 Phase 1),
- * so a simple `row_id`/`id` watermark comparison is sound, mirroring
- * `reader.ts`'s own `WHERE row_id > ?` / `WHERE id > ?`. `toolCallStates`
- * cannot use that same comparison — #298 found Devin rewrites a session's
- * entire `tool_call_state` row set (including untouched rows) under a new
- * rowid on every persist, so a rowid-based filter here would incorrectly
- * treat an already-written, unchanged row as new and duplicate it. The
- * content-hash comparison (`filterChangedToolCallStates`, the same function
- * `reader.ts` itself uses) is reused instead, fed by the hashes this
- * pass's `deriveWatermarksFromExistingLines` reconstructed from the file.
+ * `promptHistory` is genuinely insert-only (#298 Phase 1), so a simple
+ * `id` watermark comparison is sound, mirroring `reader.ts`'s own
+ * `WHERE id > ?`. `messageNodes` and `toolCallStates` cannot use that same
+ * row-id-based comparison — #298 (tool_call_state) and #341 (message_nodes)
+ * each found Devin rewrites a session's entire row set for that table
+ * (including untouched rows) under fresh row ids on every persist, so a
+ * rowid-based filter here would incorrectly treat an already-written,
+ * unchanged row as new and duplicate it. The content-hash comparison
+ * (`filterChangedToolCallStates` / `filterChangedMessageNodes`, the same
+ * functions `reader.ts` itself uses) is reused instead for both, fed by the
+ * hashes this pass's `deriveWatermarksFromExistingLines` reconstructed from
+ * the file.
  *
  * `sessions` is deliberately never filtered here — unchanged, intentional
  * "last-write-wins" replay semantics (`jsonl-writer.ts`'s `appendSessionLines`
@@ -215,8 +218,9 @@ function filterNewRows(
 ): DevinExtractedTables {
   return {
     sessions: sessionTables.sessions,
-    messageNodes: sessionTables.messageNodes.filter(
-      (m) => m.row_id > (prior.messageNodesRowId ?? -1),
+    messageNodes: filterChangedMessageNodes(
+      sessionTables.messageNodes,
+      prior.messageNodesContentHashes,
     ),
     promptHistory: sessionTables.promptHistory.filter((p) => p.id > (prior.promptHistoryId ?? -1)),
     toolCallStates: filterChangedToolCallStates(

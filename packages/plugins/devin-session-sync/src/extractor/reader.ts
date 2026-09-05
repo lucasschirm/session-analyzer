@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { DatabaseSync as DevinDatabaseSync, SQLInputValue } from 'node:sqlite';
+import { filterChangedMessageNodes } from './message-node-watermark.js';
 import type { SchemaResolution } from './schema-registry.js';
 import {
   detectUnknownColumns,
@@ -166,22 +167,25 @@ function readSessions(
 }
 
 /**
- * `message_nodes` is genuinely insert-only (#298 Phase 1, confirmed live
- * across two separate CLI invocations resuming the same session — even
- * the "duplicate node pair" re-persist phenomenon lands on a brand-new
- * `row_id`, never an in-place update): a `row_id`-watermark stays correct
- * and cheap. `SELECT *` replaces the curated column list.
+ * `message_nodes` — #298 Phase 1 originally reported this table as
+ * genuinely insert-only, but #341's live evidence overturned that finding
+ * (Devin deletes and reinserts a session's entire node forest at fresh
+ * `row_id`s on every persist, ~5.3x row churn measured live): a
+ * `row_id`-watermark is unsound (see `message-node-watermark.ts`). Always
+ * read in full (`SELECT *`, no `WHERE`), then reduced to genuinely
+ * new/changed rows by content hash — the same shape `readToolCallStates`
+ * below already uses for the analogous `tool_call_state` churn.
  */
 function readMessageNodes(
   db: DevinDatabaseSync,
   resolution: SchemaResolution,
-  since: number | null,
+  priorHashes: Readonly<Record<string, string>>,
 ): DevinMessageNodeRow[] {
   if (!resolution.knownTables.includes('message_nodes')) {
     return [];
   }
-  const sql = 'SELECT * FROM message_nodes WHERE row_id > ? ORDER BY row_id';
-  return readTable<DevinMessageNodeRow>(db, sql, [since ?? -1]);
+  const sql = 'SELECT * FROM message_nodes ORDER BY row_id';
+  return filterChangedMessageNodes(readTable<DevinMessageNodeRow>(db, sql), priorHashes);
 }
 
 /** `prompt_history` has a real per-prompt `timestamp` and an
@@ -309,10 +313,10 @@ export interface ReadDevinTablesResult {
 
 /**
  * Reads all four known tables, each above its own watermark using its own
- * per-table strategy (see `types.ts`'s `DevinWatermarks` doc comment and
- * `tool-call-watermark.ts`) — never a uniform default. Degrades per
- * `schema-registry.ts` on an unrecognized refinery version; never throws
- * on schema mismatch.
+ * per-table strategy (see `types.ts`'s `DevinWatermarks` doc comment,
+ * `message-node-watermark.ts`, and `tool-call-watermark.ts`) — never a
+ * uniform default. Degrades per `schema-registry.ts` on an unrecognized
+ * refinery version; never throws on schema mismatch.
  */
 export function readDevinTables(
   db: DevinDatabaseSync,
@@ -321,7 +325,7 @@ export function readDevinTables(
   const schema = resolveDevinSchema(readRefineryVersion(db));
   const tables: DevinExtractedTables = {
     sessions: readSessions(db, schema, watermarks.sessionsContentHashes),
-    messageNodes: readMessageNodes(db, schema, watermarks.messageNodesRowId),
+    messageNodes: readMessageNodes(db, schema, watermarks.messageNodesContentHashes),
     promptHistory: readPromptHistory(db, schema, watermarks.promptHistoryId),
     toolCallStates: readToolCallStates(db, schema, watermarks.toolCallStateHashes),
   };
