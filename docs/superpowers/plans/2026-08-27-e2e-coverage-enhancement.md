@@ -175,6 +175,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | SYNC-008 | `devin-sync sync`/`list`/`download`/`remove`/`migrate` CLI verb smoke pipeline round-trips one session | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | end-to-end CLI verb chain assertion | 3 | 4 | 3 | 36 | P1 | GREEN |
 | SYNC-009 | Devin CAS sync progress heartbeat advances during a throttled file download | `devin-sync-heartbeat.spec.ts` | `assertHeartbeat` (sync-flow.ts) with `syncProgressFilesParser` | 4 | 4 | 4 | 64 | P0 | GREEN |
 | SYNC-010 | Devin models-list capture failure (`devin` binary unavailable) never fails the sync; real session artifacts still upload and the failure surfaces as a distinguishable warning, never as `[fail]` output | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest-upload success + `Warnings:` visibility + absence of `[fail]` output assertion | 4 | 4 | 4 | 64 | P0 | GREEN |
+| SYNC-011 | Devin watcher daemon (`bin/watcher`, the sole sync path for Cloud sessions) poll loop: heartbeat lines advance (monotonic, timestamped, distinct per poll, in a bounded window), a mid-run `sessions.db` change triggers a re-sync, and an unreadable `sessions.db` after startup surfaces per-poll stderr failure lines — never a silent stall or a false-success heartbeat | `packages/plugins/devin-session-sync/tests/pipeline/watcher-heartbeat.test.ts` | `parseWatcherHeartbeats`/`assertMonotonicHeartbeats` heartbeat assertion + `poll #N failed` stderr visibility assertion | 4 | 5 | 4 | 80 | P0 | GREEN |
 
 ## 7. Infrastructure prerequisites
 
@@ -239,6 +240,14 @@ the same PR — the Devin plugin's sync→manifest→artifact-set journey and
 the Devin-Cloud `Stop`-hook-only mitigation are new user-observable
 surfaces introduced by that PR, so `GREEN` reflects the pipeline test
 landing alongside the feature rather than a backfill.
+
+SYNC-011 (issue #326) follows the same precedent: the mandatory
+`bin/watcher` daemon shipped without a catalog mapping (flagged as a
+blocker in the PR #304 review), so the row was registered and its
+pipeline test implemented in the same PR. Known watcher bugs #339
+(success signature advances despite outcome errors) and #340 (signature
+trusts `last_activity_at`) are tracked separately; SYNC-011's
+assertions deliberately avoid both areas.
 
 ## 10. Maintenance model
 
