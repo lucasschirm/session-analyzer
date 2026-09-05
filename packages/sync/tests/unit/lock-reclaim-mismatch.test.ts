@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  */
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, readFile: vi.fn(actual.readFile) };
+  return { ...actual, readFile: vi.fn(actual.readFile), link: vi.fn(actual.link) };
 });
 
 const { FileLock } = await import('../../src/index.js');
@@ -45,11 +45,13 @@ describe('FileLock stale-takeover: deterministic outdated-snapshot interleaving 
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-lock-mismatch-'));
     lockFile = path.join(tempDir, 'test.lock');
     vi.mocked(fsp.readFile).mockImplementation(fspReal.readFile);
+    vi.mocked(fsp.link).mockImplementation(fspReal.link);
   });
 
   afterEach(() => {
     fs.rmSync(tempDir, { recursive: true, force: true });
     vi.mocked(fsp.readFile).mockReset();
+    vi.mocked(fsp.link).mockReset();
   });
 
   /**
@@ -113,5 +115,50 @@ describe('FileLock stale-takeover: deterministic outdated-snapshot interleaving 
     ).toBe(contentAfterA);
 
     await lockA.release();
+  }, 10_000);
+
+  it('a restore failure that is NOT "path already re-occupied" fails loudly instead of discarding the live lock content (#327)', async () => {
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: 999_999, startedAt: Date.now() - 10_000 }));
+
+    const { release } = interceptFirstStaleRead();
+    const lockB = new FileLock(lockFile, { pollIntervalMs: 5, acquireTimeoutMs: 1000 });
+    const bAcquire = lockB.acquire().catch((err: unknown) => err);
+
+    await vi.waitFor(() => expect(vi.mocked(fsp.readFile)).toHaveBeenCalled());
+
+    const lockA = new FileLock(lockFile, { pollIntervalMs: 5, acquireTimeoutMs: 1000 });
+    await lockA.acquire();
+    const contentAfterA = fs.readFileSync(lockFile, 'utf8');
+
+    // Once B's rename-aside has claimed A's live lock (a mismatch it must
+    // then try to restore), force the restore's `link` call to fail for a
+    // reason that is NOT "the path was legitimately re-occupied" -- e.g. a
+    // permission error -- rather than the expected EEXIST.
+    vi.mocked(fsp.link).mockImplementation(async () => {
+      const err = new Error('EACCES: permission denied, link') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      throw err;
+    });
+
+    release();
+    const bResult = (await bAcquire) as Error;
+
+    expect(
+      bResult,
+      'a non-EEXIST restore failure must propagate, not resolve as success',
+    ).toBeInstanceOf(Error);
+    expect(bResult.message).toContain('Failed to restore lock');
+
+    // The live content renamed aside during B's takeover attempt must
+    // still exist somewhere, unharmed -- a failed restore must never
+    // silently discard the only remaining copy of a live holder's lock.
+    const claimFiles = fs
+      .readdirSync(tempDir)
+      .filter((name) => name.startsWith('test.lock.stale-'));
+    expect(
+      claimFiles,
+      'the claim file holding the live lock content must survive a failed restore',
+    ).toHaveLength(1);
+    expect(fs.readFileSync(path.join(tempDir, claimFiles[0]), 'utf8')).toBe(contentAfterA);
   }, 10_000);
 });

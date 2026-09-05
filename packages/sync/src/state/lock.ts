@@ -233,15 +233,34 @@ export class FileLock {
    * would let a restore clobber a legitimate new holder's lock if one was
    * created at this path while the mismatch was being resolved. `link`
    * fails with `EEXIST` instead of replacing, so a re-occupied path is
-   * correctly left alone — the claim file is dropped instead.
+   * correctly left alone — the claim file is dropped, which is the only
+   * case that error code can mean here.
+   *
+   * Any *other* failure is deliberately NOT swallowed the same way: it
+   * means the restore could not complete for an unrelated reason (a
+   * permission or I/O error), not that a legitimate new holder already
+   * occupies the path. Silently dropping the claim file in that case would
+   * discard the only remaining copy of a live holder's lock content and
+   * leave the path empty for the next contender to (incorrectly) claim
+   * clean — recreating the exact mutual-exclusion violation this method
+   * exists to prevent. The claim file is left in place and the failure
+   * propagates, failing this whole `acquire()` attempt loudly instead.
    */
   private async restoreClaim(claimPath: string): Promise<void> {
     try {
       await fsp.link(claimPath, this.lockFilePath);
-      await fsp.unlink(claimPath);
-    } catch {
-      await fsp.unlink(claimPath).catch(() => {});
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+        await fsp.unlink(claimPath).catch(() => {});
+        return;
+      }
+      throw new SyncStateError(
+        'SYNC_STATE_ERROR',
+        `Failed to restore lock ${this.lockFilePath} after a takeover mismatch: ${(err as Error).message}`,
+        err,
+      );
     }
+    await fsp.unlink(claimPath).catch(() => {});
   }
 
   private async writeLockContent(fd: fsp.FileHandle): Promise<void> {
