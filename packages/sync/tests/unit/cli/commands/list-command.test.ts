@@ -149,4 +149,40 @@ describe('runListCommand', () => {
     expect(io.stdoutStr()).toContain('agent-x.jsonl');
     expect(io.stdoutStr()).not.toContain('manifest.json');
   });
+
+  // Regression test for a bug caught only by devin-session-sync's SYNC-008
+  // pipeline test, not by any test in this file: `makeAdapter` above defines
+  // `listObjects` as an arrow function, which has no `this` at all, so it
+  // cannot detect a caller that extracts `storageAdapter.listObjects` into a
+  // bare variable and calls it detached from `storageAdapter` — breaking any
+  // *real* `StorageAdapter` whose `listObjects` reads instance state via
+  // `this` (e.g. an in-memory fixture double, or a client wrapping an SDK
+  // instance). `ClassBackedAdapter` below is a `this`-dependent double
+  // standing in for that whole class of real implementations.
+  class ClassBackedAdapter implements StorageAdapter {
+    private readonly stored: ListObjectsResult;
+    constructor(result: ListObjectsResult) {
+      this.stored = result;
+    }
+    async putObject() {
+      return { key: 'x', sha256: 'x' };
+    }
+    async listObjects(): Promise<ListObjectsResult> {
+      return this.stored;
+    }
+  }
+
+  it('lists sessions for a project via a `this`-dependent StorageAdapter method', async () => {
+    const io = makeStdio();
+    const storageAdapter = new ClassBackedAdapter({
+      objects: [{ key: 'proj-1/sess-a/manifest.json', size: 10 }],
+    });
+    const result = await runListCommand(FIXTURE_ADAPTER, ['proj-1'], {
+      env: validEnv,
+      storageAdapter,
+      ...io,
+    });
+    expect(result).toBe(0);
+    expect(io.stdoutStr()).toContain('sess-a');
+  });
 });

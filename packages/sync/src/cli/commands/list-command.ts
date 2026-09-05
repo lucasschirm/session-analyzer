@@ -521,6 +521,69 @@ function resolveProjectId(
 }
 
 /**
+ * Fetch the raw `listObjects` result for the resolved mode/project/session:
+ * reports an unsupported adapter or a thrown storage error as a written
+ * stderr line (never a thrown exception) and returns `undefined` for both.
+ * Split out of `runListCommand` to keep both functions under
+ * `.agents/rules/workspace-rules.md`'s 20/30-line function cap.
+ *
+ * Takes the whole `storageAdapter` (never a `storageAdapter.listObjects`
+ * reference held in a bare variable) and always calls it as
+ * `storageAdapter.listObjects(...)` — extracting the method into a
+ * standalone reference detaches it from its `this`, which broke a real
+ * `StorageAdapter` implementation that reads instance state internally
+ * (caught by `SYNC-008`'s pipeline test, not by any unit test using a
+ * `this`-free vi.fn() double).
+ */
+async function fetchListObjects(
+  storageAdapter: StorageAdapter,
+  args: ListMode,
+  projectId: string | undefined,
+  stderr: NodeJS.WritableStream,
+): Promise<ListObjectsResult | undefined> {
+  if (!storageAdapter.listObjects) {
+    stderr.write('Error: the configured storage adapter does not support listing objects.\n');
+    return undefined;
+  }
+  try {
+    if (args.mode === 'all-projects') return await storageAdapter.listObjects({});
+    if (args.mode === 'session' || args.mode === 'path') {
+      return await storageAdapter.listObjects({
+        projectId: projectId as string,
+        sessionId: args.sessionId,
+      });
+    }
+    return await storageAdapter.listObjects({ projectId: projectId as string });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    stderr.write(`Error listing objects: ${message}\n`);
+    return undefined;
+  }
+}
+
+/** Dispatch a fetched `ListObjectsResult` to the mode-appropriate renderer. */
+function renderListResult(
+  args: ListMode,
+  result: ListObjectsResult,
+  projectId: string | undefined,
+  stdout: NodeJS.WritableStream,
+): number {
+  if (args.mode === 'all-projects') return renderAllProjects(result, stdout);
+  if (args.mode === 'current' || args.mode === 'project') {
+    return renderProjectSessions(result, projectId, stdout);
+  }
+  return renderSessionFiles(
+    result,
+    {
+      projectId: args.projectId,
+      sessionId: args.sessionId,
+      path: args.mode === 'path' ? args.path : undefined,
+    },
+    stdout,
+  );
+}
+
+/**
  * List objects in configured storage.
  *
  * Modes:
@@ -533,8 +596,9 @@ function resolveProjectId(
  * Hoisted (#354) from `claude-session-sync`/`devin-session-sync`. Carries no
  * harness-specific rendering — restructured onto devin's already-decomposed
  * shape (`renderAllProjects`/`renderProjectSessions`/`renderSessionFiles`/
- * `resolveListStorageAdapter`/`resolveProjectId`) rather than claude's
- * pre-hoist single ~157-line inline `switch`, per
+ * `resolveListStorageAdapter`/`resolveProjectId`, plus `fetchListObjects`/
+ * `renderListResult` splitting the fetch-then-render tail out of this
+ * function) rather than claude's pre-hoist single ~157-line inline `switch`, per
  * `.agents/rules/workspace-rules.md`'s 20/30-line function cap.
  */
 export async function runListCommand(
@@ -561,38 +625,9 @@ export async function runListCommand(
 
   const storageAdapter = await resolveListStorageAdapter(adapter, args, env, cwd, options, stderr);
   if (!storageAdapter) return 1;
-  if (!storageAdapter.listObjects) {
-    stderr.write('Error: the configured storage adapter does not support listing objects.\n');
-    return 1;
-  }
 
-  let result: ListObjectsResult;
-  try {
-    result =
-      args.mode === 'all-projects'
-        ? await storageAdapter.listObjects({})
-        : args.mode === 'session' || args.mode === 'path'
-          ? await storageAdapter.listObjects({
-              projectId: projectId as string,
-              sessionId: args.sessionId,
-            })
-          : await storageAdapter.listObjects({ projectId: projectId as string });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    stderr.write(`Error listing objects: ${message}\n`);
-    return 1;
-  }
+  const result = await fetchListObjects(storageAdapter, args, projectId, stderr);
+  if (!result) return 1;
 
-  if (args.mode === 'all-projects') return renderAllProjects(result, stdout);
-  if (args.mode === 'current' || args.mode === 'project')
-    return renderProjectSessions(result, projectId, stdout);
-  return renderSessionFiles(
-    result,
-    {
-      projectId: args.projectId,
-      sessionId: args.sessionId,
-      path: args.mode === 'path' ? args.path : undefined,
-    },
-    stdout,
-  );
+  return renderListResult(args, result, projectId, stdout);
 }

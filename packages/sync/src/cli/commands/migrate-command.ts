@@ -455,6 +455,88 @@ async function generateManifests(
   return { generated, skipped, failed };
 }
 
+interface MigrationCounts {
+  copied: number;
+  skippedKeys: number;
+  failedKeys: number;
+  generated: number;
+  skippedManifests: number;
+  failedManifests: number;
+}
+
+/**
+ * Write the final `Migration complete: ...` summary line (and, if
+ * `--delete-old` was passed, the manual-cleanup reminder) for a completed
+ * `performMigration` run. Split out of `performMigration` to keep both
+ * functions under `.agents/rules/workspace-rules.md`'s 20/30-line function
+ * cap.
+ */
+function reportMigrationSummary(
+  args: MigrateArgs,
+  counts: MigrationCounts,
+  stdout: NodeJS.WritableStream,
+): void {
+  stdout.write('\n');
+  const parts: string[] = [];
+  if (!args.manifests) {
+    parts.push(`${counts.copied} keys copied`);
+    if (counts.skippedKeys > 0) parts.push(`${counts.skippedKeys} keys skipped`);
+    if (counts.failedKeys > 0) parts.push(`${counts.failedKeys} keys failed`);
+  }
+  parts.push(`${counts.generated} manifests generated`);
+  if (counts.skippedManifests > 0) parts.push(`${counts.skippedManifests} manifests skipped`);
+  if (counts.failedManifests > 0) parts.push(`${counts.failedManifests} manifests failed`);
+  stdout.write(`Migration complete: ${parts.join(', ')}.\n`);
+
+  if (args.deleteOld) {
+    stdout.write('\nNote: old keys were not deleted. Please verify the migrated data and\n');
+    stdout.write('delete old keys manually if no longer needed.\n');
+  }
+}
+
+/**
+ * Run the two migration steps (copy old-format keys, generate missing
+ * manifests) and tally the results. Split out of `performMigration` to keep
+ * both functions under `.agents/rules/workspace-rules.md`'s 20/30-line
+ * function cap — the caller still owns the getObject/putObject precondition
+ * check, the summary report, and the exit-code decision.
+ */
+async function runMigrationSteps(
+  cliAdapter: CliHarnessAdapter,
+  storageAdapter: StorageAdapter,
+  args: MigrateArgs,
+  oldKeys: OldFormatKey[],
+  missingManifests: SessionScan[],
+  stdout: NodeJS.WritableStream,
+): Promise<MigrationCounts> {
+  const counts: MigrationCounts = {
+    copied: 0,
+    skippedKeys: 0,
+    failedKeys: 0,
+    generated: 0,
+    skippedManifests: 0,
+    failedManifests: 0,
+  };
+
+  if (!args.manifests && oldKeys.length > 0) {
+    stdout.write(`\n=== Copying ${oldKeys.length} old-format key(s) ===\n`);
+    const result = await copyOldKeys(storageAdapter, oldKeys, stdout);
+    counts.copied = result.copied;
+    counts.skippedKeys = result.skipped;
+    counts.failedKeys = result.failed;
+  }
+
+  if (missingManifests.length > 0) {
+    stdout.write(`\n=== Generating ${missingManifests.length} missing manifest(s) ===\n`);
+    const result = await generateManifests(cliAdapter, storageAdapter, missingManifests, stdout);
+    counts.generated = result.generated;
+    counts.skippedManifests = result.skipped;
+    counts.failedManifests = result.failed;
+  }
+
+  return counts;
+}
+
 async function performMigration(
   cliAdapter: CliHarnessAdapter,
   storageAdapter: StorageAdapter,
@@ -469,47 +551,17 @@ async function performMigration(
     return 1;
   }
 
-  let copied = 0;
-  let skippedKeys = 0;
-  let failedKeys = 0;
-  let generated = 0;
-  let skippedManifests = 0;
-  let failedManifests = 0;
+  const counts = await runMigrationSteps(
+    cliAdapter,
+    storageAdapter,
+    args,
+    oldKeys,
+    missingManifests,
+    stdout,
+  );
+  reportMigrationSummary(args, counts, stdout);
 
-  if (!args.manifests && oldKeys.length > 0) {
-    stdout.write(`\n=== Copying ${oldKeys.length} old-format key(s) ===\n`);
-    const result = await copyOldKeys(storageAdapter, oldKeys, stdout);
-    copied = result.copied;
-    skippedKeys = result.skipped;
-    failedKeys = result.failed;
-  }
-
-  if (missingManifests.length > 0) {
-    stdout.write(`\n=== Generating ${missingManifests.length} missing manifest(s) ===\n`);
-    const result = await generateManifests(cliAdapter, storageAdapter, missingManifests, stdout);
-    generated = result.generated;
-    skippedManifests = result.skipped;
-    failedManifests = result.failed;
-  }
-
-  stdout.write('\n');
-  const parts: string[] = [];
-  if (!args.manifests) {
-    parts.push(`${copied} keys copied`);
-    if (skippedKeys > 0) parts.push(`${skippedKeys} keys skipped`);
-    if (failedKeys > 0) parts.push(`${failedKeys} keys failed`);
-  }
-  parts.push(`${generated} manifests generated`);
-  if (skippedManifests > 0) parts.push(`${skippedManifests} manifests skipped`);
-  if (failedManifests > 0) parts.push(`${failedManifests} manifests failed`);
-  stdout.write(`Migration complete: ${parts.join(', ')}.\n`);
-
-  if (args.deleteOld) {
-    stdout.write('\nNote: old keys were not deleted. Please verify the migrated data and\n');
-    stdout.write('delete old keys manually if no longer needed.\n');
-  }
-
-  return failedKeys > 0 || failedManifests > 0 ? 1 : 0;
+  return counts.failedKeys > 0 || counts.failedManifests > 0 ? 1 : 0;
 }
 
 /**

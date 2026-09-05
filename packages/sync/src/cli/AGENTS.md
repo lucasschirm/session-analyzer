@@ -38,9 +38,9 @@ Each plugin (`claude-session-sync`, `devin-session-sync`) keeps its own
 `@lucasschirm/sal-sync`, binds its own `CliHarnessAdapter`
 (`claude-cli-adapter.ts`/`devin-cli-adapter.ts`), and re-exports under the
 exact same names/signatures (minus the leading `adapter` parameter) its own
-tests assert on — see each plugin's `src/cli/AGENTS.md` (claude) or this
-file (devin has none yet; its `cli/*.ts` files carry the same wrapper
-pattern).
+tests assert on — see each plugin's own `src/cli/AGENTS.md`
+(`claude-session-sync`, `devin-session-sync`) for the wrapper pattern
+applied to that harness.
 
 ## Environment Resolution — Single Source of Truth (all harnesses)
 
