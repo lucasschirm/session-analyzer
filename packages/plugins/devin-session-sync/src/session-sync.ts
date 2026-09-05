@@ -105,8 +105,8 @@ export interface DevinSessionSyncOutcome {
   /**
    * Failures in the actual session artifact pipeline (discovery, upload,
    * manifest record/upload). Non-empty `errors` (or `failed > 0`) is what
-   * gates `hasFailure` — this is reserved for problems that mean "this
-   * session's real data failed to sync".
+   * `hasSyncFailure()` below gates on — this is reserved for problems that
+   * mean "this session's real data failed to sync".
    */
   errors: string[];
   /**
@@ -117,6 +117,20 @@ export interface DevinSessionSyncOutcome {
    * whether the real session artifacts uploaded, not on this side-channel.
    */
   warnings: string[];
+}
+
+/**
+ * The single, shared success/failure gate for a `DevinSessionSyncOutcome`:
+ * `failed > 0` (real artifact-pipeline failures) OR `errors` non-empty
+ * (e.g. a manifest-upload failure, which can occur with `failed === 0`).
+ * `warnings` never participates — see `DevinSessionSyncOutcome.warnings`'s
+ * doc comment. Exported so `watcher.ts` shares this exact predicate rather
+ * than hand-maintaining a second copy — the divergence risk of two copies
+ * is exactly what caused #339 (the watcher's copy had silently drifted to
+ * `failed > 0` alone).
+ */
+export function hasSyncFailure(outcome: DevinSessionSyncOutcome): boolean {
+  return outcome.failed > 0 || outcome.errors.length > 0;
 }
 
 function emitProgress(
@@ -137,6 +151,7 @@ function summarizeOutcome(outcome: DevinSessionSyncOutcome): string {
   if (outcome.uploaded > 0) parts.push(`${outcome.uploaded} uploaded`);
   if (outcome.skipped > 0) parts.push(`${outcome.skipped} skipped`);
   if (outcome.failed > 0) parts.push(`${outcome.failed} failed`);
+  if (outcome.errors.length > 0) parts.push(`${outcome.errors.length} error(s)`);
   if (outcome.warnings.length > 0) parts.push(`${outcome.warnings.length} warning(s)`);
   return `session ${outcome.sessionId}: ${parts.length > 0 ? parts.join(', ') : 'no changes'}`;
 }
@@ -695,7 +710,6 @@ export async function runDevinSessionSync(
   // never alone flip the whole sync to failed. Its failure is still fully
   // visible: it already emitted its own 'failure' progress event above and
   // is recorded in `outcome.warnings` (never silently dropped).
-  const hasFailure = outcome.failed > 0 || outcome.errors.length > 0;
-  emitProgress(options, hasFailure ? 'failure' : 'success', summarizeOutcome(outcome));
+  emitProgress(options, hasSyncFailure(outcome) ? 'failure' : 'success', summarizeOutcome(outcome));
   return outcome;
 }
