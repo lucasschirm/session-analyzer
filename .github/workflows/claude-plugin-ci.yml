@@ -6,6 +6,7 @@ on:
     paths:
       - 'packages/plugins/claude-session-sync/**'
       - 'packages/sync/**'
+      - 'packages/sync-core/**'
       - '.github/workflows/claude-plugin-ci.yml'
   workflow_dispatch:
 
