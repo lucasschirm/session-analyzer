@@ -1,17 +1,23 @@
 import { runTransformerConformanceSuite } from '@lucasschirm/sal-transformer-shared/conformance';
 import { describe, expect, it } from 'vitest';
-import { DevinTransformer } from '../../src/index.js';
+import { DEVIN_CONFORMANCE_PROFILE, DevinTransformer } from '../../src/index.js';
 import { devinConformanceFixtures } from '../conformance/fixtures/index.js';
 
 describe('DevinTransformer conformance', () => {
-  it('passes the shared transformer conformance suite', () => {
-    const report = runTransformerConformanceSuite(DevinTransformer, devinConformanceFixtures);
+  it('passes the shared transformer conformance suite (strict: unverified fails)', () => {
+    const report = runTransformerConformanceSuite(DevinTransformer, devinConformanceFixtures, {
+      profile: DEVIN_CONFORMANCE_PROFILE,
+      strict: true,
+    });
     for (const inv of report.invariants) {
       if (inv.status !== 'passed') {
         console.log(`[${inv.status}] ${inv.code}: ${inv.details.join('; ')}`);
       }
     }
     expect(report.passed).toBe(true);
+    // #308: every canonical invariant must actually execute for devin —
+    // `unverified` means a missing fixture silently disabled a check.
+    expect(report.invariants.filter((i) => i.status === 'unverified')).toEqual([]);
   });
 
   for (const fixture of devinConformanceFixtures.fixtures) {
