@@ -177,7 +177,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | SYNC-008 | `devin-sync sync`/`list`/`download`/`remove`/`migrate` CLI verb smoke pipeline round-trips one session | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | end-to-end CLI verb chain assertion | 3 | 4 | 3 | 36 | P1 | GREEN |
 | SYNC-009 | Devin CAS sync progress heartbeat advances during a throttled file download | `devin-sync-heartbeat.spec.ts` | `assertHeartbeat` (sync-flow.ts) with `syncProgressFilesParser` | 4 | 4 | 4 | 64 | P0 | GREEN |
 | SYNC-010 | Devin models-list capture failure (`devin` binary unavailable) never fails the sync; real session artifacts still upload and the failure surfaces as a distinguishable warning, never as `[fail]` output | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest-upload success + `Warnings:` visibility + absence of `[fail]` output assertion | 4 | 4 | 4 | 64 | P0 | GREEN |
-| SYNC-011 | Devin watcher daemon (`bin/watcher`, the sole sync path for Cloud sessions) poll loop: heartbeat lines advance (monotonic, timestamped, distinct per poll, in a bounded window), a mid-run `sessions.db` change triggers a re-sync, an unreadable `sessions.db` after startup surfaces per-poll stderr failure lines, and a per-session sync failure (`outcome.errors` non-empty, e.g. a manifest upload failure) is never advanced past as a false-success signature — the next poll retries until it clears (#339) — never a silent stall or a false-success heartbeat | `packages/plugins/devin-session-sync/tests/pipeline/watcher-heartbeat.test.ts` | `parseWatcherHeartbeats`/`assertMonotonicHeartbeats` heartbeat assertion + `poll #N failed` stderr visibility assertion + fail→retry→stable manifest-retry-count assertion (#339) | 4 | 5 | 4 | 80 | P0 | GREEN |
+| SYNC-011 | Devin watcher daemon (`bin/watcher`, the sole sync path for Cloud sessions) poll loop: heartbeat lines advance (monotonic, timestamped, distinct per poll, in a bounded window), a mid-run `sessions.db` change triggers a re-sync (including a `cogs_json`-only mutation that advances no row and not `last_activity_at` — #340), an unreadable `sessions.db` after startup surfaces per-poll stderr failure lines, and a per-session sync failure (`outcome.errors` non-empty, e.g. a manifest upload failure) is never advanced past as a false-success signature — the next poll retries until it clears (#339) — never a silent stall or a false-success heartbeat | `packages/plugins/devin-session-sync/tests/pipeline/watcher-heartbeat.test.ts` | `parseWatcherHeartbeats`/`assertMonotonicHeartbeats` heartbeat assertion + `poll #N failed` stderr visibility assertion + fail→retry→stable manifest-retry-count assertion (#339) + `cogs_json`-only mutation re-sync assertion (#340) | 4 | 5 | 4 | 80 | P0 | GREEN |
 | SYNC-012 | `FileLock`'s stale-lock takeover (`packages/sync/src/state/lock.ts`) is atomic across any number of concurrent contenders — never silently defeats mutual exclusion, which would re-enable the concurrent-duplicate-append transcript corruption `materializeSessionTranscript`'s append-only guard (#303) exists to prevent (a Devin hook write racing the watcher's poll on the same session) (#327) | `packages/sync/tests/unit/lock-stale-takeover.test.ts` + `packages/sync/tests/unit/lock-reclaim-mismatch.test.ts` + `packages/sync/tests/integration/lock-cross-process.test.ts` | black-box N-contender stress assertion (max-concurrent-holders == 1) + deterministic forced-interleaving mismatch/restore-failure assertions + real-cross-process no-duplicate-append assertion | 3 | 5 | 5 | 75 | P0 | GREEN |
 
 ## 7. Infrastructure prerequisites
@@ -250,8 +250,13 @@ blocker in the PR #304 review), so the row was registered and its
 pipeline test implemented in the same PR. Known watcher bug #339
 (success signature advances despite outcome errors) is now fixed and
 covered by SYNC-011's fail→retry→stable regression sequence. #340
-(signature trusts `last_activity_at`) remains open and tracked
-separately; SYNC-011's assertions deliberately avoid that area.
+(signature trusted `last_activity_at` for the `sessions` row component,
+missing skill-only/effort-only mutations) is now fixed — the signature
+shares the extractor's verified full-row content-hash mechanism instead
+(`session-watermark.ts`'s `sessionContentHash`) — and is covered by a
+dedicated `cogs_json`-only mutation regression in the same file, plus
+direct unit coverage of `computeSessionWatermarkSignature` in
+`watcher.test.ts`.
 
 PIPE-019 (issue #341) follows the same precedent again: the fix (a
 content-hash watermark for `message_nodes`, replacing the unsound

@@ -12,10 +12,12 @@
  *              surfaces per-poll stderr failure lines — never a silent
  *              stall and never a false-success heartbeat.
  *
- * Issue #340 (signature trusting `last_activity_at`) is tracked
- * separately; the heartbeat/re-sync and startup-failure assertions above
- * deliberately avoid that area — the re-sync trigger used there is a new
- * `message_nodes` row (a row-id watermark, not `last_activity_at`).
+ * Issue #340 (signature trusted `last_activity_at` for the `sessions` row
+ * component, missing skill-only/effort-only mutations) is fixed — the
+ * heartbeat/re-sync and startup-failure assertions above use a new
+ * `message_nodes` row as their re-sync trigger (a row-id watermark,
+ * orthogonal to #340), and the dedicated `cogs_json`-only mutation
+ * regression below covers #340's own trigger directly.
  * Issue #339 (success signature advancing despite per-session
  * `outcome.errors`, e.g. a failed manifest upload) is fixed and covered
  * directly below by a dedicated fail→retry→stable regression sequence.
@@ -342,5 +344,42 @@ describe('Devin watcher daemon poll loop: heartbeat + failure visibility (SYNC-0
     // just in telemetry/outcome.errors — per the issue's acceptance
     // criteria and `.agents/rules/sync-progress-observability.md`.
     expect(stdoutLines.join('')).toContain('1 error(s)');
+  }, 15000);
+
+  it('re-syncs a session whose only change between polls is cogs_json — last_activity_at and row counts unchanged (#340)', async () => {
+    const storage = new RecordingStorageAdapter();
+    const stdoutLines: string[] = [];
+    // last_activity_at and every row-id watermark are untouched by this
+    // mutation — only the signature's session-row content hash can detect
+    // it (#340's exact regression scenario).
+    const stdout = collectingStream(
+      stdoutLines,
+      onHeartbeat(1, () => {
+        fixture.db
+          .prepare('UPDATE sessions SET cogs_json = ? WHERE id = ?')
+          .run('{"skill":"changed-between-polls"}', 'sess-cloud');
+      }),
+    );
+
+    const exitCode = await runDevinWatcher({
+      env: watcherEnv(),
+      dataDir,
+      homeDir,
+      sessionsDbPath: fixture.path,
+      storageAdapter: storage,
+      profile: harnessProfile,
+      maxPolls: 3,
+      pollIntervalMs: 5,
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    const beats = parseWatcherHeartbeats(stdoutLines);
+    assertMonotonicHeartbeats(beats, [1, 2, 3]);
+    // Poll 1 syncs the never-seen session; poll 2 re-syncs after the
+    // cogs_json-only mutation (no new row anywhere, last_activity_at
+    // untouched); poll 3 (unchanged again) syncs nothing.
+    expect(beats.map((b) => b.changed)).toEqual([1, 1, 0]);
+    expect(storage.calls.filter((c) => c.scope === 'manifest')).toHaveLength(2);
   }, 15000);
 });
