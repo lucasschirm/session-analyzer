@@ -53,9 +53,12 @@ import { buildToolInvocationRecords } from './tool-invocations.js';
  * - `message_nodes.created_at` is unreliable; message order comes from the node
  *   tree (`node_id`/`parent_node_id`/`main_chain_id`), never from `created_at`.
  * - Skill and Agent invocation counts are derived from `tool_call_state`'s
- *   `functions.skill:*`/`functions.run_subagent:*` ACP calls (DS-F11 (#288)).
- *   `plugins/discovered.json` (the cross-session skill/agent definition
- *   catalog) is never captured and is not needed for these counts.
+ *   `functions.skill:*`/`functions.run_subagent:*` ACP calls (DS-F11 (#288)),
+ *   never from `plugins/discovered.json` (the cross-session skill/agent
+ *   definition catalog, captured since DS-B18 (#270) but not needed for
+ *   these counts — its own schema is undocumented, so `classification.ts`
+ *   classifies it and `config-components.ts` extracts from it only
+ *   defensively, per #342).
  * - Per-session cost is pending the `sessions.model` -> `models.json` `model_uid`
  *   join planned for DS-F4 and is reported as unavailable.
  */
@@ -129,7 +132,22 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // the parser now surfaces the INTEGER `main_chain_id` (previously nulled
 // by string coercion), so `buildMainChain` anchors on the authoritative
 // leaf instead of always falling back to the biggest-subtree heuristic.
-export const DEVIN_TRANSFORMER_VERSION = '0.10.0';
+// Bumped 0.10.0 -> 0.11.0 for #342: `DEVIN_KINDS` (classification.ts) now
+// covers every path the sync allowlist can upload (previously only 8
+// patterns; hooks/skills/agents/rules/windsurf/memory-files/global-config/
+// discovered-catalog were all `unclassified`), and `classifyDevinArtifacts`
+// extracts real `skill`/`agent`/`rule`/hook-`tool` components from them
+// (config-components.ts) instead of hardcoding `components: []`. Output
+// shape and population both changed (a bundle with any of these artifacts
+// now yields components and different classification/completeness output
+// where it previously didn't), and the acceptance criteria explicitly
+// require a reprocess backfill — forces a fresh generation. No
+// `DEVIN_METRIC_DEFINITION_VERSION` bump: `deriveDevinMetrics`'s call site
+// never receives `classification`/`components`/`configurationSnapshot` (see
+// devin-transformer.ts's `transform()` below), so no existing metric's
+// formula, population, or comparability group reads this data — the
+// versioning rule's trigger condition doesn't apply here.
+export const DEVIN_TRANSFORMER_VERSION = '0.11.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly
@@ -216,21 +234,33 @@ function isConfirmedRuntimeComponent(
 
 /**
  * Merges `cogs_json`/`tool_call_state`-derived session components (DS-F11
- * (#288)) with `classification.components` (currently always `[]` — see
- * `classifyDevinArtifacts`) and recomputes `configurationSnapshot` from the
- * merged list, reusing `completenessFromComponents` so completeness
+ * (#288)) with `classification.components` (file-backed skill/agent/rule/
+ * hook components from `config-components.ts`, #342 — previously always
+ * `[]`) and recomputes `configurationSnapshot` from the merged list, reusing
+ * `completenessFromComponents` so completeness
  * accounting stays in one place.
  *
  * `temporalRole` is `'runtime'` only when at least one session component has
  * actual invocation evidence (`isConfirmedRuntimeComponent`) — never
- * unconditionally, since declared-but-unconfirmed components (e.g. the MCP
- * wrapper tool AllowList, present in nearly every session regardless of use)
- * would otherwise overclaim they were "active during the session". Absent
- * any confirmed invocation, this falls back to `'capture_only'` — the same
- * convention `packages/db/src/manual-ingestion.ts`'s `adjustForManual` and
- * `packages/db/src/configuration.ts`'s `applyExposures` already use for
- * "captured, but not asserted as pre-session or runtime activity" (choosing
- * `'capture_only'` rather than inventing a new temporal state).
+ * unconditionally, since declared-but-unconfirmed COG components (e.g. the
+ * MCP wrapper tool AllowList, present in nearly every session regardless of
+ * use) would otherwise overclaim they were "active during the session".
+ * Absent any confirmed invocation, this falls back to `'pre_session'` when
+ * `classification.components` (file-backed skill/agent/rule/hook
+ * components, #342) is non-empty — these exist on disk BEFORE the session
+ * runs, the same "configuration present, not necessarily exercised"
+ * temporal fact `packages/db/src/ingestion.ts` already defaults Claude
+ * Code's own classify-time components to (`applyExposures` in
+ * `packages/db/src/configuration.ts` only writes
+ * `session_component_exposures` for `'pre_session'`/`'runtime'`, never
+ * `'capture_only'` — without this, file-backed components would classify
+ * and extract correctly yet never reach the Component Ecosystem view).
+ * Only when NEITHER a confirmed cog invocation NOR any file-backed
+ * component exists does this fall back to `'capture_only'` — the same
+ * convention `packages/db/src/manual-ingestion.ts`'s `adjustForManual`
+ * already uses for "captured, but not asserted as pre-session or runtime
+ * activity" (e.g. `mcpDeclaredOnlyBundle`'s declared-but-unconfirmed COG
+ * components alone, with no config files backing them).
  */
 function mergeSessionComponents(
   classification: ArtifactClassificationResult,
@@ -244,12 +274,17 @@ function mergeSessionComponents(
   const hasConfirmedRuntimeComponent = sessionComponents.some((c) =>
     isConfirmedRuntimeComponent(c, invocationRecords),
   );
+  const temporalRole = hasConfirmedRuntimeComponent
+    ? 'runtime'
+    : classification.components.length > 0
+      ? 'pre_session'
+      : 'capture_only';
   return {
     components,
     configurationSnapshot: {
       completeness: completenessFromComponents(components, unclassifiedCount),
       components,
-      temporalRole: hasConfirmedRuntimeComponent ? 'runtime' : 'capture_only',
+      temporalRole,
     },
   };
 }
@@ -331,7 +366,7 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
   },
 
   classifyArtifacts(bundle: UnknownArtifactBundle): ArtifactClassificationResult {
-    return classifyDevinArtifacts(bundle.artifacts);
+    return classifyDevinArtifacts(bundle);
   },
 
   getCapabilities(bundle?: UnknownArtifactBundle): MetricCapability[] {

@@ -3,6 +3,7 @@ import { MANIFEST_SCHEMA_VERSION } from '@lucasschirm/sal-sync-core';
 import type { SourceIdentity, UnknownArtifactBundle } from '@lucasschirm/sal-transformer-shared';
 import {
   componentsBundle,
+  configComponentsBundle,
   linearBundle,
   modelSwitchBundle,
   singleTierBundle,
@@ -113,6 +114,16 @@ export async function buildDevinManifestBundle(
      */
     readonly useComponentsBundle?: boolean;
     /**
+     * Use the `configComponentsBundle` fixture (#342: a plain linear session
+     * plus real file-backed `.devin/skills|agents|rules/**` config
+     * artifacts — `draft-release-notes`/`changelog-curator`/`changelog-style`,
+     * deliberately different example names than `useComponentsBundle`'s
+     * cog-derived `add-e2e-test`/`pr-review`) instead of `linearBundle`, to
+     * exercise file-backed skill/agent/rule component classification and
+     * extraction end-to-end through real ingestion.
+     */
+    readonly useConfigComponentsBundle?: boolean;
+    /**
      * Use the `subagentBundle` fixture (DS-B28 (#294): a foreground and a
      * background `run_subagent` invocation with real `subagent/*` tags and
      * synthetic prompt/result lines, a duplicate `message_nodes` pair, and
@@ -159,13 +170,15 @@ export async function buildDevinManifestBundle(
     options.sourceBundle ??
     (options.useComponentsBundle
       ? componentsBundle
-      : options.useSubagentBundle
-        ? subagentBundle
-        : options.useModelSwitchBundle
-          ? modelSwitchBundle
-          : options.useSingleTierBundle
-            ? singleTierBundle
-            : linearBundle);
+      : options.useConfigComponentsBundle
+        ? configComponentsBundle
+        : options.useSubagentBundle
+          ? subagentBundle
+          : options.useModelSwitchBundle
+            ? modelSwitchBundle
+            : options.useSingleTierBundle
+              ? singleTierBundle
+              : linearBundle);
   sourceBundle = cloneBundleWithNativeSessionId(sourceBundle, sessionId);
   if (options.corruptRootTranscript) {
     sourceBundle = cloneBundleWithRootTranscript(sourceBundle, '');

@@ -1,7 +1,7 @@
 import { runTransformerConformanceSuite } from '@lucasschirm/sal-transformer-shared/conformance';
 import { describe, expect, it } from 'vitest';
 import { DEVIN_CONFORMANCE_PROFILE, DevinTransformer } from '../../src/index.js';
-import { devinConformanceFixtures } from '../conformance/fixtures/index.js';
+import { configComponentsBundle, devinConformanceFixtures } from '../conformance/fixtures/index.js';
 
 describe('DevinTransformer conformance', () => {
   it('passes the shared transformer conformance suite (strict: unverified fails)', () => {
@@ -102,6 +102,17 @@ describe('DevinTransformer conformance', () => {
     expect(result.configurationSnapshot.completeness.tool).toBe('complete');
     expect(result.configurationSnapshot.completeness.agent).toBe('complete');
     expect(result.configurationSnapshot.temporalRole).toBe('runtime');
+  });
+
+  it('AC3 (#342): reports complete skill/agent/rule completeness for a fully-classified file-backed-config bundle, never partial', () => {
+    const result = DevinTransformer.transform(
+      configComponentsBundle,
+      devinConformanceFixtures.fixtures[0].context,
+    );
+    expect(result.warnings.filter((w) => w.code === 'unclassified_artifact')).toEqual([]);
+    expect(result.configurationSnapshot.completeness.skill).toBe('complete');
+    expect(result.configurationSnapshot.completeness.agent).toBe('complete');
+    expect(result.configurationSnapshot.completeness.rule).toBe('complete');
   });
 
   it('DS-B28 (#294): the subagent-evidence fixture produces subagent_turn evidence for both the foreground and background invocation, with clean main-chain turnOrdinal', () => {

@@ -13,7 +13,9 @@ import type {
   ComponentSummary,
   ConfigurationSnapshot,
   Issue,
+  UnknownArtifactBundle,
 } from '@lucasschirm/sal-transformer-shared';
+import { extractConfigComponents, hasFrontmatterKey } from './config-components.js';
 
 const DEVIN_KINDS: Readonly<
   Record<string, { kind: ArtifactKind; scope: ArtifactScope; role?: string }>
@@ -25,7 +27,88 @@ const DEVIN_KINDS: Readonly<
   '^native/models-list\\.raw\\.json$': { kind: 'settings', scope: 'runtime', role: 'models-raw' },
   '^plans/plan-[a-f0-9]+\\.md$': { kind: 'transcript', scope: 'session', role: 'plan' },
   '^\\.devin/config\\.json$': { kind: 'settings', scope: 'workspace' },
+  // Predates DS-B18 (#270)'s workspace/global rule-set: no real synced
+  // artifact ever normalizes to bare `config.json` (the real global config
+  // relativePath is `.config/devin/config.json`, proven by
+  // devin-session-sync's devin-profile.test.ts). Kept only for the existing
+  // fixture/unit test that exercises this literal path directly.
   '^config\\.json$': { kind: 'settings', scope: 'global' },
+
+  // --- #342: config artifact classification coverage -----------------------
+  // Root memory files (workspace). Fully anchored (no `.*` prefix) so these
+  // structurally cannot collide with a nested `.devin/agents/<name>/AGENT.md`
+  // or `.agents/agents/<name>/AGENT.md`.
+  '^agents\\.md$': { kind: 'rule', scope: 'workspace', role: 'memory' },
+  '^agent\\.md$': { kind: 'rule', scope: 'workspace', role: 'memory' },
+  '^agents\\.local\\.md$': { kind: 'rule', scope: 'workspace', role: 'memory' },
+  // Root memory files (global) - `.config/devin/`-prefixed, unambiguous.
+  '^\\.config/devin/agents\\.md$': { kind: 'rule', scope: 'global', role: 'memory' },
+  '^\\.config/devin/agent\\.md$': { kind: 'rule', scope: 'global', role: 'memory' },
+  '^\\.config/devin/agents\\.local\\.md$': { kind: 'rule', scope: 'global', role: 'memory' },
+  // The real global config.json relativePath (see the comment on
+  // `^config\.json$` above).
+  '^\\.config/devin/config\\.json$': { kind: 'settings', scope: 'global' },
+  // Cross-session skill/agent catalog - schema genuinely undocumented;
+  // `config-components.ts`'s extractor is deliberately conservative.
+  '^plugins/discovered\\.json$': {
+    kind: 'settings',
+    scope: 'global',
+    role: 'discovered-catalog',
+  },
+  // Devin-native hooks: the dedicated file is Claude-Code-hook-compatible (no
+  // wrapper key); the sibling directory has no documented convention.
+  '^\\.devin/hooks\\.v1\\.json$': { kind: 'settings', scope: 'workspace', role: 'hooks' },
+  '^\\.devin/hooks/': { kind: 'settings', scope: 'workspace', role: 'hooks-dir' },
+  // Windsurf: the rules sub-path shares the trigger/description rule schema;
+  // anything else under `.windsurf/` is an undocumented catch-all.
+  '^\\.windsurf/rules/.*\\.md$': { kind: 'rule', scope: 'workspace', role: 'windsurf' },
+  '^\\.windsurf/': { kind: 'settings', scope: 'workspace', role: 'windsurf' },
+  // `.devin/rules/**` and `.devin/global_rules.md` are structurally
+  // indistinguishable from their `~/.devin/...` global counterparts once
+  // normalized to `relativePath` (`Artifact` carries no `scope` field) -
+  // `scope: 'workspace'` is a documented best-effort default
+  // (`.agents/rules/manifest-backed-classification.md`); a real fix needs a
+  // sync-side change and is out of scope for #342.
+  '^\\.devin/rules/': { kind: 'rule', scope: 'workspace' },
+  '^\\.devin/global_rules\\.md$': { kind: 'rule', scope: 'workspace', role: 'global-rules' },
+  // Devin-native skills/agents (workspace): the identity file's pattern
+  // precedes its directory's supporting-file catch-all, which in turn
+  // precedes the loose-file catch-all (a file with no name subdirectory at
+  // all, e.g. `.devin/skills/README.md` — `packages/sync/src/discovery/
+  // glob.ts`'s `walkRecursive` recurses from the base directory itself, so
+  // sync captures this shape too; PR #375 review finding 1).
+  '^\\.devin/skills/[^/]+/skill\\.md$': { kind: 'skill', scope: 'workspace' },
+  '^\\.devin/skills/[^/]+/': { kind: 'skill', scope: 'workspace', role: 'supporting-file' },
+  '^\\.devin/skills/[^/]+$': { kind: 'skill', scope: 'workspace', role: 'loose-file' },
+  '^\\.devin/agents/[^/]+/agent\\.md$': { kind: 'agent', scope: 'workspace' },
+  '^\\.devin/agents/[^/]+/': { kind: 'agent', scope: 'workspace', role: 'supporting-file' },
+  '^\\.devin/agents/[^/]+$': { kind: 'agent', scope: 'workspace', role: 'loose-file' },
+  // Cross-harness `.agents/` convention. `.agents/agents/**` is
+  // workspace-only (no global pattern shares its prefix); `.agents/skills/**`
+  // is the THIRD structurally-ambiguous family (shared with
+  // `~/.agents/skills/**`), same documented best-effort default as above.
+  '^\\.agents/agents/[^/]+/agent\\.md$': { kind: 'agent', scope: 'workspace' },
+  '^\\.agents/agents/[^/]+/': { kind: 'agent', scope: 'workspace', role: 'supporting-file' },
+  '^\\.agents/agents/[^/]+$': { kind: 'agent', scope: 'workspace', role: 'loose-file' },
+  '^\\.agents/skills/[^/]+/skill\\.md$': { kind: 'skill', scope: 'workspace' },
+  '^\\.agents/skills/[^/]+/': { kind: 'skill', scope: 'workspace', role: 'supporting-file' },
+  '^\\.agents/skills/[^/]+$': { kind: 'skill', scope: 'workspace', role: 'loose-file' },
+  // Devin-native skills/agents (global): `.config/devin/`-prefixed,
+  // unambiguous (distinct from the workspace `.devin/skills|agents/**` prefix).
+  '^\\.config/devin/skills/[^/]+/skill\\.md$': { kind: 'skill', scope: 'global' },
+  '^\\.config/devin/skills/[^/]+/': {
+    kind: 'skill',
+    scope: 'global',
+    role: 'supporting-file',
+  },
+  '^\\.config/devin/skills/[^/]+$': { kind: 'skill', scope: 'global', role: 'loose-file' },
+  '^\\.config/devin/agents/[^/]+/agent\\.md$': { kind: 'agent', scope: 'global' },
+  '^\\.config/devin/agents/[^/]+/': {
+    kind: 'agent',
+    scope: 'global',
+    role: 'supporting-file',
+  },
+  '^\\.config/devin/agents/[^/]+$': { kind: 'agent', scope: 'global', role: 'loose-file' },
 };
 
 const ALL_COMPONENT_KINDS: readonly string[] = [
@@ -85,6 +168,23 @@ function decodeUtf8(bytes: Uint8Array): string {
 
 function normalizeSlashes(input: string): string {
   return input.replace(/\\/g, '/');
+}
+
+/** Content confirmation for the #342 config kinds: skill/agent frontmatter
+ * carries a `name` key; a rule is confirmed by its reserved memory-filename
+ * role, or by carrying either half of the `trigger`/`description` schema. */
+function confirmedForConfigKind(
+  rule: { kind: ArtifactKind; role?: string },
+  content: string,
+): boolean {
+  if (rule.kind === 'skill' || rule.kind === 'agent') {
+    return hasFrontmatterKey(content, 'name');
+  }
+  if (rule.kind === 'rule') {
+    if (rule.role === 'memory') return true;
+    return hasFrontmatterKey(content, 'trigger') || hasFrontmatterKey(content, 'description');
+  }
+  return false;
 }
 
 function pathRule(
@@ -165,6 +265,9 @@ function contentConfirmedKind(
   if (rule.role === 'schema') {
     return { ...rule, confirmed: isSchemaDescriptor(content) };
   }
+  if (rule.kind === 'skill' || rule.kind === 'agent' || rule.kind === 'rule') {
+    return { ...rule, confirmed: confirmedForConfigKind(rule, content) };
+  }
   if (rule.kind === 'settings') {
     return { ...rule, confirmed: true };
   }
@@ -239,30 +342,53 @@ function makeIssue(
   return { code, severity, message, provenance: path ? { path } : undefined };
 }
 
+/**
+ * Classifies one artifact and, when it classified to a real kind, extracts
+ * its config components (#342) via `extractConfigComponents`. Returns the
+ * classified artifact, any extraction warnings, and its components (empty
+ * for kinds `extractConfigComponents` doesn't produce components for, e.g.
+ * `transcript`).
+ */
+function classifyAndExtract(
+  artifact: Artifact<unknown>,
+  sourceId: string,
+): { classified: ClassifiedArtifact; components: ComponentSummary[]; issues: Issue[] } {
+  const { classified, detectedKind } = classifyByRule(artifact);
+  if (classified.kind === 'unclassified') {
+    const issue = makeIssue(
+      'unclassified_artifact',
+      `${artifact.relativePath} is unclassified (detected kind: ${detectedKind})`,
+      'warning',
+      artifact.relativePath,
+    );
+    return { classified, components: [], issues: [issue] };
+  }
+  const extracted = extractConfigComponents(artifact, classified, sourceId);
+  return { classified, components: extracted.components, issues: extracted.issues };
+}
+
+/**
+ * `bundle.sourceIdentity.sourceId` (with the same `'manual'` fallback
+ * `claude-code.ts`'s own `classifyArtifacts(bundle)` uses) feeds file-backed
+ * component identity (`config-components.ts`) — the reason this takes the
+ * whole bundle rather than a bare artifact array (#342).
+ */
 export function classifyDevinArtifacts(
-  artifacts: readonly Artifact<unknown>[],
+  bundle: UnknownArtifactBundle,
 ): ArtifactClassificationResult {
+  const sourceId = bundle.sourceIdentity?.sourceId ?? 'manual';
   const classifiedArtifacts: ClassifiedArtifact[] = [];
+  const components: ComponentSummary[] = [];
   const warnings: Issue[] = [];
   let unclassifiedCount = 0;
 
-  for (const artifact of artifacts) {
-    const { classified, detectedKind } = classifyByRule(artifact);
-    classifiedArtifacts.push(classified);
-    if (classified.kind === 'unclassified') {
-      unclassifiedCount++;
-      warnings.push(
-        makeIssue(
-          'unclassified_artifact',
-          `${artifact.relativePath} is unclassified (detected kind: ${detectedKind})`,
-          'warning',
-          artifact.relativePath,
-        ),
-      );
-    }
+  for (const artifact of bundle.artifacts) {
+    const extracted = classifyAndExtract(artifact, sourceId);
+    classifiedArtifacts.push(extracted.classified);
+    components.push(...extracted.components);
+    warnings.push(...extracted.issues);
+    if (extracted.classified.kind === 'unclassified') unclassifiedCount++;
   }
-
-  const components: ComponentSummary[] = [];
 
   return {
     artifacts: classifiedArtifacts,
@@ -275,4 +401,4 @@ export function classifyDevinArtifacts(
   };
 }
 
-export { artifactIdFor, toTextContent };
+export { artifactIdFor, normalizeSlashes, toTextContent };
