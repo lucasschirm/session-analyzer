@@ -5,6 +5,7 @@ export * from './commands/migrate-command.js';
 export * from './commands/remove-command.js';
 export * from './common.js';
 export * from './config.js';
+export * from './create-cli.js';
 export * from './env.js';
 export * from './harness-adapter.js';
 export * from './is-main-module.js';
