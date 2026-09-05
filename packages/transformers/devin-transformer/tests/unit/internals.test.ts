@@ -352,31 +352,33 @@ describe('Internal tool invocations', () => {
 
 describe('Internal classification', () => {
   it('classifies B3 artifacts by path and validates content', () => {
-    const result = classifyDevinArtifacts([
-      {
-        relativePath: 'transcript.jsonl',
-        content: '{"type":"session","id":"s1","ts":1,"order":1}\n',
-        mediaType: 'application/jsonl',
-      },
-      {
-        relativePath: 'native/atif-transcript.json',
-        content: '{"schema_version":"ATIF-v1.7","steps":[],"final_metrics":{}}',
-        mediaType: 'application/json',
-      },
-      {
-        relativePath: 'native/schema-descriptor.json',
-        content: '{"refineryVersion":16,"supported":true}',
-        mediaType: 'application/json',
-      },
-      {
-        relativePath: 'native/models.json',
-        content: '[{"modelUid":"x","label":"X","familyUid":"f","costTier":"Standard"}]',
-        mediaType: 'application/json',
-      },
-      { relativePath: 'plans/plan-abc.md', content: '# Plan', mediaType: 'text/markdown' },
-      { relativePath: '.devin/config.json', content: '{}', mediaType: 'application/json' },
-      { relativePath: 'unknown.bin', content: 'x', mediaType: 'application/octet-stream' },
-    ]);
+    const result = classifyDevinArtifacts({
+      artifacts: [
+        {
+          relativePath: 'transcript.jsonl',
+          content: '{"type":"session","id":"s1","ts":1,"order":1}\n',
+          mediaType: 'application/jsonl',
+        },
+        {
+          relativePath: 'native/atif-transcript.json',
+          content: '{"schema_version":"ATIF-v1.7","steps":[],"final_metrics":{}}',
+          mediaType: 'application/json',
+        },
+        {
+          relativePath: 'native/schema-descriptor.json',
+          content: '{"refineryVersion":16,"supported":true}',
+          mediaType: 'application/json',
+        },
+        {
+          relativePath: 'native/models.json',
+          content: '[{"modelUid":"x","label":"X","familyUid":"f","costTier":"Standard"}]',
+          mediaType: 'application/json',
+        },
+        { relativePath: 'plans/plan-abc.md', content: '# Plan', mediaType: 'text/markdown' },
+        { relativePath: '.devin/config.json', content: '{}', mediaType: 'application/json' },
+        { relativePath: 'unknown.bin', content: 'x', mediaType: 'application/octet-stream' },
+      ],
+    });
     const byPath = new Map(result.artifacts.map((a) => [a.relativePath, a]));
     expect(byPath.get('transcript.jsonl')?.confidence).toBe('exact');
     expect(byPath.get('native/atif-transcript.json')?.confidence).toBe('exact');
@@ -389,15 +391,17 @@ describe('Internal classification', () => {
   });
 
   it('downgrades confidence when content validation fails', () => {
-    const result = classifyDevinArtifacts([
-      { relativePath: 'transcript.jsonl', content: 'not-json', mediaType: 'application/jsonl' },
-      {
-        relativePath: 'native/atif-transcript.json',
-        content: 'not-json',
-        mediaType: 'application/json',
-      },
-      { relativePath: 'native/models.json', content: '{}', mediaType: 'application/json' },
-    ]);
+    const result = classifyDevinArtifacts({
+      artifacts: [
+        { relativePath: 'transcript.jsonl', content: 'not-json', mediaType: 'application/jsonl' },
+        {
+          relativePath: 'native/atif-transcript.json',
+          content: 'not-json',
+          mediaType: 'application/json',
+        },
+        { relativePath: 'native/models.json', content: '{}', mediaType: 'application/json' },
+      ],
+    });
     expect(result.artifacts[0]?.confidence).toBe('inferred');
     expect(result.artifacts[1]?.confidence).toBe('inferred');
     expect(result.artifacts[2]?.confidence).toBe('inferred');

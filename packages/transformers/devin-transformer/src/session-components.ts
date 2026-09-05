@@ -33,7 +33,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function componentIdentity(
+/**
+ * Exported (not just used locally) so `config-components.ts`'s file-backed
+ * component extraction (#342) reuses this exact identity shape instead of
+ * duplicating it — same `displayName: nativeId` convention for both
+ * cog-derived and file-derived components.
+ */
+export function componentIdentity(
   componentId: string,
   nativeId: string,
   provider?: string,

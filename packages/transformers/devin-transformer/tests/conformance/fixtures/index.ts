@@ -1015,20 +1015,61 @@ export const completeSessionBundle: UnknownArtifactBundle = bundle([
   artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
 ]);
 
-// The devin 'classification' fixture (#308): an artifact no path rule
-// covers — partialSnapshotsDoNotImplyRemovals asserts the unclassified
-// artifact degrades completeness (never a `complete` claim) instead of
-// implying removal.
+// The devin 'classification' fixture (#308, enriched #342): an artifact no
+// path rule covers, alongside real skill/agent/rule config artifacts —
+// partialSnapshotsDoNotImplyRemovals asserts the unclassified artifact
+// degrades completeness (never a `complete` claim) while the classified
+// skill/agent/rule components are still retained (never implicitly removed
+// just because an unrelated artifact is unclassified).
 const partialClassificationTranscript = [
   sessionLine(sessionId, 2),
   messageLine(sessionId, 1, null, 'user', 'Hello'),
   messageLine(sessionId, 2, 1, 'assistant', 'Hi'),
 ].join('\n');
 
+const exampleSkillMarkdown = `---
+name: draft-release-notes
+description: Drafts release notes from merged PRs.
+---
+# Draft Release Notes
+`;
+
+const exampleAgentMarkdown = `---
+name: changelog-curator
+description: Curates and files changelog entries.
+---
+# Changelog Curator
+`;
+
+const exampleRuleMarkdown = `---
+trigger: glob
+description: Keep changelog entries terse.
+---
+Keep every changelog entry to one sentence.
+`;
+
 export const partialClassificationBundle: UnknownArtifactBundle = bundle([
   artifact('transcript.jsonl', partialClassificationTranscript, 'application/jsonl'),
   artifact('native/models.json', modelsJson(), 'application/json'),
   artifact('mystery/unknown-artifact.bin', 'opaque-bytes', 'application/octet-stream'),
+  artifact('.devin/skills/draft-release-notes/SKILL.md', exampleSkillMarkdown, 'text/markdown'),
+  artifact('.devin/agents/changelog-curator/AGENT.md', exampleAgentMarkdown, 'text/markdown'),
+  artifact('.devin/rules/changelog-style.md', exampleRuleMarkdown, 'text/markdown'),
+]);
+
+// PIPE-019 (#342): a normal linear session (no cogs) plus real file-backed
+// skill/agent/rule config artifacts. Deliberately uses DIFFERENT example
+// names (`draft-release-notes`/`changelog-curator`/`changelog-style`) than
+// `componentsBundle`/`completeSessionBundle`'s cog-derived names
+// (`add-e2e-test`/`pr-review`) so file-derived and cog-derived components
+// stay visually distinct wherever both are asserted together.
+export const configComponentsBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', linearTranscript, 'application/jsonl'),
+  artifact('native/atif-transcript.json', linearAtif, 'application/json'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+  artifact('.devin/skills/draft-release-notes/SKILL.md', exampleSkillMarkdown, 'text/markdown'),
+  artifact('.devin/agents/changelog-curator/AGENT.md', exampleAgentMarkdown, 'text/markdown'),
+  artifact('.devin/rules/changelog-style.md', exampleRuleMarkdown, 'text/markdown'),
 ]);
 
 export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle> = {
@@ -1155,11 +1196,21 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
     ),
     fixture(
       'partial-classification',
-      'A bundle containing an artifact no path rule covers (#308): ' +
+      'A bundle containing an artifact no path rule covers, alongside real file-backed ' +
+        'skill/agent/rule config artifacts (#308, enriched #342): ' +
         'partialSnapshotsDoNotImplyRemovals asserts unclassified artifacts degrade ' +
-        'completeness without implying removal or claiming complete.',
+        'completeness without implying removal, while the classified skill/agent/rule ' +
+        'components are still retained.',
       partialClassificationBundle,
       ['root', 'classification', 'unavailable', 'deterministic'],
+    ),
+    fixture(
+      'config-components',
+      'A fully-classified session (#342): file-backed skill/agent/rule components from ' +
+        '.devin/skills|agents|rules/**, with no unclassified artifacts, so completeness ' +
+        'for skill/agent/rule reports complete rather than partial.',
+      configComponentsBundle,
+      ['root', 'file-components', 'skill', 'agent', 'rule', 'deterministic'],
     ),
   ],
 };

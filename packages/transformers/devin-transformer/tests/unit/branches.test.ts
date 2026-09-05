@@ -8,28 +8,30 @@ describe('Branch coverage: classification', () => {
   it('handles non-string artifact contents', () => {
     const buffer = new TextEncoder().encode('{"type":"session","id":"s1"}');
     const arrayBuffer = new TextEncoder().encode('hi').buffer;
-    const result = classifyDevinArtifacts([
-      {
-        relativePath: 'transcript.jsonl',
-        content: buffer,
-        mediaType: 'application/jsonl',
-      } as unknown as { relativePath: string; content: unknown; mediaType: string },
-      {
-        relativePath: 'native/schema-descriptor.json',
-        content: arrayBuffer,
-        mediaType: 'application/json',
-      } as unknown as { relativePath: string; content: unknown; mediaType: string },
-      {
-        relativePath: 'native/models.json',
-        content: [{ modelUid: 'x', label: 'X', familyUid: 'f', costTier: 'Standard' }],
-        mediaType: 'application/json',
-      } as unknown as { relativePath: string; content: unknown; mediaType: string },
-      {
-        relativePath: 'unknown.bin',
-        content: 123,
-        mediaType: 'application/octet-stream',
-      } as unknown as { relativePath: string; content: unknown; mediaType: string },
-    ]);
+    const result = classifyDevinArtifacts({
+      artifacts: [
+        {
+          relativePath: 'transcript.jsonl',
+          content: buffer,
+          mediaType: 'application/jsonl',
+        } as unknown as { relativePath: string; content: unknown; mediaType: string },
+        {
+          relativePath: 'native/schema-descriptor.json',
+          content: arrayBuffer,
+          mediaType: 'application/json',
+        } as unknown as { relativePath: string; content: unknown; mediaType: string },
+        {
+          relativePath: 'native/models.json',
+          content: [{ modelUid: 'x', label: 'X', familyUid: 'f', costTier: 'Standard' }],
+          mediaType: 'application/json',
+        } as unknown as { relativePath: string; content: unknown; mediaType: string },
+        {
+          relativePath: 'unknown.bin',
+          content: 123,
+          mediaType: 'application/octet-stream',
+        } as unknown as { relativePath: string; content: unknown; mediaType: string },
+      ],
+    });
     expect(result.artifacts[0]?.kind).toBe('transcript');
     expect(result.artifacts[1]?.kind).toBe('settings');
     expect(result.artifacts[2]?.kind).toBe('settings');
@@ -38,47 +40,53 @@ describe('Branch coverage: classification', () => {
 
   it('decodes a multi-byte UTF-8 code point', () => {
     const encoded = new TextEncoder().encode('é 😀');
-    const result = classifyDevinArtifacts([
-      {
-        relativePath: 'transcript.jsonl',
-        content: encoded,
-        mediaType: 'application/jsonl',
-      } as unknown as { relativePath: string; content: unknown; mediaType: string },
-    ]);
+    const result = classifyDevinArtifacts({
+      artifacts: [
+        {
+          relativePath: 'transcript.jsonl',
+          content: encoded,
+          mediaType: 'application/jsonl',
+        } as unknown as { relativePath: string; content: unknown; mediaType: string },
+      ],
+    });
     expect(result.artifacts[0]?.kind).toBe('transcript');
     expect(result.artifacts[0]?.confidence).toBe('inferred');
   });
 
   it('classifies global config and raw models', () => {
-    const result = classifyDevinArtifacts([
-      { relativePath: 'config.json', content: '{}', mediaType: 'application/json' },
-      {
-        relativePath: 'native/models-list.raw.json',
-        content: 'raw content',
-        mediaType: 'application/json',
-      },
-      { relativePath: 'plans/plan-12345.md', content: '', mediaType: 'text/markdown' },
-    ]);
+    const result = classifyDevinArtifacts({
+      artifacts: [
+        { relativePath: 'config.json', content: '{}', mediaType: 'application/json' },
+        {
+          relativePath: 'native/models-list.raw.json',
+          content: 'raw content',
+          mediaType: 'application/json',
+        },
+        { relativePath: 'plans/plan-12345.md', content: '', mediaType: 'text/markdown' },
+      ],
+    });
     expect(result.artifacts[0]?.scope).toBe('global');
     expect(result.artifacts[1]?.kind).toBe('settings');
     expect(result.artifacts[2]?.confidence).toBe('inferred');
   });
 
   it('infers when schema validation fails', () => {
-    const result = classifyDevinArtifacts([
-      { relativePath: 'transcript.jsonl', content: 'not-json', mediaType: 'application/jsonl' },
-      {
-        relativePath: 'native/atif-transcript.json',
-        content: 'not-json',
-        mediaType: 'application/json',
-      },
-      {
-        relativePath: 'native/schema-descriptor.json',
-        content: '{"refineryVersion":16}',
-        mediaType: 'application/json',
-      },
-      { relativePath: 'native/models.json', content: '[{}]', mediaType: 'application/json' },
-    ]);
+    const result = classifyDevinArtifacts({
+      artifacts: [
+        { relativePath: 'transcript.jsonl', content: 'not-json', mediaType: 'application/jsonl' },
+        {
+          relativePath: 'native/atif-transcript.json',
+          content: 'not-json',
+          mediaType: 'application/json',
+        },
+        {
+          relativePath: 'native/schema-descriptor.json',
+          content: '{"refineryVersion":16}',
+          mediaType: 'application/json',
+        },
+        { relativePath: 'native/models.json', content: '[{}]', mediaType: 'application/json' },
+      ],
+    });
     for (const a of result.artifacts) {
       expect(a.confidence).toBe('inferred');
     }

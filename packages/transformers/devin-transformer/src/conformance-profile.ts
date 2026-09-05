@@ -7,12 +7,15 @@ import type { ConformanceProfile } from '@lucasschirm/sal-transformer-shared/con
  * model rather than convenience:
  * - Metric ids are `devin:`-prefixed.
  * - A complete fixture exhibits `skill`/`tool`/`agent` components (derived
- *   at transform time from `cogs_json` + `tool_call_state`, DS-F11 (#288));
- *   `rule`/`mcp`/`settings` component extraction is tracked as #342.
- * - `classifyArtifacts` emits no components (transform-time derivation), so
- *   the classification invariant checks partial-snapshot semantics without
- *   per-kind presence: unclassified artifacts must never yield a `complete`
- *   claim.
+ *   at transform time from `cogs_json` + `tool_call_state`, DS-F11 (#288)).
+ * - `classifyArtifacts` ALSO emits `skill`/`agent`/`rule` components
+ *   (classify-time, file-backed — `.devin/skills|agents|rules/**` and
+ *   friends, #342); `mcp` extraction stays out of scope (#271 excludes MCP
+ *   config from sync entirely) and `settings` components aren't extracted
+ *   from config files today. `classificationComponentKinds` lists exactly
+ *   the three classify-time kinds so `checkPartialSnapshotsDoNotImplyRemovals`
+ *   asserts the enriched `partial-classification` fixture retains them
+ *   alongside its unclassified artifact.
  * - Sub Agent evidence is inline (`subagent_turn`/`detached_conversation`
  *   normalized events, DS-B28 (#294)) — Devin sub-agents are not distinct
  *   sessions, so there are no `session_relation` records or child session
@@ -28,7 +31,7 @@ import type { ConformanceProfile } from '@lucasschirm/sal-transformer-shared/con
 export const DEVIN_CONFORMANCE_PROFILE: ConformanceProfile = {
   metricPrefix: 'devin',
   completeComponentKinds: ['skill', 'tool', 'agent'],
-  classificationComponentKinds: [],
+  classificationComponentKinds: ['skill', 'agent', 'rule'],
   subagentEvidence: 'inline-events',
   inlineSubagentCategories: ['subagent_turn', 'detached_conversation'],
   skillNameField: 'name',
