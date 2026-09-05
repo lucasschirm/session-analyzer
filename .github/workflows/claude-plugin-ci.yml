@@ -5,7 +5,13 @@ on:
     branches: [main, develop]
     paths:
       - 'packages/plugins/claude-session-sync/**'
+      # Regression coverage for #274: sal-sync (packages/sync) and its
+      # sal-sync-core (packages/sync-core) dependency are bundled into the
+      # claude-sync/claude-session-sync bins by esbuild, so a change to
+      # either can break the packaged bin without the packaged-bin smoke
+      # steps below ever running unless this workflow also triggers on them.
       - 'packages/sync/**'
+      - 'packages/sync-core/**'
       - '.github/workflows/claude-plugin-ci.yml'
   workflow_dispatch:
 
