@@ -20,7 +20,7 @@ describe('parseDevinJsonlLine — session', () => {
         created_at: 900,
         last_activity_at: 1000,
         title: 'My session',
-        main_chain_id: 'chain-1',
+        main_chain_id: 47,
         cogs_json: null,
         workspace_dirs: '["/repo"]',
         hidden: 0,
@@ -42,7 +42,7 @@ describe('parseDevinJsonlLine — session', () => {
       createdAt: 900,
       lastActivityAt: 1000,
       title: 'My session',
-      mainChainId: 'chain-1',
+      mainChainId: 47,
       cogsJson: null,
       workspaceDirs: '["/repo"]',
       hidden: 0,
@@ -53,6 +53,24 @@ describe('parseDevinJsonlLine — session', () => {
   it('skips a session line missing id', () => {
     const result = parseDevinJsonlLine(line({ type: 'session', ts: null, order: 0 }), 1);
     expect('warning' in result).toBe(true);
+  });
+
+  // #324: main_chain_id is INTEGER in every observed sessions.db; the old
+  // str() coercion nulled it on all real data, killing the authoritative
+  // main-chain signal.
+  it.each([
+    [47, 47],
+    ['47', 47],
+    ['chain-1', null],
+    [null, null],
+    [undefined, null],
+  ])('normalizes main_chain_id %j to %j (#324)', (raw, expected) => {
+    const result = parseDevinJsonlLine(
+      line({ type: 'session', ts: 1000, order: 0, id: 'sess-1', main_chain_id: raw }),
+      1,
+    );
+    if (!('line' in result) || result.line.type !== 'session') throw new Error('expected session');
+    expect(result.line.mainChainId).toBe(expected);
   });
 });
 

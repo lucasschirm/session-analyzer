@@ -50,6 +50,23 @@ function num(record: Record<string, unknown>, key: string): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Integer field that the real schema stores as INTEGER but older synthetic
+ * transcripts (and defensive callers) may carry as a numeric string (#324:
+ * `main_chain_id` is INTEGER in every observed sessions.db; coercing it
+ * through `str()` nulled the authoritative main-chain signal on all real
+ * data). Non-integer and non-numeric values stay null — never guessed.
+ */
+function intOrNull(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+}
+
 type SessionFields = Omit<DevinSessionLine, 'type' | 'ts' | 'order' | 'id'>;
 
 function sessionFields(row: RawDevinJsonlLine): SessionFields {
@@ -61,7 +78,7 @@ function sessionFields(row: RawDevinJsonlLine): SessionFields {
     createdAt: num(row, 'created_at'),
     lastActivityAt: num(row, 'last_activity_at'),
     title: str(row, 'title'),
-    mainChainId: str(row, 'main_chain_id'),
+    mainChainId: intOrNull(row, 'main_chain_id'),
     cogsJson: str(row, 'cogs_json'),
     workspaceDirs: str(row, 'workspace_dirs'),
     hidden: num(row, 'hidden'),

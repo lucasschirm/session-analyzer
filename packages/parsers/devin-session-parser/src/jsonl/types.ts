@@ -36,7 +36,12 @@ export interface DevinSessionLine {
   createdAt: number | null;
   lastActivityAt: number | null;
   title: string | null;
-  mainChainId: string | null;
+  /**
+   * The session's main-chain leaf node id — INTEGER in the real schema
+   * (#324); numeric strings from older synthetic transcripts are tolerated
+   * and normalized to a number.
+   */
+  mainChainId: number | null;
   cogsJson: string | null;
   workspaceDirs: string | null;
   hidden: number | null;
