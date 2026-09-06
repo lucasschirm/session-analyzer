@@ -114,7 +114,13 @@ const MODEL_REGISTRY: Record<string, RegisteredModel> = {
   },
 };
 
-function resolveModel(model: string | undefined): RegisteredModel | undefined {
+/**
+ * Exported so claude-code-metrics.ts's `isRecognizedForCost` can delegate to
+ * this same prefix list rather than maintaining its own byte-identical copy
+ * — the two "is this a model we know how to price" checks must never drift
+ * apart (#377 review).
+ */
+export function resolveModel(model: string | undefined): RegisteredModel | undefined {
   if (model === undefined) return undefined;
   const exact = MODEL_REGISTRY[model];
   if (exact) return exact;

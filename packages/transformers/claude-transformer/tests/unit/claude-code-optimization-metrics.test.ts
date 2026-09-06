@@ -420,6 +420,51 @@ function partialMiddleTurnJsonl(): string {
   ].join('\n');
 }
 
+/** Every request in the session has incomplete usage — the anchor is
+ *  missing `cache_read_input_tokens`, the second is missing
+ *  `cache_creation_input_tokens`. */
+function allTurnsPartialJsonl(): string {
+  return [
+    JSON.stringify({
+      type: 'permission-mode',
+      permissionMode: 'normal',
+      sessionId: 'synth-partial',
+    }),
+    userTurn({
+      uuid: 'u-ap-1',
+      parentUuid: null,
+      ts: '2026-08-01T10:00:00.000Z',
+      tsMs: 1_722_506_400_000,
+      line: 2,
+    }),
+    assistantTurn({
+      uuid: 'a-ap-1',
+      parentUuid: 'u-ap-1',
+      ts: '2026-08-01T10:00:01.000Z',
+      tsMs: 1_722_506_401_000,
+      line: 3,
+      text: 'Hi',
+      usage: { input_tokens: 1_000, output_tokens: 50, cache_creation_input_tokens: 100 },
+    }),
+    userTurn({
+      uuid: 'u-ap-2',
+      parentUuid: 'a-ap-1',
+      ts: '2026-08-01T10:00:02.000Z',
+      tsMs: 1_722_506_402_000,
+      line: 4,
+    }),
+    assistantTurn({
+      uuid: 'a-ap-2',
+      parentUuid: 'u-ap-2',
+      ts: '2026-08-01T10:00:03.000Z',
+      tsMs: 1_722_506_403_000,
+      line: 5,
+      text: 'Done',
+      usage: { input_tokens: 1_200, output_tokens: 40, cache_read_input_tokens: 100 },
+    }),
+  ].join('\n');
+}
+
 function latencyAndParallelismJsonl(): string {
   const lines = [
     JSON.stringify({ type: 'permission-mode', permissionMode: 'normal', sessionId: 'synth-lat' }),
@@ -829,8 +874,15 @@ describe('claude-code-optimization-metrics', () => {
       // Anchor (turn 1) = 1_000+100+50 = 1_150; turn 2 is unknown (excluded,
       // never zero-filled); turn 3 = 1_200+0+100 = 1_300 -> delta 150.
       expect(first?.value).toBe(1_150);
-      expect(first?.exact).toBe(false); // a partial record exists in-session
+      // first_request_tokens depends solely on the anchor (turn 1), which is
+      // itself fully known — turn 2's incompleteness must not taint it, even
+      // though turn 2 is a real record elsewhere in the same session.
+      expect(first?.exact).toBe(true);
       expect(growthMax?.value).toBe(150);
+      // growth_max depends on the anchor plus every *contributing* record
+      // (turn 1, turn 3) — turn 2 was excluded, not counted, so it must not
+      // taint this exactness either.
+      expect(growthMax?.exact).toBe(true);
       expect(growthMean?.value).toBeCloseTo(75, 6); // (0 + 150) / 2 known deltas
       // total input = 1_150 + 1_300 = 2_450 (turn 2 excluded wholesale, not
       // partially folded in); cache_read = 50+100 = 150; cache_creation = 100+0 = 100.
@@ -845,6 +897,26 @@ describe('claude-code-optimization-metrics', () => {
       expect(growthMean?.evidenceRecordIds.length).toBe(2);
       expect(hitRate?.evidenceRecordIds.length).toBe(2);
       expect(writeRate?.evidenceRecordIds.length).toBe(2);
+    });
+
+    it('marks every context/cache metric unavailable when the anchor and every later request are all incomplete (#377)', () => {
+      const b = bundle([artifact('transcript.jsonl', allTurnsPartialJsonl(), 'application/jsonl')]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      // The anchor-null branch (first_request/growth_*) and the
+      // known.length===0 branch (hit_rate/write_rate) are independent code
+      // paths (#377) — this fixture exercises both simultaneously, since
+      // every request (including the anchor) is missing a field.
+      for (const metricId of [
+        'claude:context:first_request_tokens:root_only',
+        'claude:context:growth_max_tokens:root_only',
+        'claude:context:growth_mean_tokens:root_only',
+        'claude:cache:hit_rate:root_only',
+        'claude:cache:write_rate:root_only',
+      ]) {
+        const metric = findMetric(result, metricId);
+        expect(metric?.value).toBeNull();
+        expect(metric?.unavailableReason).toBeTruthy();
+      }
     });
   });
 

@@ -1211,9 +1211,6 @@ export function deriveClaudeCodeOptimizationMetrics(
 
     // Context and cache
     const sorted = sortModelUsage(modelUsageRecords, turnMap);
-    const allTokenExact = sorted.every(
-      (r) => (r.payload as ModelUsagePayload).tokenValuesExact === true,
-    );
     const firstDef = definitionFor(`claude:context:first_request_tokens:${scope}`);
     const growthMaxDef = definitionFor(`claude:context:growth_max_tokens:${scope}`);
     const growthMeanDef = definitionFor(`claude:context:growth_mean_tokens:${scope}`);
@@ -1297,11 +1294,20 @@ export function deriveClaudeCodeOptimizationMetrics(
         const knownDeltas = known.map((u) => Math.max(0, u.total - anchor));
         const growthMax = Math.max(...knownDeltas);
         const growthMean = knownDeltas.reduce((a, b) => a + b, 0) / knownDeltas.length;
+        // Exactness reflects only the record(s) each value actually depends
+        // on, not every record observed in the whole session (`sorted` can
+        // include records excluded from this specific computation) —
+        // first_request_tokens depends solely on the anchor; growth_max
+        // depends on the anchor plus every contributing (known) record.
+        const anchorExact = (sorted[0].payload as ModelUsagePayload).tokenValuesExact === true;
+        const knownExact = known.every(
+          (u) => (u.record.payload as ModelUsagePayload).tokenValuesExact === true,
+        );
 
         pushMetric(
           firstDef,
           anchor,
-          allTokenExact,
+          anchorExact,
           contextRecordIds,
           contextProvenance,
           'first_request_total_input_tokens',
@@ -1309,7 +1315,7 @@ export function deriveClaudeCodeOptimizationMetrics(
         pushMetric(
           growthMaxDef,
           growthMax,
-          allTokenExact,
+          knownExact,
           knownRecordIds,
           knownProvenance,
           'max_delta_from_first_request_anchor',

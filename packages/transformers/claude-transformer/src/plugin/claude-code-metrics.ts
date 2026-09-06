@@ -23,6 +23,7 @@ import {
   normalizeValidations,
 } from './claude-code-tasks.js';
 import type { InvocationPayload, ModelUsagePayload } from './claude-code-usage.js';
+import { resolveModel } from './claude-code-usage.js';
 
 // ---------------------------------------------------------------------------
 // Versioning
@@ -175,14 +176,14 @@ function entryTimestampMs(entry: ClaudeCodeEntry): number | undefined {
   return undefined;
 }
 
+/**
+ * Delegates to claude-code-usage.ts's `resolveModel` (#377 review) instead
+ * of maintaining a separately-hand-kept prefix list that could silently
+ * drift from the one `normalizeModelUsage`/cost computation actually prices
+ * against.
+ */
 function isRecognizedForCost(model: string | undefined): boolean {
-  if (!model) return false;
-  const lower = model.toLowerCase();
-  if (lower.startsWith('claude-3-5-sonnet')) return true;
-  if (lower.startsWith('claude-3-5-haiku')) return true;
-  if (lower.startsWith('claude-3-opus')) return true;
-  if (lower.startsWith('claude-3-haiku')) return true;
-  return false;
+  return resolveModel(model) !== undefined;
 }
 
 function extractRootSession(bundle: UnknownArtifactBundle): ClaudeCodeSession | undefined {
