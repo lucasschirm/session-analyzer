@@ -114,7 +114,13 @@ const MODEL_REGISTRY: Record<string, RegisteredModel> = {
   },
 };
 
-function resolveModel(model: string | undefined): RegisteredModel | undefined {
+/**
+ * Exported so claude-code-metrics.ts's `isRecognizedForCost` can delegate to
+ * this same prefix list rather than maintaining its own byte-identical copy
+ * — the two "is this a model we know how to price" checks must never drift
+ * apart (#377 review).
+ */
+export function resolveModel(model: string | undefined): RegisteredModel | undefined {
   if (model === undefined) return undefined;
   const exact = MODEL_REGISTRY[model];
   if (exact) return exact;
@@ -153,10 +159,10 @@ export interface ModelUsagePayload {
   readonly turnRecordId: string;
   readonly model: string;
   readonly provider: string;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  readonly cacheCreationTokens: number;
-  readonly cacheReadTokens: number;
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly cacheCreationTokens: number | null;
+  readonly cacheReadTokens: number | null;
   readonly thinkingTokens?: number;
   readonly tokenValuesExact: boolean;
   readonly cost?: number;
@@ -688,15 +694,33 @@ export function normalizeModelUsage(
         model,
       });
       const registered = resolveModel(model);
-      const inputTokens = usage.input_tokens ?? 0;
-      const outputTokens = usage.output_tokens ?? 0;
-      const cacheCreationTokens = usage.cache_creation_input_tokens ?? 0;
-      const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
+      const inputTokens = usage.input_tokens;
+      const outputTokens = usage.output_tokens;
+      const cacheCreationTokens = usage.cache_creation_input_tokens;
+      const cacheReadTokens = usage.cache_read_input_tokens;
       const thinkingTokens = usage.output_tokens_details?.thinking_tokens;
+      // Exact iff the source actually reported every field this record
+      // depends on — mirrors devin-transformer's stepMetricsAreExact, per
+      // .agents/rules/missing-is-never-zero.md (#377). A hardcoded `true`
+      // here previously claimed exactness regardless of source completeness.
+      const tokenValuesExact =
+        inputTokens !== null &&
+        outputTokens !== null &&
+        cacheCreationTokens !== null &&
+        cacheReadTokens !== null;
       let cost: number | undefined;
       let pricingVersionId: string | undefined;
       let currency: string | undefined;
-      if (registered) {
+      // Narrowing `tokenValuesExact` alone doesn't narrow the individual
+      // fields for TS, so the null checks are repeated here rather than
+      // relied on via that boolean.
+      if (
+        registered &&
+        inputTokens !== null &&
+        outputTokens !== null &&
+        cacheCreationTokens !== null &&
+        cacheReadTokens !== null
+      ) {
         cost =
           inputTokens * registered.inputTokenPrice +
           outputTokens * registered.outputTokenPrice +
@@ -722,7 +746,7 @@ export function normalizeModelUsage(
         cacheCreationTokens,
         cacheReadTokens,
         thinkingTokens,
-        tokenValuesExact: true,
+        tokenValuesExact,
         cost,
         costExact: false,
         pricingVersionId,

@@ -46,6 +46,7 @@ interface DefinitionOptions {
   readonly allocationMethod?: string;
   readonly missingDataBehavior?: 'unknown' | 'not_applicable';
   readonly denominator?: string;
+  readonly version?: number;
 }
 
 function metricDefinition(
@@ -65,7 +66,7 @@ function metricDefinition(
 ): MetricDefinition {
   return {
     metricId,
-    version: 1,
+    version: options.version ?? 1,
     label,
     description,
     family,
@@ -130,6 +131,10 @@ interface BaseMetricSpec {
   readonly populationRule: string;
   readonly statusRule: string;
   readonly requiredEvidence: EvidenceRequirement;
+  /** Omit for version 1. Bump when the formula/computation method changes
+   *  what a metric can report for the same underlying session data, per
+   *  `.agents/rules/metric-meaning-versioning.md`. */
+  readonly version?: number;
 }
 
 const BASE_SPECS: readonly BaseMetricSpec[] = [
@@ -146,6 +151,11 @@ const BASE_SPECS: readonly BaseMetricSpec[] = [
     populationRule: 'sessions_with_assistant_requests',
     statusRule: 'include_partial_censored',
     requiredEvidence: 'assistant_requests',
+    // Version 2 (#377): a request whose own usage is incomplete is now
+    // excluded as the anchor (reported unavailable) instead of silently
+    // treating its missing cache/input field as zero — a different result
+    // for the same underlying session than v1 could ever produce.
+    version: 2,
   },
   {
     metricId: 'claude:context:growth_max_tokens',
@@ -161,6 +171,9 @@ const BASE_SPECS: readonly BaseMetricSpec[] = [
     populationRule: 'sessions_with_assistant_requests',
     statusRule: 'right_censored_partial',
     requiredEvidence: 'assistant_requests',
+    // Version 2 (#377): requests with incomplete usage are excluded from
+    // the delta computation instead of contributing a phantom-zero total.
+    version: 2,
   },
   {
     metricId: 'claude:context:growth_mean_tokens',
@@ -176,6 +189,8 @@ const BASE_SPECS: readonly BaseMetricSpec[] = [
     populationRule: 'sessions_with_assistant_requests',
     statusRule: 'right_censored_partial',
     requiredEvidence: 'assistant_requests',
+    // Version 2 (#377): see growth_max_tokens.
+    version: 2,
   },
   {
     metricId: 'claude:cache:hit_rate',
@@ -190,6 +205,12 @@ const BASE_SPECS: readonly BaseMetricSpec[] = [
     populationRule: 'sessions_with_input_tokens',
     statusRule: 'right_censored_partial',
     requiredEvidence: 'assistant_requests',
+    // Version 2 (#377): a request missing any of the three components this
+    // ratio depends on is now excluded wholesale from both the numerator
+    // and denominator instead of contributing a phantom-zero term — a
+    // different result for the same underlying session than v1 could ever
+    // produce.
+    version: 2,
   },
   {
     metricId: 'claude:cache:write_rate',
@@ -204,6 +225,8 @@ const BASE_SPECS: readonly BaseMetricSpec[] = [
     populationRule: 'sessions_with_input_tokens',
     statusRule: 'right_censored_partial',
     requiredEvidence: 'assistant_requests',
+    // Version 2 (#377): see hit_rate.
+    version: 2,
   },
   {
     metricId: 'claude:compaction:count',
@@ -411,6 +434,7 @@ export function getClaudeCodeOptimizationMetricDefinitions(): readonly MetricDef
           spec.aggregation,
           spec.populationRule,
           spec.statusRule,
+          { version: spec.version },
         ),
       );
       requiredEvidenceByMetricId.set(metricId, spec.requiredEvidence);
@@ -704,6 +728,39 @@ function sortModelUsage(
     if (tb !== undefined) return 1;
     return 0;
   });
+}
+
+interface KnownTokenUsage {
+  readonly record: NormalizedEvidenceRecord;
+  readonly inputTokens: number;
+  readonly cacheCreationTokens: number;
+  readonly cacheReadTokens: number;
+  /** Raw input + cache-creation + cache-read, the composite the context and
+   *  cache-hit-rate metrics below are built from. */
+  readonly total: number;
+}
+
+/**
+ * Resolves one `model_usage` record's token fields only when all three
+ * components (input, cache-creation, cache-read) the context/cache metrics
+ * below depend on are known — `null` otherwise. A composite built from a
+ * partial record must not silently treat the missing piece as zero, per
+ * `.agents/rules/missing-is-never-zero.md` (#377). Narrowing the fields once
+ * here (rather than re-checking nullness at each call site) avoids either
+ * dead-code guards or unsound casts downstream.
+ */
+function knownTokenUsage(record: NormalizedEvidenceRecord): KnownTokenUsage | null {
+  const { inputTokens, cacheCreationTokens, cacheReadTokens } = record.payload as ModelUsagePayload;
+  if (inputTokens === null || cacheCreationTokens === null || cacheReadTokens === null) {
+    return null;
+  }
+  return {
+    record,
+    inputTokens,
+    cacheCreationTokens,
+    cacheReadTokens,
+    total: inputTokens + cacheCreationTokens + cacheReadTokens,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1154,9 +1211,6 @@ export function deriveClaudeCodeOptimizationMetrics(
 
     // Context and cache
     const sorted = sortModelUsage(modelUsageRecords, turnMap);
-    const allTokenExact = sorted.every(
-      (r) => (r.payload as ModelUsagePayload).tokenValuesExact === true,
-    );
     const firstDef = definitionFor(`claude:context:first_request_tokens:${scope}`);
     const growthMaxDef = definitionFor(`claude:context:growth_max_tokens:${scope}`);
     const growthMeanDef = definitionFor(`claude:context:growth_mean_tokens:${scope}`);
@@ -1210,98 +1264,150 @@ export function deriveClaudeCodeOptimizationMetrics(
         'no assistant requests with token usage',
       );
     } else {
-      const totalInputs = sorted.map((r) => {
-        const p = r.payload as ModelUsagePayload;
-        return p.inputTokens + p.cacheCreationTokens + p.cacheReadTokens;
-      });
-      const anchor = totalInputs[0] as number;
-      const deltas = totalInputs.map((t) => Math.max(0, t - anchor));
-      const growthMax = Math.max(...deltas);
-      const growthMean = deltas.reduce((a, b) => a + b, 0) / totalInputs.length;
+      const usages = sorted.map(knownTokenUsage);
+      const anchor = usages[0]?.total ?? null;
+      const known = usages.filter((u): u is KnownTokenUsage => u !== null);
+      const knownRecordIds = known.map((u) => u.record.recordId);
+      const knownProvenance = known.map((u) => provenanceForRecord(u.record, rootArtifactId));
       const contextRecordIds = sorted.map((r) => r.recordId);
       const contextProvenance = sorted.map((r) => provenanceForRecord(r, rootArtifactId));
       const contextPartialReason = censored
         ? 'right-censored session; further assistant requests may occur'
         : undefined;
 
-      pushMetric(
-        firstDef,
-        anchor,
-        allTokenExact,
-        contextRecordIds,
-        contextProvenance,
-        'first_request_total_input_tokens',
-      );
-      pushMetric(
-        growthMaxDef,
-        growthMax,
-        allTokenExact,
-        contextRecordIds,
-        contextProvenance,
-        'max_delta_from_first_request_anchor',
-        undefined,
-        contextPartialReason,
-      );
-      pushMetric(
-        growthMeanDef,
-        growthMean,
-        false,
-        contextRecordIds,
-        contextProvenance,
-        'mean_delta_from_first_request_anchor',
-        undefined,
-        contextPartialReason,
-      );
+      // first_request_tokens/growth_max/growth_mean are defined relative to
+      // the first (anchor) request specifically — if its own usage is
+      // incomplete, these three are unavailable regardless of what later
+      // requests report (#377). hit_rate/write_rate below have no such
+      // dependency on the anchor and are computed independently of it.
+      if (anchor === null) {
+        const noAnchorReason = 'first assistant request has incomplete token usage';
+        pushMetric(firstDef, null, false, [], [], 'first_request_incomplete', noAnchorReason);
+        pushMetric(growthMaxDef, null, false, [], [], 'first_request_incomplete', noAnchorReason);
+        pushMetric(growthMeanDef, null, false, [], [], 'first_request_incomplete', noAnchorReason);
+      } else {
+        // Records with an unknown combined total are excluded from the
+        // deltas below (and from the evidence cited for these two metrics)
+        // rather than treated as a zero delta — same "missing never
+        // contributes to a sum, and is never cited as evidence for a
+        // computation it didn't contribute to" rule.
+        const knownDeltas = known.map((u) => Math.max(0, u.total - anchor));
+        const growthMax = Math.max(...knownDeltas);
+        const growthMean = knownDeltas.reduce((a, b) => a + b, 0) / knownDeltas.length;
+        // Exactness reflects only the record(s) each value actually depends
+        // on, not every record observed in the whole session (`sorted` can
+        // include records excluded from this specific computation) —
+        // first_request_tokens depends solely on the anchor; growth_max
+        // depends on the anchor plus every contributing (known) record.
+        const anchorExact = (sorted[0].payload as ModelUsagePayload).tokenValuesExact === true;
+        const knownExact = known.every(
+          (u) => (u.record.payload as ModelUsagePayload).tokenValuesExact === true,
+        );
 
-      let totalInput = 0;
-      let cacheRead = 0;
-      let cacheCreation = 0;
-      for (const r of sorted) {
-        const p = r.payload as ModelUsagePayload;
-        totalInput += p.inputTokens + p.cacheCreationTokens + p.cacheReadTokens;
-        cacheRead += p.cacheReadTokens;
-        cacheCreation += p.cacheCreationTokens;
+        pushMetric(
+          firstDef,
+          anchor,
+          anchorExact,
+          contextRecordIds,
+          contextProvenance,
+          'first_request_total_input_tokens',
+        );
+        pushMetric(
+          growthMaxDef,
+          growthMax,
+          knownExact,
+          knownRecordIds,
+          knownProvenance,
+          'max_delta_from_first_request_anchor',
+          undefined,
+          contextPartialReason,
+        );
+        pushMetric(
+          growthMeanDef,
+          growthMean,
+          false,
+          knownRecordIds,
+          knownProvenance,
+          'mean_delta_from_first_request_anchor',
+          undefined,
+          contextPartialReason,
+        );
       }
-      if (totalInput === 0) {
+
+      // hit_rate/write_rate depend only on SOME requests having a fully
+      // known token composite — not specifically the first one — so they
+      // must not be gated on `anchor !== null` (#377): a session whose
+      // first request is incomplete but later requests are fully known
+      // must still report these two ratios.
+      if (known.length === 0) {
         pushMetric(
           hitDef,
           null,
           false,
-          contextRecordIds,
-          contextProvenance,
-          'zero_total_input_tokens',
-          'total input tokens are zero',
+          [],
+          [],
+          'no_requests_with_complete_token_usage',
+          'no assistant requests with complete token usage',
         );
         pushMetric(
           writeDef,
           null,
           false,
-          contextRecordIds,
-          contextProvenance,
-          'zero_total_input_tokens',
-          'total input tokens are zero',
+          [],
+          [],
+          'no_requests_with_complete_token_usage',
+          'no assistant requests with complete token usage',
         );
       } else {
-        pushMetric(
-          hitDef,
-          cacheRead / totalInput,
-          false,
-          contextRecordIds,
-          contextProvenance,
-          'cache_read_to_total_input_ratio',
-          undefined,
-          contextPartialReason,
-        );
-        pushMetric(
-          writeDef,
-          cacheCreation / totalInput,
-          false,
-          contextRecordIds,
-          contextProvenance,
-          'cache_creation_to_total_input_ratio',
-          undefined,
-          contextPartialReason,
-        );
+        let totalInput = 0;
+        let cacheRead = 0;
+        let cacheCreation = 0;
+        for (const u of known) {
+          totalInput += u.total;
+          cacheRead += u.cacheReadTokens;
+          cacheCreation += u.cacheCreationTokens;
+        }
+        if (totalInput === 0) {
+          pushMetric(
+            hitDef,
+            null,
+            false,
+            knownRecordIds,
+            knownProvenance,
+            'zero_total_input_tokens',
+            'total input tokens are zero',
+          );
+          pushMetric(
+            writeDef,
+            null,
+            false,
+            knownRecordIds,
+            knownProvenance,
+            'zero_total_input_tokens',
+            'total input tokens are zero',
+          );
+        } else {
+          pushMetric(
+            hitDef,
+            cacheRead / totalInput,
+            false,
+            knownRecordIds,
+            knownProvenance,
+            'cache_read_to_total_input_ratio',
+            undefined,
+            contextPartialReason,
+          );
+          pushMetric(
+            writeDef,
+            cacheCreation / totalInput,
+            false,
+            knownRecordIds,
+            knownProvenance,
+            'cache_creation_to_total_input_ratio',
+            undefined,
+            contextPartialReason,
+          );
+        }
       }
     }
 

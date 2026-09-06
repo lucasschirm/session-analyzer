@@ -115,6 +115,13 @@ component retains a source pointer (JSON Pointer or text range).
 - **Estimated token counts**: A tokenizer can make captured-text token counts
   exact under a named tokenizer/method, but this does not turn them into
   provider-observed request usage.
+- **Partial per-request token usage**: An individual request's `usage` object
+  can legitimately omit or malform one or more of `input_tokens`/
+  `output_tokens`/`cache_creation_input_tokens`/`cache_read_input_tokens`
+  (older log format, non-standard entry). Such fields propagate as missing,
+  never a measured zero (#377); `model_usage.tokenValuesExact` and the
+  affected `claude:context:*`/`claude:cache:*`/`claude:cost:total` metrics'
+  `exact` flag reflect this per-record rather than assuming completeness.
 - **Global configuration scope**: A global artifact can be observed by sessions
   in many projects. One global update creates one environment lifecycle event
   and project/session exposure intervals; it is not duplicated per project.
