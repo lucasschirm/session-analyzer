@@ -1,7 +1,6 @@
 {
   "name": "@lucasschirm/devin-session-sync",
   "version": "0.1.0",
-  "private": false,
   "type": "module",
   "license": "ISC",
   "description": "Devin CLI plugin adapter for the @lucasschirm/sal-sync session data sync engine (SQLite->JSONL extractor, devin-sync CLI, and sessions.db-watermark watcher).",
