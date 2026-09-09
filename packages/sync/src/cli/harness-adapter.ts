@@ -83,4 +83,18 @@ export interface CliHarnessAdapter {
   migrateManifestHarness: string;
   /** Full help text for `<bin> --help` / `<bin> -h` / no-args. */
   helpText: string;
+  /**
+   * Optional: list all working directories this harness has sessions for,
+   * for `workdir list` and `workdir add`'s interactive selection. Returns
+   * distinct, non-null `working_directory` values from the harness's
+   * session store. Omitted when a harness has no session store that maps
+   * sessions to working directories (in which case `workdir list` shows
+   * only the configured workdirs from the project config file).
+   */
+  listAvailableWorkdirs?: (options: {
+    env?: Record<string, string | undefined>;
+    cwd?: string;
+    homeDir?: string;
+    sessionsDbPath?: string;
+  }) => Promise<string[]>;
 }

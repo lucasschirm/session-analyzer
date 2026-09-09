@@ -10,6 +10,7 @@ import { formatAbortMessage, writeErrorLog } from './cli/logger.js';
 import { runMigrateCommand } from './cli/migrate-command.js';
 import { runRemoveCommand } from './cli/remove-command.js';
 import { runSyncCommand } from './cli/sync-command.js';
+import { runWorkdirCommand } from './cli/workdir-command.js';
 import { DevinCliAdapter } from './devin-cli-adapter.js';
 import { isMainModule } from './is-main-module.js';
 
@@ -33,7 +34,14 @@ function readPackageVersion(): string {
  */
 export const main = createCliMain(
   DevinCliAdapter,
-  { runSyncCommand, runListCommand, runDownloadCommand, runRemoveCommand, runMigrateCommand },
+  {
+    runSyncCommand,
+    runListCommand,
+    runDownloadCommand,
+    runRemoveCommand,
+    runMigrateCommand,
+    runWorkdirCommand,
+  },
   readPackageVersion,
 );
 

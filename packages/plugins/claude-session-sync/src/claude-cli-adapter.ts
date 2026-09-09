@@ -32,6 +32,10 @@ Commands:
   migrate --yes                          Copy old keys to new format + generate missing manifests
   migrate --yes --manifests              Only generate missing manifests (skip key migration)
   migrate --yes --delete-old             Copy and warn about old keys to delete manually
+  workdir list                            List configured working directories for this project
+  workdir add <path>                      Add a working directory (resolves ., ~, relative)
+  workdir add /path/to/worktrees/*        Add a glob/wildcard pattern
+  workdir remove <path>                   Remove a working directory from this project's config
 
 Options:
   -v, --version                           Print version and exit

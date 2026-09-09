@@ -7,6 +7,7 @@ import {
   type PutObjectResult,
   type StorageAdapter,
   sha256Hex,
+  writeWorkdirConfig,
 } from '@lucasschirm/sal-sync';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { runSyncCommand } from '../../src/cli/sync-command.js';
@@ -141,6 +142,7 @@ describe('runSyncCommand', () => {
       storageAdapter: storage,
       stdout,
       models: stubModels,
+      all: true,
     });
 
     expect(code).toBe(0);
@@ -198,6 +200,7 @@ describe('runSyncCommand', () => {
       storageAdapter: storage,
       stdout,
       models: stubModels,
+      all: true,
     });
     const { stream: stdout2, lines: lines2 } = writable();
     const code = await runSyncCommand({
@@ -208,6 +211,7 @@ describe('runSyncCommand', () => {
       force: true,
       stdout: stdout2,
       models: stubModels,
+      all: true,
     });
     expect(code).toBe(0);
     expect(lines2.join('')).toContain('[force]');
@@ -262,6 +266,7 @@ describe('runSyncCommand', () => {
       sessionsDbPath: fixture.path,
       homeDir,
       stdout,
+      all: true,
     });
     expect(code).toBe(1);
     expect(lines.join('')).toContain('[fail] session sess-bad');
@@ -301,6 +306,7 @@ describe('runSyncCommand', () => {
           throw new Error('devin cli unavailable');
         },
       },
+      all: true,
     });
 
     // The real session artifacts (transcript, config, manifest, ...) all
@@ -361,9 +367,225 @@ describe('runSyncCommand', () => {
       storageAdapter: failingStorage,
       stdout,
       models: stubModels,
+      all: true,
     });
 
     expect(code).toBe(1);
     expect(lines.join('')).toContain('failed');
+  });
+});
+
+describe('runSyncCommand workdir filtering', () => {
+  let fixture: FixtureDbHandle | undefined;
+  let dataDir: string;
+  let homeDir: string;
+
+  beforeEach(async () => {
+    dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'devin-sync-workdir-'));
+    homeDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'devin-sync-home-'));
+  });
+
+  afterEach(async () => {
+    fixture?.close();
+    fixture = undefined;
+    await fsp.rm(dataDir, { recursive: true, force: true });
+    await fsp.rm(homeDir, { recursive: true, force: true });
+  });
+
+  const stubModels = { runModelsList: async () => devinModelsListFixture };
+
+  function envFor(): Record<string, string> {
+    return {
+      SAL_PROJECT_ID: 'proj-workdir',
+      SAL_STORAGE_TYPE: 's3',
+      SAL_STORAGE_BUCKET: 'test-bucket',
+      SAL_STORAGE_REGION: 'us-east-1',
+      SAL_STORAGE_ACCESS_KEY_ID: 'AKIAIOSFODNN7EXAMPLE',
+      SAL_STORAGE_SECRET_ACCESS_KEY: 'secret',
+      SAL_DATA_DIR: dataDir,
+    };
+  }
+
+  function writable(): { stream: NodeJS.WritableStream; lines: string[] } {
+    const lines: string[] = [];
+    return {
+      stream: {
+        write: (chunk: string) => {
+          lines.push(chunk);
+          return true;
+        },
+      } as NodeJS.WritableStream,
+      lines,
+    };
+  }
+
+  function sessionRow(id: string, workdir: string | null) {
+    return {
+      id,
+      working_directory: workdir,
+      backend_type: null,
+      model: 'devin-1',
+      agent_mode: null,
+      created_at: 100,
+      last_activity_at: 200,
+      title: id,
+      main_chain_id: null,
+      cogs_json: null,
+      workspace_dirs: null,
+      hidden: 0,
+      metadata: null,
+    };
+  }
+
+  it('filters by current cwd when no workdir config exists', async () => {
+    fixture = buildFixtureDb({
+      sessions: [
+        sessionRow('s-cwd', '/tmp/current-proj'),
+        sessionRow('s-other', '/tmp/other-proj'),
+      ],
+    });
+    const storage = new RecordingStorageAdapter();
+    const { stream: stdout, lines } = writable();
+    const code = await runSyncCommand({
+      env: envFor(),
+      cwd: '/tmp/current-proj',
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: storage,
+      stdout,
+      models: stubModels,
+    });
+    expect(code).toBe(0);
+    expect(lines.join('')).toContain('Filtering by current directory: /tmp/current-proj');
+    expect(lines.join('')).toContain('Synced 1 session(s)');
+    const manifestCalls = storage.calls.filter((c) => c.scope === 'manifest');
+    expect(manifestCalls).toHaveLength(1);
+  });
+
+  it('filters by configured workdir patterns when config exists', async () => {
+    fixture = buildFixtureDb({
+      sessions: [
+        sessionRow('s-a', '/tmp/proj-a'),
+        sessionRow('s-b', '/tmp/proj-b'),
+        sessionRow('s-c', '/tmp/other'),
+      ],
+    });
+    await writeWorkdirConfig(dataDir, 'proj-workdir', {
+      workdirs: ['/tmp/proj-a', '/tmp/proj-b'],
+    });
+    const storage = new RecordingStorageAdapter();
+    const { stream: stdout, lines } = writable();
+    const code = await runSyncCommand({
+      env: envFor(),
+      cwd: '/unrelated',
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: storage,
+      stdout,
+      models: stubModels,
+    });
+    expect(code).toBe(0);
+    expect(lines.join('')).toContain('Filtering by 2 workdir pattern(s)');
+    expect(lines.join('')).toContain('Synced 2 session(s)');
+    const manifestCalls = storage.calls.filter((c) => c.scope === 'manifest');
+    expect(manifestCalls).toHaveLength(2);
+  });
+
+  it('filters by glob pattern', async () => {
+    fixture = buildFixtureDb({
+      sessions: [
+        sessionRow('s-1', '/tmp/worktrees/feature-a'),
+        sessionRow('s-2', '/tmp/worktrees/feature-b'),
+        sessionRow('s-3', '/tmp/unrelated'),
+      ],
+    });
+    await writeWorkdirConfig(dataDir, 'proj-workdir', {
+      workdirs: ['/tmp/worktrees/*'],
+    });
+    const storage = new RecordingStorageAdapter();
+    const { stream: stdout, lines } = writable();
+    const code = await runSyncCommand({
+      env: envFor(),
+      cwd: '/unrelated',
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: storage,
+      stdout,
+      models: stubModels,
+    });
+    expect(code).toBe(0);
+    expect(lines.join('')).toContain('Synced 2 session(s)');
+    const manifestCalls = storage.calls.filter((c) => c.scope === 'manifest');
+    expect(manifestCalls).toHaveLength(2);
+  });
+
+  it('excludes sessions with null working_directory when filtering', async () => {
+    fixture = buildFixtureDb({
+      sessions: [sessionRow('s-null', null), sessionRow('s-cwd', '/tmp/current-proj')],
+    });
+    const storage = new RecordingStorageAdapter();
+    const { stream: stdout, lines } = writable();
+    const code = await runSyncCommand({
+      env: envFor(),
+      cwd: '/tmp/current-proj',
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: storage,
+      stdout,
+      models: stubModels,
+    });
+    expect(code).toBe(0);
+    expect(lines.join('')).toContain('Synced 1 session(s)');
+    const manifestCalls = storage.calls.filter((c) => c.scope === 'manifest');
+    expect(manifestCalls).toHaveLength(1);
+  });
+
+  it('reports no sessions when nothing matches the filter', async () => {
+    fixture = buildFixtureDb({
+      sessions: [sessionRow('s-1', '/tmp/unrelated')],
+    });
+    const storage = new RecordingStorageAdapter();
+    const { stream: stdout, lines } = writable();
+    const code = await runSyncCommand({
+      env: envFor(),
+      cwd: '/tmp/current-proj',
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: storage,
+      stdout,
+      models: stubModels,
+    });
+    expect(code).toBe(0);
+    expect(lines.join('')).toContain(
+      'No sessions found matching the configured working directories',
+    );
+    expect(storage.calls.filter((c) => c.scope === 'manifest')).toHaveLength(0);
+  });
+
+  it('syncs all sessions when --all is set, ignoring workdir filter', async () => {
+    fixture = buildFixtureDb({
+      sessions: [
+        sessionRow('s-a', '/tmp/proj-a'),
+        sessionRow('s-b', '/tmp/proj-b'),
+        sessionRow('s-c', '/tmp/proj-c'),
+      ],
+    });
+    await writeWorkdirConfig(dataDir, 'proj-workdir', { workdirs: ['/tmp/proj-a'] });
+    const storage = new RecordingStorageAdapter();
+    const { stream: stdout, lines } = writable();
+    const code = await runSyncCommand({
+      env: envFor(),
+      cwd: '/unrelated',
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: storage,
+      stdout,
+      models: stubModels,
+      all: true,
+    });
+    expect(code).toBe(0);
+    expect(lines.join('')).toContain('Synced 3 session(s)');
+    const manifestCalls = storage.calls.filter((c) => c.scope === 'manifest');
+    expect(manifestCalls).toHaveLength(3);
   });
 });

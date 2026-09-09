@@ -3,6 +3,7 @@ export * from './commands/download-command.js';
 export * from './commands/list-command.js';
 export * from './commands/migrate-command.js';
 export * from './commands/remove-command.js';
+export * from './commands/workdir-command.js';
 export * from './common.js';
 export * from './config.js';
 export * from './create-cli.js';

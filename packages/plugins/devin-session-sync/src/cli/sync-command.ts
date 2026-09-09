@@ -4,9 +4,11 @@ import {
   buildStorageAdapter,
   getDataDir,
   type HarnessProfile,
+  readWorkdirConfig,
   StateStore,
   type StorageAdapter,
   type SyncConfig,
+  workdirMatches,
 } from '@lucasschirm/sal-sync';
 
 import { DevinHarnessProfile } from '../devin-profile.js';
@@ -28,6 +30,8 @@ export interface SyncCommandOptions {
   stdout?: NodeJS.WritableStream;
   stderr?: NodeJS.WritableStream;
   force?: boolean;
+  /** Sync all sessions regardless of working directory. Bypasses workdir filtering. */
+  all?: boolean;
   /** Defaults to `DevinHarnessProfile`. See `.agents/rules` DS-B5 (#143): the harness
    * identity is always threaded from the profile, never a hardcoded literal. */
   harnessProfile?: HarnessProfile;
@@ -176,6 +180,7 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const force = options.force ?? false;
+  const syncAll = options.all ?? false;
   const profile = options.harnessProfile ?? DevinHarnessProfile;
 
   const env = options.env ?? (await resolveCliEnv(cwd));
@@ -220,8 +225,45 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
       stderr.write(`devin-sync: models capture warning: ${models.error}\n`);
     }
 
+    // Filter sessions by working directory unless --all is set. The filter
+    // uses the project's workdir config (`~/.sal-sync/projects/<projectId>/
+    // config.json`); if no config exists, defaults to the current cwd so
+    // `devin-sync sync` run from a project directory only syncs that
+    // project's sessions — not every session on the machine.
+    let sessionsToSync = handle.sessions;
+    if (!syncAll) {
+      const workdirConfig = await readWorkdirConfig(dataDir, config.projectId);
+      const patterns = workdirConfig.workdirs;
+      if (patterns.length > 0) {
+        sessionsToSync = handle.sessions.filter((s) => {
+          if (!s.working_directory) return false;
+          return workdirMatches(s.working_directory, patterns);
+        });
+        stdout.write(
+          `Filtering by ${patterns.length} workdir pattern(s): ${patterns.join(', ')}\n`,
+        );
+      } else {
+        const normalizedCwd = cwd.replace(/\/+$/, '');
+        sessionsToSync = handle.sessions.filter((s) => {
+          if (!s.working_directory) return false;
+          return s.working_directory.replace(/\/+$/, '') === normalizedCwd;
+        });
+        stdout.write(`Filtering by current directory: ${cwd}\n`);
+      }
+
+      if (sessionsToSync.length === 0) {
+        stdout.write(
+          `No sessions found matching the configured working directories for project "${config.projectId}".\n`,
+        );
+        stdout.write(
+          `Use \`${profile.harness === 'devin' ? 'devin-sync' : 'claude-sync'} workdir add\` to configure working directories, or \`sync --all\` to sync everything.\n`,
+        );
+        return 0;
+      }
+    }
+
     stdout.write(
-      `Syncing ${handle.sessions.length} session(s) for project "${config.projectId}"...\n\n`,
+      `Syncing ${sessionsToSync.length} session(s) for project "${config.projectId}"...\n\n`,
     );
 
     // Reopen the database every N sessions to clear SQLite's internal page
@@ -233,7 +275,7 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
     // per session.
     const SESSIONS_PER_DB_HANDLE = 25;
     const outcomes: DevinSessionSyncOutcome[] = [];
-    for (let i = 0; i < handle.sessions.length; i++) {
+    for (let i = 0; i < sessionsToSync.length; i++) {
       if (i > 0 && i % SESSIONS_PER_DB_HANDLE === 0) {
         handle.close();
         handle = await openSnapshotHandleOrReport(
@@ -251,7 +293,7 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
       }
       outcomes.push(
         await syncOneSessionSafely(
-          handle.sessions[i],
+          sessionsToSync[i],
           handle,
           config,
           dataDir,
