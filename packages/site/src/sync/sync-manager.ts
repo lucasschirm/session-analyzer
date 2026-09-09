@@ -241,6 +241,22 @@ interface SessionSnapshot {
   wasUpdated: boolean;
 }
 
+interface SessionSyncContext {
+  remoteSessionId: string;
+  manifest: SyncManifest;
+  mainPath: string;
+  existing: DashboardSession | null;
+  localRunCount: number;
+}
+
+interface SessionFilesContext {
+  remoteSessionId: string;
+  manifest: SyncManifest;
+  mainPath: string;
+  existing: DashboardSession | null;
+  forceForConfig: boolean;
+}
+
 /**
  * Singleton reactive store that coordinates the sync state machine.
  *
@@ -987,12 +1003,15 @@ export class SyncManager extends EventTarget {
     }
   }
 
-  private async processSessionManifest(
+  private async setupSessionManifestState(
     project: ProjectSyncState,
-    worker: Worker,
     remoteSessionId: string,
     manifest: SyncManifest,
-  ): Promise<void> {
+  ): Promise<{
+    localSession: DashboardSession;
+    existing: DashboardSession | null;
+    sessionState: SessionSyncState;
+  }> {
     const { localSession, existing } = await this.ensureSessionStub(
       project.localProjectId,
       remoteSessionId,
@@ -1006,10 +1025,26 @@ export class SyncManager extends EventTarget {
       existing === null,
     );
     await this.db.updateSessionManifest(localSession.id, manifest);
+    return { localSession, existing, sessionState };
+  }
+
+  private async processSessionManifest(
+    project: ProjectSyncState,
+    worker: Worker,
+    remoteSessionId: string,
+    manifest: SyncManifest,
+  ): Promise<void> {
+    const { localSession, existing, sessionState } = await this.setupSessionManifestState(
+      project,
+      remoteSessionId,
+      manifest,
+    );
     const localRunCount = await this.db.getSyncRunCount(existing?.id ?? localSession.id);
+    const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
     await this.dispatchOrHandleMainArtifact(sessionState, project, localSession, worker, {
       remoteSessionId,
       manifest,
+      mainPath,
       existing,
       localRunCount,
     });
@@ -1037,31 +1072,17 @@ export class SyncManager extends EventTarget {
     project: ProjectSyncState,
     localSession: DashboardSession,
     worker: Worker,
-    ctx: {
-      remoteSessionId: string;
-      manifest: SyncManifest;
-      existing: DashboardSession | null;
-      localRunCount: number;
-    },
+    ctx: SessionSyncContext,
   ): Promise<void> {
-    const mainPath = ctx.manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
-    const mainArtifact = this.findMainArtifact(ctx.manifest, mainPath);
-    if (!mainArtifact) {
-      await this.handleTranscriptUnavailable(
+    if (!this.findMainArtifact(ctx.manifest, ctx.mainPath)) {
+      return this.handleTranscriptUnavailable(
         sessionState,
         localSession,
         worker,
         ctx.remoteSessionId,
       );
-      return;
     }
-    await this.dispatchSessionSync(sessionState, project, localSession, worker, {
-      remoteSessionId: ctx.remoteSessionId,
-      manifest: ctx.manifest,
-      mainPath,
-      existing: ctx.existing,
-      localRunCount: ctx.localRunCount,
-    });
+    return this.dispatchSessionSync(sessionState, project, localSession, worker, ctx);
   }
 
   private async ensureSessionStub(
@@ -1112,57 +1133,29 @@ export class SyncManager extends EventTarget {
     project: ProjectSyncState,
     localSession: DashboardSession,
     worker: Worker,
-    ctx: {
-      remoteSessionId: string;
-      manifest: SyncManifest;
-      mainPath: string;
-      existing: DashboardSession | null;
-      localRunCount: number;
-    },
+    ctx: SessionSyncContext,
   ): Promise<void> {
-    const { shouldSync, forceForConfig } = await this.checkSyncRequirement(
-      localSession.id,
-      ctx.manifest,
-      ctx.mainPath,
-      ctx.existing,
-      ctx.localRunCount,
-    );
+    const { shouldSync, forceForConfig } = await this.checkSyncRequirement(localSession.id, ctx);
     if (!shouldSync && !forceForConfig) {
-      await this.markSessionInSync(
-        sessionState,
-        project,
-        localSession,
-        worker,
-        ctx.remoteSessionId,
-        ctx.existing !== null,
-        ctx.mainPath,
-        ctx.manifest,
-      );
-      return;
+      return this.markSessionInSync(sessionState, project, localSession, worker, ctx);
     }
-    await this.requestSessionFiles(sessionState, project, localSession, worker, {
-      remoteSessionId: ctx.remoteSessionId,
-      manifest: ctx.manifest,
-      mainPath: ctx.mainPath,
-      existing: ctx.existing,
+    return this.requestSessionFiles(sessionState, project, localSession, worker, {
+      ...ctx,
       forceForConfig,
     });
   }
 
   private async checkSyncRequirement(
     localSessionId: string,
-    manifest: SyncManifest,
-    mainPath: string,
-    existing: DashboardSession | null,
-    localRunCount: number,
+    ctx: SessionSyncContext,
   ): Promise<{ shouldSync: boolean; forceForConfig: boolean }> {
-    const shouldSync = await this.isSyncNeeded(existing, localRunCount, manifest);
+    const shouldSync = await this.isSyncNeeded(ctx.existing, ctx.localRunCount, ctx.manifest);
     const forceForConfig = await this.shouldForceForConfigArtifacts(
       localSessionId,
-      manifest,
-      mainPath,
+      ctx.manifest,
+      ctx.mainPath,
       shouldSync,
-      existing,
+      ctx.existing,
     );
     return { shouldSync, forceForConfig };
   }
@@ -1172,26 +1165,11 @@ export class SyncManager extends EventTarget {
     project: ProjectSyncState,
     localSession: DashboardSession,
     worker: Worker,
-    ctx: {
-      remoteSessionId: string;
-      manifest: SyncManifest;
-      mainPath: string;
-      existing: DashboardSession | null;
-      forceForConfig: boolean;
-    },
+    ctx: SessionFilesContext,
   ): Promise<void> {
     const filesToDownload = await this.resolveFilesToDownload(localSession.id, ctx);
     if (filesToDownload !== undefined && filesToDownload.length === 0) {
-      await this.markSessionInSync(
-        sessionState,
-        project,
-        localSession,
-        worker,
-        ctx.remoteSessionId,
-        true,
-        ctx.mainPath,
-        ctx.manifest,
-      );
+      await this.markSessionInSync(sessionState, project, localSession, worker, ctx, true);
       return;
     }
     await this.sendDownloadRequestToWorker(
@@ -1205,12 +1183,7 @@ export class SyncManager extends EventTarget {
 
   private async resolveFilesToDownload(
     localSessionId: string,
-    ctx: {
-      manifest: SyncManifest;
-      mainPath: string;
-      existing: DashboardSession | null;
-      forceForConfig: boolean;
-    },
+    ctx: SessionFilesContext,
   ): Promise<FileToDownload[] | undefined> {
     const wasFailed = ctx.existing?.sync_status === 'failed';
     if (wasFailed || ctx.forceForConfig) return undefined;
@@ -1227,15 +1200,14 @@ export class SyncManager extends EventTarget {
     sessionState.syncStatus = 'pending';
     await this.db.setSessionSyncStatus(localSessionId, 'pending');
     const localFileEtas = await this.buildLocalFileEtas(localSessionId);
-    worker.postMessage(
-      this.buildSyncMessage(
-        ctx.remoteSessionId,
-        true,
-        ctx.existing !== null,
-        filesToDownload,
-        localFileEtas,
-      ),
+    const msg = this.buildSyncMessage(
+      ctx.remoteSessionId,
+      true,
+      ctx.existing !== null,
+      filesToDownload,
+      localFileEtas,
     );
+    worker.postMessage(msg);
     this.emitChange();
   }
 
@@ -1311,20 +1283,18 @@ export class SyncManager extends EventTarget {
     project: ProjectSyncState,
     localSession: DashboardSession,
     worker: Worker,
-    remoteSessionId: string,
-    exists: boolean,
-    mainPath: string,
-    manifest: SyncManifest,
+    ctx: SessionSyncContext | SessionFilesContext,
+    exists = ctx.existing !== null,
   ): Promise<void> {
     await this.refreshInScopeSessionFiles(
       project.localProjectId,
       localSession.id,
-      manifest,
-      mainPath,
+      ctx.manifest,
+      ctx.mainPath,
     );
     sessionState.syncStatus = 'in_sync';
     await this.db.setSessionSyncStatus(localSession.id, 'in_sync');
-    worker.postMessage(this.buildSyncMessage(remoteSessionId, false, exists, []));
+    worker.postMessage(this.buildSyncMessage(ctx.remoteSessionId, false, exists, []));
     this.emitChange();
   }
 
