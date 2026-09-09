@@ -26,8 +26,7 @@ src/
 │   ├── project-selector.ts        # Project dropdown (input component)
 │   ├── project-sync-indicator.ts  # Small spinner that opens the project sync status modal when clicked
 │   ├── project-sync-status-modal.ts # Per-project and full-run sync status modal with project/session progress and file counts
-│   ├── sync-progress-bar.ts       # Global sync progress bar with live P/S/F counts, queued-run suffix, cancel button, final-results summary with unicode icons (files/new projects/new sessions/sessions updated) shown for 6s after completion, and full sync-status modal
-│   ├── sync-status-bar.ts         # Bottom-fixed sync discovery indicator ("Found: X Projects / Y Sessions / Z sessions pending") shown while a run is active or queued
+│   ├── sync-progress-bar.ts       # Global sync progress bar with live P/S/F counts, queued-run suffix, cancel button, final-results summary with unicode icons (files/new projects/new sessions/sessions updated) that stays visible until the user clicks Close, and full sync-status modal
 │   ├── toast-container.ts         # ToastManager singleton + fixed-position toast stack (error/warning/info/success); error toasts are sticky, others auto-dismiss; sync warnings and run failures are wired to toasts via the manager
 │   └── upload-zone.ts             # Drag & drop + file picker upload zone
 ├── db/                            # SQLite WASM control database (worker) and analytics worker client
@@ -47,7 +46,7 @@ src/
 │   ├── s3-errors.ts               # Shared S3 error utilities: hintForS3Error (human hint + docs link per error code), formatS3Error (HTTP status + code + message), describeS3Error (structured message + hint for toast notifications)
 │   └── uploaded-file.ts           # Uploaded file metadata helpers
 ├── pages/
-│   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap, sync-manager initialization, Connect entry point, bottom-fixed sync-status-bar, and toast-container
+│   ├── app-root.ts                # Root shell: header, HashRouter outlet, DB bootstrap, sync-manager initialization, Connect entry point, and toast-container
 │   ├── artifact-diff/             # Artifact diff analytics view
 │   │   ├── artifact-diff-chart-helpers.ts
 │   │   ├── artifact-diff-params.ts

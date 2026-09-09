@@ -112,6 +112,7 @@ describe('manifest schema', () => {
         },
       ],
       syncRuns: [],
+      syncRunsCount: 0,
     };
     expect(manifest.artifacts[0].sha256).toBe('sha256');
     expect(typeCheck<SyncManifest>(manifest)).toBe(true);

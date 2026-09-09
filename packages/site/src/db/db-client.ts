@@ -195,9 +195,12 @@ export class DbClient {
     return this.call({ type: 'getSessionSyncManifest', sessionId }) as Promise<SyncManifest | null>;
   }
 
-  /** Returns the number of recorded sync runs for a session. */
-  getSyncRunCount(sessionId: string): Promise<number> {
-    return this.call({ type: 'getSyncRunCount', sessionId }) as Promise<number>;
+  /** Returns the `updated_at` timestamp for a session, or null if unset. */
+  getSessionUpdatedAt(sessionId: string): Promise<string | null> {
+    return this.call({
+      type: 'getSessionUpdatedAt',
+      sessionId,
+    }) as Promise<string | null>;
   }
 
   /** Marks every pending/processing session in a project as failed. */
@@ -223,6 +226,11 @@ export class DbClient {
   /** Inserts or updates a session file record on the (session_id, path) key. */
   upsertSessionFile(file: SessionFileRecord): Promise<void> {
     return this.call({ type: 'upsertSessionFile', file }) as Promise<void>;
+  }
+
+  /** Bulk insert/update session file records in a single transaction. */
+  bulkUpsertSessionFiles(files: SessionFileRecord[]): Promise<void> {
+    return this.call({ type: 'bulkUpsertSessionFiles', files }) as Promise<void>;
   }
 
   /** Deletes all file records for a session. */

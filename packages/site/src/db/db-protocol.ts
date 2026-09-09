@@ -61,11 +61,12 @@ export type DbRequest =
     }
   | { id: number; type: 'updateSessionManifest'; sessionId: string; manifest: SyncManifest }
   | { id: number; type: 'getSessionSyncManifest'; sessionId: string }
-  | { id: number; type: 'getSyncRunCount'; sessionId: string }
+  | { id: number; type: 'getSessionUpdatedAt'; sessionId: string }
   | { id: number; type: 'failStaleSessions'; projectId: string; details: string }
   | { id: number; type: 'reconcileSyncStates'; sessionDetails: string }
   | { id: number; type: 'getSessionFiles'; sessionId: string }
   | { id: number; type: 'upsertSessionFile'; file: SessionFileRecord }
+  | { id: number; type: 'bulkUpsertSessionFiles'; files: SessionFileRecord[] }
   | { id: number; type: 'deleteSessionFiles'; sessionId: string }
   | {
       id: number;

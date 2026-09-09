@@ -37,6 +37,7 @@ import { requestPasskey } from './passkey-prompt';
 import type {
   FileSummary,
   FileToDownload,
+  LocalFileHash,
   SessionFileDownloadedMessage,
   SessionSyncCompleteMessage,
   SessionSyncContinueMessage,
@@ -150,6 +151,10 @@ interface SessionSyncState extends SessionProgressState {
   manifest?: SyncManifest;
   /** In-flight `onFileDownloaded` (retain) promises; awaited before ingestion. */
   retainPromises: Promise<void>[];
+  /** In-memory file records keyed by path; bulk-written at completion. */
+  fileMap: Map<string, SessionFileRecord>;
+  /** Paths with pending analytics retention/processing. */
+  pendingRetention: Set<string>;
   /** True when the session did not exist locally before this run. */
   isNew: boolean;
   /** True when an existing session had at least one file downloaded this run. */
@@ -246,7 +251,6 @@ interface SessionSyncContext {
   manifest: SyncManifest;
   mainPath: string;
   existing: DashboardSession | null;
-  localRunCount: number;
 }
 
 interface SessionFilesContext {
@@ -254,7 +258,6 @@ interface SessionFilesContext {
   manifest: SyncManifest;
   mainPath: string;
   existing: DashboardSession | null;
-  forceForConfig: boolean;
 }
 
 /**
@@ -909,7 +912,7 @@ export class SyncManager extends EventTarget {
         sync: false,
       });
     } else if (message.type === 'SESSION_MANIFEST_READY') {
-      worker.postMessage(this.buildSyncMessage(message.sessionId, false, false, []));
+      worker.postMessage(this.buildSyncMessage(message.sessionId, false, false));
     }
   }
 
@@ -1039,14 +1042,12 @@ export class SyncManager extends EventTarget {
       remoteSessionId,
       manifest,
     );
-    const localRunCount = await this.db.getSyncRunCount(existing?.id ?? localSession.id);
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
     await this.dispatchOrHandleMainArtifact(sessionState, project, localSession, worker, {
       remoteSessionId,
       manifest,
       mainPath,
       existing,
-      localRunCount,
     });
   }
 
@@ -1108,26 +1109,6 @@ export class SyncManager extends EventTarget {
     return localSession.id;
   }
 
-  private async shouldForceForConfigArtifacts(
-    localSessionId: string,
-    manifest: SyncManifest,
-    mainPath: string,
-    shouldSync: boolean,
-    existing: DashboardSession | null,
-  ): Promise<boolean> {
-    if (shouldSync || !existing) return false;
-    const inScope = this.filterInScopeArtifacts(manifest.artifacts, mainPath);
-    const configArtifacts = inScope.filter((a) => a.scope === 'workspace' || a.scope === 'global');
-    if (configArtifacts.length === 0) return false;
-    const localFiles = await this.db.getSessionFiles(localSessionId);
-    const localByPath = new Map(localFiles.map((f) => [f.path, f]));
-    return configArtifacts.some((a) => {
-      const file = this.artifactToFile(a, mainPath);
-      const local = localByPath.get(file.file);
-      return !local || local.sha256 !== file.hash || local.status !== 'processed';
-    });
-  }
-
   private async dispatchSessionSync(
     sessionState: SessionSyncState,
     project: ProjectSyncState,
@@ -1135,29 +1116,11 @@ export class SyncManager extends EventTarget {
     worker: Worker,
     ctx: SessionSyncContext,
   ): Promise<void> {
-    const { shouldSync, forceForConfig } = await this.checkSyncRequirement(localSession.id, ctx);
-    if (!shouldSync && !forceForConfig) {
+    const shouldSync = this.isSyncNeeded(ctx.existing, ctx.manifest);
+    if (!shouldSync) {
       return this.markSessionInSync(sessionState, project, localSession, worker, ctx);
     }
-    return this.requestSessionFiles(sessionState, project, localSession, worker, {
-      ...ctx,
-      forceForConfig,
-    });
-  }
-
-  private async checkSyncRequirement(
-    localSessionId: string,
-    ctx: SessionSyncContext,
-  ): Promise<{ shouldSync: boolean; forceForConfig: boolean }> {
-    const shouldSync = await this.isSyncNeeded(ctx.existing, ctx.localRunCount, ctx.manifest);
-    const forceForConfig = await this.shouldForceForConfigArtifacts(
-      localSessionId,
-      ctx.manifest,
-      ctx.mainPath,
-      shouldSync,
-      ctx.existing,
-    );
-    return { shouldSync, forceForConfig };
+    return this.requestSessionFiles(sessionState, project, localSession, worker, ctx);
   }
 
   private async requestSessionFiles(
@@ -1167,27 +1130,7 @@ export class SyncManager extends EventTarget {
     worker: Worker,
     ctx: SessionFilesContext,
   ): Promise<void> {
-    const filesToDownload = await this.resolveFilesToDownload(localSession.id, ctx);
-    if (filesToDownload !== undefined && filesToDownload.length === 0) {
-      await this.markSessionInSync(sessionState, project, localSession, worker, ctx, true);
-      return;
-    }
-    await this.sendDownloadRequestToWorker(
-      sessionState,
-      localSession.id,
-      worker,
-      ctx,
-      filesToDownload,
-    );
-  }
-
-  private async resolveFilesToDownload(
-    localSessionId: string,
-    ctx: SessionFilesContext,
-  ): Promise<FileToDownload[] | undefined> {
-    const wasFailed = ctx.existing?.sync_status === 'failed';
-    if (wasFailed || ctx.forceForConfig) return undefined;
-    return this.computeFilesToDownload(localSessionId, ctx.manifest, ctx.mainPath);
+    await this.sendDownloadRequestToWorker(sessionState, localSession.id, worker, ctx);
   }
 
   private async sendDownloadRequestToWorker(
@@ -1195,17 +1138,15 @@ export class SyncManager extends EventTarget {
     localSessionId: string,
     worker: Worker,
     ctx: { remoteSessionId: string; existing: DashboardSession | null },
-    filesToDownload?: FileToDownload[],
   ): Promise<void> {
     sessionState.syncStatus = 'pending';
     await this.db.setSessionSyncStatus(localSessionId, 'pending');
-    const localFileEtas = await this.buildLocalFileEtas(localSessionId);
+    const localFileHashes = await this.buildLocalFileHashes(localSessionId);
     const msg = this.buildSyncMessage(
       ctx.remoteSessionId,
       true,
       ctx.existing !== null,
-      filesToDownload,
-      localFileEtas,
+      localFileHashes,
     );
     worker.postMessage(msg);
     this.emitChange();
@@ -1224,7 +1165,7 @@ export class SyncManager extends EventTarget {
     session.completeReceived = true;
     this.markSessionFailed(project, session);
     await this.persistSessionFailure(project, session, remoteSessionId, details);
-    worker.postMessage(this.buildSyncMessage(remoteSessionId, false, false, []));
+    worker.postMessage(this.buildSyncMessage(remoteSessionId, false, false));
     this.emitChange();
   }
 
@@ -1274,7 +1215,7 @@ export class SyncManager extends EventTarget {
       'transcript_unavailable',
       'Main transcript not uploaded',
     );
-    worker.postMessage(this.buildSyncMessage(remoteSessionId, false, true, []));
+    worker.postMessage(this.buildSyncMessage(remoteSessionId, false, true));
     this.emitChange();
   }
 
@@ -1294,7 +1235,7 @@ export class SyncManager extends EventTarget {
     );
     sessionState.syncStatus = 'in_sync';
     await this.db.setSessionSyncStatus(localSession.id, 'in_sync');
-    worker.postMessage(this.buildSyncMessage(ctx.remoteSessionId, false, exists, []));
+    worker.postMessage(this.buildSyncMessage(ctx.remoteSessionId, false, exists));
     this.emitChange();
   }
 
@@ -1358,6 +1299,8 @@ export class SyncManager extends EventTarget {
       filesFailed: 0,
       bytesReceived: 0,
       retainPromises: [],
+      fileMap: new Map(),
+      pendingRetention: new Set(),
       isNew,
       wasUpdated: false,
     };
@@ -1374,33 +1317,18 @@ export class SyncManager extends EventTarget {
     );
   }
 
-  private async isSyncNeeded(
-    existing: { sync_status?: string; id: string } | null,
-    localRunCount: number,
+  private isSyncNeeded(
+    existing: { sync_status?: string; sync_updated_at?: string } | null,
     manifest: SyncManifest,
-  ): Promise<boolean> {
+  ): boolean {
     if (!existing) return true;
-    if (localRunCount < manifest.syncRuns.length) return true;
+    if (
+      manifest.updatedAt &&
+      existing.sync_updated_at &&
+      manifest.updatedAt > existing.sync_updated_at
+    )
+      return true;
     return ['failed', 'pending', 'transcript_unavailable'].includes(existing.sync_status ?? '');
-  }
-
-  private async computeFilesToDownload(
-    sessionId: string,
-    manifest: SyncManifest,
-    mainPath: string,
-  ): Promise<FileToDownload[] | undefined> {
-    const inScope = this.filterInScopeArtifacts(manifest.artifacts, mainPath);
-    if (!this.hasUsableHashes(inScope)) return undefined;
-    const localFiles = await this.db.getSessionFiles(sessionId);
-    const toDownload: FileToDownload[] = [];
-    for (const artifact of inScope) {
-      const file = this.artifactToFile(artifact, mainPath);
-      const local = localFiles.find((row) => row.path === file.file);
-      if (!local || local.sha256 !== file.hash || local.status !== 'processed') {
-        toDownload.push(file);
-      }
-    }
-    return toDownload;
   }
 
   private filterInScopeArtifacts(
@@ -1428,10 +1356,6 @@ export class SyncManager extends EventTarget {
       /^subagents\/[^/]+\.jsonl$/.test(relativePath) ||
       /^subagents\/[^/]+\.meta\.json$/.test(relativePath)
     );
-  }
-
-  private hasUsableHashes(artifacts: ManifestArtifact[]): boolean {
-    return artifacts.every((artifact) => this.isValidSha256(artifact.sha256));
   }
 
   private isValidSha256(value: string): boolean {
@@ -1462,14 +1386,15 @@ export class SyncManager extends EventTarget {
     const existingFiles = await this.db.getSessionFiles(sessionId);
     const existingByPath = new Map(existingFiles.map((f) => [f.path, f]));
     const now = Date.now();
+    const records: SessionFileRecord[] = [];
     for (const artifact of inScope) {
       const file = this.artifactToFile(artifact, mainPath);
       const existing = existingByPath.get(file.file);
-      // Preserve non-processed statuses (e.g. 'failed') so that
-      // computeFilesToDownload can still detect files needing re-download.
+      // Preserve non-processed statuses (e.g. 'failed') so the worker's
+      // hash-diff can still detect files needing re-download.
       // Only upsert as 'processed' when the file is new or already processed.
       const status = existing && existing.status !== 'processed' ? existing.status : 'processed';
-      const record: SessionFileRecord = {
+      records.push({
         id: existing?.id ?? generateId(),
         project_id: projectId,
         session_id: sessionId,
@@ -1479,8 +1404,10 @@ export class SyncManager extends EventTarget {
         size: file.size,
         status,
         updated_at: now,
-      };
-      await this.db.upsertSessionFile(record);
+      });
+    }
+    if (records.length > 0) {
+      await this.db.bulkUpsertSessionFiles(records);
     }
   }
 
@@ -1488,32 +1415,33 @@ export class SyncManager extends EventTarget {
     sessionId: string,
     sync: boolean,
     exists: boolean,
-    filesToDownload?: FileToDownload[],
-    localFileEtas?: Record<string, string>,
+    localFileHashes?: Record<string, LocalFileHash>,
   ): SessionSyncMessage {
     return {
       type: 'SESSION_SYNC',
       sessionId,
       sync,
       exists,
-      filesToDownload,
-      localFileEtas,
+      localFileHashes,
     };
   }
 
-  /** Build a path→etag map for locally stored files, used by the worker to
-   * skip downloads when the S3 listing ETag hasn't changed. */
-  private async buildLocalFileEtas(
+  /** Build a path→{sha256,etag,status} map for locally stored files, used by
+   * the worker to skip downloads when the local hash matches the manifest
+   * hash and the file is processed. */
+  private async buildLocalFileHashes(
     localSessionId: string,
-  ): Promise<Record<string, string> | undefined> {
+  ): Promise<Record<string, LocalFileHash> | undefined> {
     const files = await this.db.getSessionFiles(localSessionId);
-    const etas: Record<string, string> = {};
+    const hashes: Record<string, LocalFileHash> = {};
     for (const file of files) {
-      if (file.etag && file.status === 'processed') {
-        etas[file.path] = file.etag;
-      }
+      hashes[file.path] = {
+        sha256: file.sha256,
+        etag: file.etag,
+        status: file.status,
+      };
     }
-    return Object.keys(etas).length > 0 ? etas : undefined;
+    return Object.keys(hashes).length > 0 ? hashes : undefined;
   }
 
   private handleSessionSyncProgress(
@@ -1563,7 +1491,12 @@ export class SyncManager extends EventTarget {
   }
 
   private broadcastRunProgress(): void {
-    this.broadcast({ type: 'run-progress', snapshot: this.buildSnapshot() });
+    const snapshot = this.buildSnapshot();
+    this.broadcast({ type: 'run-progress', snapshot });
+    // Also notify local UI listeners — the throttled progress path is the
+    // only one that updates filesFound/filesDownloaded counts, so without a
+    // local dispatch the progress bar never advances during a run.
+    this.dispatchEvent(new CustomEvent('change', { detail: snapshot }));
   }
 
   private async handleSessionFileDownloaded(
@@ -1581,8 +1514,9 @@ export class SyncManager extends EventTarget {
           .setSessionSyncStatus(session.localSessionId, 'processing')
           .catch(() => undefined);
       }
-      await this.upsertDownloadedFile(project, session, message);
+      this.recordDownloadedFile(project, session, message);
       session.pendingFiles++;
+      session.pendingRetention.add(message.file);
       this.dispatchRetainPromise(project, session, message);
       this.emitChange();
     } catch (error) {
@@ -1636,12 +1570,12 @@ export class SyncManager extends EventTarget {
     session.retainPromises.push(retainPromise);
   }
 
-  private async upsertDownloadedFile(
+  private recordDownloadedFile(
     project: ProjectSyncState,
     session: SessionSyncState,
     message: SessionFileDownloadedMessage,
-  ): Promise<void> {
-    const existing = await this.findSessionFile(session.localSessionId, message.file);
+  ): void {
+    const existing = session.fileMap.get(message.file);
     const record: SessionFileRecord = {
       id: existing?.id ?? generateId(),
       project_id: project.localProjectId,
@@ -1654,7 +1588,7 @@ export class SyncManager extends EventTarget {
       status: 'downloaded',
       updated_at: Date.now(),
     };
-    await this.db.upsertSessionFile(record);
+    session.fileMap.set(message.file, record);
   }
 
   private fileScope(file: string): 'session' | 'workspace' | 'global' | 'runtime' {
@@ -1663,41 +1597,33 @@ export class SyncManager extends EventTarget {
     return 'session';
   }
 
-  private async onFileProcessed(
-    session: SessionSyncState,
-    message: SessionFileDownloadedMessage,
-  ): Promise<void> {
-    await this.updateFileStatus(session.localSessionId, message.file, 'processed');
+  private onFileProcessed(session: SessionSyncState, message: SessionFileDownloadedMessage): void {
+    this.setInMemoryFileStatus(session, message.file, 'processed');
+    session.pendingRetention.delete(message.file);
     session.pendingFiles = Math.max(0, session.pendingFiles - 1);
-    await this.maybeCompleteSession(session);
+    void this.maybeCompleteSession(session);
     this.emitChange();
   }
 
-  private async onFileProcessFailed(
+  private onFileProcessFailed(
     session: SessionSyncState,
     message: SessionFileDownloadedMessage,
-  ): Promise<void> {
-    await this.updateFileStatus(session.localSessionId, message.file, 'failed');
+  ): void {
+    this.setInMemoryFileStatus(session, message.file, 'failed');
+    session.pendingRetention.delete(message.file);
     session.pendingFiles = Math.max(0, session.pendingFiles - 1);
     this.emitChange();
   }
 
-  private async updateFileStatus(
-    sessionId: string,
+  private setInMemoryFileStatus(
+    session: SessionSyncState,
     path: string,
     status: 'downloaded' | 'processed' | 'failed',
-  ): Promise<void> {
-    const existing = await this.findSessionFile(sessionId, path);
+  ): void {
+    const existing = session.fileMap.get(path);
     if (!existing) return;
-    await this.db.upsertSessionFile({ ...existing, status, updated_at: Date.now() });
-  }
-
-  private async findSessionFile(
-    sessionId: string,
-    path: string,
-  ): Promise<SessionFileRecord | undefined> {
-    const files = await this.db.getSessionFiles(sessionId);
-    return files.find((row) => row.path === path);
+    existing.status = status;
+    existing.updated_at = Date.now();
   }
 
   private async handleSessionSyncComplete(
@@ -1708,16 +1634,18 @@ export class SyncManager extends EventTarget {
     if (!session) return;
     session.completeReceived = true;
 
-    await this.reconcileSessionFilesList(project, session, message.files);
+    this.reconcileSessionFilesList(project, session, message.files);
     await this.settleRetainPromises(session);
 
     if (session.syncStatus === 'transcript_unavailable' || session.syncStatus === 'failed') {
+      await this.bulkPersistSessionFiles(session);
       this.markSessionDone(project, session);
       this.emitChange();
       return;
     }
 
     try {
+      await this.bulkPersistSessionFiles(session);
       await this.onSyncComplete(session.localSessionId, session.manifest, project.projectId);
     } catch (error) {
       await this.handleIngestFailed(project, session, message.sessionId, error);
@@ -1729,14 +1657,20 @@ export class SyncManager extends EventTarget {
     this.emitChange();
   }
 
-  private async reconcileSessionFilesList(
+  private async bulkPersistSessionFiles(session: SessionSyncState): Promise<void> {
+    const files = [...session.fileMap.values()];
+    if (files.length === 0) return;
+    await this.db.bulkUpsertSessionFiles(files);
+  }
+
+  private reconcileSessionFilesList(
     project: ProjectSyncState,
     session: SessionSyncState,
     files: FileSummary[],
-  ): Promise<void> {
+  ): void {
     for (const file of files) {
       try {
-        await this.reconcileCompleteFile(project, session, file);
+        this.reconcileCompleteFile(project, session, file);
       } catch (error) {
         console.error(`Reconcile file failed for ${file.file}:`, error);
       }
@@ -1766,13 +1700,16 @@ export class SyncManager extends EventTarget {
     this.emitChange();
   }
 
-  private async reconcileCompleteFile(
+  private reconcileCompleteFile(
     project: ProjectSyncState,
     session: SessionSyncState,
     file: FileSummary,
-  ): Promise<void> {
-    const existing = await this.findSessionFile(session.localSessionId, file.file);
+  ): void {
+    const existing = session.fileMap.get(file.file);
     const status = this.fileSummaryStatus(file, existing);
+    if (file.status === 'unchanged' && !existing && !this.isValidSha256(file.hash)) {
+      return;
+    }
     const record: SessionFileRecord = {
       id: existing?.id ?? generateId(),
       project_id: project.localProjectId,
@@ -1784,10 +1721,7 @@ export class SyncManager extends EventTarget {
       status,
       updated_at: Date.now(),
     };
-    if (file.status === 'unchanged' && !existing && !this.isValidSha256(file.hash)) {
-      return;
-    }
-    await this.db.upsertSessionFile(record);
+    session.fileMap.set(file.file, record);
   }
 
   private fileSummaryStatus(

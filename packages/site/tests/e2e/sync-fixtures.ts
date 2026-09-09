@@ -153,6 +153,8 @@ export function buildSessionManifest(
     mainTranscriptRelativePath,
     artifacts,
     syncRuns: [buildSyncRun(files.length)],
+    syncRunsCount: 1,
+    updatedAt: new Date().toISOString(),
   };
 }
 

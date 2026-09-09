@@ -65,6 +65,7 @@ describe('SyncManager analytics bridge', () => {
       mainTranscriptRelativePath: artifact.relativePath,
       artifacts: [artifact],
       syncRuns: [],
+      syncRunsCount: 0,
     };
   }
 
@@ -162,6 +163,7 @@ describe('syncManager singleton analytics wiring', () => {
       mainTranscriptRelativePath: 'session/transcript.jsonl',
       artifacts: [],
       syncRuns: [],
+      syncRunsCount: 0,
     };
     // @ts-expect-error — accessing private field for regression test
     await syncManager.onSyncComplete('sess-1', manifest, 'p1');
@@ -265,10 +267,11 @@ describe('SyncManager session failure isolation', () => {
       getSessionBySyncId: vi.fn().mockResolvedValue(null),
       upsertSessionStub: vi.fn().mockResolvedValue(undefined),
       setSessionSyncStatus: vi.fn().mockResolvedValue(undefined),
-      getSyncRunCount: vi.fn().mockResolvedValue(0),
+      getSessionUpdatedAt: vi.fn().mockResolvedValue(null),
       updateSessionManifest: vi.fn().mockResolvedValue(undefined),
       getSessionFiles: vi.fn().mockResolvedValue([]),
       upsertSessionFile: vi.fn().mockResolvedValue(undefined),
+      bulkUpsertSessionFiles: vi.fn().mockResolvedValue(undefined),
       failStaleSessions: vi.fn().mockResolvedValue(undefined),
       setProjectSyncStatus: vi.fn().mockResolvedValue(undefined),
     } as unknown as DbClient;
@@ -340,6 +343,7 @@ describe('SyncManager session failure isolation', () => {
       transcriptsCaptured: true,
       artifacts: [],
       syncRuns: [],
+      syncRunsCount: 0,
     };
 
     // @ts-expect-error — testing private method
@@ -385,6 +389,7 @@ describe('SyncManager session failure isolation', () => {
       transcriptsCaptured: true,
       artifacts: [],
       syncRuns: [],
+      syncRunsCount: 0,
     };
 
     // @ts-expect-error — testing private method

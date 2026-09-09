@@ -1,7 +1,6 @@
 import type { SyncManifest } from '@lucasschirm/sal-sync-core';
 import { describe, expect, it } from 'vitest';
 import type {
-  FileToDownload,
   SessionFileDownloadedMessage,
   SyncMessageFromWorker,
   SyncMessageToWorker,
@@ -29,7 +28,7 @@ describe('sync-protocol', () => {
       sessionId: 'sess',
       sync: true,
       exists: false,
-      filesToDownload: [],
+      localFileHashes: {},
     };
     const cancel: SyncMessageToWorker = { type: 'CANCEL' };
 
@@ -37,7 +36,7 @@ describe('sync-protocol', () => {
     expect(cont.type).toBe('SESSION_SYNC_CONTINUE');
     expect(sync.type).toBe('SESSION_SYNC');
     expect(cancel.type).toBe('CANCEL');
-    expect((sync as { filesToDownload?: FileToDownload[] }).filesToDownload).toEqual([]);
+    expect((sync as { localFileHashes?: Record<string, unknown> }).localFileHashes).toEqual({});
   });
 
   it('supports every worker→main message type with the required fields', () => {

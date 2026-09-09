@@ -153,11 +153,14 @@ async function waitForSyncCompleted(page: Page, timeout = 30000): Promise<void> 
 }
 
 /**
- * Wait for the progress bar to completely hide (including the 6-second
- * completed-summary display). Use this when you just need the sync to be
- * finished and don't need to inspect the modal.
+ * Wait for the sync to finish and dismiss the completed summary. The completed
+ * summary stays visible until the user clicks "Close" (it no longer auto-hides),
+ * so this waits for the completed state and then clicks the Close button.
  */
 async function waitForSyncIdle(page: Page, timeout = 30000): Promise<void> {
+  await waitForSyncCompleted(page, timeout);
+  const closeButton = page.locator('sync-progress-bar').getByRole('button', { name: 'Close' });
+  await closeButton.click();
   await expect(progressBar(page)).toBeHidden({ timeout });
 }
 
@@ -672,6 +675,9 @@ test('offline event aborts the active run', async ({ page }) => {
 
   await startSyncFromHome(page, bucket);
   await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
+  // Wait for the worker to discover at least one session before aborting,
+  // so the session appears in the sync status modal after the abort.
+  await expect(progressBar(page)).toContainText('Sessions', { timeout: 10000 });
 
   await page.evaluate(() => window.dispatchEvent(new Event('offline')));
   await waitForSyncCompleted(page);

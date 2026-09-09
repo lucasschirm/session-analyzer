@@ -389,7 +389,7 @@ export class ManualIngestionOrchestrator {
       transcriptsCaptured: mainTranscript !== undefined,
       mainTranscriptRelativePath: mainTranscript?.relativePath,
       artifacts: [],
-      syncRuns: [],
+      syncRunsCount: 0,
       importBatchId: bundle.importBatchId,
       suppliedFileInventory: inventory.map((item) => ({
         relativePath: item.relativePath,

@@ -262,6 +262,7 @@ async function makeManifest(
     mainTranscriptRelativePath: mainPath,
     artifacts,
     syncRuns: [],
+    syncRunsCount: 0,
   };
 
   return { manifest, downloads };
@@ -316,7 +317,7 @@ function startMessage(
 
 function syncMessage(
   sessionId: string,
-  filesToDownload?: FileToDownload[],
+  localFileHashes?: Record<string, { sha256: string; etag?: string; status: string }>,
   options?: { sync?: boolean; exists?: boolean },
 ): SyncMessageToWorker {
   return {
@@ -324,7 +325,7 @@ function syncMessage(
     sessionId,
     sync: options?.sync ?? true,
     exists: options?.exists ?? false,
-    filesToDownload,
+    localFileHashes,
   };
 }
 
@@ -415,12 +416,7 @@ describe('SessionSyncWorker', () => {
     await worker.handleMessage(startMessage('proj'));
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
 
     const done = findOne(posted, 'WORKER_DONE') as {
@@ -476,7 +472,7 @@ describe('SessionSyncWorker', () => {
     expect(client.getCalls.length).toBe(0);
   });
 
-  it('downloads only the files requested in SESSION_SYNC', async () => {
+  it('skips files whose local hash matches the manifest hash', async () => {
     const { worker, posted } = createWorker(client);
     const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
       { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
@@ -488,10 +484,14 @@ describe('SessionSyncWorker', () => {
     await worker.handleMessage(startMessage('proj'));
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
-    const onlyMain = downloads
-      .filter((file) => file.isMainTranscript)
-      .map(({ content: _content, ...rest }) => rest);
-    worker.handleMessage(syncMessage('sess-1', onlyMain));
+    // Pass local hashes for non-main files so the worker skips them.
+    const localHashes: Record<string, { sha256: string; status: string }> = {};
+    for (const file of downloads) {
+      if (!file.isMainTranscript) {
+        localHashes[file.file] = { sha256: file.hash, status: 'processed' };
+      }
+    }
+    worker.handleMessage(syncMessage('sess-1', localHashes));
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
 
     const fileMessages = findMessages(posted, 'SESSION_FILE_DOWNLOADED') as Array<{
@@ -501,7 +501,59 @@ describe('SessionSyncWorker', () => {
     expect(fileMessages[0].message.file).toBe('transcript.jsonl');
   });
 
-  it('falls back to the in-scope manifest list when filesToDownload is omitted', async () => {
+  it('downloads files whose local hash differs from the manifest hash', async () => {
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+      { scope: 'session', relativePath: 'subagents/agent-1.jsonl', content: 'sub line\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    await worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    // Pass a stale hash for the subagent file so it gets re-downloaded.
+    const localHashes: Record<string, { sha256: string; status: string }> = {
+      'subagents/agent-1.jsonl': { sha256: '0'.repeat(64), status: 'processed' },
+    };
+    worker.handleMessage(syncMessage('sess-1', localHashes));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    const fileMessages = findMessages(posted, 'SESSION_FILE_DOWNLOADED') as Array<{
+      message: SessionFileDownloadedMessage;
+    }>;
+    const files = fileMessages.map((m) => m.message.file);
+    expect(files).toContain('transcript.jsonl');
+    expect(files).toContain('subagents/agent-1.jsonl');
+  });
+
+  it('downloads files whose local status is not processed even with matching hash', async () => {
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+      { scope: 'session', relativePath: 'subagents/agent-1.jsonl', content: 'sub line\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    await worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    // Pass matching hash but 'failed' status for the subagent file.
+    const subagent = downloads.find((f) => f.file === 'subagents/agent-1.jsonl')!;
+    const localHashes: Record<string, { sha256: string; status: string }> = {
+      'subagents/agent-1.jsonl': { sha256: subagent.hash, status: 'failed' },
+    };
+    worker.handleMessage(syncMessage('sess-1', localHashes));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    const fileMessages = findMessages(posted, 'SESSION_FILE_DOWNLOADED') as Array<{
+      message: SessionFileDownloadedMessage;
+    }>;
+    const files = fileMessages.map((m) => m.message.file);
+    expect(files).toContain('subagents/agent-1.jsonl');
+  });
+
+  it('downloads all in-scope files when localFileHashes is omitted', async () => {
     const { worker, posted } = createWorker(client);
     const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
       { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
@@ -527,7 +579,7 @@ describe('SessionSyncWorker', () => {
     expect(files).toContain('global/settings.json');
   });
 
-  it('downloads the main transcript before other files', async () => {
+  it('downloads all files through the pool without a main-transcript gate', async () => {
     client.setAutoResolve(false);
     const { worker, posted } = createWorker(client);
     const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
@@ -544,21 +596,27 @@ describe('SessionSyncWorker', () => {
     client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
 
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
 
-    await vi.waitUntil(() => client.pendingKeys().length > 0);
-    expect(client.pendingKeys()[0]).toBe(
+    // All files are queued together — no main-transcript-first gate.
+    await vi.waitUntil(() => client.pendingKeys().length === 2);
+    const pending = client.pendingKeys();
+    expect(pending).toContain(
       buildObjectKey({
         projectId: 'proj',
         sessionId: 'sess-1',
         scope: 'session',
         relativePath: 'transcript.jsonl',
         contentSha256: downloads.find((f) => f.isMainTranscript)?.hash as string,
+      }),
+    );
+    expect(pending).toContain(
+      buildObjectKey({
+        projectId: 'proj',
+        sessionId: 'sess-1',
+        scope: 'session',
+        relativePath: 'subagents/agent-1.jsonl',
+        contentSha256: downloads.find((f) => f.file === 'subagents/agent-1.jsonl')?.hash as string,
       }),
     );
   });
@@ -579,12 +637,7 @@ describe('SessionSyncWorker', () => {
     await worker.handleMessage(startMessage('proj'));
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
 
     const expectedLegacy = buildObjectKey({
@@ -615,12 +668,7 @@ describe('SessionSyncWorker', () => {
     await worker.handleMessage(startMessage('proj'));
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
     await vi.waitUntil(() => findMessages(posted, 'SESSION_FILE_DOWNLOADED').length > 0);
 
     const fileMessage = findOne(posted, 'SESSION_FILE_DOWNLOADED') as {
@@ -663,12 +711,7 @@ describe('SessionSyncWorker', () => {
     client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
 
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
 
     await vi.waitUntil(() => client.pendingKeys().length > 0);
     const mainKey = client.pendingKeys()[0];
@@ -710,16 +753,65 @@ describe('SessionSyncWorker', () => {
     await worker.handleMessage(startMessage('proj'));
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
 
     const failed = findOne(posted, 'SESSION_SYNC_FAILED') as { error: { code: string } };
     expect(failed.error.code).toBe('HASH_MISMATCH');
+  });
+
+  it('downloads sibling files even when the main transcript fails', async () => {
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+      { scope: 'session', relativePath: 'subagents/agent-1.jsonl', content: 'sub line\n' },
+    ]);
+    client.putBuffer(
+      manifestKey('proj', 'sess-1'),
+      encoder.encode(JSON.stringify(manifest)).buffer,
+    );
+    // Upload correct subagent, wrong main transcript.
+    const main = downloads.find((f) => f.isMainTranscript) as FileToDownload & { content: string };
+    const sub = downloads.find((f) => f.file === 'subagents/agent-1.jsonl') as FileToDownload & {
+      content: string;
+    };
+    client.putBuffer(
+      buildObjectKey({
+        projectId: 'proj',
+        sessionId: 'sess-1',
+        scope: 'session',
+        relativePath: main.relativePath,
+        contentSha256: main.hash,
+      }),
+      encoder.encode('wrong content\n').buffer,
+    );
+    client.putBuffer(
+      buildObjectKey({
+        projectId: 'proj',
+        sessionId: 'sess-1',
+        scope: 'session',
+        relativePath: sub.relativePath,
+        contentSha256: sub.hash,
+      }),
+      encoder.encode(sub.content).buffer,
+    );
+
+    await worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    worker.handleMessage(syncMessage('sess-1', undefined));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    // Session is failed due to main transcript hash mismatch.
+    const failed = findOne(posted, 'SESSION_SYNC_FAILED') as { error: { code: string } };
+    expect(failed.error.code).toBe('HASH_MISMATCH');
+
+    // Sibling file was still downloaded.
+    const fileMessages = findMessages(posted, 'SESSION_FILE_DOWNLOADED') as Array<{
+      message: SessionFileDownloadedMessage;
+    }>;
+    const files = fileMessages.map((m) => m.message.file);
+    expect(files).toContain('subagents/agent-1.jsonl');
   });
 
   it('marks subagent files failed and continues when a subagent hash mismatches', async () => {
@@ -746,12 +838,7 @@ describe('SessionSyncWorker', () => {
     await worker.handleMessage(startMessage('proj'));
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
 
     const complete = findOne(posted, 'SESSION_SYNC_COMPLETE') as SessionSyncCompleteMessage;
@@ -810,12 +897,7 @@ describe('SessionSyncWorker', () => {
     client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
 
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
 
     await vi.waitUntil(() => client.pendingKeys().length > 0);
     client.rejectNext(
@@ -844,12 +926,7 @@ describe('SessionSyncWorker', () => {
     client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
 
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
 
     await vi.waitUntil(() => client.pendingKeys().length > 0);
     worker.handleMessage(cancelMessage());
@@ -884,26 +961,16 @@ describe('SessionSyncWorker', () => {
     client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
 
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
 
-    await vi.waitUntil(() => client.pendingKeys().length === 1);
-    const mainKey = client.pendingKeys()[0];
-    client.resolve(mainKey, client.getBuffer(mainKey));
-    await flush();
-
-    await vi.waitUntil(() => client.pendingKeys().length === 5);
+    // All 6 files are queued together through the pool (no main-transcript gate).
+    await vi.waitUntil(() => client.pendingKeys().length === 6);
     expect(client.maxInFlight).toBeLessThanOrEqual(8);
 
     worker.handleMessage(cancelMessage());
     await flush();
 
     await vi.waitUntil(() => client.inFlight === 0);
-    expect(findMessages(posted, 'SESSION_FILE_DOWNLOADED').length).toBe(1);
   });
 
   it('honors targetSessionIds and ignores non-target sessions', async () => {
@@ -1041,12 +1108,7 @@ describe('SessionSyncWorker', () => {
     await worker.handleMessage(startMessage('proj'));
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
-    worker.handleMessage(
-      syncMessage(
-        'sess-1',
-        downloads.map(({ content: _content, ...rest }) => rest),
-      ),
-    );
+    worker.handleMessage(syncMessage('sess-1', undefined));
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
 
     const series = extractProgressSeries(posted);

@@ -53,6 +53,12 @@ async function startSyncFromHome(page: Page, bucket: FixtureBucket): Promise<voi
 }
 
 async function waitForSyncIdle(page: Page, timeout = 30000): Promise<void> {
+  // The completed summary stays visible until the user clicks "Close"
+  // (it no longer auto-hides), so wait for the completed state and then
+  // dismiss it.
+  await expect(progressBar(page)).toContainText(/[✓⊘⚠]/, { timeout });
+  const closeButton = page.locator('sync-progress-bar').getByRole('button', { name: 'Close' });
+  await closeButton.click();
   await expect(progressBar(page)).toBeHidden({ timeout });
 }
 

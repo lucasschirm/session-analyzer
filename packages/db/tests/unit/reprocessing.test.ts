@@ -244,6 +244,7 @@ async function makeManifest(
     mainTranscriptRelativePath: 'transcript.jsonl',
     artifacts: [artifact],
     syncRuns: [],
+    syncRunsCount: 0,
   };
   return { manifest, resolved: [resolved] };
 }

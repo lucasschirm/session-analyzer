@@ -4,7 +4,6 @@ import '../components/header-project-selector';
 import '../components/left-nav';
 import '../components/passkey-modal';
 import '../components/sync-progress-bar';
-import '../components/sync-status-bar';
 import '../components/toast-container';
 import { analyticsClient } from '../db/analytics-client';
 import { dbClient } from '../db/db-client';
@@ -650,8 +649,6 @@ export class AppRoot extends LitElement {
         `
           : ''
       }
-
-      <sync-status-bar></sync-status-bar>
 
       <passkey-modal
         .open=${this.passkeyOpen}

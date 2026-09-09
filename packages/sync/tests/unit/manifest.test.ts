@@ -127,7 +127,7 @@ describe('buildManifest', () => {
     expect(manifest.endReason).toBe('completed');
     expect(manifest.transcriptsCaptured).toBe(true);
     expect(manifest.artifacts).toHaveLength(1);
-    expect(manifest.syncRuns).toHaveLength(2);
+    expect(manifest.syncRunsCount).toBe(2);
   });
 
   it('defaults harnessVersion to unknown when empty', () => {
@@ -188,11 +188,9 @@ describe('buildManifest', () => {
     ];
     const manifest = buildManifest(makeSession(), [makeArtifact()], createEmptySyncState(), runs);
 
-    expect(manifest.syncRuns).toHaveLength(3);
-    expect(manifest.syncRuns[0].trigger).toBe('session-start');
-    expect(manifest.syncRuns[0].filesDiscovered).toBe(10);
-    expect(manifest.syncRuns[1].trigger).toBe('file-changed');
-    expect(manifest.syncRuns[2].trigger).toBe('session-end');
+    expect(manifest.syncRunsCount).toBe(3);
+    expect(manifest.updatedAt).toBeDefined();
+    expect(manifest.syncRuns).toBeUndefined();
   });
 });
 
@@ -279,10 +277,8 @@ describe('ManifestGenerator', () => {
     const secondGenerator = new ManifestGenerator(tempDir);
     const manifest = await secondGenerator.generate(makeSession(), [makeArtifact()]);
 
-    expect(manifest.syncRuns).toHaveLength(2);
-    expect(manifest.syncRuns[0].trigger).toBe('session-start');
-    expect(manifest.syncRuns[0].filesDiscovered).toBe(5);
-    expect(manifest.syncRuns[1].trigger).toBe('file-changed');
+    expect(manifest.syncRunsCount).toBe(2);
+    expect(manifest.updatedAt).toBeDefined();
   });
 
   it('uploads the manifest and records it as uploaded in durable state', async () => {
@@ -332,7 +328,7 @@ describe('ManifestGenerator', () => {
     const result = await recoveryGenerator.upload(recoveredManifest);
 
     expect(result.key).toBe('proj-1/sess-1/manifest.json');
-    expect(recoveredManifest.syncRuns).toHaveLength(1);
+    expect(recoveredManifest.syncRunsCount).toBe(1);
   });
 
   it('throws when uploading without a storage adapter', async () => {
@@ -357,7 +353,7 @@ describe('ManifestGenerator', () => {
     const recoveredManifest = await new ManifestGenerator(tempDir).generate(session, [
       makeArtifact(),
     ]);
-    expect(recoveredManifest.syncRuns).toHaveLength(2);
+    expect(recoveredManifest.syncRunsCount).toBe(2);
     expect(recoveredManifest.artifacts[0].status).toBe('pending');
   });
 });

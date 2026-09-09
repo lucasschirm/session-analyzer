@@ -344,7 +344,7 @@ function buildManifestForSession(
     transcriptsCaptured: true,
     mainTranscriptRelativePath: mainTranscript?.relativePath,
     artifacts,
-    syncRuns: [],
+    syncRunsCount: 0,
   };
 }
 

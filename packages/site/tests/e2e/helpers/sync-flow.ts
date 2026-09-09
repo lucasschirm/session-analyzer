@@ -74,6 +74,12 @@ export async function waitForSyncCompleted(page: Page, timeout = 30000): Promise
 }
 
 export async function waitForSyncIdle(page: Page, timeout = 30000): Promise<void> {
+  // The completed summary stays visible until the user clicks "Close"
+  // (it no longer auto-hides), so wait for the completed state and then
+  // dismiss it.
+  await waitForSyncCompleted(page, timeout);
+  const closeButton = page.locator('sync-progress-bar').getByRole('button', { name: 'Close' });
+  await closeButton.click();
   await expect(progressBar(page)).toBeHidden({ timeout });
 }
 

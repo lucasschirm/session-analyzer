@@ -5,9 +5,6 @@ import { type SyncManager, type SyncManagerSnapshot, syncManager } from '../sync
 
 import './project-sync-status-modal';
 
-/** How long the final-results summary stays visible after a run completes. */
-const COMPLETED_DISPLAY_MS = 6000;
-
 /**
  * Global sync progress bar, always mounted so it never unmount/remount across
  * run transitions. It displays live aggregate counts when a run is active and
@@ -15,10 +12,12 @@ const COMPLETED_DISPLAY_MS = 6000;
  *
  * When a run finishes (done / cancelled / failed) the bar switches to a
  * final-results summary with unicode icons showing files downloaded, new
- * projects, new sessions, and sessions updated. The summary auto-hides after
- * {@link COMPLETED_DISPLAY_MS} milliseconds.
+ * projects, new sessions, and sessions updated. The summary stays visible
+ * until the user clicks the "Close" button, so the final results are never
+ * missed. If a new run starts while the summary is still visible, the
+ * transition back to running/queued clears it.
  *
- * Clicking the bar (not the cancel button) opens the full run summary modal.
+ * Clicking the bar (not the cancel/close button) opens the full run summary modal.
  */
 @customElement('sync-progress-bar')
 export class SyncProgressBar extends LitElement {
@@ -156,8 +155,6 @@ export class SyncProgressBar extends LitElement {
   /** The terminal state of the completed run (done / cancelled / failed). */
   @state() private completedState: 'done' | 'cancelled' | 'failed' | null = null;
 
-  private completedTimer: ReturnType<typeof setTimeout> | null = null;
-
   connectedCallback(): void {
     super.connectedCallback();
     this.snapshot = this.syncManager.getSnapshot();
@@ -167,7 +164,6 @@ export class SyncProgressBar extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.syncManager.removeEventListener('change', this.handleChange);
-    this.clearCompletedTimer();
   }
 
   private handleChange = (event: Event): void => {
@@ -176,35 +172,20 @@ export class SyncProgressBar extends LitElement {
 
     const runState = snapshot.activeRun?.state;
     if (runState === 'done' || runState === 'cancelled' || runState === 'failed') {
-      // A run just entered a terminal state — capture the final snapshot and
-      // start the auto-hide timer. If a new run starts while the summary is
-      // still visible, the transition back to running/queued clears it.
+      // A run just entered a terminal state — capture the final snapshot so
+      // the completed summary stays visible until the user dismisses it. If a
+      // new run starts while the summary is still visible, the transition
+      // back to running/queued clears it.
       if (this.completedState !== runState || !this.completedSnapshot) {
         this.completedSnapshot = snapshot;
         this.completedState = runState;
-        this.startCompletedTimer();
       }
     } else if (runState === 'running' || runState === 'queued') {
       this.clearCompletedDisplay();
     }
   };
 
-  private startCompletedTimer(): void {
-    this.clearCompletedTimer();
-    this.completedTimer = setTimeout(() => {
-      this.clearCompletedDisplay();
-    }, COMPLETED_DISPLAY_MS);
-  }
-
-  private clearCompletedTimer(): void {
-    if (this.completedTimer) {
-      clearTimeout(this.completedTimer);
-      this.completedTimer = null;
-    }
-  }
-
   private clearCompletedDisplay(): void {
-    this.clearCompletedTimer();
     this.completedSnapshot = null;
     this.completedState = null;
   }
@@ -395,11 +376,11 @@ export class SyncProgressBar extends LitElement {
           ${this.renderCompletedCounts(totals)}
           <button
             class="dismiss-button"
-            title="Dismiss"
+            title="Close"
             @click=${this.handleDismissClick}
             type="button"
           >
-            [✕]
+            Close
           </button>
         </div>
         ${this.renderModal()}

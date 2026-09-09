@@ -133,6 +133,8 @@ function makeSyncManifest(sessionId: string): SyncManifest {
     mainTranscriptRelativePath: 'transcript.jsonl',
     artifacts: [{ type: 'file', path: 'output.txt' }],
     syncRuns: [{ id: 'run-1', status: 'ok' }],
+    syncRunsCount: 1,
+    updatedAt: '2024-01-01T00:00:00.000Z',
   };
 }
 
@@ -838,7 +840,7 @@ describe('DatabaseManager', () => {
       expect(read!.syncRuns).toEqual([]);
     });
 
-    it('safeJsonLength: getSyncRunCount counts sync runs', () => {
+    it('updateSessionManifest writes sync_runs_count and updated_at', () => {
       const project = makeProject({ id: 'proj-manifest-6', name: 'Manifest Project 6' });
       mgr.createProject(project);
       const stub = makeSessionStub('proj-manifest-6', { id: 'sess-manifest-6' });
@@ -847,18 +849,57 @@ describe('DatabaseManager', () => {
       mgr.updateSessionManifest('sess-manifest-6', {
         ...makeSyncManifest('sess-manifest-6'),
         syncRuns: [{ id: 'r1' }, { id: 'r2' }, { id: 'r3' }],
+        syncRunsCount: 3,
+        updatedAt: '2026-09-20T12:00:00.000Z',
       });
 
-      expect(mgr.getSyncRunCount('sess-manifest-6')).toBe(3);
+      const read = mgr.getSessionSyncManifest('sess-manifest-6');
+      expect(read!.syncRunsCount).toBe(3);
+      expect(read!.updatedAt).toBe('2026-09-20T12:00:00.000Z');
     });
 
-    it('safeJsonLength: returns 0 when sync_runs is null', () => {
+    it('getSessionUpdatedAt returns the updated_at column', () => {
+      const project = makeProject({ id: 'proj-manifest-6b', name: 'Manifest Project 6b' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-manifest-6b', { id: 'sess-manifest-6b' });
+      mgr.upsertSessionStub(stub);
+
+      mgr.updateSessionManifest('sess-manifest-6b', {
+        ...makeSyncManifest('sess-manifest-6b'),
+        updatedAt: '2026-09-20T12:00:00.000Z',
+      });
+
+      expect(mgr.getSessionUpdatedAt('sess-manifest-6b')).toBe('2026-09-20T12:00:00.000Z');
+    });
+
+    it('getSessionUpdatedAt returns null when no manifest has been written', () => {
       const project = makeProject({ id: 'proj-manifest-7', name: 'Manifest Project 7' });
       mgr.createProject(project);
       const stub = makeSessionStub('proj-manifest-7', { id: 'sess-manifest-7' });
       mgr.upsertSessionStub(stub);
-      // No manifest written, sync_runs is null
-      expect(mgr.getSyncRunCount('sess-manifest-7')).toBe(0);
+      expect(mgr.getSessionUpdatedAt('sess-manifest-7')).toBeNull();
+    });
+
+    it('migration backfills sync_runs_count from existing sync_runs JSON', () => {
+      const project = makeProject({ id: 'proj-migrate', name: 'Migrate Project' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-migrate', { id: 'sess-migrate' });
+      mgr.upsertSessionStub(stub);
+      // Simulate an old row with sync_runs JSON but no sync_runs_count
+      mgr.updateSessionManifest('sess-migrate', {
+        ...makeSyncManifest('sess-migrate'),
+        syncRuns: [{ id: 'r1' }, { id: 'r2' }],
+        syncRunsCount: 0,
+      });
+      // Manually null out sync_runs_count to simulate pre-migration state
+      (mgr as unknown as { requireDb: () => { exec: (stmt: unknown) => void } }).requireDb().exec({
+        sql: 'UPDATE sessions SET sync_runs_count = NULL WHERE id = ?',
+        bind: ['sess-migrate'],
+      });
+      // Re-run backfill
+      (mgr as unknown as { backfillSyncRunsCount: () => void }).backfillSyncRunsCount();
+      const read = mgr.getSessionSyncManifest('sess-migrate');
+      expect(read!.syncRunsCount).toBe(2);
     });
 
     it('updateSessionManifest throws for a non-existent session', () => {
@@ -953,6 +994,71 @@ describe('DatabaseManager', () => {
       mgr.deleteSessionFiles('sess-files-4');
 
       expect(mgr.getSessionFiles('sess-files-4')).toHaveLength(0);
+    });
+
+    it('bulk upserts all file records in one call', () => {
+      const project = makeProject({ id: 'proj-bulk-1', name: 'Bulk Project 1' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-bulk-1', { id: 'sess-bulk-1' });
+      mgr.upsertSessionStub(stub);
+
+      const files = [
+        { ...makeSessionFile('proj-bulk-1', 'sess-bulk-1'), id: 'f1', path: 'a.txt' },
+        { ...makeSessionFile('proj-bulk-1', 'sess-bulk-1'), id: 'f2', path: 'b.txt' },
+        { ...makeSessionFile('proj-bulk-1', 'sess-bulk-1'), id: 'f3', path: 'c.txt' },
+      ];
+      mgr.bulkUpsertSessionFiles(files);
+
+      const result = mgr.getSessionFiles('sess-bulk-1');
+      expect(result).toHaveLength(3);
+      expect(result.map((f) => f.path)).toEqual(['a.txt', 'b.txt', 'c.txt']);
+    });
+
+    it('bulk upsert replaces conflicting (session_id, path) rows', () => {
+      const project = makeProject({ id: 'proj-bulk-2', name: 'Bulk Project 2' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-bulk-2', { id: 'sess-bulk-2' });
+      mgr.upsertSessionStub(stub);
+
+      // Insert initial file
+      mgr.upsertSessionFile({
+        ...makeSessionFile('proj-bulk-2', 'sess-bulk-2'),
+        path: 'a.txt',
+        status: 'downloaded',
+      });
+
+      // Bulk upsert with updated status for same path + new file
+      mgr.bulkUpsertSessionFiles([
+        {
+          ...makeSessionFile('proj-bulk-2', 'sess-bulk-2'),
+          path: 'a.txt',
+          status: 'processed',
+          etag: 'etag-updated',
+        },
+        {
+          ...makeSessionFile('proj-bulk-2', 'sess-bulk-2'),
+          id: 'new-id',
+          path: 'b.txt',
+          status: 'processed',
+        },
+      ]);
+
+      const result = mgr.getSessionFiles('sess-bulk-2');
+      expect(result).toHaveLength(2);
+      const aFile = result.find((f) => f.path === 'a.txt');
+      expect(aFile?.status).toBe('processed');
+      expect(aFile?.etag).toBe('etag-updated');
+      expect(result.find((f) => f.path === 'b.txt')).toBeDefined();
+    });
+
+    it('bulk upsert with empty array is a no-op', () => {
+      const project = makeProject({ id: 'proj-bulk-3', name: 'Bulk Project 3' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-bulk-3', { id: 'sess-bulk-3' });
+      mgr.upsertSessionStub(stub);
+
+      mgr.bulkUpsertSessionFiles([]);
+      expect(mgr.getSessionFiles('sess-bulk-3')).toHaveLength(0);
     });
   });
 

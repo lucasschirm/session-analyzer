@@ -103,6 +103,7 @@ export function buildManifest(
     transcriptsCaptured: options?.captureTranscripts ?? true,
     mainTranscriptRelativePath: mainTranscript?.relativePath,
     artifacts,
-    syncRuns: [...runs],
+    syncRunsCount: runs.length,
+    updatedAt: new Date().toISOString(),
   };
 }

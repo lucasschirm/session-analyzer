@@ -181,6 +181,7 @@ async function ingestAuthoritativeSync(
     mainTranscriptRelativePath: mainTranscript?.relativePath,
     artifacts: [],
     syncRuns: [],
+    syncRunsCount: 0,
   };
 
   return defaultOrchestrator.commitAtomic({

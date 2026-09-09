@@ -86,6 +86,7 @@ function makeManifest(content: string, sha256: string): SyncManifest {
       },
     ],
     syncRuns: [],
+    syncRunsCount: 0,
   };
 }
 

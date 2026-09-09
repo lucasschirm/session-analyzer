@@ -198,7 +198,8 @@ export function buildSessionManifest(
     transcriptsCaptured: options?.transcriptsCaptured ?? true,
     mainTranscriptRelativePath: mainTranscript?.relativePath,
     artifacts,
-    syncRuns: [run],
+    syncRunsCount: 1,
+    updatedAt: new Date().toISOString(),
   };
 }
 

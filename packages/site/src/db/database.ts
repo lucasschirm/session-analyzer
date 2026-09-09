@@ -96,6 +96,8 @@ interface SessionRow {
   sync_main_transcript_relative_path: string | null;
   sync_artifacts: string | null;
   sync_runs: string | null;
+  sync_runs_count: number | null;
+  updated_at: string | null;
 }
 
 interface CapiLike {
@@ -131,6 +133,8 @@ const COLUMN_MIGRATIONS = [
   'ALTER TABLE sessions ADD COLUMN sync_main_transcript_relative_path TEXT',
   'ALTER TABLE sessions ADD COLUMN sync_artifacts TEXT',
   'ALTER TABLE sessions ADD COLUMN sync_runs TEXT',
+  'ALTER TABLE sessions ADD COLUMN sync_runs_count INTEGER DEFAULT 0',
+  'ALTER TABLE sessions ADD COLUMN updated_at TEXT',
   'ALTER TABLE session_files ADD COLUMN etag TEXT',
 ] as const;
 
@@ -184,6 +188,8 @@ const SESSIONS_TABLE_COLUMNS_SQL = `
   sync_main_transcript_relative_path TEXT,
   sync_artifacts TEXT,
   sync_runs TEXT,
+  sync_runs_count INTEGER,
+  updated_at TEXT,
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 `;
 
@@ -356,9 +362,29 @@ export class DatabaseManager {
         if (!/duplicate column name/i.test((error as Error).message)) throw error;
       }
     }
+    this.backfillSyncRunsCount();
     this.migrateContextCompactionsNullable();
     this.createSyncIndexes(db);
     this.backfillReadableIds();
+  }
+
+  /**
+   * Backfills `sync_runs_count` from the legacy `sync_runs` JSON column for
+   * existing rows that predate the `sync_runs_count` column. Rows where
+   * `sync_runs_count` is already non-null (e.g. written by newer code) are
+   * left untouched. This is idempotent and safe to run on every startup.
+   */
+  private backfillSyncRunsCount(): void {
+    const db = this.requireDb();
+    const rows = db.selectObjects(
+      'SELECT id, sync_runs FROM sessions WHERE sync_runs_count IS NULL OR sync_runs_count = 0',
+    ) as Array<{ id: string; sync_runs: string | null }>;
+    for (const row of rows) {
+      db.exec({
+        sql: 'UPDATE sessions SET sync_runs_count = ? WHERE id = ?',
+        bind: [safeJsonLength(row.sync_runs), row.id],
+      });
+    }
   }
 
   /**
@@ -1022,7 +1048,7 @@ export class DatabaseManager {
         sync_manifest_model = ?, sync_started_at = ?, sync_ended_at = ?, sync_duration_ms = ?,
         sync_end_reason = ?, sync_engine_version = ?, sync_plugin_version = ?,
         sync_transcripts_captured = ?, sync_main_transcript_relative_path = ?, sync_artifacts = ?,
-        sync_runs = ?
+        sync_runs = ?, sync_runs_count = ?, updated_at = ?
         WHERE id = ?`,
       bind: [
         manifest.sessionId,
@@ -1039,7 +1065,9 @@ export class DatabaseManager {
         Number(manifest.transcriptsCaptured ?? 0),
         manifest.mainTranscriptRelativePath ?? null,
         safeJsonStringify(manifest.artifacts),
-        safeJsonStringify(manifest.syncRuns),
+        safeJsonStringify(manifest.syncRuns ?? []),
+        manifest.syncRunsCount ?? 0,
+        manifest.updatedAt ?? null,
         sessionId,
       ],
     });
@@ -1052,7 +1080,7 @@ export class DatabaseManager {
         sync_session_id, sync_schema_version, sync_harness, sync_harness_version,
         sync_manifest_model, sync_started_at, sync_ended_at, sync_duration_ms,
         sync_end_reason, sync_engine_version, sync_plugin_version, sync_transcripts_captured,
-        sync_main_transcript_relative_path, sync_artifacts, sync_runs
+        sync_main_transcript_relative_path, sync_artifacts, sync_runs, sync_runs_count, updated_at
       FROM sessions WHERE id = ?`,
       [sessionId],
     ) as Record<string, unknown> | undefined;
@@ -1077,15 +1105,17 @@ export class DatabaseManager {
         : undefined,
       artifacts: safeJsonParseArray<unknown>(String(row.sync_artifacts ?? '[]')),
       syncRuns: safeJsonParseArray<unknown>(String(row.sync_runs ?? '[]')),
+      syncRunsCount: typeof row.sync_runs_count === 'number' ? row.sync_runs_count : 0,
+      updatedAt: row.updated_at ? String(row.updated_at) : undefined,
     };
   }
 
-  /** Returns the number of recorded sync runs for a session. */
-  getSyncRunCount(sessionId: string): number {
-    const row = this.requireDb().selectObject('SELECT sync_runs FROM sessions WHERE id = ?', [
+  /** Returns the `updated_at` timestamp for a session, or null if unset. */
+  getSessionUpdatedAt(sessionId: string): string | null {
+    const row = this.requireDb().selectObject('SELECT updated_at FROM sessions WHERE id = ?', [
       sessionId,
-    ]) as unknown as { sync_runs: string | null } | undefined;
-    return safeJsonLength(row?.sync_runs);
+    ]) as unknown as { updated_at: string | null } | undefined;
+    return row?.updated_at ?? null;
   }
 
   /** Marks every pending/processing session in a project as failed. */
@@ -1129,6 +1159,41 @@ export class DatabaseManager {
         file.updated_at,
       ],
     });
+  }
+
+  /** Bulk insert/update session file records in a single transaction. */
+  bulkUpsertSessionFiles(files: SessionFileRecord[]): void {
+    if (files.length === 0) return;
+    const db = this.requireDb();
+    db.exec({ sql: 'BEGIN', bind: [] });
+    try {
+      for (const file of files) {
+        db.exec({
+          sql: `INSERT INTO session_files (
+            id, project_id, session_id, path, scope, sha256, etag, size, status, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(session_id, path) DO UPDATE SET
+            scope = excluded.scope, sha256 = excluded.sha256, etag = excluded.etag,
+            size = excluded.size, status = excluded.status, updated_at = excluded.updated_at`,
+          bind: [
+            file.id,
+            file.project_id,
+            file.session_id,
+            file.path,
+            file.scope,
+            file.sha256,
+            file.etag ?? null,
+            file.size,
+            file.status,
+            file.updated_at,
+          ],
+        });
+      }
+      db.exec({ sql: 'COMMIT', bind: [] });
+    } catch (error) {
+      db.exec({ sql: 'ROLLBACK', bind: [] });
+      throw error;
+    }
   }
 
   /** Deletes all file records for a session. */
@@ -1219,6 +1284,7 @@ function rowToSession(row: SessionRow): DashboardSession {
     sync_session_id: row.sync_session_id ?? undefined,
     sync_status: isSessionSyncStatus(row.sync_status) ? row.sync_status : undefined,
     sync_details: row.sync_details ?? undefined,
+    sync_updated_at: row.updated_at ?? undefined,
   };
 }
 
