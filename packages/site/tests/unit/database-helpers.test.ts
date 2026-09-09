@@ -995,6 +995,71 @@ describe('DatabaseManager', () => {
 
       expect(mgr.getSessionFiles('sess-files-4')).toHaveLength(0);
     });
+
+    it('bulk upserts all file records in one call', () => {
+      const project = makeProject({ id: 'proj-bulk-1', name: 'Bulk Project 1' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-bulk-1', { id: 'sess-bulk-1' });
+      mgr.upsertSessionStub(stub);
+
+      const files = [
+        { ...makeSessionFile('proj-bulk-1', 'sess-bulk-1'), id: 'f1', path: 'a.txt' },
+        { ...makeSessionFile('proj-bulk-1', 'sess-bulk-1'), id: 'f2', path: 'b.txt' },
+        { ...makeSessionFile('proj-bulk-1', 'sess-bulk-1'), id: 'f3', path: 'c.txt' },
+      ];
+      mgr.bulkUpsertSessionFiles(files);
+
+      const result = mgr.getSessionFiles('sess-bulk-1');
+      expect(result).toHaveLength(3);
+      expect(result.map((f) => f.path)).toEqual(['a.txt', 'b.txt', 'c.txt']);
+    });
+
+    it('bulk upsert replaces conflicting (session_id, path) rows', () => {
+      const project = makeProject({ id: 'proj-bulk-2', name: 'Bulk Project 2' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-bulk-2', { id: 'sess-bulk-2' });
+      mgr.upsertSessionStub(stub);
+
+      // Insert initial file
+      mgr.upsertSessionFile({
+        ...makeSessionFile('proj-bulk-2', 'sess-bulk-2'),
+        path: 'a.txt',
+        status: 'downloaded',
+      });
+
+      // Bulk upsert with updated status for same path + new file
+      mgr.bulkUpsertSessionFiles([
+        {
+          ...makeSessionFile('proj-bulk-2', 'sess-bulk-2'),
+          path: 'a.txt',
+          status: 'processed',
+          etag: 'etag-updated',
+        },
+        {
+          ...makeSessionFile('proj-bulk-2', 'sess-bulk-2'),
+          id: 'new-id',
+          path: 'b.txt',
+          status: 'processed',
+        },
+      ]);
+
+      const result = mgr.getSessionFiles('sess-bulk-2');
+      expect(result).toHaveLength(2);
+      const aFile = result.find((f) => f.path === 'a.txt');
+      expect(aFile?.status).toBe('processed');
+      expect(aFile?.etag).toBe('etag-updated');
+      expect(result.find((f) => f.path === 'b.txt')).toBeDefined();
+    });
+
+    it('bulk upsert with empty array is a no-op', () => {
+      const project = makeProject({ id: 'proj-bulk-3', name: 'Bulk Project 3' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-bulk-3', { id: 'sess-bulk-3' });
+      mgr.upsertSessionStub(stub);
+
+      mgr.bulkUpsertSessionFiles([]);
+      expect(mgr.getSessionFiles('sess-bulk-3')).toHaveLength(0);
+    });
   });
 
   // ================================================================

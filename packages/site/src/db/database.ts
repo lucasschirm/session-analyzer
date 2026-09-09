@@ -1161,6 +1161,41 @@ export class DatabaseManager {
     });
   }
 
+  /** Bulk insert/update session file records in a single transaction. */
+  bulkUpsertSessionFiles(files: SessionFileRecord[]): void {
+    if (files.length === 0) return;
+    const db = this.requireDb();
+    db.exec({ sql: 'BEGIN', bind: [] });
+    try {
+      for (const file of files) {
+        db.exec({
+          sql: `INSERT INTO session_files (
+            id, project_id, session_id, path, scope, sha256, etag, size, status, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(session_id, path) DO UPDATE SET
+            scope = excluded.scope, sha256 = excluded.sha256, etag = excluded.etag,
+            size = excluded.size, status = excluded.status, updated_at = excluded.updated_at`,
+          bind: [
+            file.id,
+            file.project_id,
+            file.session_id,
+            file.path,
+            file.scope,
+            file.sha256,
+            file.etag ?? null,
+            file.size,
+            file.status,
+            file.updated_at,
+          ],
+        });
+      }
+      db.exec({ sql: 'COMMIT', bind: [] });
+    } catch (error) {
+      db.exec({ sql: 'ROLLBACK', bind: [] });
+      throw error;
+    }
+  }
+
   /** Deletes all file records for a session. */
   deleteSessionFiles(sessionId: string): void {
     this.requireDb().exec({

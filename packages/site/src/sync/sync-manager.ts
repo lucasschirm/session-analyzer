@@ -151,6 +151,10 @@ interface SessionSyncState extends SessionProgressState {
   manifest?: SyncManifest;
   /** In-flight `onFileDownloaded` (retain) promises; awaited before ingestion. */
   retainPromises: Promise<void>[];
+  /** In-memory file records keyed by path; bulk-written at completion. */
+  fileMap: Map<string, SessionFileRecord>;
+  /** Paths with pending analytics retention/processing. */
+  pendingRetention: Set<string>;
   /** True when the session did not exist locally before this run. */
   isNew: boolean;
   /** True when an existing session had at least one file downloaded this run. */
@@ -1295,6 +1299,8 @@ export class SyncManager extends EventTarget {
       filesFailed: 0,
       bytesReceived: 0,
       retainPromises: [],
+      fileMap: new Map(),
+      pendingRetention: new Set(),
       isNew,
       wasUpdated: false,
     };
@@ -1380,6 +1386,7 @@ export class SyncManager extends EventTarget {
     const existingFiles = await this.db.getSessionFiles(sessionId);
     const existingByPath = new Map(existingFiles.map((f) => [f.path, f]));
     const now = Date.now();
+    const records: SessionFileRecord[] = [];
     for (const artifact of inScope) {
       const file = this.artifactToFile(artifact, mainPath);
       const existing = existingByPath.get(file.file);
@@ -1387,7 +1394,7 @@ export class SyncManager extends EventTarget {
       // computeFilesToDownload can still detect files needing re-download.
       // Only upsert as 'processed' when the file is new or already processed.
       const status = existing && existing.status !== 'processed' ? existing.status : 'processed';
-      const record: SessionFileRecord = {
+      records.push({
         id: existing?.id ?? generateId(),
         project_id: projectId,
         session_id: sessionId,
@@ -1397,8 +1404,10 @@ export class SyncManager extends EventTarget {
         size: file.size,
         status,
         updated_at: now,
-      };
-      await this.db.upsertSessionFile(record);
+      });
+    }
+    if (records.length > 0) {
+      await this.db.bulkUpsertSessionFiles(records);
     }
   }
 
@@ -1505,8 +1514,9 @@ export class SyncManager extends EventTarget {
           .setSessionSyncStatus(session.localSessionId, 'processing')
           .catch(() => undefined);
       }
-      await this.upsertDownloadedFile(project, session, message);
+      this.recordDownloadedFile(project, session, message);
       session.pendingFiles++;
+      session.pendingRetention.add(message.file);
       this.dispatchRetainPromise(project, session, message);
       this.emitChange();
     } catch (error) {
@@ -1560,12 +1570,12 @@ export class SyncManager extends EventTarget {
     session.retainPromises.push(retainPromise);
   }
 
-  private async upsertDownloadedFile(
+  private recordDownloadedFile(
     project: ProjectSyncState,
     session: SessionSyncState,
     message: SessionFileDownloadedMessage,
-  ): Promise<void> {
-    const existing = await this.findSessionFile(session.localSessionId, message.file);
+  ): void {
+    const existing = session.fileMap.get(message.file);
     const record: SessionFileRecord = {
       id: existing?.id ?? generateId(),
       project_id: project.localProjectId,
@@ -1578,7 +1588,7 @@ export class SyncManager extends EventTarget {
       status: 'downloaded',
       updated_at: Date.now(),
     };
-    await this.db.upsertSessionFile(record);
+    session.fileMap.set(message.file, record);
   }
 
   private fileScope(file: string): 'session' | 'workspace' | 'global' | 'runtime' {
@@ -1587,41 +1597,33 @@ export class SyncManager extends EventTarget {
     return 'session';
   }
 
-  private async onFileProcessed(
-    session: SessionSyncState,
-    message: SessionFileDownloadedMessage,
-  ): Promise<void> {
-    await this.updateFileStatus(session.localSessionId, message.file, 'processed');
+  private onFileProcessed(session: SessionSyncState, message: SessionFileDownloadedMessage): void {
+    this.setInMemoryFileStatus(session, message.file, 'processed');
+    session.pendingRetention.delete(message.file);
     session.pendingFiles = Math.max(0, session.pendingFiles - 1);
-    await this.maybeCompleteSession(session);
+    void this.maybeCompleteSession(session);
     this.emitChange();
   }
 
-  private async onFileProcessFailed(
+  private onFileProcessFailed(
     session: SessionSyncState,
     message: SessionFileDownloadedMessage,
-  ): Promise<void> {
-    await this.updateFileStatus(session.localSessionId, message.file, 'failed');
+  ): void {
+    this.setInMemoryFileStatus(session, message.file, 'failed');
+    session.pendingRetention.delete(message.file);
     session.pendingFiles = Math.max(0, session.pendingFiles - 1);
     this.emitChange();
   }
 
-  private async updateFileStatus(
-    sessionId: string,
+  private setInMemoryFileStatus(
+    session: SessionSyncState,
     path: string,
     status: 'downloaded' | 'processed' | 'failed',
-  ): Promise<void> {
-    const existing = await this.findSessionFile(sessionId, path);
+  ): void {
+    const existing = session.fileMap.get(path);
     if (!existing) return;
-    await this.db.upsertSessionFile({ ...existing, status, updated_at: Date.now() });
-  }
-
-  private async findSessionFile(
-    sessionId: string,
-    path: string,
-  ): Promise<SessionFileRecord | undefined> {
-    const files = await this.db.getSessionFiles(sessionId);
-    return files.find((row) => row.path === path);
+    existing.status = status;
+    existing.updated_at = Date.now();
   }
 
   private async handleSessionSyncComplete(
@@ -1632,16 +1634,18 @@ export class SyncManager extends EventTarget {
     if (!session) return;
     session.completeReceived = true;
 
-    await this.reconcileSessionFilesList(project, session, message.files);
+    this.reconcileSessionFilesList(project, session, message.files);
     await this.settleRetainPromises(session);
 
     if (session.syncStatus === 'transcript_unavailable' || session.syncStatus === 'failed') {
+      await this.bulkPersistSessionFiles(session);
       this.markSessionDone(project, session);
       this.emitChange();
       return;
     }
 
     try {
+      await this.bulkPersistSessionFiles(session);
       await this.onSyncComplete(session.localSessionId, session.manifest, project.projectId);
     } catch (error) {
       await this.handleIngestFailed(project, session, message.sessionId, error);
@@ -1653,14 +1657,20 @@ export class SyncManager extends EventTarget {
     this.emitChange();
   }
 
-  private async reconcileSessionFilesList(
+  private async bulkPersistSessionFiles(session: SessionSyncState): Promise<void> {
+    const files = [...session.fileMap.values()];
+    if (files.length === 0) return;
+    await this.db.bulkUpsertSessionFiles(files);
+  }
+
+  private reconcileSessionFilesList(
     project: ProjectSyncState,
     session: SessionSyncState,
     files: FileSummary[],
-  ): Promise<void> {
+  ): void {
     for (const file of files) {
       try {
-        await this.reconcileCompleteFile(project, session, file);
+        this.reconcileCompleteFile(project, session, file);
       } catch (error) {
         console.error(`Reconcile file failed for ${file.file}:`, error);
       }
@@ -1690,13 +1700,16 @@ export class SyncManager extends EventTarget {
     this.emitChange();
   }
 
-  private async reconcileCompleteFile(
+  private reconcileCompleteFile(
     project: ProjectSyncState,
     session: SessionSyncState,
     file: FileSummary,
-  ): Promise<void> {
-    const existing = await this.findSessionFile(session.localSessionId, file.file);
+  ): void {
+    const existing = session.fileMap.get(file.file);
     const status = this.fileSummaryStatus(file, existing);
+    if (file.status === 'unchanged' && !existing && !this.isValidSha256(file.hash)) {
+      return;
+    }
     const record: SessionFileRecord = {
       id: existing?.id ?? generateId(),
       project_id: project.localProjectId,
@@ -1708,10 +1721,7 @@ export class SyncManager extends EventTarget {
       status,
       updated_at: Date.now(),
     };
-    if (file.status === 'unchanged' && !existing && !this.isValidSha256(file.hash)) {
-      return;
-    }
-    await this.db.upsertSessionFile(record);
+    session.fileMap.set(file.file, record);
   }
 
   private fileSummaryStatus(

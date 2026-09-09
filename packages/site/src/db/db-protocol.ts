@@ -66,6 +66,7 @@ export type DbRequest =
   | { id: number; type: 'reconcileSyncStates'; sessionDetails: string }
   | { id: number; type: 'getSessionFiles'; sessionId: string }
   | { id: number; type: 'upsertSessionFile'; file: SessionFileRecord }
+  | { id: number; type: 'bulkUpsertSessionFiles'; files: SessionFileRecord[] }
   | { id: number; type: 'deleteSessionFiles'; sessionId: string }
   | {
       id: number;

@@ -228,6 +228,11 @@ export class DbClient {
     return this.call({ type: 'upsertSessionFile', file }) as Promise<void>;
   }
 
+  /** Bulk insert/update session file records in a single transaction. */
+  bulkUpsertSessionFiles(files: SessionFileRecord[]): Promise<void> {
+    return this.call({ type: 'bulkUpsertSessionFiles', files }) as Promise<void>;
+  }
+
   /** Deletes all file records for a session. */
   deleteSessionFiles(sessionId: string): Promise<void> {
     return this.call({ type: 'deleteSessionFiles', sessionId }) as Promise<void>;

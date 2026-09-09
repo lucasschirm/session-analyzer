@@ -148,6 +148,10 @@ const handlers: Record<DbRequest['type'], Handler> = {
     manager.upsertSessionFile((request as DbRequestOf<'upsertSessionFile'>).file);
     return { id: request.id, ok: true };
   },
+  bulkUpsertSessionFiles: (request) => {
+    manager.bulkUpsertSessionFiles((request as DbRequestOf<'bulkUpsertSessionFiles'>).files);
+    return { id: request.id, ok: true };
+  },
   deleteSessionFiles: (request) => {
     manager.deleteSessionFiles((request as DbRequestOf<'deleteSessionFiles'>).sessionId);
     return { id: request.id, ok: true };
