@@ -22,7 +22,7 @@
     "version:patch": "pnpm -r version:patch",
     "version:align": "node scripts/align-plugin-versions.mjs",
     "prepare": "husky",
-    "version:publish": "pnpm -r version:publish"
+    "version:publish": "node scripts/publish-packages.mjs"
   },
   "author": "",
   "license": "ISC",
