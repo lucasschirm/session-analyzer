@@ -1,4 +1,5 @@
 export * from './claude.js';
+export * from './claude-profile.js';
 export { validateCliConfig, validateStorageConfig } from './cli/config.js';
 export { parseDownloadArgs, runDownloadCommand } from './cli/download-command.js';
 export { resolveCliEnv } from './cli/env.js';

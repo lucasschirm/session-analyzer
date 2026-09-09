@@ -6,10 +6,7 @@
  */
 
 import type { ClaudeCodeEntry, ClaudeCodeSession } from '../types/session.js';
-
-function numOr0(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-}
+import { numOr0 } from '../utils/numeric.js';
 
 export function accumulateUsage(entries: ClaudeCodeEntry[]): ClaudeCodeSession['aggregateUsage'] {
   const totals: ClaudeCodeSession['aggregateUsage'] = {

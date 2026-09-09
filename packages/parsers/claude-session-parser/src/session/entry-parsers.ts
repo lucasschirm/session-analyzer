@@ -71,6 +71,7 @@ import type {
   WorktreeStateEntry,
 } from '../types/session.js';
 import { makeParseError } from '../utils/errors.js';
+import { numOr0, numOrNull } from '../utils/numeric.js';
 import { clampBlob } from '../utils/text.js';
 
 export interface EntryParseOutcome {
@@ -95,10 +96,6 @@ function str(obj: Record<string, unknown>, key: string): string | undefined {
 function num(obj: Record<string, unknown>, key: string): number | undefined {
   const v = obj[key];
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-}
-
-function numOr0(v: unknown): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
 function bool(obj: Record<string, unknown>, key: string): boolean | undefined {
@@ -315,10 +312,10 @@ function buildAssistantUsage(
 ): NonNullable<AssistantEntry['message']['usage']> | undefined {
   if (!isRecord(raw)) return undefined;
   const usage: NonNullable<AssistantEntry['message']['usage']> = {
-    input_tokens: numOr0(raw.input_tokens),
-    output_tokens: numOr0(raw.output_tokens),
-    cache_creation_input_tokens: numOr0(raw.cache_creation_input_tokens),
-    cache_read_input_tokens: numOr0(raw.cache_read_input_tokens),
+    input_tokens: numOrNull(raw.input_tokens),
+    output_tokens: numOrNull(raw.output_tokens),
+    cache_creation_input_tokens: numOrNull(raw.cache_creation_input_tokens),
+    cache_read_input_tokens: numOrNull(raw.cache_read_input_tokens),
   };
   if (isRecord(raw.cache_creation)) {
     const cacheCreation: NonNullable<

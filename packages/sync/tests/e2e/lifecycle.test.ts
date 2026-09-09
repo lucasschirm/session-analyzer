@@ -24,7 +24,7 @@ import {
 } from '../../src/index.js';
 
 const packageRoot = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
-const watchScriptPath = path.resolve(packageRoot, 'dist', 'cli', 'watch.js');
+const watchScriptPath = path.resolve(packageRoot, 'dist', 'cli', 'watch-entry.js');
 
 class InMemoryStorageAdapter implements StorageAdapter {
   readonly calls: PutObjectInput[] = [];

@@ -2,8 +2,6 @@ import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 
 import {
-  CLAUDE_HARNESS,
-  CLAUDE_HARNESS_VERSION,
   CLAUDE_SYNC_TRIGGERS,
   claudeEventToSyncTrigger,
   parseClaudeHookInput,
@@ -11,6 +9,7 @@ import {
   toHarnessSession,
   toSyncInput,
 } from '../../src/claude.js';
+import { CLAUDE_HARNESS, CLAUDE_HARNESS_VERSION } from '../../src/claude-profile.js';
 
 function baseInput(overrides: Record<string, unknown> = {}) {
   return {

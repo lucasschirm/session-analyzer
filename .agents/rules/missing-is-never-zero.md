@@ -1,5 +1,5 @@
 ---
-globs: "packages/db-core/**,packages/db/**,packages/transformer/**,packages/site/src/**"
+globs: "packages/db-core/**,packages/db/**,packages/transformers/**,packages/site/src/**"
 ---
 
 # Missing Is Never Zero

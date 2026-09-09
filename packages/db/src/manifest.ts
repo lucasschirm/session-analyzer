@@ -1,5 +1,5 @@
 import type { SyncManifest } from '@lucasschirm/sal-sync-core';
-import type { Artifact, SourceIdentity } from '@lucasschirm/sal-transformer';
+import type { Artifact, SourceIdentity } from '@lucasschirm/sal-transformer-shared';
 import type { ArtifactContent, ResolvedArtifact } from './ports.js';
 
 export type ManifestInput = SyncManifest;

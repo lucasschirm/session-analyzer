@@ -2,6 +2,7 @@ export * from './allowlist.js';
 export * from './artifact.js';
 export * from './config/contract.js';
 export * from './errors.js';
+export * from './harness-profile.js';
 export * from './hashing/sha256.js';
 export * from './limits.js';
 export * from './manifest/contract.js';

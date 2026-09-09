@@ -6,6 +6,19 @@ import process from 'node:process';
 
 import type { DiscoveryError } from './contract.js';
 
+/**
+ * Claude Code's config-directory override env var. Kept here (rather than in
+ * a harness-agnostic module) because `resolveClaudeConfigDir`/
+ * `getDefaultClaudeConfigDir` below are Claude-specific defaults: discovery
+ * (`discover`/`discoverGlobal` in `./core.js`/`./global.js`) no longer calls
+ * them implicitly — it resolves the config directory from an injected
+ * `HarnessProfile.configDir(env)` instead. These are retained as reusable
+ * building blocks for `ClaudeHarnessProfile.configDir`
+ * (`packages/plugins/claude-session-sync`) and for this package's own
+ * backward-compatible `DEFAULT_HARNESS_PROFILE` (`./default-profile.js`), so
+ * existing `@lucasschirm/sal-sync` consumers that predate the harness-profile
+ * abstraction keep working unchanged.
+ */
 export const CLAUDE_CONFIG_DIR_ENV = 'CLAUDE_CONFIG_DIR';
 
 const CASE_INSENSITIVE_PLATFORMS = new Set(['win32', 'darwin']);

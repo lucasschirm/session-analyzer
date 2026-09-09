@@ -134,4 +134,4 @@ before heuristic variants.
 - Plan: `docs/superpowers/plans/2026-08-24-analytics-data-platform-design.md` §9 (Metric definition and evolution), §8.6 (Metric registry and values schema)
 - ADR-0006: Metric versioning
 - Metric ontology: `docs/superpowers/SESSION_METRICS.md`
-- Implementation: `packages/db-core/src/metrics.ts`, `packages/transformer/src/metric.ts`, `packages/transformer/src/comparability.ts`
+- Implementation: `packages/db-core/src/metrics.ts`, `packages/transformers/transformer-shared/src/metric.ts`, `packages/transformers/transformer-shared/src/comparability.ts`

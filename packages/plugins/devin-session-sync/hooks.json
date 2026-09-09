@@ -1,0 +1,55 @@
+{
+  "description": "Sync Devin CLI session data to the SAL sync engine. Wires 4 of the 8 documented ACP hook events (SessionStart/Stop/PostCompaction/SessionEnd) — PreToolUse/PostToolUse/PermissionRequest/UserPromptSubmit are ACP-tool-related and out of scope for this plugin. CRITICAL CAVEAT (verified, master plan Part A3): Devin Cloud sessions run command hooks for every event EXCEPT SessionStart and SessionEnd — so a SessionEnd-triggered sync only ever fires for local CLI sessions. Mitigation, all three shipped: the Stop hook below (fires every turn, works in both Cloud and local), the bulk `devin-sync sync` CLI command for manual/scheduled catch-up, and the mandatory bin/watcher daemon polling sessions.db watermarks (started independently of any hook, since the hook that would spawn a per-session watcher — SessionStart — is exactly the one Cloud sessions never fire).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${DEVIN_PLUGIN_ROOT}/bin/session-start"],
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${DEVIN_PLUGIN_ROOT}/bin/hook"],
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostCompaction": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${DEVIN_PLUGIN_ROOT}/bin/hook"],
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${DEVIN_PLUGIN_ROOT}/bin/session-end"],
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

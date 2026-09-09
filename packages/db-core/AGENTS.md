@@ -55,6 +55,7 @@ tests/
 - **Generation-scoped visibility**: `sessions.current_generation_id` is the
   single visibility switch; candidate and current rows coexist.
 - **Deterministic IDs**: pure-JS FNV-1a 64-bit hash, no runtime crypto.
+- **Session failure isolation**: A failed session or ingestion error must never invalidate, lock, or corrupt persistence for other sessions in the database.
 
 ## Key relationships
 

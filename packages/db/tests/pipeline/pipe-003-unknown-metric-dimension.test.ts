@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ClaudeCodeTransformer } from '@lucasschirm/sal-claude-transformer';
 import { FRESH_SCHEMA_SQL } from '@lucasschirm/sal-db-core';
+import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
 import type {
   Artifact,
   ArtifactClassificationResult,
@@ -13,8 +15,7 @@ import type {
   TransformContext,
   TransformResult,
   UnknownArtifactBundle,
-} from '@lucasschirm/sal-transformer';
-import { ClaudeCodeTransformer, createDefaultRegistry } from '@lucasschirm/sal-transformer';
+} from '@lucasschirm/sal-transformer-shared';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';

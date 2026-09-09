@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ClaudeCodeTransformer } from '@lucasschirm/sal-claude-transformer';
 import { FRESH_SCHEMA_SQL } from '@lucasschirm/sal-db-core';
 import { contentTypeFor, sha256Hex } from '@lucasschirm/sal-sync';
 import {
@@ -13,15 +14,12 @@ import {
   type StorageAdapter,
   type SyncManifest,
 } from '@lucasschirm/sal-sync-core';
-import {
-  ClaudeCodeTransformer,
-  createDefaultRegistry,
-  type UnknownArtifactBundle,
-} from '@lucasschirm/sal-transformer';
+import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
+import type { UnknownArtifactBundle } from '@lucasschirm/sal-transformer-shared';
+import { runTransformerConformanceSuite } from '@lucasschirm/sal-transformer-shared/conformance';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import { runSessionEnd } from '../../../plugins/claude-session-sync/src/index.js';
-import { runTransformerConformanceSuite } from '../../../transformer/tests/conformance/suite.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

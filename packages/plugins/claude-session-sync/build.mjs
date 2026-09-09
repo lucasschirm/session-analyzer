@@ -1,10 +1,9 @@
-import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
-import { basename, resolve, sep } from 'node:path';
+import { chmodSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as esbuildBuild } from 'esbuild';
 
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
-const syncPackageRoot = resolve(packageRoot, '..', '..', 'sync');
 const binDir = resolve(packageRoot, 'bin');
 
 const FORBIDDEN_PACKAGE = '@lucasschirm/sal-claude-session-parser';
@@ -21,39 +20,20 @@ const DEFAULT_ENTRIES = {
   'claude-sync': 'src/cli.ts',
 };
 
-const GUARD_PATTERN =
-  /if\s*\(\s*import\.meta\.url\.startsWith\s*\(\s*['"]file:['"]\s*\)\s*&&\s*process\.argv\s*\[\s*1\s*\]\s*===\s*fileURLToPath\s*\(\s*import\.meta\.url\s*\)\s*\)\s*\{[^{}]*\}\s*/g;
-
-function isInsideSyncPackage(absPath) {
-  let rp;
-  try {
-    rp = realpathSync(absPath);
-  } catch {
-    return false;
-  }
-  const normalized = rp.endsWith(sep) ? rp : `${rp}${sep}`;
-  const syncRoot = syncPackageRoot.endsWith(sep) ? syncPackageRoot : `${syncPackageRoot}${sep}`;
-  return normalized.startsWith(syncRoot);
-}
-
-function stripSyncCliGuards() {
-  return {
-    name: 'strip-sync-cli-guards',
-    setup(build) {
-      build.onLoad({ filter: /\.[jt]s$/ }, (args) => {
-        if (!isInsideSyncPackage(args.path)) {
-          return;
-        }
-        const source = readFileSync(args.path, 'utf8');
-        const stripped = source.replace(GUARD_PATTERN, '');
-        if (stripped === source) {
-          return;
-        }
-        return { contents: stripped, loader: 'js' };
-      });
-    },
-  };
-}
+// NOTE(#274): this build previously carried a `stripSyncCliGuards` esbuild
+// plugin that regex-stripped `@lucasschirm/sal-sync`'s
+// `if (import.meta.url... && process.argv[1] === ...)` self-invoking CLI
+// guards out of `packages/sync/src/cli/{watch,run}.ts` at bundle time. That
+// masked the symptom for this plugin only (`devin-session-sync`, which had
+// no equivalent workaround, silently no-op'd — see #274) without fixing the
+// underlying defect: those guards relied on `import.meta.url`/
+// `process.argv[1]` identity, which is meaningless once bundled alongside
+// another entry point. The guards have since been removed at the source
+// (`packages/sync/src/cli/watch.ts` and `run.ts` are now pure, side-effect
+// -free exports; their standalone-process behavior lives in
+// `watch-entry.ts`/`run-entry.ts`, which are never re-exported through the
+// package barrel), so this bundle-time patch is no longer needed and has
+// been removed rather than kept as a vestigial no-op.
 
 /**
  * Bundle the Claude Code plugin entry points into single-file executables.
@@ -82,7 +62,6 @@ export async function build(options = {}) {
     sourcemap: false,
     metafile: true,
     banner: { js: SHEBANG },
-    plugins: [stripSyncCliGuards()],
     ...options.esbuildOptions,
   });
 

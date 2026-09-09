@@ -1,14 +1,21 @@
 import path from 'node:path';
-import type { ArtifactScope } from '@lucasschirm/sal-sync-core';
-import {
-  CAPTURE_ALLOWLIST,
-  DEFAULT_SYNC_LIMITS,
-  type SyncLimits,
+import process from 'node:process';
+import type {
+  ArtifactScope,
+  HarnessProfile,
+  SessionLayoutDescriptor,
 } from '@lucasschirm/sal-sync-core';
+import { DEFAULT_SYNC_LIMITS, type SyncLimits } from '@lucasschirm/sal-sync-core';
 import { DiscoveryContext } from './context.js';
 import type { DiscoveryInput, DiscoveryResult, SessionDiscoveryInput } from './contract.js';
 import { discoverFromPattern, type ExpandedPattern, expandAllowlist } from './glob.js';
-import { getHomeDir, resolveClaudeConfigDir } from './paths.js';
+import { getHomeDir } from './paths.js';
+import { MAIN_TRANSCRIPT_STORAGE_NAME } from './session-layout.js';
+
+// Re-exported for backward compatibility: this constant used to be defined
+// here. The canonical definition (and the rest of Claude's session layout)
+// now lives in `./session-layout.js` alongside `CLAUDE_SESSION_LAYOUT`.
+export { MAIN_TRANSCRIPT_STORAGE_NAME };
 
 export async function runScopeDiscovery(
   context: DiscoveryContext,
@@ -29,21 +36,10 @@ export function makeDiscoveryContext(limits?: SyncLimits): DiscoveryContext {
   return new DiscoveryContext(limits ?? DEFAULT_SYNC_LIMITS);
 }
 
-const SUBAGENT_TRANSCRIPTS_PATTERN = 'subagents/*.jsonl';
-const SUBAGENT_META_PATTERN = 'subagents/*.meta.json';
-
-/**
- * Storage-relative name for the main transcript file within the `session` scope.
- *
- * The on-disk filename is `<sessionId>.jsonl`, but the S3 key already includes
- * the sessionId at `<projectId>/<sessionId>/...`, so we use a fixed
- * name to avoid repeating the sessionId in the key.
- */
-export const MAIN_TRANSCRIPT_STORAGE_NAME = 'transcript.jsonl';
-
 export async function runSessionDiscovery(
   context: DiscoveryContext,
   input: SessionDiscoveryInput,
+  sessionLayout: SessionLayoutDescriptor,
 ): Promise<void> {
   if (input.captureTranscripts === false || !input.transcriptPath) {
     return;
@@ -53,14 +49,14 @@ export async function runSessionDiscovery(
   const transcriptDir = path.dirname(resolvedTranscriptPath);
 
   // Capture the exact main transcript file; never glob *.jsonl from the project dir.
-  // Use a fixed storage name so the sessionId is not repeated in the S3 key.
+  // Use the profile's fixed storage name so the sessionId is not repeated in the S3 key.
   await context.addFile(
     resolvedTranscriptPath,
     transcriptDir,
     'session',
     input.projectId,
     input.sessionId,
-    MAIN_TRANSCRIPT_STORAGE_NAME,
+    sessionLayout.mainTranscriptStorageName,
   );
 
   if (context.stopped) {
@@ -72,13 +68,14 @@ export async function runSessionDiscovery(
   // the sessionId prefix (e.g. "subagents/agent-xxx.jsonl" instead of
   // "<sessionId>/subagents/agent-xxx.jsonl").
   const sessionDir = path.join(transcriptDir, input.sessionId);
+  const { subagentTranscriptsPattern, subagentMetaPattern } = sessionLayout;
 
   await discoverFromPattern(
     context,
     {
       root: sessionDir,
-      relativePattern: SUBAGENT_TRANSCRIPTS_PATTERN,
-      original: SUBAGENT_TRANSCRIPTS_PATTERN,
+      relativePattern: subagentTranscriptsPattern,
+      original: subagentTranscriptsPattern,
     },
     'session',
     input.projectId,
@@ -91,20 +88,23 @@ export async function runSessionDiscovery(
 
   await discoverFromPattern(
     context,
-    { root: sessionDir, relativePattern: SUBAGENT_META_PATTERN, original: SUBAGENT_META_PATTERN },
+    { root: sessionDir, relativePattern: subagentMetaPattern, original: subagentMetaPattern },
     'session',
     input.projectId,
     input.sessionId,
   );
 }
 
-export async function discover(input: DiscoveryInput): Promise<DiscoveryResult> {
+export async function discover(
+  input: DiscoveryInput,
+  profile: HarnessProfile,
+): Promise<DiscoveryResult> {
   const context = makeDiscoveryContext(input.limits);
-  const claudeConfigDir = input.claudeConfigDir ?? resolveClaudeConfigDir();
+  const configDir = input.configDir ?? profile.configDir(input.env ?? process.env);
   const homeDir = input.homeDir ?? getHomeDir();
 
   const workspacePatterns = expandAllowlist(
-    CAPTURE_ALLOWLIST.workspace,
+    profile.captureAllowlist.workspace,
     '',
     '',
     input.workspaceRoot,
@@ -118,12 +118,12 @@ export async function discover(input: DiscoveryInput): Promise<DiscoveryResult> 
   );
 
   if (!context.stopped) {
-    const globalPatterns = expandAllowlist(CAPTURE_ALLOWLIST.global, claudeConfigDir, homeDir);
+    const globalPatterns = expandAllowlist(profile.captureAllowlist.global, configDir, homeDir);
     await runScopeDiscovery(context, 'global', globalPatterns, input.projectId, input.sessionId);
   }
 
   if (!context.stopped && input.transcriptPath && input.captureTranscripts !== false) {
-    await runSessionDiscovery(context, input);
+    await runSessionDiscovery(context, input, profile.sessionLayout);
   }
 
   return context.toResult();

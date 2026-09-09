@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   componentUtilizationToChartSeries,
   filterByScope,
+  isDurationMetric,
   isTokenMetric,
   metricLabel,
   modelHarnessCohortsToChartSeries,
@@ -60,6 +61,39 @@ describe('isTokenMetric', () => {
     expect(isTokenMetric('claude:duration:wall_ms:root_only')).toBe(false);
     expect(isTokenMetric('claude:turns:count:root_only')).toBe(false);
   });
+
+  it('returns true for devin token metrics (harness-independent matching)', () => {
+    expect(isTokenMetric('devin:tokens:total:inclusive')).toBe(true);
+    expect(isTokenMetric('devin:tokens:cache_creation:root_only')).toBe(true);
+    expect(isTokenMetric('devin:tokens:cache_read:root_only')).toBe(true);
+    expect(isTokenMetric('devin:tokens:output:root_only')).toBe(true);
+    expect(isTokenMetric('devin:tokens:input:root_only')).toBe(true);
+  });
+
+  it('returns false for non-token devin metrics', () => {
+    expect(isTokenMetric('devin:duration:wall_ms:root_only')).toBe(false);
+    expect(isTokenMetric('devin:turns:count:root_only')).toBe(false);
+    expect(isTokenMetric('devin:steps:count:root_only')).toBe(false);
+  });
+});
+
+describe('isDurationMetric', () => {
+  it('returns true for the claude wall-clock duration metric', () => {
+    expect(isDurationMetric('claude:duration:wall_ms:root_only')).toBe(true);
+    expect(isDurationMetric('claude:duration:wall_ms:inclusive')).toBe(true);
+  });
+
+  it('returns true for the devin wall-clock duration metric (harness-independent matching)', () => {
+    expect(isDurationMetric('devin:duration:wall_ms:root_only')).toBe(true);
+    expect(isDurationMetric('devin:duration:wall_ms:inclusive')).toBe(true);
+  });
+
+  it('returns false for non-duration metrics from either harness', () => {
+    expect(isDurationMetric('claude:tokens:total:root_only')).toBe(false);
+    expect(isDurationMetric('devin:tokens:total:root_only')).toBe(false);
+    expect(isDurationMetric('claude:turns:count:root_only')).toBe(false);
+    expect(isDurationMetric('devin:cost:total:root_only')).toBe(false);
+  });
 });
 
 describe('stripScopeSuffix', () => {
@@ -91,6 +125,15 @@ describe('metricLabel', () => {
   it('falls back to the metricId when no fallback', () => {
     const label = metricLabel('unknown:metric');
     expect(label).toBe('unknown:metric');
+  });
+
+  it('applies the duration "(min)" suffix consistently for claude and devin', () => {
+    expect(metricLabel('claude:duration:wall_ms:root_only', 'Fallback')).toBe(
+      'Session duration (min)',
+    );
+    expect(metricLabel('devin:duration:wall_ms:root_only', 'Fallback')).toBe(
+      'Session duration (min)',
+    );
   });
 });
 
@@ -197,6 +240,40 @@ describe('trendToChartSeries', () => {
     const series = trendToChartSeries(trend);
     expect(series.buckets).toHaveLength(1);
   });
+
+  it('rounds devin duration values to whole minutes, same as claude', () => {
+    const trend = {
+      series: [
+        makePoint({
+          time: 't1',
+          value: 3.7,
+          metricId: 'devin:duration:wall_ms:root_only',
+          label: 'Duration (root-only)',
+        }),
+      ],
+    } as unknown as PortfolioTrendSeries;
+    const series = trendToChartSeries(trend, 'main');
+    expect(series.buckets).toHaveLength(1);
+    expect(series.buckets[0].y).toBe(4);
+  });
+
+  it('excludes devin token metrics from the main trend, same as claude', () => {
+    const trend = {
+      series: [
+        makePoint({ time: 't1', value: 10, metricId: 'm1:root_only' }),
+        makePoint({
+          time: 't1',
+          value: 500,
+          metricId: 'devin:tokens:total:root_only',
+          label: 'Tokens (root-only)',
+        }),
+      ],
+    } as unknown as PortfolioTrendSeries;
+    const series = trendToChartSeries(trend, 'main');
+    expect(series.buckets).toHaveLength(1);
+    expect(series.buckets[0].x).toBe('t1');
+    expect(series.buckets[0].y).toBe(10);
+  });
 });
 
 describe('tokenTrendToChartSeries', () => {
@@ -216,6 +293,23 @@ describe('tokenTrendToChartSeries', () => {
     expect(series.buckets).toHaveLength(1);
     expect(series.buckets[0].y).toBe(500);
     expect(series.label).toBe('Token usage trends');
+  });
+
+  it('includes devin token metrics, same as claude', () => {
+    const trend = {
+      series: [
+        makePoint({ time: 't1', value: 10, metricId: 'm1:root_only' }),
+        makePoint({
+          time: 't1',
+          value: 750,
+          metricId: 'devin:tokens:total:root_only',
+          label: 'Tokens (root-only)',
+        }),
+      ],
+    } as unknown as PortfolioTrendSeries;
+    const series = tokenTrendToChartSeries(trend, 'main');
+    expect(series.buckets).toHaveLength(1);
+    expect(series.buckets[0].y).toBe(750);
   });
 });
 

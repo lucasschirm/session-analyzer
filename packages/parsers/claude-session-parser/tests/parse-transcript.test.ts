@@ -789,8 +789,8 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
   const content = readFixture('c1-sparse-entries.jsonl');
   const session = parseSessionTranscript(content, { skipTimelines: true });
 
-  it('parses all 34 lines and keeps every entry despite near-total field omission', () => {
-    expect(session.entries).toHaveLength(34);
+  it('parses all 35 lines and keeps every entry despite near-total field omission', () => {
+    expect(session.entries).toHaveLength(35);
   });
 
   it('a bare {"type":"assistant"} defaults uuid/sessionId to "" and content to [], and records missing_timestamp with no uuid on the error', () => {
@@ -1071,13 +1071,26 @@ describe('parseEntry (via parseSessionTranscript) — sparse/minimal-fields fixt
     });
   });
 
-  it('assistant usage: {} defaults every numeric usage field to 0 via entry-parsers own numOr0', () => {
+  it('assistant usage: {} preserves every field as null via entry-parsers own numOrNull (#377)', () => {
     const entry = entryAt<AssistantEntry>(session, 31, 'assistant');
     expect(entry.message.usage).toEqual({
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
+      input_tokens: null,
+      output_tokens: null,
+      cache_creation_input_tokens: null,
+      cache_read_input_tokens: null,
+    });
+  });
+
+  it('assistant usage with a mix of present/absent/malformed fields propagates each independently (#377)', () => {
+    // input_tokens/output_tokens: present and valid — pass through unchanged.
+    // cache_creation_input_tokens: absent entirely — null, not 0.
+    // cache_read_input_tokens: present but non-numeric ("oops") — null, not 0.
+    const entry = entryAt<AssistantEntry>(session, 34, 'assistant');
+    expect(entry.message.usage).toEqual({
+      input_tokens: 100,
+      output_tokens: 20,
+      cache_creation_input_tokens: null,
+      cache_read_input_tokens: null,
     });
   });
 

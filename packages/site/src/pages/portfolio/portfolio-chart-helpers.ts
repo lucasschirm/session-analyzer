@@ -1,3 +1,11 @@
+// TODO(#142 / DS-B4): this direct import of the Claude-specific
+// `tryMetricIdToLabel` violates the AnalyticsDataSource boundary
+// (`.agents/rules/no-canonical-metrics-in-lit.md`). It is repointed here
+// from the pre-split `@lucasschirm/sal-transformer` to
+// `@lucasschirm/sal-claude-transformer` as an interim step for the DS-F5
+// (#154) package split; #142 should remove this import entirely and route
+// label lookup through AnalyticsDataSource instead.
+import { tryMetricIdToLabel } from '@lucasschirm/sal-claude-transformer';
 import type {
   ComponentUtilizationPage,
   ComponentUtilizationRow,
@@ -9,7 +17,6 @@ import type {
   ProjectListPage,
   TimeSeriesPoint,
 } from '@lucasschirm/sal-db';
-import { tryMetricIdToLabel } from '@lucasschirm/sal-transformer';
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import { componentHref } from '../component-ecosystem/component-ecosystem-params';
@@ -20,18 +27,22 @@ import { buildPortfolioHash, evidenceLinkHref } from './portfolio-params';
 // Sessions scope filtering (shared by portfolio and project-behavior)
 // ---------------------------------------------------------------------------
 
-/** Metric IDs that belong to the token usage chart (split out from main trend). */
-const TOKEN_METRIC_PREFIXES = [
-  'claude:tokens:cache_creation:',
-  'claude:tokens:cache_read:',
-  'claude:tokens:total:',
-  'claude:tokens:output:',
-  'claude:tokens:input:',
-];
+/**
+ * Metric IDs are shaped `<harness>:<category>:...` consistently across every
+ * harness transformer (e.g. `claude:tokens:total:root_only` and
+ * `devin:tokens:total:root_only`, or `claude:duration:wall_ms:root_only` and
+ * `devin:duration:wall_ms:root_only` — see claude-transformer's
+ * `claude-code-metrics.ts` and devin-transformer's `metrics/definitions.ts`).
+ * Category matching must key off this domain segment, not a hardcoded
+ * harness prefix, so chart helpers work for any harness's metric IDs.
+ */
+function metricDomainSegments(metricId: string): string[] {
+  return metricId.split(':').slice(1);
+}
 
-/** Whether a metric ID belongs to the token usage chart. */
+/** Whether a metric ID belongs to the token usage chart, for any harness. */
 export function isTokenMetric(metricId: string): boolean {
-  return TOKEN_METRIC_PREFIXES.some((prefix) => metricId.startsWith(prefix));
+  return metricDomainSegments(metricId)[0] === 'tokens';
 }
 
 /**
@@ -49,17 +60,18 @@ export function metricLabel(metricId: string, fallback?: string): string {
   const stripped = stripScopeSuffix(raw);
   // The duration metric is stored in minutes; surface the unit in the label
   // so chart axes and tooltips read "Session duration (min)".
-  if (/^claude:duration:wall_ms/.test(metricId)) return 'Session duration (min)';
+  if (isDurationMetric(metricId)) return 'Session duration (min)';
   return stripped;
 }
 
 /**
- * Returns true when the metric is the wall-clock duration metric, so chart
- * helpers can round displayed values to 0 decimals (minutes are integers in
- * practice and fractional minutes add noise).
+ * Returns true when the metric is the wall-clock duration metric, for any
+ * harness, so chart helpers can round displayed values to 0 decimals
+ * (minutes are integers in practice and fractional minutes add noise).
  */
 export function isDurationMetric(metricId: string): boolean {
-  return /^claude:duration:wall_ms/.test(metricId);
+  const [category, subcategory] = metricDomainSegments(metricId);
+  return category === 'duration' && subcategory === 'wall_ms';
 }
 
 /**

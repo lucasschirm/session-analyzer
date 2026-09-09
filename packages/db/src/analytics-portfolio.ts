@@ -1,6 +1,5 @@
 import type {
   PortfolioDailyRollup,
-  PortfolioDimensionRollup,
   PortfolioDistribution,
   SqliteExecutor,
   SqliteTransaction,
@@ -10,7 +9,6 @@ import {
   ComponentIdentityStore,
   MetricDefinitionStore,
   PortfolioDailyRollupStore,
-  PortfolioDimensionRollupStore,
   PortfolioDistributionStore,
   ProjectStore,
 } from '@lucasschirm/sal-db-core';
@@ -39,6 +37,26 @@ import {
 type Queryable = SqliteExecutor | SqliteTransaction;
 
 const DEFAULT_LIMIT = 50;
+
+/**
+ * Per-harness total-inclusive token metric ids feeding the portfolio
+ * headline `totalTokens` KPI (#325). The headline is a harness-neutral
+ * surface, so every harness's total-inclusive metric must be listed here —
+ * a future harness adds its `<harness>:tokens:total:inclusive` id in this
+ * one place and the KPI picks it up.
+ */
+const TOTAL_TOKENS_METRIC_IDS = [
+  'claude:tokens:total:inclusive',
+  'devin:tokens:total:inclusive',
+] as const;
+
+/**
+ * Normalized-event types carrying a `$.payload.model` field, feeding the
+ * portfolio headline `modelCount` KPI (#325). Claude Code emits
+ * `model_request` records; the Devin transformer emits `model_usage`
+ * records instead — both count toward distinct models.
+ */
+const MODEL_EVENT_TYPES = ['model_request', 'model_usage'] as const;
 
 /**
  * Maps a stored component kind to its display-friendly form.
@@ -244,6 +262,112 @@ function measurementClassForAggregate(
   return 'derived';
 }
 
+interface RollupAggregate {
+  readonly comparabilityGroupId: string;
+  readonly metricDefinitionId: string;
+  readonly analysisReleaseId: string;
+  readonly generationId: string;
+  valueSum: number | null;
+  valueMean: number | null;
+  valueMin: number | null;
+  valueMax: number | null;
+  valueCount: number;
+}
+
+function rollupAggregateValue(aggregate: RollupAggregate, aggregation: string): number | null {
+  const lower = aggregation.toLowerCase();
+  if (lower === 'sum') return aggregate.valueSum;
+  if (lower === 'count') return aggregate.valueCount;
+  if (lower === 'mean') {
+    if (aggregate.valueCount === 0 || aggregate.valueSum === null) return null;
+    return aggregate.valueSum / aggregate.valueCount;
+  }
+  if (lower === 'min') return aggregate.valueMin;
+  if (lower === 'max') return aggregate.valueMax;
+  return null;
+}
+
+function combineNullableNumbers(
+  a: number | null,
+  b: number | null,
+  op: 'min' | 'max',
+): number | null {
+  if (a === null && b === null) return null;
+  if (a === null) return b;
+  if (b === null) return a;
+  return op === 'min' ? Math.min(a, b) : Math.max(a, b);
+}
+
+async function loadHeadlineMetricsFromRollups(
+  queryable: Queryable,
+  portfolioId: string,
+  query: AnalyticsQuery,
+): Promise<readonly MetricValueDto[]> {
+  const allRollups = await PortfolioDailyRollupStore.listByPortfolio(queryable, portfolioId);
+  const range = resolveTimeRange(query, 0, Number.MAX_SAFE_INTEGER);
+  const rollups = allRollups.filter((r) => isDailyRollupInQuery(r, query, range));
+  if (rollups.length === 0) return [];
+
+  const groups = new Map<string, RollupAggregate>();
+  for (const rollup of rollups) {
+    const key = `${rollup.comparabilityGroupId}:${rollup.metricDefinitionId}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.valueSum =
+        existing.valueSum === null
+          ? rollup.valueSum
+          : rollup.valueSum === null
+            ? existing.valueSum
+            : existing.valueSum + rollup.valueSum;
+      existing.valueCount += rollup.valueCount;
+      existing.valueMin = combineNullableNumbers(existing.valueMin, rollup.valueMin, 'min');
+      existing.valueMax = combineNullableNumbers(existing.valueMax, rollup.valueMax, 'max');
+    } else {
+      groups.set(key, {
+        comparabilityGroupId: rollup.comparabilityGroupId,
+        metricDefinitionId: rollup.metricDefinitionId,
+        analysisReleaseId: rollup.analysisReleaseId,
+        generationId: rollup.generationId,
+        valueSum: rollup.valueSum,
+        valueMean: rollup.valueMean,
+        valueMin: rollup.valueMin,
+        valueMax: rollup.valueMax,
+        valueCount: rollup.valueCount,
+      });
+    }
+  }
+
+  const definitions = await loadMetricDefinitions(
+    queryable,
+    [...groups.values()].map((g) => g.metricDefinitionId),
+  );
+
+  const metrics: MetricValueDto[] = [];
+  for (const group of groups.values()) {
+    const definition = definitions.get(group.metricDefinitionId);
+    if (!definition) continue;
+    const value = rollupAggregateValue(group, definition.aggregation);
+    if (value === null) continue;
+    const knownN = group.valueCount;
+    const metricToken = makeToken(
+      group.analysisReleaseId,
+      group.generationId,
+      group.comparabilityGroupId,
+      knownN,
+      knownN,
+      0,
+      measurementClassForAggregate(definition.measurementClass, definition.aggregation),
+      String(definition.version),
+      [evidenceLink('portfolio', portfolioId, `Portfolio rollup: ${definition.metricId}`)],
+    );
+    metrics.push(
+      makeMetricValue(definition.metricId, value, definition.unit, definition.label, metricToken),
+    );
+  }
+
+  return metrics;
+}
+
 function isDistributionInQuery(
   distribution: PortfolioDistribution,
   query: AnalyticsQuery,
@@ -276,18 +400,6 @@ function isDailyRollupInQuery(
   const dayStart = toDayBucket(range.start);
   const dayEnd = toDayBucket(range.end);
   return rollup.dayBucket >= dayStart && rollup.dayBucket <= dayEnd;
-}
-
-function isDimensionRollupInQuery(
-  rollup: PortfolioDimensionRollup,
-  query: AnalyticsQuery,
-): boolean {
-  if (query.analysisReleaseId && rollup.analysisReleaseId !== query.analysisReleaseId) return false;
-  if (query.comparabilityGroupId && rollup.comparabilityGroupId !== query.comparabilityGroupId) {
-    return false;
-  }
-  if (query.generationId && rollup.generationId !== query.generationId) return false;
-  return true;
 }
 
 function makeBaseToken(
@@ -406,19 +518,20 @@ async function sumTotalTokensInPortfolio(
   query: AnalyticsQuery,
 ): Promise<number> {
   const generationId = query.generationId;
+  const metricIn = TOTAL_TOKENS_METRIC_IDS.map(() => '?').join(', ');
   const sql = generationId
     ? `SELECT COALESCE(SUM(r.value_sum), 0) AS total
        FROM portfolio_daily_rollups r
        JOIN metric_definitions d ON d.id = r.metric_definition_id
        WHERE r.portfolio_id = ? AND r.generation_id = ?
-         AND d.metric_id = 'claude:tokens:total:inclusive'`
+         AND d.metric_id IN (${metricIn})`
     : `SELECT COALESCE(SUM(r.value_sum), 0) AS total
        FROM portfolio_daily_rollups r
        JOIN metric_definitions d ON d.id = r.metric_definition_id
        WHERE r.portfolio_id = ?
-         AND d.metric_id = 'claude:tokens:total:inclusive'`;
-  const params = generationId ? [portfolioId, generationId] : [portfolioId];
-  const { rows } = await queryable.exec(sql, params);
+         AND d.metric_id IN (${metricIn})`;
+  const base = generationId ? [portfolioId, generationId] : [portfolioId];
+  const { rows } = await queryable.exec(sql, [...base, ...TOTAL_TOKENS_METRIC_IDS]);
   return asNumber(rows[0]?.total);
 }
 
@@ -428,23 +541,24 @@ async function countDistinctModelsInPortfolio(
   query: AnalyticsQuery,
 ): Promise<number> {
   const generationId = query.generationId;
+  const typeIn = MODEL_EVENT_TYPES.map(() => '?').join(', ');
   const sql = generationId
     ? `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
        FROM normalized_events e
        JOIN sessions s ON s.id = e.session_id
        JOIN projects p ON p.id = s.project_id
        WHERE p.portfolio_id = ? AND s.current_generation_id = ?
-         AND e.event_type = 'model_request'
+         AND e.event_type IN (${typeIn})
          AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL`
     : `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
        FROM normalized_events e
        JOIN sessions s ON s.id = e.session_id
        JOIN projects p ON p.id = s.project_id
        WHERE p.portfolio_id = ?
-         AND e.event_type = 'model_request'
+         AND e.event_type IN (${typeIn})
          AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL`;
-  const params = generationId ? [portfolioId, generationId] : [portfolioId];
-  const { rows } = await queryable.exec(sql, params);
+  const base = generationId ? [portfolioId, generationId] : [portfolioId];
+  const { rows } = await queryable.exec(sql, [...base, ...MODEL_EVENT_TYPES]);
   return asNumber(rows[0]?.c);
 }
 
@@ -584,6 +698,9 @@ export async function getPortfolioOverview(
     if (!definition) continue;
     headlineMetrics.push(metricFromDistribution(distribution, definition, overviewToken));
   }
+
+  const rollupMetrics = await loadHeadlineMetricsFromRollups(queryable, portfolioId, query);
+  headlineMetrics.push(...rollupMetrics);
 
   const projectCount = await countProjectsInPortfolio(queryable, portfolioId);
   const sessionCount = await countSessionsInPortfolio(queryable, portfolioId, query);

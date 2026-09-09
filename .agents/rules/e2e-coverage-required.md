@@ -1,5 +1,5 @@
 ---
-globs: "packages/site/**,packages/db/**,packages/transformer/**,packages/sync/**,packages/parsers/**,packages/plugins/**"
+globs: "packages/site/**,packages/db/**,packages/transformers/**,packages/sync/**,packages/parsers/**,packages/plugins/**"
 ---
 
 # E2E Coverage Required

@@ -19,7 +19,7 @@ import {
   SourceTombstoneStore,
 } from '@lucasschirm/sal-db-core';
 import type { SyncManifest } from '@lucasschirm/sal-sync-core';
-import type { TransformerRegistry } from '@lucasschirm/sal-transformer';
+import type { TransformerRegistry } from '@lucasschirm/sal-transformer-shared';
 import { DefaultIngestionOrchestrator } from './ingestion.js';
 import { deleteLifecycleRowsForGeneration } from './lifecycle-cleanup.js';
 import type {

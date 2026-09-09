@@ -12,7 +12,7 @@ import type {
   TransformContext,
   TransformResult,
   UnknownArtifactBundle,
-} from '@lucasschirm/sal-transformer';
+} from '@lucasschirm/sal-transformer-shared';
 import type { ManualIngestionBundle } from '../../src/manifest.js';
 
 export interface BenchmarkScale {

@@ -14,6 +14,7 @@ import {
   toHarnessSession,
   toSyncInput,
 } from './claude.js';
+import { ClaudeHarnessProfile } from './claude-profile.js';
 import { resolveCliEnv } from './cli/env.js';
 import { isMainModule } from './is-main-module.js';
 
@@ -30,6 +31,7 @@ export async function runHook(raw: unknown, options: CliOptions = {}): Promise<n
   const result = await capture({
     ...options,
     input: syncInput,
+    harnessProfile: ClaudeHarnessProfile,
   });
 
   return result.exitCode;

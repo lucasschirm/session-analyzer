@@ -1,6 +1,6 @@
 {
   "name": "session-analyzer",
-  "version": "1.0.1",
+  "version": "1.1.0-0",
   "private": true,
   "description": "Offline Agentic Session Dashboard - Visualize and manage AI coding sessions",
   "type": "module",
@@ -20,6 +20,7 @@
     "verify": "pnpm -r build && pnpm -r run verify",
     "analytics-gates": "node scripts/analytics-gates/run-all-gates.mjs",
     "version:patch": "pnpm -r version:patch",
+    "version:align": "node scripts/align-plugin-versions.mjs",
     "prepare": "husky",
     "version:publish": "pnpm -r version:publish"
   },

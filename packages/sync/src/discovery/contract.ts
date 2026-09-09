@@ -34,8 +34,14 @@ export interface WorkspaceDiscoveryInput extends DiscoveryOptions {
 }
 
 export interface GlobalDiscoveryInput extends DiscoveryOptions {
-  claudeConfigDir?: string;
+  /**
+   * Explicit override for the harness's global config directory. When
+   * omitted, it is resolved from the injected `HarnessProfile.configDir(env)`.
+   */
+  configDir?: string;
   homeDir?: string;
+  /** Env record passed to `HarnessProfile.configDir` when `configDir` is not set explicitly. */
+  env?: Record<string, string | undefined>;
 }
 
 export interface SessionDiscoveryInput extends DiscoveryOptions {

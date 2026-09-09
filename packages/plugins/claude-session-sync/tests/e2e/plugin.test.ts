@@ -164,10 +164,10 @@ class MockS3Server {
     // ListObjectsV2: GET /bucket?list-type=2&prefix=...
     if (req.method === 'GET' && url.searchParams.has('list-type')) {
       const prefix = url.searchParams.get('prefix') ?? '';
-      const matchingKeys = [...this.objects.keys()].filter((k) => k.startsWith(prefix));
-      const contents = matchingKeys
-        .map((k) => {
-          const obj = this.objects.get(k)!;
+      const matchingEntries = [...this.objects.entries()].filter(([k]) => k.startsWith(prefix));
+      const matchingKeys = matchingEntries.map(([k]) => k);
+      const contents = matchingEntries
+        .map(([k, obj]) => {
           return `<Contents><Key>${k}</Key><Size>${obj.body.length}</Size><ETag>"${obj.sha256}"</ETag></Contents>`;
         })
         .join('');

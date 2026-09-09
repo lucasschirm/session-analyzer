@@ -175,9 +175,9 @@ describe('capture allowlist', () => {
 
     const globalPatterns = CAPTURE_ALLOWLIST.global.map((entry) => entry.pattern);
     expect(globalPatterns).toEqual([
-      '~/.claude/settings.json',
-      '~/.claude/CLAUDE.md',
-      '~/.claude/agents/**',
+      '{configDir}/settings.json',
+      '{configDir}/CLAUDE.md',
+      '{configDir}/agents/**',
       '~/.claude.json',
     ]);
   });

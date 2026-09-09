@@ -390,6 +390,24 @@ describe('FileLock', () => {
     expect(err.code).toBe('SYNC_STATE_ERROR');
   });
 
+  it('release() does not unlink a lock file whose content no longer matches what this instance wrote (#327)', async () => {
+    const lockFile = path.join(tempDir, 'test.lock');
+    const lock = new FileLock(lockFile, { pollIntervalMs: 5 });
+    await lock.acquire();
+
+    // Simulate the on-disk lock having been replaced by a different holder
+    // in the rare adversarial interleaving `unlinkOwnLockFile`'s doc
+    // comment describes — direct overwrite is a faithful enough stand-in
+    // for that outcome without needing to reproduce the interleaving itself.
+    const otherHolder = JSON.stringify({ pid: 999_998, startedAt: Date.now() });
+    fs.writeFileSync(lockFile, otherHolder);
+
+    await lock.release();
+
+    expect(fs.existsSync(lockFile)).toBe(true);
+    expect(fs.readFileSync(lockFile, 'utf8')).toBe(otherHolder);
+  });
+
   it('recovers using a real child process pid', async () => {
     const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 2000)']);
     await new Promise<void>((resolve) => child.on('spawn', resolve));

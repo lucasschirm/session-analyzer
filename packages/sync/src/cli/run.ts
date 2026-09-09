@@ -1,5 +1,4 @@
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 import type { CliOptions, CommandResult } from './common.js';
 import { capture, sessionEnd, sessionStart, status, sync, watch } from './index.js';
 
@@ -26,11 +25,4 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   return result.exitCode;
-}
-
-if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().then(
-    (code) => process.exit(code),
-    () => process.exit(1),
-  );
 }

@@ -1,4 +1,5 @@
 import type { SyncManifest } from '@lucasschirm/sal-sync-core';
+import { DEFAULT_HARNESS_PROFILE } from '../discovery/default-profile.js';
 import { FileLock, StateStore } from '../state/index.js';
 import {
   buildCandidates,
@@ -134,14 +135,17 @@ export async function sessionEnd(options: CliOptions = {}): Promise<CommandResul
       }
 
       const discoveryStart = Date.now();
-      discovery = await discover({
-        projectId: config.projectId,
-        sessionId: input.session_id,
-        workspaceRoot: input.cwd,
-        transcriptPath: input.transcript_path,
-        captureTranscripts: config.captureTranscripts,
-        limits: config.limits,
-      });
+      discovery = await discover(
+        {
+          projectId: config.projectId,
+          sessionId: input.session_id,
+          workspaceRoot: input.cwd,
+          transcriptPath: input.transcript_path,
+          captureTranscripts: config.captureTranscripts,
+          limits: config.limits,
+        },
+        options.harnessProfile ?? DEFAULT_HARNESS_PROFILE,
+      );
       const discoveryDuration = Date.now() - discoveryStart;
 
       const sanitizationStart = Date.now();

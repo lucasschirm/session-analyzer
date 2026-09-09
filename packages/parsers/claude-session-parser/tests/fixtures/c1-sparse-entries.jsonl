@@ -32,3 +32,4 @@
 {"type": "assistant", "uuid": "sp-usage-1", "timestamp": "2026-08-01T00:00:00.000Z", "sessionId": "sess-sparse", "message": {"role": "assistant", "content": [], "model": "model-sparse", "usage": {}}}
 {"type": "user", "uuid": "sp-empty-ts", "timestamp": "", "sessionId": "sess-sparse", "message": {"role": "user", "content": "Empty string timestamp, not a missing field."}}
 {"type": "user", "timestamp": "not-a-date", "sessionId": "sess-sparse", "message": {"role": "user", "content": "Invalid timestamp without a uuid at all."}}
+{"type": "assistant", "uuid": "sp-usage-2", "timestamp": "2026-08-01T00:00:02.000Z", "sessionId": "sess-sparse", "message": {"role": "assistant", "content": [], "model": "model-sparse", "usage": {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": "oops"}}}

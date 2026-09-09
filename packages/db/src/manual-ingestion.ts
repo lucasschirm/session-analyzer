@@ -17,7 +17,7 @@ import type {
   SourceIdentity,
   TransformResult,
   UnknownArtifactBundle,
-} from '@lucasschirm/sal-transformer';
+} from '@lucasschirm/sal-transformer-shared';
 import {
   type AtomicGenerationCommit,
   DefaultIngestionOrchestrator,

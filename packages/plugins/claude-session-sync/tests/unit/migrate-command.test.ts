@@ -6,7 +6,6 @@ import type {
   HeadObjectInput,
   HeadObjectResult,
   ListObjectEntry,
-  ListObjectsInput,
   PutObjectInput,
   PutObjectResult,
   StorageAdapter,
@@ -70,7 +69,7 @@ function makeAdapter(objects: ListObjectEntry[]): {
     headObject: vi
       .fn()
       .mockImplementation(async (input: HeadObjectInput): Promise<HeadObjectResult | undefined> => {
-        const key = `${input.projectId}/${input.sessionId}/${input.relativePath}`;
+        const _key = `${input.projectId}/${input.sessionId}/${input.relativePath}`;
         // Only return a head if the NEW-format key exists
         return undefined;
       }),
@@ -284,6 +283,34 @@ describe('runMigrateCommand', () => {
     expect(manifestPuts[0]?.contentType).toBe('application/json');
   });
 
+  it('backfills manifests with the literal "claude-code" harness, never "claude" (#354)', async () => {
+    // `packages/db`'s `classifyManifestArtifact` exact-string-matches the
+    // literal 'claude-code' (NOT `ClaudeHarnessProfile.harness`, which is
+    // 'claude') to run Claude-specific artifact classification. This test
+    // pins that literal directly in the persisted manifest body so a future
+    // hoist/refactor that "cleans up" this field to derive from
+    // `profile.harness` fails loudly here instead of silently degrading
+    // every migrated Claude session's artifacts to `unclassified`.
+    const objects: ListObjectEntry[] = [{ key: 'proj-1/sess-a/transcript.jsonl', size: 100 }];
+    const { adapter, puts } = makeAdapter(objects);
+    const { stream } = captureStream();
+    const stderr = captureStream().stream;
+
+    const result = await runMigrateCommand(['--yes'], {
+      env: validEnv,
+      storageAdapter: adapter,
+      stdout: stream,
+      stderr,
+    });
+
+    expect(result).toBe(0);
+    const manifestPut = puts.find((p) => p.scope === 'manifest');
+    if (!manifestPut) throw new Error('expected a manifest put');
+    const body = JSON.parse((manifestPut.body as Buffer).toString('utf8'));
+    expect(body.harness).toBe('claude-code');
+    expect(body.harness).not.toBe('claude');
+  });
+
   it('generates manifests only with --yes --manifests (no key migration)', async () => {
     const objects: ListObjectEntry[] = [
       { key: 'proj-1/sess-a/session/transcript.jsonl', size: 100 },
@@ -364,7 +391,7 @@ describe('runMigrateCommand', () => {
   });
 
   it('errors without storage config', async () => {
-    const { lines, stream } = captureStream();
+    const { stream } = captureStream();
     const stderrLines = captureStream();
 
     const result = await runMigrateCommand([], {

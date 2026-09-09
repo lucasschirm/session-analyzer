@@ -79,14 +79,18 @@ interface FileDownloadResult {
   code?: string;
 }
 
+const MAIN_THREAD_TIMEOUT_MS = 30_000;
+
 interface PendingContinue {
   resolve: (sync: boolean) => void;
   reject: (error: Error) => void;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 interface PendingSync {
   resolve: (decision: SessionSyncDecision) => void;
   reject: (error: Error) => void;
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -282,7 +286,21 @@ export class SessionSyncWorker {
 
   private waitForContinue(sessionId: string): Promise<boolean> {
     return new Promise((resolve, reject) => {
-      this.sessionContinue.set(sessionId, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.sessionContinue.delete(sessionId);
+        resolve(true);
+      }, MAIN_THREAD_TIMEOUT_MS);
+      this.sessionContinue.set(sessionId, {
+        resolve: (sync) => {
+          clearTimeout(timer);
+          resolve(sync);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+        timer,
+      });
     });
   }
 
@@ -290,13 +308,28 @@ export class SessionSyncWorker {
     const pending = this.sessionContinue.get(message.sessionId);
     if (pending) {
       this.sessionContinue.delete(message.sessionId);
+      if (pending.timer) clearTimeout(pending.timer);
       pending.resolve(message.sync);
     }
   }
 
   private waitForSync(sessionId: string): Promise<SessionSyncDecision> {
     return new Promise((resolve, reject) => {
-      this.sessionSync.set(sessionId, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.sessionSync.delete(sessionId);
+        reject(new Error(`Timed out waiting for sync decision on session ${sessionId}`));
+      }, MAIN_THREAD_TIMEOUT_MS);
+      this.sessionSync.set(sessionId, {
+        resolve: (decision) => {
+          clearTimeout(timer);
+          resolve(decision);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+        timer,
+      });
     });
   }
 
@@ -304,6 +337,7 @@ export class SessionSyncWorker {
     const pending = this.sessionSync.get(message.sessionId);
     if (pending) {
       this.sessionSync.delete(message.sessionId);
+      if (pending.timer) clearTimeout(pending.timer);
       pending.resolve({
         sync: message.sync,
         exists: message.exists,
@@ -821,10 +855,12 @@ export class SessionSyncWorker {
     this.cancelled = true;
     this.sessionQueue.length = 0;
     this.sessionContinue.forEach((pending) => {
+      if (pending.timer) clearTimeout(pending.timer);
       pending.reject(new Error('cancelled'));
     });
     this.sessionContinue.clear();
     this.sessionSync.forEach((pending) => {
+      if (pending.timer) clearTimeout(pending.timer);
       pending.reject(new Error('cancelled'));
     });
     this.sessionSync.clear();

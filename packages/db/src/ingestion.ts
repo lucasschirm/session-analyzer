@@ -18,6 +18,7 @@ import {
   getCurrentGenerationId,
   IngestionSourceStore,
   ManifestArtifactStore,
+  MessageEffortStore,
   MetricDefinitionStore,
   MetricValueStore,
   NormalizedEventStore,
@@ -39,6 +40,7 @@ import { MANIFEST_SCHEMA_VERSION, sha256Hex } from '@lucasschirm/sal-sync-core';
 import type {
   Artifact,
   Issue,
+  NormalizedEvidenceRecord,
   Provenance,
   ScalarMetricValue,
   SessionSummary,
@@ -47,7 +49,7 @@ import type {
   TransformerRegistry,
   TransformResult,
   UnknownArtifactBundle,
-} from '@lucasschirm/sal-transformer';
+} from '@lucasschirm/sal-transformer-shared';
 import type { ArtifactCanonicalizationInput, ArtifactDiffRecordContext } from './artifact-diff.js';
 import { ArtifactDiffRepository } from './artifact-diff.js';
 import { ComponentLifecycleEngine } from './component-lifecycle.js';
@@ -575,6 +577,7 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         );
         await this.pruneEvidenceForSessions(tx, result);
         await this.upsertEvidence(tx, commit.generationId, result);
+        await this.upsertMessageEffort(tx, commit.generationId, result);
         await this.upsertSessionSummaries(
           tx,
           commit.sessionId,
@@ -1328,6 +1331,12 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     }
     for (const sessionId of sessionIds) {
       await tx.exec('DELETE FROM normalized_events WHERE session_id = ?', [sessionId]);
+      // Mirrors the normalized_events prune above: stale message_effort rows
+      // for a touched session must not survive into a reprocessed
+      // generation (schema-change-tests.md / #289's own reprocess
+      // acceptance criterion) — the new generation's upsertMessageEffort
+      // pass (below) fully repopulates them from its own evidence.
+      await tx.exec('DELETE FROM message_effort WHERE session_id = ?', [sessionId]);
     }
   }
 
@@ -1345,6 +1354,66 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         eventVersion: 1,
         rawDetails: JSON.stringify(record),
         retainRaw: true,
+      });
+    }
+  }
+
+  /**
+   * Extracts the `(requestOrder, rawEffort, normalizedEffort)` triple from a
+   * `model_request` OR `model_usage` evidence record, or `null` when the
+   * record doesn't carry a usable effort signal. The dual-type check is
+   * deliberate and forward-looking (#289): Claude's own evidence is always
+   * `model_request`-typed; a later Devin-side effort issue attaches the
+   * same two payload fields to `model_usage`-typed records instead, so this
+   * stays generic without modification once that issue lands. `null` is
+   * returned — never a synthetic all-null row — when `requestOrder` isn't
+   * numeric or both effort fields are absent, per
+   * `.agents/rules/missing-is-never-zero.md`.
+   */
+  private extractMessageEffort(
+    record: NormalizedEvidenceRecord,
+  ): { requestOrder: number; rawEffort: string | null; normalizedEffort: string | null } | null {
+    if (record.recordType !== 'model_request' && record.recordType !== 'model_usage') return null;
+    const payload = record.payload as {
+      requestOrder?: unknown;
+      effort?: unknown;
+      normalizedEffort?: unknown;
+    };
+    if (typeof payload.requestOrder !== 'number' || !Number.isFinite(payload.requestOrder)) {
+      return null;
+    }
+    const rawEffort = typeof payload.effort === 'string' ? payload.effort : null;
+    const normalizedEffort =
+      typeof payload.normalizedEffort === 'string' ? payload.normalizedEffort : null;
+    if (rawEffort === null && normalizedEffort === null) return null;
+    return { requestOrder: payload.requestOrder, rawEffort, normalizedEffort };
+  }
+
+  /**
+   * Per-message reasoning-effort trail (#289), written from evidence
+   * records generically — never writes the `model_requests`/`model_usage`
+   * typed tables themselves, which remain owned by #183
+   * (`.agents/rules/sql-only-in-db-core.md` / "one owner per shared
+   * artifact").
+   */
+  private async upsertMessageEffort(
+    tx: SqliteTransaction,
+    generationId: string,
+    result: TransformResult,
+  ): Promise<void> {
+    for (const record of result.evidence) {
+      const effort = this.extractMessageEffort(record);
+      if (!effort) continue;
+      const id = `meff-${deterministicId('message_effort', record.sessionId, String(effort.requestOrder))}`;
+      await MessageEffortStore.insert(tx, {
+        id,
+        sessionId: record.sessionId,
+        generationId,
+        requestOrder: effort.requestOrder,
+        rawEffort: effort.rawEffort,
+        normalizedEffort: effort.normalizedEffort,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
       });
     }
   }

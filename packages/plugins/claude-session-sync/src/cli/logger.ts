@@ -1,7 +1,17 @@
-import * as fsp from 'node:fs/promises';
-import path from 'node:path';
+import {
+  type AbortLogResult,
+  formatLogTimestamp,
+  buildLogFileName as sharedBuildLogFileName,
+  formatAbortMessage as sharedFormatAbortMessage,
+  formatErrorLogContent as sharedFormatErrorLogContent,
+  resolveLogFolder as sharedResolveLogFolder,
+  writeErrorLog as sharedWriteErrorLog,
+} from '@lucasschirm/sal-sync';
 
-import { getDataDir } from '@lucasschirm/sal-sync';
+import { ClaudeCliAdapter } from '../claude-cli-adapter.js';
+
+export type { AbortLogResult };
+export { formatLogTimestamp };
 
 /**
  * Environment variable used to override the folder where `claude-sync` writes
@@ -16,14 +26,7 @@ import { getDataDir } from '@lucasschirm/sal-sync';
  * abort handler) — it is not a sensitive credential, so it does not need the
  * security blocklist applied to `SAL_STORAGE_*` keys.
  */
-export const LOG_FOLDER_ENV = 'CLAUDE_SYNC_LOG_PATH_FOLDER';
-
-export interface AbortLogResult {
-  /** Absolute path of the log file that was (attempted to be) written. */
-  logPath: string;
-  /** Whether the log file was successfully written to disk. */
-  written: boolean;
-}
+export const LOG_FOLDER_ENV = ClaudeCliAdapter.logFolderEnvVar;
 
 /**
  * Resolve the log folder for `claude-sync` error logs.
@@ -34,25 +37,12 @@ export interface AbortLogResult {
  * from `@lucasschirm/sal-sync` (which honors `SAL_DATA_DIR`, defaulting to
  * `~/.sal-sync/logs`). Relative paths are resolved against the current working
  * directory.
+ *
+ * Hoisted (#354) to `@lucasschirm/sal-sync`'s harness-parameterized logger —
+ * this wrapper binds it to `ClaudeCliAdapter`.
  */
 export function resolveLogFolder(env: Record<string, string | undefined>): string {
-  const configured = env[LOG_FOLDER_ENV];
-  if (configured && configured.trim() !== '') {
-    return path.resolve(configured);
-  }
-  return path.join(getDataDir(env), 'logs');
-}
-
-/**
- * Format a timestamp suitable for use in a log filename
- * (`YYYYMMDD-HHMMSS`, UTC, filesystem-safe).
- */
-export function formatLogTimestamp(date: Date = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return (
-    `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
-    `-${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`
-  );
+  return sharedResolveLogFolder(ClaudeCliAdapter, env);
 }
 
 /**
@@ -62,23 +52,7 @@ export function formatLogTimestamp(date: Date = new Date()): string {
  * Unknown/missing commands fall back to `claude-sync-log-${timestamp}.log`.
  */
 export function buildLogFileName(command: string | undefined, timestamp: string): string {
-  const safeCommand = command && command.trim() !== '' ? command : 'claude-sync';
-  return `${safeCommand}-log-${timestamp}.log`;
-}
-
-function formatCause(cause: unknown, depth = 0): string {
-  const indent = '  '.repeat(depth);
-  if (cause instanceof Error) {
-    const parts = [`${indent}${cause.name}: ${cause.message}`];
-    if (cause.stack) parts.push(`${indent}${cause.stack}`);
-    if ((cause as Error & { cause?: unknown }).cause && depth < 5) {
-      parts.push(
-        `${indent}Cause: ${formatCause((cause as Error & { cause?: unknown }).cause, depth + 1)}`,
-      );
-    }
-    return parts.join('\n');
-  }
-  return `${indent}${String(cause)}`;
+  return sharedBuildLogFileName(ClaudeCliAdapter, command, timestamp);
 }
 
 /**
@@ -86,25 +60,7 @@ function formatCause(cause: unknown, depth = 0): string {
  * name, message, stack trace, and any chained `cause` values.
  */
 export function formatErrorLogContent(err: unknown, command: string | undefined): string {
-  const commandLabel = command && command.trim() !== '' ? command : 'claude-sync';
-  const timestamp = new Date().toISOString();
-  const header = `claude-sync ${commandLabel} — error log\nTimestamp: ${timestamp}\n\n`;
-
-  if (err instanceof Error) {
-    const parts = [`Error: ${err.name}: ${err.message}`];
-    if (err.stack) {
-      parts.push(err.stack);
-    } else {
-      parts.push('(no stack trace available)');
-    }
-    const cause = (err as Error & { cause?: unknown }).cause;
-    if (cause !== undefined) {
-      parts.push(`\nCause:\n${formatCause(cause)}`);
-    }
-    return `${header}${parts.join('\n')}\n`;
-  }
-
-  return `${header}Error: ${String(err)}\n`;
+  return sharedFormatErrorLogContent(ClaudeCliAdapter, err, command);
 }
 
 /**
@@ -121,17 +77,7 @@ export async function writeErrorLog(
   command: string | undefined,
   err: unknown,
 ): Promise<AbortLogResult> {
-  const folder = resolveLogFolder(env);
-  const timestamp = formatLogTimestamp();
-  const logPath = path.join(folder, buildLogFileName(command, timestamp));
-  const content = formatErrorLogContent(err, command);
-  try {
-    await fsp.mkdir(folder, { recursive: true });
-    await fsp.writeFile(logPath, content, 'utf8');
-    return { logPath, written: true };
-  } catch {
-    return { logPath, written: false };
-  }
+  return sharedWriteErrorLog(ClaudeCliAdapter, env, command, err);
 }
 
 /**
@@ -146,9 +92,5 @@ export async function writeErrorLog(
  *   `claude-sync: aborted: <message> (failed to write log at <logPath>)`
  */
 export function formatAbortMessage(err: unknown, result: AbortLogResult): string {
-  if (result.written) {
-    return `claude-sync: aborted. Check log in ${result.logPath}`;
-  }
-  const message = err instanceof Error ? err.message : String(err);
-  return `claude-sync: aborted: ${message} (failed to write log at ${result.logPath})`;
+  return sharedFormatAbortMessage(ClaudeCliAdapter, err, result);
 }

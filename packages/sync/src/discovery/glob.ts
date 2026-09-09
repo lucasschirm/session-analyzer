@@ -11,20 +11,30 @@ export interface ExpandedPattern {
   original: string;
 }
 
+const CONFIG_DIR_PATTERN_PREFIX = '{configDir}/';
+const HOME_PATTERN_PREFIX = '~/';
+
+/**
+ * Expand a global-scope allowlist pattern to a root + relative pattern pair.
+ *
+ * Two prefix conventions are supported, generic across harnesses:
+ *   - `{configDir}/...` resolves against the harness's own config directory
+ *     (`HarnessProfile.configDir(env)`, e.g. `~/.claude` for Claude).
+ *   - `~/...` resolves against the home directory directly, regardless of
+ *     the harness's config directory (e.g. Claude's `~/.claude.json`, which
+ *     lives outside its `~/.claude/` config directory).
+ */
 export function expandAllowlistPattern(
   pattern: string,
-  claudeConfigDir: string,
+  configDir: string,
   homeDir: string,
 ): ExpandedPattern | undefined {
-  if (pattern === '~/.claude.json') {
-    return { root: homeDir, relativePattern: '.claude.json', original: pattern };
+  if (pattern.startsWith(CONFIG_DIR_PATTERN_PREFIX)) {
+    const relative = pattern.slice(CONFIG_DIR_PATTERN_PREFIX.length);
+    return { root: configDir, relativePattern: relative, original: pattern };
   }
-  if (pattern.startsWith('~/.claude/')) {
-    const relative = pattern.slice('~/.claude/'.length);
-    return { root: claudeConfigDir, relativePattern: relative, original: pattern };
-  }
-  if (pattern.startsWith('~/')) {
-    const relative = pattern.slice('~/'.length);
+  if (pattern.startsWith(HOME_PATTERN_PREFIX)) {
+    const relative = pattern.slice(HOME_PATTERN_PREFIX.length);
     return { root: homeDir, relativePattern: relative, original: pattern };
   }
   // Workspace / session patterns are relative to their own root.
@@ -241,7 +251,7 @@ async function walkRecursive(
 
 export function expandAllowlist(
   entries: readonly AllowlistEntry[],
-  claudeConfigDir: string,
+  configDir: string,
   homeDir: string,
   root?: string,
 ): ExpandedPattern[] {
@@ -249,7 +259,7 @@ export function expandAllowlist(
 
   for (const entry of entries) {
     if (entry.scope === 'global') {
-      const pattern = expandAllowlistPattern(entry.pattern, claudeConfigDir, homeDir);
+      const pattern = expandAllowlistPattern(entry.pattern, configDir, homeDir);
       if (pattern) {
         expanded.push(pattern);
       }

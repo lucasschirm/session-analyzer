@@ -1,5 +1,5 @@
 ---
-globs: "packages/db-core/**,packages/db/**,packages/transformer/**"
+globs: "packages/db-core/**,packages/db/**,packages/transformers/**"
 ---
 
 # Metric Meaning Changes Require Versioning

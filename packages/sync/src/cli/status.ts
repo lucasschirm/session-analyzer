@@ -1,7 +1,8 @@
 import * as fsp from 'node:fs/promises';
 import process from 'node:process';
 
-import type { ArtifactStatus } from '@lucasschirm/sal-sync-core';
+import type { ArtifactStatus, HarnessProfile } from '@lucasschirm/sal-sync-core';
+import { DEFAULT_HARNESS_PROFILE } from '../discovery/default-profile.js';
 import { discover } from '../discovery/index.js';
 import {
   type ArtifactStateStatus,
@@ -58,7 +59,12 @@ function appendWatcherCrashError(report: StatusReport, sessionId?: string): void
  * watcher alive status.
  */
 export async function status(
-  options: { argv?: string[]; env?: Record<string, string | undefined>; dataDir?: string } = {},
+  options: {
+    argv?: string[];
+    env?: Record<string, string | undefined>;
+    dataDir?: string;
+    harnessProfile?: HarnessProfile;
+  } = {},
 ): Promise<CommandResult> {
   const args = parseCliArgs(options.argv ?? process.argv.slice(2));
   const dataDir = options.dataDir ?? args.dataDir ?? getDataDir(options.env);
@@ -119,14 +125,17 @@ export async function status(
   // Try to compute pending delta size by re-discovering current files.
   if (sessionId && resolved.config && args.cwd) {
     try {
-      const discovery = await discover({
-        projectId: resolved.config.projectId,
-        sessionId,
-        workspaceRoot: args.cwd,
-        transcriptPath: args.transcriptPath,
-        captureTranscripts: resolved.config.captureTranscripts,
-        limits: resolved.config.limits,
-      });
+      const discovery = await discover(
+        {
+          projectId: resolved.config.projectId,
+          sessionId,
+          workspaceRoot: args.cwd,
+          transcriptPath: args.transcriptPath,
+          captureTranscripts: resolved.config.captureTranscripts,
+          limits: resolved.config.limits,
+        },
+        options.harnessProfile ?? DEFAULT_HARNESS_PROFILE,
+      );
       const candidateResults = await buildCandidates(discovery, resolved.config, {
         projectRoot: args.cwd,
       });

@@ -5,13 +5,25 @@ description: Use when adding or updating a harness parser/transformer integratio
 
 # Add Harness Integration
 
+> **TODO (DS-B9 / #147):** `packages/transformer` was split into
+> `packages/transformers/{transformer-shared,claude-transformer}` by DS-F5
+> (#154); a future `devin-transformer` (DS-F7 / #149) will add a third. The
+> package paths and fixture layout referenced below (including
+> `packages/transformer/tests/fixtures/<harness>/...`, which did not match
+> the actual `tests/conformance/fixtures/` layout even before the split) are
+> stale and are re-pointed by DS-B9 (#147), which is explicitly scoped to run
+> after DS-F5. Read this skill for procedure and invariants; verify concrete
+> paths against the current `packages/transformers/` layout rather than the
+> literal paths below until DS-B9 lands.
+
 ## Overview
 
 This skill codifies the repeatable procedure for adding a new harness
 integration to the analytics platform. A harness integration has two layers:
 a **native parser** (produces a typed native model) and a **canonical
 transformer** (produces a canonical write batch). The transformer is a plugin
-registered in `@lucasschirm/sal-transformer`; the parser is a separate
+registered via `@lucasschirm/sal-transformer-registry`, implementing the
+contract in `@lucasschirm/sal-transformer-shared`; the parser is a separate
 package the transformer depends on.
 
 **Core invariant:** transformers are pure and deterministic. They never open

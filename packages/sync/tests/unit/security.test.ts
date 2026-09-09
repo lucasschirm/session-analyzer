@@ -9,7 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildObjectKey,
   buildSessionManifest,
+  CLAUDE_SESSION_LAYOUT,
   createWatcherMatcher,
+  DEFAULT_HARNESS_PROFILE,
   DEFAULT_SANITIZATION_POLICY,
   discover,
   getArtifactRecord,
@@ -335,13 +337,16 @@ describe('discovery boundary enforcement', () => {
       const linkPath = path.join(workspace, 'CLAUDE.md');
       fs.symlinkSync(path.join(outside, 'leaked.md'), linkPath);
 
-      const result = await discover({
-        projectId: 'proj-1',
-        sessionId: 'sess-1',
-        workspaceRoot: workspace,
-        claudeConfigDir,
-        homeDir,
-      });
+      const result = await discover(
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          workspaceRoot: workspace,
+          configDir: claudeConfigDir,
+          homeDir,
+        },
+        DEFAULT_HARNESS_PROFILE,
+      );
 
       const found = result.artifacts.find((a) => a.relativePath === 'CLAUDE.md');
       expect(found).toBeUndefined();
@@ -359,14 +364,17 @@ describe('discovery boundary enforcement', () => {
       const linkPath = path.join(transcriptDir, 'transcript.jsonl');
       fs.symlinkSync(outsideFile, linkPath);
 
-      const result = await discover({
-        projectId: 'proj-1',
-        sessionId: 'sess-1',
-        workspaceRoot: workspace,
-        claudeConfigDir,
-        homeDir,
-        transcriptPath: linkPath,
-      });
+      const result = await discover(
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          workspaceRoot: workspace,
+          configDir: claudeConfigDir,
+          homeDir,
+          transcriptPath: linkPath,
+        },
+        DEFAULT_HARNESS_PROFILE,
+      );
 
       expect(result.artifacts.some((a) => a.scope === 'session')).toBe(false);
       expect(result.errors.some((e) => e.code === 'SYNC_DISCOVERY_ERROR')).toBe(true);
@@ -380,13 +388,16 @@ describe('discovery boundary enforcement', () => {
     const normalFile = path.join(badDir, 'settings.json');
     await writeFile(normalFile, '{}');
 
-    const result = await discover({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-      claudeConfigDir,
-      homeDir,
-    });
+    const result = await discover(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+        configDir: claudeConfigDir,
+        homeDir,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     const found = result.artifacts.find((a) => a.relativePath === '.claude/settings.json');
     expect(found).toBeDefined();
@@ -399,13 +410,16 @@ describe('discovery boundary enforcement', () => {
   it('does not expose absolute local paths in artifact relativePath', async () => {
     await writeFile(path.join(workspace, 'CLAUDE.md'), '# ok');
 
-    const result = await discover({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-      claudeConfigDir,
-      homeDir,
-    });
+    const result = await discover(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+        configDir: claudeConfigDir,
+        homeDir,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     for (const artifact of result.artifacts) {
       expect(path.isAbsolute(artifact.relativePath)).toBe(false);
@@ -427,7 +441,7 @@ describe('watcher boundary enforcement', () => {
   });
 
   it('matcher rejects paths outside the transcript directory', () => {
-    const matcher = createWatcherMatcher(transcriptDir, 'sess-1');
+    const matcher = createWatcherMatcher(transcriptDir, 'sess-1', CLAUDE_SESSION_LAYOUT);
 
     expect(isPathWatched(matcher, path.join(transcriptDir, 'sess-1.jsonl'))).toBe(true);
     expect(
@@ -447,7 +461,7 @@ describe('watcher boundary enforcement', () => {
     const linkPath = path.join(transcriptDir, 'link.jsonl');
     fs.symlinkSync(outsideFile, linkPath);
 
-    const matcher = createWatcherMatcher(transcriptDir, 'sess-1');
+    const matcher = createWatcherMatcher(transcriptDir, 'sess-1', CLAUDE_SESSION_LAYOUT);
     expect(isPathWatched(matcher, linkPath)).toBe(false);
     expect(getWatchedRelativePath(matcher, linkPath)).toBeUndefined();
 
@@ -521,14 +535,17 @@ describe('transcript capture policy', () => {
     const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
     await writeFile(transcriptPath, '{"secret":true}\n');
 
-    const result = await discover({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-      claudeConfigDir,
-      homeDir,
-      transcriptPath,
-    });
+    const result = await discover(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+        configDir: claudeConfigDir,
+        homeDir,
+        transcriptPath,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     const transcript = result.artifacts.find((a) => a.relativePath === 'transcript.jsonl');
     expect(transcript).toBeDefined();
@@ -539,15 +556,18 @@ describe('transcript capture policy', () => {
     const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
     await writeFile(transcriptPath, '{"secret":true}\n');
 
-    const result = await discover({
-      projectId: 'proj-1',
-      sessionId: 'sess-1',
-      workspaceRoot: workspace,
-      claudeConfigDir,
-      homeDir,
-      transcriptPath,
-      captureTranscripts: false,
-    });
+    const result = await discover(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        workspaceRoot: workspace,
+        configDir: claudeConfigDir,
+        homeDir,
+        transcriptPath,
+        captureTranscripts: false,
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
 
     expect(result.artifacts.some((a) => a.scope === 'session')).toBe(false);
   });

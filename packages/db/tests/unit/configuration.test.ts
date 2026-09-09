@@ -3,7 +3,7 @@ import {
   ComponentIdentityStore,
   FRESH_SCHEMA_SQL,
 } from '@lucasschirm/sal-db-core';
-import type { ComponentSummary } from '@lucasschirm/sal-transformer';
+import type { ComponentSummary } from '@lucasschirm/sal-transformer-shared';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import {

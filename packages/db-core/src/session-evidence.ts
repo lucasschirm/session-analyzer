@@ -1272,6 +1272,100 @@ export const ModelUsageStore = createSessionScopedStore<
   idFrom: ['sessionId', 'requestId', 'tokenClass'],
 });
 
+// Message effort
+//
+// Per-message reasoning-effort trail (#289). Sourced from `model_request` /
+// `model_usage` evidence records at the same `(session_id, request_order)`
+// grain those tables use, but owned and written independently of them (see
+// #183 for the still-unimplemented `model_requests`/`model_usage` writers).
+// `raw_effort` and `normalized_effort` are nullable independently; a row is
+// only ever written when at least one is non-null — absence of a row *is*
+// the "no effort signal for this message" signal, mirroring the
+// `session_relations` convention (never backfilled with a synthetic row).
+//
+// `NORMALIZED_EFFORT_LEVELS` is deliberately re-stated verbatim here rather
+// than imported from `@lucasschirm/sal-transformer-shared`: db-core must
+// never depend on a transformer package (`sql-only-in-db-core.md` /
+// `transformers-never-write-sqlite.md`). Any change to the shared
+// vocabulary in `transformer-shared/src/effort.ts` must be mirrored here.
+const NORMALIZED_EFFORT_LEVELS = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const;
+
+const MESSAGE_EFFORT_COLUMNS: readonly Column[] = [
+  { name: 'id', field: 'id', type: 'TEXT', pkey: true, notNull: true },
+  {
+    name: 'session_id',
+    field: 'sessionId',
+    type: 'TEXT',
+    notNull: true,
+    fk: { table: 'sessions', column: 'id', onDelete: 'CASCADE' },
+  },
+  {
+    name: 'generation_id',
+    field: 'generationId',
+    type: 'TEXT',
+    notNull: true,
+    fk: { table: 'transformation_generations', column: 'id', onDelete: 'SET NULL' },
+  },
+  { name: 'request_order', field: 'requestOrder', type: 'INTEGER', notNull: true },
+  { name: 'raw_effort', field: 'rawEffort', type: 'TEXT' },
+  {
+    name: 'normalized_effort',
+    field: 'normalizedEffort',
+    type: 'TEXT',
+    check: `normalized_effort IS NULL OR normalized_effort IN (${NORMALIZED_EFFORT_LEVELS.map((l) => `'${l}'`).join(', ')})`,
+  },
+  { name: 'created_at', field: 'createdAt', type: 'INTEGER', notNull: true },
+  { name: 'updated_at', field: 'updatedAt', type: 'INTEGER', notNull: true },
+];
+
+const MESSAGE_EFFORT_INDEXES: readonly IndexSpec[] = [
+  {
+    name: 'idx_message_effort_session_order',
+    columns: ['session_id', 'request_order'],
+    unique: true,
+  },
+  { name: 'idx_message_effort_session', columns: ['session_id'] },
+];
+
+export const CREATE_MESSAGE_EFFORT_TABLE = buildCreateTable(
+  'message_effort',
+  MESSAGE_EFFORT_COLUMNS,
+  MESSAGE_EFFORT_INDEXES,
+);
+
+export interface MessageEffort {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly generationId: string;
+  readonly requestOrder: number;
+  readonly rawEffort: string | null;
+  readonly normalizedEffort: string | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export type InsertMessageEffortInput = InsertInput<MessageEffort>;
+export type UpdateMessageEffortInput = UpdateInput<MessageEffort>;
+
+export const MessageEffortStore = createSessionScopedStore<
+  MessageEffort,
+  InsertMessageEffortInput,
+  UpdateMessageEffortInput
+>({
+  table: 'message_effort',
+  columns: MESSAGE_EFFORT_COLUMNS,
+  idFrom: ['sessionId', 'requestOrder'],
+  listOrderBy: 'request_order',
+});
+
 // Invocations
 
 const INVOCATION_COLUMNS: readonly Column[] = [
@@ -2604,6 +2698,7 @@ ${CREATE_MODEL_CAPABILITIES_TABLE}
 ${CREATE_PRICING_VERSIONS_TABLE}
 ${CREATE_MODEL_REQUESTS_TABLE}
 ${CREATE_MODEL_USAGE_TABLE}
+${CREATE_MESSAGE_EFFORT_TABLE}
 ${CREATE_INVOCATIONS_TABLE}
 ${CREATE_PAYLOADS_TABLE}
 ${CREATE_INVOCATION_PAYLOADS_TABLE}
@@ -2746,5 +2841,11 @@ export const SESSION_EVIDENCE_MIGRATIONS_FRAGMENT: readonly Migration[] = [
     name: 'create-component-evidence-links',
     sql: CREATE_COMPONENT_EVIDENCE_LINKS_TABLE,
     checksum: checksumOf(CREATE_COMPONENT_EVIDENCE_LINKS_TABLE),
+  },
+  {
+    id: 81,
+    name: 'create-message-effort',
+    sql: CREATE_MESSAGE_EFFORT_TABLE,
+    checksum: checksumOf(CREATE_MESSAGE_EFFORT_TABLE),
   },
 ];

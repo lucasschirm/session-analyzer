@@ -29,7 +29,8 @@ export function ensureDist() {
   const markers = [
     'packages/db-core/dist/index.js',
     'packages/db/dist/index.js',
-    'packages/transformer/dist/index.js',
+    'packages/transformers/transformer-shared/dist/index.js',
+    'packages/transformers/claude-transformer/dist/index.js',
   ];
   const missing = markers.filter((m) => !existsSync(join(repoRoot, m)));
   if (missing.length === 0) return;

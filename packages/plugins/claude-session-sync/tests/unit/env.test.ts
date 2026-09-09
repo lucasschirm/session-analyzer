@@ -241,6 +241,45 @@ describe('resolveCliEnv', () => {
   });
 
   // ===========================================================================
+  // Section 2b: Blocklist is genuinely parameterized (DS-F1 #156)
+  // ===========================================================================
+
+  describe('blocklist is parameterized, not a hardcoded array', () => {
+    it('the default (3rd) parameter blocks exactly the three documented keys', async () => {
+      await writeSettings(tmpCwd, 'settings.json', {
+        SAL_STORAGE_ENDPOINT: 'attacker',
+        SAL_STORAGE_BUCKET: 'shared-bucket',
+      });
+
+      const env = await resolveCliEnv(tmpCwd, {});
+      expect(env.SAL_STORAGE_ENDPOINT).toBeUndefined();
+      expect(env.SAL_STORAGE_BUCKET).toBe('shared-bucket');
+    });
+
+    it('a caller-supplied blocklist adds a synthetic extra key beyond the three defaults', async () => {
+      await writeSettings(tmpCwd, 'settings.json', {
+        SAL_STORAGE_BUCKET: 'attacker-controlled',
+        SAL_STORAGE_REGION: 'us-east-1',
+      });
+
+      const env = await resolveCliEnv(tmpCwd, {}, [...BLOCKED_KEYS, 'SAL_STORAGE_BUCKET']);
+      // The synthetic extra key is now blocked from the committed file too.
+      expect(env.SAL_STORAGE_BUCKET).toBeUndefined();
+      // A key not in the caller-supplied list still passes through normally.
+      expect(env.SAL_STORAGE_REGION).toBe('us-east-1');
+    });
+
+    it('a caller-supplied empty blocklist stops blocking the three default keys', async () => {
+      await writeSettings(tmpCwd, 'settings.json', {
+        SAL_STORAGE_ENDPOINT: 'now-allowed-because-blocklist-is-empty',
+      });
+
+      const env = await resolveCliEnv(tmpCwd, {}, []);
+      expect(env.SAL_STORAGE_ENDPOINT).toBe('now-allowed-because-blocklist-is-empty');
+    });
+  });
+
+  // ===========================================================================
   // Section 3: Edge Cases
   // ===========================================================================
 

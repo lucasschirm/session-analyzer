@@ -1,5 +1,4 @@
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 
 import {
   type CliOptions,
@@ -65,16 +64,4 @@ export async function watch(options: WatchOptions = {}): Promise<CommandResult> 
     await shutdown();
     return { exitCode: 1 };
   }
-}
-
-async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
-  const result = await watch({ argv });
-  return result.exitCode;
-}
-
-if (import.meta.url.startsWith('file:') && process.argv[1] === fileURLToPath(import.meta.url)) {
-  main().then(
-    (code) => process.exit(code),
-    () => process.exit(1),
-  );
 }

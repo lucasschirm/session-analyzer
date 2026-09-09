@@ -119,6 +119,7 @@ export async function capture(options: CliOptions = {}): Promise<CommandResult> 
         storageAdapter,
         trigger,
         uploadTimeoutMs: config.timeouts.hookUploadTimeoutMs,
+        harnessProfile: options.harnessProfile,
       }),
     );
 

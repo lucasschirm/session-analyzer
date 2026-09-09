@@ -1,3 +1,7 @@
+// TODO(#142 / DS-B4): see the same note in portfolio-chart-helpers.ts — this
+// import is repointed to @lucasschirm/sal-claude-transformer as an interim
+// step for the DS-F5 (#154) package split; #142 should remove it.
+import { tryMetricIdToLabel } from '@lucasschirm/sal-claude-transformer';
 import type {
   ComponentFactPage,
   ContextTimingSeries,
@@ -7,7 +11,6 @@ import type {
   SessionTree,
   SessionTreeNode,
 } from '@lucasschirm/sal-db';
-import { tryMetricIdToLabel } from '@lucasschirm/sal-transformer';
 import type { ChartBucket, ChartSeries, TableRow } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import type { MetricCardView } from '../portfolio/portfolio-chart-helpers';

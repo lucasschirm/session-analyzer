@@ -91,6 +91,7 @@ export async function sync(options: CliOptions = {}): Promise<CommandResult> {
     trigger: 'manual',
     uploadTimeoutMs: config.timeouts.syncTimeoutMs,
     session,
+    harnessProfile: options.harnessProfile,
   });
 
   const run = { ...runResult, trigger: 'manual' as const };

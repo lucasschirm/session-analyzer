@@ -17,7 +17,7 @@ import type {
   ComponentCompleteness,
   ComponentSummary,
   SourcePointer,
-} from '@lucasschirm/sal-transformer';
+} from '@lucasschirm/sal-transformer-shared';
 
 export type { ConfigurationSnapshotTemporalRole };
 

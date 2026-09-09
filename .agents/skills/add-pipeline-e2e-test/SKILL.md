@@ -42,7 +42,7 @@ commit/partial-write boundaries, and stale rollups served silently.
 | Ingestion entry | `packages/db/src/ingestion.ts` |
 | Rollup reconciliation | `packages/db/src/rollup-reconciliation.ts` |
 | Analytics DTO façade | `packages/db/src/analytics.ts` |
-| Transformer registry | `packages/transformer/src/` plugins |
+| Transformer registry | `packages/transformers/registry/src/` (composition), `packages/transformers/*-transformer/src/` (plugins) |
 
 ## Procedure
 

@@ -19,8 +19,8 @@ Review changes in:
 - `packages/db-core/tests/unit/metrics.test.ts`
 - `packages/db-core/tests/unit/migrations.test.ts`
 - `packages/db-core/tests/unit/schema-parity.test.ts`
-- `packages/transformer/src/metric.ts`
-- `packages/transformer/src/comparability.ts`
+- `packages/transformers/transformer-shared/src/metric.ts`
+- `packages/transformers/transformer-shared/src/comparability.ts`
 - `packages/db/src/dto.ts`
 - `packages/db/src/analytics.ts`
 - `docs/architecture/metrics/`
