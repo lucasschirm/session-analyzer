@@ -579,7 +579,7 @@ describe('SessionSyncWorker', () => {
     expect(files).toContain('global/settings.json');
   });
 
-  it('downloads the main transcript before other files', async () => {
+  it('downloads all files through the pool without a main-transcript gate', async () => {
     client.setAutoResolve(false);
     const { worker, posted } = createWorker(client);
     const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
@@ -598,14 +598,25 @@ describe('SessionSyncWorker', () => {
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
     worker.handleMessage(syncMessage('sess-1', undefined));
 
-    await vi.waitUntil(() => client.pendingKeys().length > 0);
-    expect(client.pendingKeys()[0]).toBe(
+    // All files are queued together — no main-transcript-first gate.
+    await vi.waitUntil(() => client.pendingKeys().length === 2);
+    const pending = client.pendingKeys();
+    expect(pending).toContain(
       buildObjectKey({
         projectId: 'proj',
         sessionId: 'sess-1',
         scope: 'session',
         relativePath: 'transcript.jsonl',
         contentSha256: downloads.find((f) => f.isMainTranscript)?.hash as string,
+      }),
+    );
+    expect(pending).toContain(
+      buildObjectKey({
+        projectId: 'proj',
+        sessionId: 'sess-1',
+        scope: 'session',
+        relativePath: 'subagents/agent-1.jsonl',
+        contentSha256: downloads.find((f) => f.file === 'subagents/agent-1.jsonl')?.hash as string,
       }),
     );
   });
@@ -747,6 +758,60 @@ describe('SessionSyncWorker', () => {
 
     const failed = findOne(posted, 'SESSION_SYNC_FAILED') as { error: { code: string } };
     expect(failed.error.code).toBe('HASH_MISMATCH');
+  });
+
+  it('downloads sibling files even when the main transcript fails', async () => {
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+      { scope: 'session', relativePath: 'subagents/agent-1.jsonl', content: 'sub line\n' },
+    ]);
+    client.putBuffer(
+      manifestKey('proj', 'sess-1'),
+      encoder.encode(JSON.stringify(manifest)).buffer,
+    );
+    // Upload correct subagent, wrong main transcript.
+    const main = downloads.find((f) => f.isMainTranscript) as FileToDownload & { content: string };
+    const sub = downloads.find((f) => f.file === 'subagents/agent-1.jsonl') as FileToDownload & {
+      content: string;
+    };
+    client.putBuffer(
+      buildObjectKey({
+        projectId: 'proj',
+        sessionId: 'sess-1',
+        scope: 'session',
+        relativePath: main.relativePath,
+        contentSha256: main.hash,
+      }),
+      encoder.encode('wrong content\n').buffer,
+    );
+    client.putBuffer(
+      buildObjectKey({
+        projectId: 'proj',
+        sessionId: 'sess-1',
+        scope: 'session',
+        relativePath: sub.relativePath,
+        contentSha256: sub.hash,
+      }),
+      encoder.encode(sub.content).buffer,
+    );
+
+    await worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    worker.handleMessage(syncMessage('sess-1', undefined));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    // Session is failed due to main transcript hash mismatch.
+    const failed = findOne(posted, 'SESSION_SYNC_FAILED') as { error: { code: string } };
+    expect(failed.error.code).toBe('HASH_MISMATCH');
+
+    // Sibling file was still downloaded.
+    const fileMessages = findMessages(posted, 'SESSION_FILE_DOWNLOADED') as Array<{
+      message: SessionFileDownloadedMessage;
+    }>;
+    const files = fileMessages.map((m) => m.message.file);
+    expect(files).toContain('subagents/agent-1.jsonl');
   });
 
   it('marks subagent files failed and continues when a subagent hash mismatches', async () => {
@@ -898,19 +963,14 @@ describe('SessionSyncWorker', () => {
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
     worker.handleMessage(syncMessage('sess-1', undefined));
 
-    await vi.waitUntil(() => client.pendingKeys().length === 1);
-    const mainKey = client.pendingKeys()[0];
-    client.resolve(mainKey, client.getBuffer(mainKey));
-    await flush();
-
-    await vi.waitUntil(() => client.pendingKeys().length === 5);
+    // All 6 files are queued together through the pool (no main-transcript gate).
+    await vi.waitUntil(() => client.pendingKeys().length === 6);
     expect(client.maxInFlight).toBeLessThanOrEqual(8);
 
     worker.handleMessage(cancelMessage());
     await flush();
 
     await vi.waitUntil(() => client.inFlight === 0);
-    expect(findMessages(posted, 'SESSION_FILE_DOWNLOADED').length).toBe(1);
   });
 
   it('honors targetSessionIds and ignores non-target sessions', async () => {

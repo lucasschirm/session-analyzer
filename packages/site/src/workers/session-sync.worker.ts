@@ -67,7 +67,12 @@ interface SessionSyncDecision {
 }
 
 interface SessionState {
-  files: Array<FileToDownload & { status: 'downloaded' | 'failed' | 'unchanged' }>;
+  files: Array<
+    FileToDownload & {
+      status: 'downloaded' | 'failed' | 'unchanged';
+      code?: string;
+    }
+  >;
   filesFound: number;
   downloadedCount: number;
   failedCount: number;
@@ -421,26 +426,25 @@ export class SessionSyncWorker {
     }
     const state = this.createSessionState(sessionId, files);
     try {
-      const mainFile = files.find((file) => file.isMainTranscript);
-      const otherFiles = files.filter((file) => file !== mainFile);
-      if (this.cancelled) return;
-      if (mainFile) {
-        const result = await this.downloadAndVerifyFile(sessionId, mainFile, state);
-        if (this.cancelled) return;
-        if (result.status !== 'downloaded') {
-          this.counts.failed++;
-          this.emitSessionFailed(
-            sessionId,
-            this.downloadErrorCode(result),
-            'Main transcript failed',
-          );
-          return;
-        }
-      }
+      // All files go through the download pool together — no main-transcript
+      // gate. A main transcript failure does not prevent sibling files from
+      // downloading. The main transcript status is inspected at completion to
+      // determine session viability.
       if (!this.cancelled) {
-        await this.downloadFilesInPool(sessionId, otherFiles, state);
+        await this.downloadFilesInPool(sessionId, files, state);
       }
       if (this.cancelled) return;
+      const mainFile = files.find((file) => file.isMainTranscript);
+      const mainResult = mainFile ? state.files.find((f) => f.file === mainFile.file) : undefined;
+      if (mainResult && mainResult.status === 'failed') {
+        this.counts.failed++;
+        this.emitSessionFailed(
+          sessionId,
+          this.mainTranscriptErrorCode(mainResult),
+          'Main transcript failed',
+        );
+        return;
+      }
       this.emitSyncComplete(sessionId, this.buildFileSummary(state));
       this.counts.synced++;
     } finally {
@@ -660,7 +664,7 @@ export class SessionSyncWorker {
       const actualHash = await sha256Hex(new Uint8Array(buffer));
       if (file.hash && actualHash !== file.hash.toLowerCase()) {
         file.hash = actualHash;
-        this.setFileStatus(state, file, 'failed');
+        this.setFileStatus(state, file, 'failed', 'HASH_MISMATCH');
         this.emitProgress(sessionId, state);
         return { status: 'hash-mismatch' };
       }
@@ -672,7 +676,7 @@ export class SessionSyncWorker {
     } catch (error) {
       if (this.cancelled) return { status: 'failed' };
       const code = this.classifyDownloadError(error);
-      this.setFileStatus(state, file, 'failed');
+      this.setFileStatus(state, file, 'failed', code);
       this.emitProgress(sessionId, state);
       return { status: 'failed', code };
     } finally {
@@ -685,13 +689,20 @@ export class SessionSyncWorker {
     state: SessionState,
     file: FileToDownload,
     status: 'downloaded' | 'failed' | 'unchanged',
+    code?: string,
   ): void {
     const entry = state.files.find((f) => f.file === file.file);
     if (!entry) return;
     entry.status = status;
+    entry.code = code;
     entry.hash = file.hash;
     if (status === 'downloaded') state.downloadedCount++;
     if (status === 'failed') state.failedCount++;
+  }
+
+  private mainTranscriptErrorCode(mainResult: SessionState['files'][number]): string {
+    if (mainResult.code) return mainResult.code;
+    return 'DOWNLOAD_FAILED';
   }
 
   private updateProgress(
@@ -719,11 +730,6 @@ export class SessionSyncWorker {
       bytes_received: state.bytesReceived,
       timestamp: new Date(ms).toISOString(),
     });
-  }
-
-  private downloadErrorCode(result: FileDownloadResult): string {
-    if (result.status === 'hash-mismatch') return 'HASH_MISMATCH';
-    return result.code ?? 'DOWNLOAD_FAILED';
   }
 
   private classifyDownloadError(error: unknown): string {
