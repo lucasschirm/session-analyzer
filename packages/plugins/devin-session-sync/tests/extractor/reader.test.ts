@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mergeMessageNodeHashes } from '../../src/extractor/message-node-watermark.js';
 import {
   assertSqliteAvailable,
+  buildWorkdirWhereClause,
   computeSchemaDescriptor,
   DevinSqliteUnavailableError,
+  hasAnySessions,
   listWorkingDirectories,
   openDevinDatabase,
   readAllSessions,
@@ -484,6 +486,26 @@ describe('per-session reads (readDevinTablesForSession)', () => {
     expect(sessions.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
   });
 
+  it('readAllSessions filters by working directory patterns using SQL LIKE / =', () => {
+    const s1 = session('s1');
+    s1.working_directory = '/home/user/worktrees/feature-a';
+    const s2 = session('s2');
+    s2.working_directory = '/home/user/worktrees/tsk0049-e2e';
+    const s3 = session('s3');
+    s3.working_directory = '/home/user/other-proj';
+    const fixture = buildFixtureDb({
+      sessions: [s1, s2, s3],
+    });
+    cleanup = fixture.close;
+
+    const resolution = resolveSchema(fixture.db);
+    const matched = readAllSessions(fixture.db, resolution, ['/home/user/worktrees/*']);
+    expect(matched.map((s) => s.id)).toEqual(['s1', 's2']);
+
+    const matchedDash = readAllSessions(fixture.db, resolution, ['/home/user/worktrees/*-e2e']);
+    expect(matchedDash.map((s) => s.id)).toEqual(['s2']);
+  });
+
   it('listWorkingDirectories returns distinct, non-null working_directory values sorted', () => {
     const s1 = session('s1');
     s1.working_directory = '/home/user/proj-b';
@@ -501,6 +523,23 @@ describe('per-session reads (readDevinTablesForSession)', () => {
     expect(dirs).toEqual(['/home/user/proj-a', '/home/user/proj-b']);
   });
 
+  it('listWorkingDirectories filters by working directory patterns using SQL LIKE / =', () => {
+    const s1 = session('s1');
+    s1.working_directory = '/home/user/worktrees/feature-a';
+    const s2 = session('s2');
+    s2.working_directory = '/home/user/worktrees/tsk0049-e2e';
+    const s3 = session('s3');
+    s3.working_directory = '/home/user/other-proj';
+    const fixture = buildFixtureDb({
+      sessions: [s1, s2, s3],
+    });
+    cleanup = fixture.close;
+
+    const resolution = resolveSchema(fixture.db);
+    const dirs = listWorkingDirectories(fixture.db, resolution, ['/home/user/worktrees/*']);
+    expect(dirs).toEqual(['/home/user/worktrees/feature-a', '/home/user/worktrees/tsk0049-e2e']);
+  });
+
   it('listWorkingDirectories returns empty when sessions table is not in knownTables', () => {
     // Simulate a degraded schema resolution where 'sessions' isn't in the
     // known table set (e.g. an unrecognized refinery version with no
@@ -514,6 +553,47 @@ describe('per-session reads (readDevinTablesForSession)', () => {
     };
     const dirs = listWorkingDirectories(fixture.db, degradedResolution);
     expect(dirs).toEqual([]);
+  });
+
+  it('hasAnySessions detects presence and absence of session rows', () => {
+    const emptyFixture = buildFixtureDb({ sessions: [] });
+    try {
+      const resolution = resolveSchema(emptyFixture.db);
+      expect(hasAnySessions(emptyFixture.db, resolution)).toBe(false);
+
+      const degradedResolution = {
+        ...resolution,
+        knownTables: resolution.knownTables.filter((t) => t !== 'sessions'),
+      };
+      expect(hasAnySessions(emptyFixture.db, degradedResolution)).toBe(false);
+    } finally {
+      emptyFixture.close();
+    }
+
+    const populatedFixture = buildFixtureDb({ sessions: [session('s1')] });
+    try {
+      const resolution = resolveSchema(populatedFixture.db);
+      expect(hasAnySessions(populatedFixture.db, resolution)).toBe(true);
+    } finally {
+      populatedFixture.close();
+    }
+  });
+
+  it('buildWorkdirWhereClause builds SQL LIKE and equality clauses', () => {
+    expect(buildWorkdirWhereClause([])).toEqual({
+      clause: '1=1',
+      params: [],
+    });
+
+    expect(buildWorkdirWhereClause(['/home/user/proj/', '/home/user/other'])).toEqual({
+      clause: '(working_directory = ? OR working_directory = ?)',
+      params: ['/home/user/proj', '/home/user/other'],
+    });
+
+    expect(buildWorkdirWhereClause(['/home/user/worktrees/*', '/home/user/proj-?'])).toEqual({
+      clause: '(working_directory LIKE ? OR working_directory LIKE ?)',
+      params: ['/home/user/worktrees/%', '/home/user/proj-_'],
+    });
   });
 
   it('paginates message_nodes in batches of the given limit', () => {

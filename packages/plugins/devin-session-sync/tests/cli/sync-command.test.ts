@@ -519,6 +519,34 @@ describe('runSyncCommand workdir filtering', () => {
     expect(manifestCalls).toHaveLength(2);
   });
 
+  it('filters sessions in nested subdirectories by wildcard pattern using SQL LIKE', async () => {
+    fixture = buildFixtureDb({
+      sessions: [
+        sessionRow('s-nested-1', '/tmp/worktrees/tsk0005/src'),
+        sessionRow('s-nested-2', '/tmp/worktrees/tsk0049-e2e/nested/deep'),
+        sessionRow('s-other', '/tmp/other/tsk0005'),
+      ],
+    });
+    await writeWorkdirConfig(dataDir, 'proj-workdir', {
+      workdirs: ['/tmp/worktrees/*'],
+    });
+    const storage = new RecordingStorageAdapter();
+    const { stream: stdout, lines } = writable();
+    const code = await runSyncCommand({
+      env: envFor(),
+      cwd: '/unrelated',
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: storage,
+      stdout,
+      models: stubModels,
+    });
+    expect(code).toBe(0);
+    expect(lines.join('')).toContain('Synced 2 session(s)');
+    const manifestCalls = storage.calls.filter((c) => c.scope === 'manifest');
+    expect(manifestCalls).toHaveLength(2);
+  });
+
   it('excludes sessions with null working_directory when filtering', async () => {
     fixture = buildFixtureDb({
       sessions: [sessionRow('s-null', null), sessionRow('s-cwd', '/tmp/current-proj')],
