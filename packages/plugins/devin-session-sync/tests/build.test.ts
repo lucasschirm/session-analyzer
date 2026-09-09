@@ -46,4 +46,28 @@ describe('build (esbuild bin bundling)', () => {
       }),
     ).rejects.toThrow(/Forbidden package/);
   }, 30000);
+
+  it('limits the published artifact to .devin-plugin, bin, hooks.json, and package.json', async () => {
+    const pkg = JSON.parse(await fsp.readFile(path.join(packageRoot, 'package.json'), 'utf8'));
+    expect(pkg.files).toEqual(
+      expect.arrayContaining(['.devin-plugin', 'bin', 'hooks.json', 'package.json']),
+    );
+    expect(pkg.files).not.toContain('.claude-plugin');
+    expect(pkg.files).not.toContain('node_modules');
+  });
+
+  it('bump-plugin-version script updates .devin-plugin/plugin.json without referencing .claude-plugin', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const scriptPath = path.join(packageRoot, 'scripts', 'bump-plugin-version.js');
+    const manifestPath = path.join(packageRoot, '.devin-plugin', 'plugin.json');
+    const originalManifest = await fsp.readFile(manifestPath, 'utf8');
+    try {
+      execFileSync(process.execPath, [scriptPath], { timeout: 5000 });
+      const updated = JSON.parse(await fsp.readFile(manifestPath, 'utf8'));
+      const pkg = JSON.parse(await fsp.readFile(path.join(packageRoot, 'package.json'), 'utf8'));
+      expect(updated.version).toBe(pkg.version);
+    } finally {
+      await fsp.writeFile(manifestPath, originalManifest);
+    }
+  });
 });
