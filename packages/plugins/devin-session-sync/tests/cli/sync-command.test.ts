@@ -485,7 +485,38 @@ describe('runSyncCommand workdir filtering', () => {
       models: stubModels,
     });
     expect(code).toBe(0);
-    expect(lines.join('')).toContain('Filtering by 2 workdir pattern(s)');
+    expect(lines.join('')).toContain('Filtering project folder and 2 workdir pattern(s)');
+    expect(lines.join('')).toContain('Synced 2 session(s)');
+    const manifestCalls = storage.calls.filter((c) => c.scope === 'manifest');
+    expect(manifestCalls).toHaveLength(2);
+  });
+
+  it('includes cwd (project folder) alongside configured workdir patterns', async () => {
+    fixture = buildFixtureDb({
+      sessions: [
+        sessionRow('s-main', '/tmp/my-proj'),
+        sessionRow('s-wt', '/tmp/my-proj-worktrees/wt-1'),
+        sessionRow('s-other', '/tmp/other'),
+      ],
+    });
+    await writeWorkdirConfig(dataDir, 'proj-workdir', {
+      workdirs: ['/tmp/my-proj-worktrees/*'],
+    });
+    const storage = new RecordingStorageAdapter();
+    const { stream: stdout, lines } = writable();
+    const code = await runSyncCommand({
+      env: envFor(),
+      cwd: '/tmp/my-proj',
+      sessionsDbPath: fixture.path,
+      homeDir,
+      storageAdapter: storage,
+      stdout,
+      models: stubModels,
+    });
+    expect(code).toBe(0);
+    expect(lines.join('')).toContain(
+      'Filtering project folder and 1 workdir pattern(s): /tmp/my-proj-worktrees/*',
+    );
     expect(lines.join('')).toContain('Synced 2 session(s)');
     const manifestCalls = storage.calls.filter((c) => c.scope === 'manifest');
     expect(manifestCalls).toHaveLength(2);

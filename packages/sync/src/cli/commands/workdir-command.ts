@@ -102,12 +102,14 @@ export function isGlobPattern(input: string): boolean {
  * and `?` or `_` matches any single character.
  */
 export function matchesSqlLike(value: string, pattern: string): boolean {
-  const likePattern = pattern.replace(/\*/g, '%').replace(/\?/g, '_');
+  const normalizedVal = value.replace(/\\/g, '/');
+  const normalizedPat = pattern.replace(/\\/g, '/').replace(/(?<=\*)\/+$/, '');
+  const likePattern = normalizedPat.replace(/\*/g, '%').replace(/\?/g, '_');
   const regexStr = `^${likePattern
     .replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&')
     .replace(/%/g, '.*')
     .replace(/_/g, '.')}$`;
-  return new RegExp(regexStr).test(value);
+  return new RegExp(regexStr).test(normalizedVal);
 }
 
 /**
@@ -117,17 +119,31 @@ export function matchesSqlLike(value: string, pattern: string): boolean {
  * (replacing `*` with `%`) as well as `minimatch`.
  */
 export function workdirMatches(workdir: string, patterns: readonly string[]): boolean {
-  const normalized = path.normalize(workdir).replace(/\/+$/, '');
+  const normalized = path.normalize(workdir).replace(/\\/g, '/').replace(/\/+$/, '');
   for (const pattern of patterns) {
-    if (isGlobPattern(pattern)) {
-      if (matchesSqlLike(normalized, pattern)) return true;
-      if (minimatch(normalized, pattern, { dot: true })) return true;
+    const cleanPattern = pattern.replace(/\\/g, '/').replace(/\/+$/, '');
+    if (isGlobPattern(cleanPattern)) {
+      if (matchesSqlLike(normalized, cleanPattern)) return true;
+      if (minimatch(normalized, cleanPattern, { dot: true })) return true;
     } else {
-      const normalizedPattern = path.normalize(pattern).replace(/\/+$/, '');
+      const normalizedPattern = path
+        .normalize(cleanPattern)
+        .replace(/\\/g, '/')
+        .replace(/\/+$/, '');
       if (normalized === normalizedPattern) return true;
     }
   }
   return false;
+}
+
+/** Checks whether a directory is a git worktree directory (has a `.git` file). */
+async function isGitWorktreeDir(dirPath: string): Promise<boolean> {
+  try {
+    const stat = await fsp.stat(path.join(dirPath, '.git'));
+    return stat.isFile();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -136,14 +152,19 @@ export function workdirMatches(workdir: string, patterns: readonly string[]): bo
  * quotes in bash/zsh, which expanded the wildcard to matching filesystem paths).
  *
  * If multiple arguments are passed and they all share the same parent directory whose
- * entries on disk match the arguments, we reconstruct the wildcard pattern `<parent>/*`
- * so it is stored as a single wildcard pattern rather than multiple individual entries.
+ * entries on disk match the arguments, we reconstruct the wildcard pattern `<parent>/*`.
+ * If a single argument is passed inside a worktree container directory (e.g. `.worktrees`,
+ * `worktrees`, or a directory containing a git worktree `.git` file) where it is the only
+ * entry on disk, we also reconstruct `<parent>/*` so single-worktree setups expand to the
+ * container wildcard as intended.
  */
 export async function detectShellGlobExpansion(
   args: string[],
   cwd: string = process.cwd(),
 ): Promise<string | undefined> {
-  if (args.length <= 1) return undefined;
+  if (args.length === 0) return undefined;
+  if (args.length === 1 && isGlobPattern(args[0])) return undefined;
+
   const resolvedList = args.map((a) => resolveWorkdirPath(a, cwd));
   const first = resolvedList[0];
   const parent = path.dirname(first);
@@ -155,17 +176,39 @@ export async function detectShellGlobExpansion(
     const entries = await fsp.readdir(parent);
     const argBasenames = new Set(resolvedList.map((p) => path.basename(p)));
     const nonHidden = entries.filter((e) => !e.startsWith('.'));
-    const matchesNonHidden =
-      nonHidden.length > 0 &&
-      nonHidden.length === argBasenames.size &&
-      nonHidden.every((e) => argBasenames.has(e));
-    const matchesAll =
-      entries.length > 0 &&
-      entries.length === argBasenames.size &&
-      entries.every((e) => argBasenames.has(e));
+    const parentBase = path.basename(parent).toLowerCase();
 
-    if (matchesNonHidden || matchesAll) {
-      return path.join(parent, '*');
+    // Multi-arg expansion: shell expanded `parent/*` into 2+ items matching all entries
+    if (args.length > 1) {
+      const matchesNonHidden =
+        nonHidden.length > 0 &&
+        nonHidden.length === argBasenames.size &&
+        nonHidden.every((e) => argBasenames.has(e));
+      const matchesAll =
+        entries.length > 0 &&
+        entries.length === argBasenames.size &&
+        entries.every((e) => argBasenames.has(e));
+
+      if (matchesNonHidden || matchesAll) {
+        return path.join(parent, '*');
+      }
+    }
+
+    // Single-arg expansion: shell expanded `parent/*` when parent directory has only 1 entry.
+    // Only collapse for worktree container directories (e.g. .worktrees, worktrees, *-worktrees,
+    // or directories containing a git worktree .git file) so we don't accidentally turn a normal
+    // project folder `workdir add /path/to/project` into `/path/to/*`.
+    if (args.length === 1) {
+      const isWorktreeContainer =
+        parentBase.includes('worktree') || (await isGitWorktreeDir(first));
+      if (isWorktreeContainer) {
+        const isSingleEntry =
+          (nonHidden.length === 1 && nonHidden[0] === path.basename(first)) ||
+          (entries.length === 1 && entries[0] === path.basename(first));
+        if (isSingleEntry) {
+          return path.join(parent, '*');
+        }
+      }
     }
   } catch {
     // Parent directory not accessible
@@ -300,6 +343,19 @@ async function runWorkdirAdd(
     // Manual add: resolve each path and add to config
     for (const arg of pathsToAdd) {
       const resolved = resolveWorkdirPath(arg, cwd);
+      if (isGlobPattern(resolved)) {
+        // Prune any existing exact paths that are covered by this wildcard pattern
+        const beforeCount = config.workdirs.length;
+        config.workdirs = config.workdirs.filter(
+          (existing) => isGlobPattern(existing) || !workdirMatches(existing, [resolved]),
+        );
+        const pruned = beforeCount - config.workdirs.length;
+        if (pruned > 0) {
+          stdout.write(
+            `Pruned ${pruned} redundant directory path(s) covered by wildcard: ${resolved}\n`,
+          );
+        }
+      }
       if (!config.workdirs.includes(resolved)) {
         config.workdirs.push(resolved);
         stdout.write(`Added: ${resolved}\n`);
