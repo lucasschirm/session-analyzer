@@ -74,6 +74,7 @@ async function syncOneSessionSafely(
       env,
       homeDir,
       models,
+      releaseTablesAfterMaterialization: true,
       onProgress: (event) => writeProgressLine(stdout, event),
     });
   } catch (err) {
@@ -190,7 +191,7 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
   // progress line appears.
   stdout.write('Finding sessions...\n');
 
-  const handle = await openSnapshotHandleOrReport(
+  let handle = await openSnapshotHandleOrReport(
     env,
     cwd,
     profile.harnessVersion,
@@ -223,11 +224,34 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
       `Syncing ${handle.sessions.length} session(s) for project "${config.projectId}"...\n\n`,
     );
 
+    // Reopen the database every N sessions to clear SQLite's internal page
+    // cache and allow V8 to GC accumulated StatementSync objects. Each
+    // per-session read creates new prepared statements via db.prepare(); on
+    // large stores (hundreds of sessions), these accumulate in V8's old
+    // space and are not reclaimed until a major GC runs. Reopening
+    // periodically forces a clean slate without the overhead of reopening
+    // per session.
+    const SESSIONS_PER_DB_HANDLE = 25;
     const outcomes: DevinSessionSyncOutcome[] = [];
-    for (const session of handle.sessions) {
+    for (let i = 0; i < handle.sessions.length; i++) {
+      if (i > 0 && i % SESSIONS_PER_DB_HANDLE === 0) {
+        handle.close();
+        handle = await openSnapshotHandleOrReport(
+          env,
+          cwd,
+          profile.harnessVersion,
+          stderr,
+          options.sessionsDbPath,
+          options.homeDir,
+        );
+        if (!handle) {
+          stderr.write('Error: could not reopen Devin sessions.db during sync.\n');
+          return 1;
+        }
+      }
       outcomes.push(
         await syncOneSessionSafely(
-          session,
+          handle.sessions[i],
           handle,
           config,
           dataDir,
@@ -244,6 +268,6 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
     const { errors } = summarizeTotals(outcomes, stdout);
     return errors.length > 0 ? 1 : 0;
   } finally {
-    handle.close();
+    handle?.close();
   }
 }

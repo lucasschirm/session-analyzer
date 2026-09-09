@@ -96,6 +96,15 @@ export interface DevinSessionSyncOptions {
   onProgress?: (event: DevinSyncProgressEvent) => void;
   /** Optional overrides for the Devin models-list capture (e.g. test fixtures). */
   models?: Partial<CaptureDevinModelsOptions>;
+  /**
+   * When true, clears the `tables` arrays after transcript materialization
+   * to allow V8 to GC the row objects before discovery/upload begins. Only
+   * safe when the caller does not reuse `tables` after this call — the
+   * sync command (which creates a fresh `tables` per session) sets this to
+   * `true`; the watcher (which shares `snapshot.tables` across sessions in
+   * the same poll) must leave it `false`.
+   */
+  releaseTablesAfterMaterialization?: boolean;
 }
 
 export interface DevinSessionSyncOutcome {
@@ -294,9 +303,10 @@ async function appendNewSessionRows(
     ? deriveWatermarksFromExistingLines(existing)
     : { watermarks: EMPTY_WATERMARKS, lineCount: 0, messageNodeIds: new Set<number>() };
   const newTables = filterNewRows(sessionTables, derived.watermarks);
-  const { text } = buildDevinJsonl(newTables, {
+  const { lines } = buildDevinJsonl(newTables, {
     orderOffset: derived.lineCount,
     priorWatermarks: derived.watermarks,
+    skipText: true,
     subagentContext: {
       messageNodes: sessionTables.messageNodes,
       toolCallStates: sessionTables.toolCallStates,
@@ -304,7 +314,24 @@ async function appendNewSessionRows(
     },
   });
   await fsp.mkdir(path.dirname(transcriptPath), { recursive: true });
-  await fsp.appendFile(transcriptPath, text, 'utf8');
+  // Stream lines to disk one at a time instead of building a single
+  // `text` string via `lines.map(JSON.stringify).join('\n')`. That
+  // intermediate string doubles the session's memory footprint (the
+  // mapped array + the joined result both exist simultaneously), which
+  // caused OOM on stores with many large sessions — V8's old-space GC
+  // can't reclaim the per-session data fast enough between iterations.
+  if (lines.length > 0) {
+    const handle = await fsp.open(transcriptPath, 'a');
+    try {
+      for (const line of lines) {
+        await handle.write(JSON.stringify(line));
+        await handle.write('\n');
+      }
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  }
   return transcriptPath;
 }
 
@@ -648,6 +675,15 @@ async function uploadSessionArtifacts(
     }),
   );
 
+  // Clear candidate content to allow GC — processDelta has already hashed
+  // and uploaded everything; the content strings (especially the transcript,
+  // which can be hundreds of MB for a large session) are no longer needed.
+  // Without this, V8's old-space GC doesn't reclaim them between sync-loop
+  // iterations, accumulating memory across sessions.
+  for (const result of candidateResults) {
+    result.candidate.content = '';
+  }
+
   const manifestArtifacts = buildManifestArtifactsFromResults(candidateResults, {
     uploaded: deltaResult.uploaded,
     skipped: deltaResult.skipped,
@@ -685,6 +721,21 @@ export async function runDevinSessionSync(
     options.sessionId,
     options.dataDir,
   );
+
+  // Release the raw session table data immediately — the transcript has
+  // been materialized to disk, and downstream (discovery/upload) reads it
+  // back from the file, not from these in-memory row objects. Keeping them
+  // alive through the rest of the pipeline accumulates hundreds of MB per
+  // session in V8's old space (the major GC doesn't run between sync-loop
+  // iterations), eventually OOMing on stores with many large sessions.
+  // Only safe when the caller owns `tables` exclusively (not shared with
+  // other sessions in the same poll, as the watcher's `snapshot.tables` is).
+  if (options.releaseTablesAfterMaterialization) {
+    options.tables.sessions = [];
+    options.tables.messageNodes = [];
+    options.tables.promptHistory = [];
+    options.tables.toolCallStates = [];
+  }
 
   emitProgress(options, 'progress', `discovering artifacts for session ${options.sessionId}`);
   const discovery = await runDiscovery(options, profile, transcriptPath);

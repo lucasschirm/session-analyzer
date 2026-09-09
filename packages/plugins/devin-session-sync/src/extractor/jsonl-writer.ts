@@ -66,6 +66,15 @@ export interface BuildDevinJsonlOptions {
    * existed — see `appendSubagentLines`.
    */
   subagentContext?: SubagentSyntheticContext;
+  /**
+   * When true, skips building the full `text` string (the caller will
+   * stream `lines` to disk instead). This avoids creating a potentially
+   * huge intermediate string — `lines.map(JSON.stringify).join('\n')` —
+   * that doubles the session's memory footprint during materialization.
+   * The returned `text` will be `''` when this is true, regardless of
+   * whether `lines` is empty.
+   */
+  skipText?: boolean;
 }
 
 export interface BuildDevinJsonlResult {
@@ -101,7 +110,8 @@ export function buildDevinJsonl(
     );
   }
   const prior = options.priorWatermarks ?? EMPTY_WATERMARKS;
-  return { lines, text: serializeLines(lines), watermarks: computeWatermarks(tables, prior) };
+  const text = options.skipText ? '' : serializeLines(lines);
+  return { lines, text, watermarks: computeWatermarks(tables, prior) };
 }
 
 interface SubagentContextBuckets {
