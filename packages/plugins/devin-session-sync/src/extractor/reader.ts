@@ -331,3 +331,165 @@ export function readDevinTables(
   };
   return { tables, schema };
 }
+
+// ---------------------------------------------------------------------------
+// Per-session reads (memory-bounded for large session stores)
+// ---------------------------------------------------------------------------
+
+/** Default page size for per-session paginated reads. Keeps each SQLite query
+ * batch small so a store with hundreds of sessions never loads all sessions'
+ * rows into JS memory at once — only the session currently being processed. */
+export const SESSION_READ_PAGE_SIZE = 2000;
+
+/**
+ * Reads all rows from the `sessions` table (lightweight — one row per
+ * session, no large content columns). Used to enumerate sessions before
+ * reading each session's heavy tables individually via
+ * {@link readDevinTablesForSession}.
+ */
+export function readAllSessions(
+  db: DevinDatabaseSync,
+  resolution: SchemaResolution,
+): DevinSessionRow[] {
+  if (!resolution.knownTables.includes('sessions')) {
+    return [];
+  }
+  return readTable<DevinSessionRow>(db, 'SELECT * FROM sessions ORDER BY id');
+}
+
+/** Resolves the schema once so per-session reads don't re-query the refinery
+ * ledger on every session. */
+export function resolveSchema(db: DevinDatabaseSync): SchemaResolution {
+  return resolveDevinSchema(readRefineryVersion(db));
+}
+
+function readSessionRow(
+  db: DevinDatabaseSync,
+  resolution: SchemaResolution,
+  sessionId: string,
+): DevinSessionRow[] {
+  if (!resolution.knownTables.includes('sessions')) {
+    return [];
+  }
+  return readTable<DevinSessionRow>(db, 'SELECT * FROM sessions WHERE id = ?', [sessionId]);
+}
+
+function readMessageNodesForSession(
+  db: DevinDatabaseSync,
+  resolution: SchemaResolution,
+  sessionId: string,
+  priorHashes: Readonly<Record<string, string>>,
+  limit: number,
+): DevinMessageNodeRow[] {
+  if (!resolution.knownTables.includes('message_nodes')) {
+    return [];
+  }
+  const all: DevinMessageNodeRow[] = [];
+  let lastRowId = -1;
+  while (true) {
+    const batch = readTable<DevinMessageNodeRow>(
+      db,
+      'SELECT * FROM message_nodes WHERE session_id = ? AND row_id > ? ORDER BY row_id LIMIT ?',
+      [sessionId, lastRowId, limit],
+    );
+    all.push(...batch);
+    if (batch.length < limit) break;
+    lastRowId = batch[batch.length - 1].row_id;
+  }
+  return filterChangedMessageNodes(all, priorHashes);
+}
+
+function readPromptHistoryForSession(
+  db: DevinDatabaseSync,
+  resolution: SchemaResolution,
+  sessionId: string,
+  since: number | null,
+  limit: number,
+): DevinPromptHistoryRow[] {
+  if (!resolution.knownTables.includes('prompt_history')) {
+    return [];
+  }
+  const all: DevinPromptHistoryRow[] = [];
+  let lastId = since ?? -1;
+  while (true) {
+    const batch = readTable<DevinPromptHistoryRow>(
+      db,
+      'SELECT * FROM prompt_history WHERE session_id = ? AND id > ? ORDER BY id LIMIT ?',
+      [sessionId, lastId, limit],
+    );
+    all.push(...batch);
+    if (batch.length < limit) break;
+    lastId = batch[batch.length - 1].id;
+  }
+  return all;
+}
+
+function readToolCallStatesForSession(
+  db: DevinDatabaseSync,
+  resolution: SchemaResolution,
+  sessionId: string,
+  priorHashes: Readonly<Record<string, string>>,
+  limit: number,
+): DevinToolCallStateRow[] {
+  if (!resolution.knownTables.includes('tool_call_state')) {
+    return [];
+  }
+  const all: DevinToolCallStateRow[] = [];
+  let lastRowId = -1;
+  while (true) {
+    const batch = readTable<DevinToolCallStateRow>(
+      db,
+      'SELECT rowid AS row_id, * FROM tool_call_state WHERE session_id = ? AND rowid > ? ORDER BY rowid LIMIT ?',
+      [sessionId, lastRowId, limit],
+    );
+    all.push(...batch);
+    if (batch.length < limit) break;
+    lastRowId = batch[batch.length - 1].row_id;
+  }
+  return filterChangedToolCallStates(all, priorHashes);
+}
+
+/**
+ * Reads only one session's tables from the database, paginated in batches of
+ * `limit` rows per query so a single session with many rows never causes a
+ * single huge SQLite allocation. The caller processes and discards each
+ * session's tables before reading the next, so only one session's data is in
+ * JS memory at a time — the fix for the OOM that occurred when
+ * `readDevinTables` loaded all sessions' rows simultaneously.
+ *
+ * `watermarks` is typically `EMPTY_WATERMARKS` for a full per-session read;
+ * the content-hash filtering (`filterChangedMessageNodes` etc.) is applied
+ * the same way as the full-table read.
+ */
+export function readDevinTablesForSession(
+  db: DevinDatabaseSync,
+  sessionId: string,
+  watermarks: DevinWatermarks,
+  resolution: SchemaResolution,
+  limit: number = SESSION_READ_PAGE_SIZE,
+): DevinExtractedTables {
+  return {
+    sessions: readSessionRow(db, resolution, sessionId),
+    messageNodes: readMessageNodesForSession(
+      db,
+      resolution,
+      sessionId,
+      watermarks.messageNodesContentHashes,
+      limit,
+    ),
+    promptHistory: readPromptHistoryForSession(
+      db,
+      resolution,
+      sessionId,
+      watermarks.promptHistoryId,
+      limit,
+    ),
+    toolCallStates: readToolCallStatesForSession(
+      db,
+      resolution,
+      sessionId,
+      watermarks.toolCallStateHashes,
+      limit,
+    ),
+  };
+}

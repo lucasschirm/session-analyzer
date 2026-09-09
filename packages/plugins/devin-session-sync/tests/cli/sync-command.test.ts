@@ -84,6 +84,18 @@ describe('runSyncCommand', () => {
     expect(lines.join('')).toContain('No local Devin sessions found');
   });
 
+  it('shows "Finding sessions..." before reading the session list', async () => {
+    fixture = buildFixtureDb({});
+    const { stream: stdout, lines } = writable();
+    await runSyncCommand({
+      env: envFor(),
+      sessionsDbPath: fixture.path,
+      homeDir,
+      stdout,
+    });
+    expect(lines.join('')).toContain('Finding sessions...');
+  });
+
   it('syncs every session found in sessions.db and uploads a manifest for each', async () => {
     fixture = buildFixtureDb({
       sessions: [

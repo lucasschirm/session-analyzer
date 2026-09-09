@@ -6,7 +6,10 @@ import {
   computeSchemaDescriptor,
   DevinSqliteUnavailableError,
   openDevinDatabase,
+  readAllSessions,
   readDevinTables,
+  readDevinTablesForSession,
+  resolveSchema,
 } from '../../src/extractor/reader.js';
 import { mergeSessionHashes } from '../../src/extractor/session-watermark.js';
 import { mergeToolCallStateHashes } from '../../src/extractor/tool-call-watermark.js';
@@ -422,6 +425,81 @@ describe('sessions change-detection skip signal (#298)', () => {
     const watermark = { ...EMPTY_WATERMARKS, sessionsContentHashes: { other: 'deadbeef' } };
     const result = readDevinTables(fixture.db, watermark);
     expect(result.tables.sessions).toHaveLength(1);
+  });
+});
+
+describe('per-session reads (readDevinTablesForSession)', () => {
+  it('reads only the requested session, not other sessions', () => {
+    const fixture = buildFixtureDb({
+      sessions: [session('s1'), session('s2')],
+      messageNodes: [
+        messageNode('s1', 0, null),
+        messageNode('s1', 1, 0),
+        messageNode('s2', 0, null),
+      ],
+      promptHistory: [prompt('s1', 1, 1_700_000_000), prompt('s2', 1, 1_700_000_000)],
+      toolCallStates: [toolCall('s1', 'call-1'), toolCall('s2', 'call-2')],
+    });
+    cleanup = fixture.close;
+
+    const resolution = resolveSchema(fixture.db);
+    const tables = readDevinTablesForSession(fixture.db, 's1', EMPTY_WATERMARKS, resolution);
+    expect(tables.sessions).toHaveLength(1);
+    expect(tables.sessions[0].id).toBe('s1');
+    expect(tables.messageNodes).toHaveLength(2);
+    expect(tables.messageNodes.every((m) => m.session_id === 's1')).toBe(true);
+    expect(tables.promptHistory).toHaveLength(1);
+    expect(tables.promptHistory.every((p) => p.session_id === 's1')).toBe(true);
+    expect(tables.toolCallStates).toHaveLength(1);
+    expect(tables.toolCallStates.every((t) => t.session_id === 's1')).toBe(true);
+  });
+
+  it('returns empty tables for a session that does not exist', () => {
+    const fixture = buildFixtureDb({ sessions: [session('s1')] });
+    cleanup = fixture.close;
+
+    const resolution = resolveSchema(fixture.db);
+    const tables = readDevinTablesForSession(
+      fixture.db,
+      'no-such-session',
+      EMPTY_WATERMARKS,
+      resolution,
+    );
+    expect(tables.sessions).toHaveLength(0);
+    expect(tables.messageNodes).toHaveLength(0);
+    expect(tables.promptHistory).toHaveLength(0);
+    expect(tables.toolCallStates).toHaveLength(0);
+  });
+
+  it('readAllSessions lists every session row', () => {
+    const fixture = buildFixtureDb({
+      sessions: [session('s1'), session('s2'), session('s3')],
+    });
+    cleanup = fixture.close;
+
+    const resolution = resolveSchema(fixture.db);
+    const sessions = readAllSessions(fixture.db, resolution);
+    expect(sessions).toHaveLength(3);
+    expect(sessions.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
+  });
+
+  it('paginates message_nodes in batches of the given limit', () => {
+    // Create 5 message nodes for one session; with limit=2, the pagination
+    // loop should still collect all 5 (3 batches: 2 + 2 + 1).
+    const nodes = Array.from({ length: 5 }, (_, i) => {
+      const node = messageNode('s1', i, i === 0 ? null : i - 1);
+      node.row_id = i + 1;
+      return node;
+    });
+    const fixture = buildFixtureDb({
+      sessions: [session('s1')],
+      messageNodes: nodes,
+    });
+    cleanup = fixture.close;
+
+    const resolution = resolveSchema(fixture.db);
+    const tables = readDevinTablesForSession(fixture.db, 's1', EMPTY_WATERMARKS, resolution, 2);
+    expect(tables.messageNodes).toHaveLength(5);
   });
 });
 

@@ -51,6 +51,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # Align both plugins to the higher of their two versions before
+      # bumping/publishing. A manual edit or a divergent starting version
+      # (e.g. devin-session-sync shipped at 0.1.0 while claude-session-sync
+      # was already at 0.2.39) can drift them; this converges them so the
+      # bump and publish always land on the same version for both plugins.
+      - name: Align plugin versions
+        run: node scripts/align-plugin-versions.mjs
+
       # Only bump when the current version already exists on npm. If a previous
       # run bumped but failed to publish, this run publishes that version
       # instead of widening the gap, and re-runs become idempotent.

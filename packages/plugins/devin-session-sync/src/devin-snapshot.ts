@@ -3,8 +3,19 @@ import process from 'node:process';
 
 import { resolveDevinCliVersion } from './devin-profile.js';
 import { resolveDevinPaths } from './extractor/paths.js';
-import { computeSchemaDescriptor, openDevinDatabase, readDevinTables } from './extractor/reader.js';
-import type { DevinExtractedTables, DevinSchemaDescriptor } from './extractor/types.js';
+import {
+  computeSchemaDescriptor,
+  openDevinDatabase,
+  readAllSessions,
+  readDevinTables,
+  readDevinTablesForSession,
+  resolveSchema,
+} from './extractor/reader.js';
+import type {
+  DevinExtractedTables,
+  DevinSchemaDescriptor,
+  DevinSessionRow,
+} from './extractor/types.js';
 import { EMPTY_WATERMARKS } from './extractor/types.js';
 
 /**
@@ -54,5 +65,61 @@ export async function readDevinSnapshot(
     return { tables, schemaDescriptor };
   } finally {
     close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Per-session snapshot reader (memory-bounded for large session stores)
+// ---------------------------------------------------------------------------
+
+/**
+ * A handle that keeps `sessions.db` open so the sync command can read one
+ * session's tables at a time (via {@link readSessionTables}) instead of
+ * loading all sessions' rows into memory at once. The `sessions` list and
+ * `schemaDescriptor` are read up front (lightweight); heavy per-session
+ * tables are read on demand and discarded after processing, so only one
+ * session's data is in JS memory at a time.
+ *
+ * Always call {@link close} when done (typically in a `finally` block).
+ */
+export interface DevinSnapshotHandle {
+  /** All session rows (lightweight — one row per session). */
+  sessions: DevinSessionRow[];
+  schemaDescriptor: DevinSchemaDescriptor;
+  /** Reads one session's tables (paginated, memory-bounded). */
+  readSessionTables: (sessionId: string) => DevinExtractedTables;
+  /** Closes the database handle and releases any temp snapshot copy. */
+  close: () => void;
+}
+
+/**
+ * Opens `sessions.db`, reads the lightweight `sessions` list and schema
+ * descriptor up front, and returns a handle for per-session table reads.
+ * Use this instead of {@link readDevinSnapshot} when processing many
+ * sessions sequentially (e.g. `devin-sync sync`) to avoid loading all
+ * sessions' `message_nodes`/`tool_call_state`/`prompt_history` into memory
+ * at once.
+ */
+export async function openDevinSnapshotHandle(
+  options: ReadDevinSnapshotOptions = {},
+): Promise<DevinSnapshotHandle> {
+  const dbPath = resolveSnapshotDbPath(options);
+  const devinCliVersion = options.devinCliVersion ?? resolveDevinCliVersion();
+
+  const { db, close } = await openDevinDatabase(dbPath);
+  try {
+    const resolution = resolveSchema(db);
+    const sessions = readAllSessions(db, resolution);
+    const schemaDescriptor = computeSchemaDescriptor(db, devinCliVersion);
+    return {
+      sessions,
+      schemaDescriptor,
+      readSessionTables: (sessionId: string) =>
+        readDevinTablesForSession(db, sessionId, EMPTY_WATERMARKS, resolution),
+      close,
+    };
+  } catch (err) {
+    close();
+    throw err;
   }
 }

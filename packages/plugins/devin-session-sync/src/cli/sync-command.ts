@@ -10,7 +10,7 @@ import {
 } from '@lucasschirm/sal-sync';
 
 import { DevinHarnessProfile } from '../devin-profile.js';
-import { type DevinSnapshot, readDevinSnapshot } from '../devin-snapshot.js';
+import { type DevinSnapshotHandle, openDevinSnapshotHandle } from '../devin-snapshot.js';
 import type { DevinSessionRow } from '../extractor/types.js';
 import { type CaptureDevinModelsOptions, captureDevinModels } from '../models/capture.js';
 import {
@@ -46,7 +46,7 @@ function writeProgressLine(stdout: NodeJS.WritableStream, event: DevinSyncProgre
 
 async function syncOneSessionSafely(
   session: DevinSessionRow,
-  snapshot: DevinSnapshot,
+  handle: DevinSnapshotHandle,
   config: SyncConfig,
   dataDir: string,
   storageAdapter: StorageAdapter,
@@ -57,9 +57,13 @@ async function syncOneSessionSafely(
   models: Partial<CaptureDevinModelsOptions> | undefined,
 ): Promise<DevinSessionSyncOutcome> {
   try {
+    // Read only this session's tables — paginated, memory-bounded. Only one
+    // session's data is in JS memory at a time, fixing the OOM that occurred
+    // when the full snapshot loaded all sessions' rows simultaneously.
+    const tables = handle.readSessionTables(session.id);
     return await runDevinSessionSync({
-      tables: snapshot.tables,
-      schemaDescriptor: snapshot.schemaDescriptor,
+      tables,
+      schemaDescriptor: handle.schemaDescriptor,
       sessionId: session.id,
       cwd: session.working_directory ?? process.cwd(),
       config,
@@ -103,16 +107,22 @@ async function clearForceState(
   }
 }
 
-async function readSnapshotOrReport(
+async function openSnapshotHandleOrReport(
   env: Record<string, string | undefined>,
   cwd: string,
   devinCliVersion: string,
   stderr: NodeJS.WritableStream,
   sessionsDbPath: string | undefined,
   homeDir: string | undefined,
-): Promise<DevinSnapshot | undefined> {
+): Promise<DevinSnapshotHandle | undefined> {
   try {
-    return await readDevinSnapshot({ env, cwd, devinCliVersion, sessionsDbPath, home: homeDir });
+    return await openDevinSnapshotHandle({
+      env,
+      cwd,
+      devinCliVersion,
+      sessionsDbPath,
+      home: homeDir,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     stderr.write(`Error: could not read Devin sessions.db: ${message}\n`);
@@ -152,9 +162,10 @@ function summarizeTotals(
 /**
  * Manually upload all local Devin CLI sessions to S3 storage.
  *
- * - Reads every session directly from `sessions.db` (`cli/project.ts`'s
- *   `listDevinSessions`, reused via `readDevinSnapshot`) — never scoped to
- *   the invoking cwd.
+ * - Reads the `sessions` list from `sessions.db` (lightweight), then reads
+ *   each session's heavy tables (message_nodes, tool_call_state,
+ *   prompt_history) one session at a time — never all sessions at once —
+ *   so a store with hundreds of sessions doesn't OOM.
  * - For each session: materializes its transcript, discovers workspace/global
  *   config + session-linked plans, uploads the delta, and records the
  *   manifest.
@@ -174,7 +185,12 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
   }
   const config = validation.config;
 
-  const snapshot = await readSnapshotOrReport(
+  // Reading the session list from sessions.db can take a moment on large
+  // stores — show the user we're working before the first per-session
+  // progress line appears.
+  stdout.write('Finding sessions...\n');
+
+  const handle = await openSnapshotHandleOrReport(
     env,
     cwd,
     profile.harnessVersion,
@@ -182,48 +198,52 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
     options.sessionsDbPath,
     options.homeDir,
   );
-  if (!snapshot) return 1;
+  if (!handle) return 1;
 
-  if (snapshot.tables.sessions.length === 0) {
-    stdout.write('No local Devin sessions found to sync.\n');
-    return 0;
-  }
+  try {
+    if (handle.sessions.length === 0) {
+      stdout.write('No local Devin sessions found to sync.\n');
+      return 0;
+    }
 
-  const storageAdapter = options.storageAdapter ?? buildStorageAdapter(config);
-  const dataDir = getDataDir(env);
-  await clearForceState(force, dataDir, config.projectId, stdout);
+    const storageAdapter = options.storageAdapter ?? buildStorageAdapter(config);
+    const dataDir = getDataDir(env);
+    await clearForceState(force, dataDir, config.projectId, stdout);
 
-  const models = await captureDevinModels({
-    dataDir,
-    devinCliVersion: profile.harnessVersion,
-    ...options.models,
-  });
-  if (models.error) {
-    stderr.write(`devin-sync: models capture warning: ${models.error}\n`);
-  }
+    const models = await captureDevinModels({
+      dataDir,
+      devinCliVersion: profile.harnessVersion,
+      ...options.models,
+    });
+    if (models.error) {
+      stderr.write(`devin-sync: models capture warning: ${models.error}\n`);
+    }
 
-  stdout.write(
-    `Syncing ${snapshot.tables.sessions.length} session(s) for project "${config.projectId}"...\n\n`,
-  );
-
-  const outcomes: DevinSessionSyncOutcome[] = [];
-  for (const session of snapshot.tables.sessions) {
-    outcomes.push(
-      await syncOneSessionSafely(
-        session,
-        snapshot,
-        config,
-        dataDir,
-        storageAdapter,
-        profile,
-        env,
-        stdout,
-        options.homeDir,
-        options.models,
-      ),
+    stdout.write(
+      `Syncing ${handle.sessions.length} session(s) for project "${config.projectId}"...\n\n`,
     );
-  }
 
-  const { errors } = summarizeTotals(outcomes, stdout);
-  return errors.length > 0 ? 1 : 0;
+    const outcomes: DevinSessionSyncOutcome[] = [];
+    for (const session of handle.sessions) {
+      outcomes.push(
+        await syncOneSessionSafely(
+          session,
+          handle,
+          config,
+          dataDir,
+          storageAdapter,
+          profile,
+          env,
+          stdout,
+          options.homeDir,
+          options.models,
+        ),
+      );
+    }
+
+    const { errors } = summarizeTotals(outcomes, stdout);
+    return errors.length > 0 ? 1 : 0;
+  } finally {
+    handle.close();
+  }
 }

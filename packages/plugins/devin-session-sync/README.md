@@ -4,34 +4,20 @@ A [Devin CLI](https://docs.devin.ai/) plugin that synchronizes your session data
 — the local `sessions.db` transcript and telemetry — to S3-compatible storage
 via the [`@lucasschirm/sal-sync`](../../sync) engine.
 
-## What it does
-
-The Devin CLI maintains a local SQLite database at
-`~/.local/share/devin/cli/sessions.db` (or `$XDG_DATA_HOME/devin/cli/sessions.db`).
-This plugin reads that database and produces deterministic, ordered
-`devin-session-jsonl/v1` output, then uploads it through the SAL sync engine so
-the [Agentic Sessions Dashboard](../../../) can analyze it alongside Claude Code
-and other agentic session sources.
-
-### Plugin lifecycle
-
-The plugin is driven by the Devin CLI hook system (declared in
-[`hooks.json`](hooks.json)):
-
-| Event          | What happens                                                                  |
-| -------------- | ----------------------------------------------------------------------------- |
-| `SessionStart` | Records the session and starts the `watcher` to observe incremental state.    |
-| `SessionEnd`   | Performs the final sync: flushes remaining state, uploads the manifest, and ends cleanly. |
-
-The `watcher` also keeps a watermark so repeated runs are incremental and do not
-transmit data that has already been synced.
-
 ## Installation
 
-Devin plugins are installed directly from a git source subdirectory; there is no
-`marketplace.json` file in the Devin install model. The repository's root
-[`.claude-plugin/marketplace.json`](../../../.claude-plugin/marketplace.json) is
-the Claude Code marketplace and intentionally lists only the Claude plugin.
+Devin plugins are installed at the user level and are available across all your
+projects. There is no `marketplace.json` for Devin plugins — installation is
+direct from a git source subdirectory or a local folder.
+
+### Prerequisites
+
+- **Devin CLI** installed and on your `PATH` (`devin --version`).
+- **Node.js >= 22.13.0** (or >= 23.4.0) — the plugin reads Devin's local
+  `sessions.db` via the built-in `node:sqlite` module, which requires one of
+  these versions.
+- **S3-compatible storage** configured (see [Configuration](#configuration)
+  below).
 
 ### From the remote repository
 
@@ -84,8 +70,75 @@ bin/watcher              # Watermark / state watcher
 bin/devin-sync           # Standalone CLI for manual sync/list/download
 ```
 
-The npm package also publishes the `devin-session-sync` bin name as an alias for
-`devin-sync`.
+### Verifying the installation
+
+```bash
+devin plugins list
+devin plugins info devin-session-sync
+```
+
+### Updating and removing
+
+```bash
+devin plugins update devin-session-sync   # re-fetch at the latest version
+devin plugins remove devin-session-sync    # uninstall
+```
+
+## Configuration
+
+The plugin and its standalone CLI read configuration from environment variables,
+falling back to `.devin/config.local.json` and `.devin/config.json` `env` keys.
+Required variables:
+
+| Variable                    | Description                                      |
+| --------------------------- | ------------------------------------------------ |
+| `SAL_PROJECT_ID`            | Unique project identifier.                       |
+| `SAL_STORAGE_TYPE`          | Storage backend (`s3` only today).               |
+| `SAL_STORAGE_BUCKET`        | S3 bucket name.                                  |
+| `SAL_STORAGE_REGION`        | AWS region.                                      |
+| `SAL_STORAGE_ACCESS_KEY_ID` | AWS access key ID.                               |
+| `SAL_STORAGE_SECRET_ACCESS_KEY` | AWS secret access key.                       |
+
+See the sync engine documentation for the full option list and LocalStack
+configuration.
+
+## What it does
+
+The Devin CLI maintains a local SQLite database at
+`~/.local/share/devin/cli/sessions.db` (or `$XDG_DATA_HOME/devin/cli/sessions.db`).
+This plugin reads that database and produces deterministic, ordered
+`devin-session-jsonl/v1` output, then uploads it through the SAL sync engine so
+the [Agentic Sessions Dashboard](../../../) can analyze it alongside Claude Code
+and other agentic session sources.
+
+### Plugin lifecycle
+
+The plugin is driven by the Devin CLI hook system (declared in
+[`hooks.json`](hooks.json)):
+
+| Event          | What happens                                                                  |
+| -------------- | ----------------------------------------------------------------------------- |
+| `SessionStart` | Records the session and starts the `watcher` to observe incremental state.    |
+| `Stop`         | Syncs the current session state (fires every turn, works in both Cloud and local). |
+| `PostCompaction` | Syncs after context compaction.                                             |
+| `SessionEnd`   | Performs the final sync: flushes remaining state, uploads the manifest, and ends cleanly. |
+
+The `watcher` also keeps a watermark so repeated runs are incremental and do not
+transmit data that has already been synced.
+
+### Unattended sessions (Cloud)
+
+Devin Cloud sessions never fire `SessionStart`/`SessionEnd` hooks. To cover
+that, the plugin ships a mandatory `bin/watcher` daemon that polls
+`sessions.db` watermarks on an interval and re-syncs changed sessions. Start it
+independently of any hook (e.g. via a process manager or a login shell):
+
+```bash
+node ./packages/plugins/devin-session-sync/bin/watcher
+```
+
+The bulk `devin-sync sync` CLI command (below) is the manual/scheduled
+catch-up path for the same gap.
 
 ## Standalone CLI
 
@@ -127,24 +180,6 @@ devin-sync migrate                 # Dry run: list old-format keys and missing m
 
 Run `devin-sync --help` for the full command reference.
 
-### Configuration
-
-The CLI and plugin read configuration from environment variables, falling back to
-`.devin/config.local.json` and `.devin/config.json` `env` keys. Required
-variables are the same as the sync engine:
-
-| Variable                    | Description                                      |
-| --------------------------- | ------------------------------------------------ |
-| `SAL_PROJECT_ID`            | Unique project identifier.                       |
-| `SAL_STORAGE_TYPE`          | Storage backend (`s3` only today).               |
-| `SAL_STORAGE_BUCKET`        | S3 bucket name.                                  |
-| `SAL_STORAGE_REGION`        | AWS region.                                      |
-| `SAL_STORAGE_ACCESS_KEY_ID` | AWS access key ID.                               |
-| `SAL_STORAGE_SECRET_ACCESS_KEY` | AWS secret access key.                       |
-
-See the sync engine documentation for the full option list and LocalStack
-configuration.
-
 ## Distribution note
 
 - The Claude plugin is listed in the repository's
@@ -160,7 +195,8 @@ configuration.
 
 This package is auto-published by `.github/workflows/version-patch.yml` on every
 push to `main`, alongside the Claude plugin. It shares the same esbuild-bundled,
-provenance-enabled, public npm publish path.
+provenance-enabled, public npm publish path. Both plugins are kept at the same
+version (aligned and bumped together by the version-patch workflow).
 
 ## Development
 
