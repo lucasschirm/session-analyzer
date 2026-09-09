@@ -169,7 +169,7 @@ export class ToastContainer extends LitElement {
 
     .toast-stack {
       position: fixed;
-      top: 16px;
+      top: 72px;
       right: 16px;
       z-index: 100;
       display: flex;

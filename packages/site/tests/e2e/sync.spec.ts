@@ -675,6 +675,9 @@ test('offline event aborts the active run', async ({ page }) => {
 
   await startSyncFromHome(page, bucket);
   await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
+  // Wait for the worker to discover at least one session before aborting,
+  // so the session appears in the sync status modal after the abort.
+  await expect(progressBar(page)).toContainText('Sessions', { timeout: 10000 });
 
   await page.evaluate(() => window.dispatchEvent(new Event('offline')));
   await waitForSyncCompleted(page);
