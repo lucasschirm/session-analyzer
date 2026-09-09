@@ -267,10 +267,11 @@ describe('SyncManager session failure isolation', () => {
       getSessionBySyncId: vi.fn().mockResolvedValue(null),
       upsertSessionStub: vi.fn().mockResolvedValue(undefined),
       setSessionSyncStatus: vi.fn().mockResolvedValue(undefined),
-      getSyncRunCount: vi.fn().mockResolvedValue(0),
+      getSessionUpdatedAt: vi.fn().mockResolvedValue(null),
       updateSessionManifest: vi.fn().mockResolvedValue(undefined),
       getSessionFiles: vi.fn().mockResolvedValue([]),
       upsertSessionFile: vi.fn().mockResolvedValue(undefined),
+      bulkUpsertSessionFiles: vi.fn().mockResolvedValue(undefined),
       failStaleSessions: vi.fn().mockResolvedValue(undefined),
       setProjectSyncStatus: vi.fn().mockResolvedValue(undefined),
     } as unknown as DbClient;

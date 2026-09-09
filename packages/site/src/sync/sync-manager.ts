@@ -1390,8 +1390,8 @@ export class SyncManager extends EventTarget {
     for (const artifact of inScope) {
       const file = this.artifactToFile(artifact, mainPath);
       const existing = existingByPath.get(file.file);
-      // Preserve non-processed statuses (e.g. 'failed') so that
-      // computeFilesToDownload can still detect files needing re-download.
+      // Preserve non-processed statuses (e.g. 'failed') so the worker's
+      // hash-diff can still detect files needing re-download.
       // Only upsert as 'processed' when the file is new or already processed.
       const status = existing && existing.status !== 'processed' ? existing.status : 'processed';
       records.push({
