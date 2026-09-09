@@ -5,6 +5,7 @@ import { resolveDevinCliVersion } from './devin-profile.js';
 import { resolveDevinPaths } from './extractor/paths.js';
 import {
   computeSchemaDescriptor,
+  hasAnySessions,
   openDevinDatabase,
   readAllSessions,
   readDevinTables,
@@ -42,6 +43,8 @@ export interface ReadDevinSnapshotOptions {
   env?: Record<string, string | undefined>;
   /** Live `devin --version` output; resolved automatically when omitted. */
   devinCliVersion?: string;
+  /** Optional working directory patterns to filter sessions at read time via SQL. */
+  workdirPatterns?: readonly string[];
 }
 
 function resolveSnapshotDbPath(options: ReadDevinSnapshotOptions): string {
@@ -86,6 +89,8 @@ export interface DevinSnapshotHandle {
   /** All session rows (lightweight — one row per session). */
   sessions: DevinSessionRow[];
   schemaDescriptor: DevinSchemaDescriptor;
+  /** Returns true if the sessions table contains any rows at all. */
+  hasAnySessions: () => boolean;
   /** Reads one session's tables (paginated, memory-bounded). */
   readSessionTables: (sessionId: string) => DevinExtractedTables;
   /** Closes the database handle and releases any temp snapshot copy. */
@@ -109,11 +114,12 @@ export async function openDevinSnapshotHandle(
   const { db, close } = await openDevinDatabase(dbPath);
   try {
     const resolution = resolveSchema(db);
-    const sessions = readAllSessions(db, resolution);
+    const sessions = readAllSessions(db, resolution, options.workdirPatterns);
     const schemaDescriptor = computeSchemaDescriptor(db, devinCliVersion);
     return {
       sessions,
       schemaDescriptor,
+      hasAnySessions: () => hasAnySessions(db, resolution),
       readSessionTables: (sessionId: string) =>
         readDevinTablesForSession(db, sessionId, EMPTY_WATERMARKS, resolution),
       close,

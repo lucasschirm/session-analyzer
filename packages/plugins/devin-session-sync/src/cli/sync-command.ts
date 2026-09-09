@@ -119,6 +119,7 @@ async function openSnapshotHandleOrReport(
   stderr: NodeJS.WritableStream,
   sessionsDbPath: string | undefined,
   homeDir: string | undefined,
+  workdirPatterns?: readonly string[],
 ): Promise<DevinSnapshotHandle | undefined> {
   try {
     return await openDevinSnapshotHandle({
@@ -127,6 +128,7 @@ async function openSnapshotHandleOrReport(
       devinCliVersion,
       sessionsDbPath,
       home: homeDir,
+      workdirPatterns,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -190,6 +192,17 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
     return 1;
   }
   const config = validation.config;
+  const dataDir = getDataDir(env);
+
+  // Resolve workdir patterns up front so sessions.db can filter rows directly
+  // via SQL (`WHERE working_directory LIKE "/path/%"`).
+  let activePatterns: string[] | undefined;
+  let hasConfiguredPatterns = false;
+  if (!syncAll) {
+    const workdirConfig = await readWorkdirConfig(dataDir, config.projectId);
+    hasConfiguredPatterns = workdirConfig.workdirs.length > 0;
+    activePatterns = hasConfiguredPatterns ? workdirConfig.workdirs : [cwd];
+  }
 
   // Reading the session list from sessions.db can take a moment on large
   // stores — show the user we're working before the first per-session
@@ -203,17 +216,30 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
     stderr,
     options.sessionsDbPath,
     options.homeDir,
+    activePatterns,
   );
   if (!handle) return 1;
 
   try {
     if (handle.sessions.length === 0) {
+      if (!handle.hasAnySessions()) {
+        stdout.write('No local Devin sessions found to sync.\n');
+        return 0;
+      }
+      if (!syncAll && activePatterns) {
+        stdout.write(
+          `No sessions found matching the configured working directories for project "${config.projectId}".\n`,
+        );
+        stdout.write(
+          `Use \`${profile.harness === 'devin' ? 'devin-sync' : 'claude-sync'} workdir add\` to configure working directories, or \`sync --all\` to sync everything.\n`,
+        );
+        return 0;
+      }
       stdout.write('No local Devin sessions found to sync.\n');
       return 0;
     }
 
     const storageAdapter = options.storageAdapter ?? buildStorageAdapter(config);
-    const dataDir = getDataDir(env);
     await clearForceState(force, dataDir, config.projectId, stdout);
 
     const models = await captureDevinModels({
@@ -231,23 +257,16 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
     // `devin-sync sync` run from a project directory only syncs that
     // project's sessions — not every session on the machine.
     let sessionsToSync = handle.sessions;
-    if (!syncAll) {
-      const workdirConfig = await readWorkdirConfig(dataDir, config.projectId);
-      const patterns = workdirConfig.workdirs;
-      if (patterns.length > 0) {
-        sessionsToSync = handle.sessions.filter((s) => {
-          if (!s.working_directory) return false;
-          return workdirMatches(s.working_directory, patterns);
-        });
+    if (!syncAll && activePatterns) {
+      sessionsToSync = handle.sessions.filter((s) => {
+        if (!s.working_directory) return false;
+        return workdirMatches(s.working_directory, activePatterns);
+      });
+      if (hasConfiguredPatterns) {
         stdout.write(
-          `Filtering by ${patterns.length} workdir pattern(s): ${patterns.join(', ')}\n`,
+          `Filtering by ${activePatterns.length} workdir pattern(s): ${activePatterns.join(', ')}\n`,
         );
       } else {
-        const normalizedCwd = cwd.replace(/\/+$/, '');
-        sessionsToSync = handle.sessions.filter((s) => {
-          if (!s.working_directory) return false;
-          return s.working_directory.replace(/\/+$/, '') === normalizedCwd;
-        });
         stdout.write(`Filtering by current directory: ${cwd}\n`);
       }
 
@@ -285,6 +304,7 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
           stderr,
           options.sessionsDbPath,
           options.homeDir,
+          activePatterns,
         );
         if (!handle) {
           stderr.write('Error: could not reopen Devin sessions.db during sync.\n');

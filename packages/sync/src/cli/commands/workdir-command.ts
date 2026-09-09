@@ -97,21 +97,80 @@ export function isGlobPattern(input: string): boolean {
 }
 
 /**
+ * Matches a string against a wildcard pattern using SQL LIKE semantics where
+ * `*` or `%` matches zero or more characters (including directory slashes `/`),
+ * and `?` or `_` matches any single character.
+ */
+export function matchesSqlLike(value: string, pattern: string): boolean {
+  const likePattern = pattern.replace(/\*/g, '%').replace(/\?/g, '_');
+  const regexStr = `^${likePattern
+    .replace(/[-[\]{}()+.,\\^$|#\s]/g, '\\$&')
+    .replace(/%/g, '.*')
+    .replace(/_/g, '.')}$`;
+  return new RegExp(regexStr).test(value);
+}
+
+/**
  * Tests whether a session's `working_directory` matches any of the
  * configured workdir patterns. Exact paths match after normalization;
- * glob patterns (containing `*`, `?`, `[`) match via `minimatch`.
+ * glob patterns (containing `*`, `?`, `[`) match via SQL LIKE semantics
+ * (replacing `*` with `%`) as well as `minimatch`.
  */
 export function workdirMatches(workdir: string, patterns: readonly string[]): boolean {
   const normalized = path.normalize(workdir).replace(/\/+$/, '');
   for (const pattern of patterns) {
     if (isGlobPattern(pattern)) {
-      if (minimatch(normalized, pattern, { dot: false })) return true;
+      if (matchesSqlLike(normalized, pattern)) return true;
+      if (minimatch(normalized, pattern, { dot: true })) return true;
     } else {
       const normalizedPattern = path.normalize(pattern).replace(/\/+$/, '');
       if (normalized === normalizedPattern) return true;
     }
   }
   return false;
+}
+
+/**
+ * Detects whether an array of arguments passed to `workdir add` or `workdir remove`
+ * was produced by shell glob expansion (e.g. the user ran `workdir add /path/*` without
+ * quotes in bash/zsh, which expanded the wildcard to matching filesystem paths).
+ *
+ * If multiple arguments are passed and they all share the same parent directory whose
+ * entries on disk match the arguments, we reconstruct the wildcard pattern `<parent>/*`
+ * so it is stored as a single wildcard pattern rather than multiple individual entries.
+ */
+export async function detectShellGlobExpansion(
+  args: string[],
+  cwd: string = process.cwd(),
+): Promise<string | undefined> {
+  if (args.length <= 1) return undefined;
+  const resolvedList = args.map((a) => resolveWorkdirPath(a, cwd));
+  const first = resolvedList[0];
+  const parent = path.dirname(first);
+  if (parent === first || !resolvedList.every((p) => path.dirname(p) === parent)) {
+    return undefined;
+  }
+
+  try {
+    const entries = await fsp.readdir(parent);
+    const argBasenames = new Set(resolvedList.map((p) => path.basename(p)));
+    const nonHidden = entries.filter((e) => !e.startsWith('.'));
+    const matchesNonHidden =
+      nonHidden.length > 0 &&
+      nonHidden.length === argBasenames.size &&
+      nonHidden.every((e) => argBasenames.has(e));
+    const matchesAll =
+      entries.length > 0 &&
+      entries.length === argBasenames.size &&
+      entries.every((e) => argBasenames.has(e));
+
+    if (matchesNonHidden || matchesAll) {
+      return path.join(parent, '*');
+    }
+  } catch {
+    // Parent directory not accessible
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +216,10 @@ async function runWorkdirList(
         stdout.write('  (no sessions found in session store)\n');
       } else {
         for (const dir of available) {
-          const mark = configuredSet.has(dir) ? ' [configured]' : '';
+          const mark =
+            configuredSet.has(dir) || workdirMatches(dir, configured.workdirs)
+              ? ' [configured]'
+              : '';
           stdout.write(`  ${dir}${mark}\n`);
         }
       }
@@ -167,7 +229,7 @@ async function runWorkdirList(
     }
   }
 
-  // Show configured patterns that don't appear in the session store (e.g. globs)
+  // Show configured patterns that don't match any session in the session store
   if (adapter.listAvailableWorkdirs) {
     const available = await adapter
       .listAvailableWorkdirs({
@@ -177,8 +239,9 @@ async function runWorkdirList(
         sessionsDbPath: options.sessionsDbPath,
       })
       .catch(() => [] as string[]);
-    const availableSet = new Set(available);
-    const extra = configured.workdirs.filter((w) => !availableSet.has(w));
+    const extra = configured.workdirs.filter(
+      (pattern) => !available.some((dir) => workdirMatches(dir, [pattern])),
+    );
     if (extra.length > 0) {
       stdout.write('\nConfigured patterns not in session store:\n\n');
       for (const dir of extra) {
@@ -223,8 +286,19 @@ async function runWorkdirAdd(
   const config = await readWorkdirConfig(dataDir, projectId);
 
   if (args.length > 0) {
+    // Check if the shell expanded a wildcard pattern (e.g. `workdir add /path/*` unquoted).
+    // If multiple args are passed and all share a common parent directory whose entries on disk
+    // match the arguments, collapse them to `<parent>/*` instead of adding each individual entry.
+    const wildcardPattern = await detectShellGlobExpansion(args, cwd);
+    if (wildcardPattern) {
+      stdout.write(
+        `Detected shell glob expansion; storing wildcard pattern: '${wildcardPattern}'\n`,
+      );
+    }
+    const pathsToAdd = wildcardPattern ? [wildcardPattern] : args;
+
     // Manual add: resolve each path and add to config
-    for (const arg of args) {
+    for (const arg of pathsToAdd) {
       const resolved = resolveWorkdirPath(arg, cwd);
       if (!config.workdirs.includes(resolved)) {
         config.workdirs.push(resolved);
@@ -245,7 +319,7 @@ async function runWorkdirAdd(
     stderr.write(
       'Error: interactive workdir selection requires a session store. Provide a path argument instead:\n' +
         `  ${adapter.binName} workdir add <path>\n` +
-        `  ${adapter.binName} workdir add /path/to/worktrees/*\n`,
+        `  ${adapter.binName} workdir add '/path/to/worktrees/*'\n`,
     );
     return 1;
   }
@@ -274,7 +348,7 @@ async function runWorkdirAdd(
   const choices = available.map((dir) => ({
     name: dir,
     value: dir,
-    checked: configuredSet.has(dir),
+    checked: configuredSet.has(dir) || workdirMatches(dir, config.workdirs),
   }));
 
   const selected = await checkbox({
@@ -317,8 +391,11 @@ async function runWorkdirRemove(
     return 1;
   }
 
+  const wildcardPattern = await detectShellGlobExpansion(args, cwd);
+  const pathsToRemove = wildcardPattern ? [wildcardPattern] : args;
+
   const config = await readWorkdirConfig(dataDir, projectId);
-  const toRemove = new Set(args.map((a) => resolveWorkdirPath(a, cwd)));
+  const toRemove = new Set(pathsToRemove.map((a) => resolveWorkdirPath(a, cwd)));
   const before = config.workdirs.length;
   config.workdirs = config.workdirs.filter((w) => !toRemove.has(w));
   const removed = before - config.workdirs.length;
@@ -345,13 +422,13 @@ async function runWorkdirRemove(
  * are mapped to the current `SAL_PROJECT_ID`.
  *
  * Subcommands:
- *   workdir list                          List all working directories from the
- *                                         session store + configured patterns.
- *   workdir add                           Interactive checkbox selection (requires
- *                                         adapter.listAvailableWorkdirs).
- *   workdir add <path>                    Add a path (resolves `.`, `~`, relative).
- *   workdir add /path/to/worktrees/*      Add a glob pattern (wildcard match).
- *   workdir remove <path>                 Remove a working directory from config.
+ *   workdir list                            List all working directories from the
+ *                                           session store + configured patterns.
+ *   workdir add                             Interactive checkbox selection (requires
+ *                                           adapter.listAvailableWorkdirs).
+ *   workdir add <path>                      Add a path (resolves `.`, `~`, relative).
+ *   workdir add '/path/to/worktrees/*'      Add a glob pattern (wildcard match).
+ *   workdir remove <path>                   Remove a working directory from config.
  *
  * Config is stored at `<dataDir>/projects/<SAL_PROJECT_ID>/config.json`.
  */
@@ -367,10 +444,10 @@ export async function runWorkdirCommand(
     stdout.write(
       `Usage: ${adapter.binName} workdir <subcommand> [options]\n\n` +
         'Subcommands:\n' +
-        '  list                          List working directories from session store + config\n' +
-        '  add [path]                    Add a working directory (interactive if no path)\n' +
-        '  add /path/to/worktrees/*      Add a glob/wildcard pattern\n' +
-        '  remove <path>                 Remove a working directory from config\n',
+        '  list                            List working directories from session store + config\n' +
+        '  add [path]                      Add a working directory (interactive if no path)\n' +
+        "  add '/path/to/worktrees/*'      Add a glob/wildcard pattern\n" +
+        '  remove <path>                   Remove a working directory from config\n',
     );
     return 0;
   }

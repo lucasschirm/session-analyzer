@@ -21,7 +21,7 @@ Commands:
   workdir add                             Interactive checkbox: select which working
                                            directories map to this SAL_PROJECT_ID
   workdir add <path>                      Add a working directory (resolves ., ~, relative)
-  workdir add /path/to/worktrees/*        Add a glob/wildcard pattern
+  workdir add '/path/to/worktrees/*'      Add a glob/wildcard pattern (quotes prevent shell expansion)
   workdir remove <path>                   Remove a working directory from this project's config
   list                                    List all projects in storage
   list --current                          List sessions for the current project (SAL_PROJECT_ID)

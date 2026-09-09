@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   type CliHarnessAdapter,
+  detectShellGlobExpansion,
   isGlobPattern,
+  matchesSqlLike,
   readWorkdirConfig,
   resolveWorkdirPath,
   runWorkdirCommand,
@@ -119,6 +121,87 @@ describe('isGlobPattern', () => {
   });
 });
 
+describe('matchesSqlLike', () => {
+  it('matches exact strings', () => {
+    expect(matchesSqlLike('/home/user/project', '/home/user/project')).toBe(true);
+    expect(matchesSqlLike('/home/user/project', '/home/user/other')).toBe(false);
+  });
+
+  it('matches wildcard * across directory separators', () => {
+    expect(matchesSqlLike('/worktrees/tsk0005', '/worktrees/*')).toBe(true);
+    expect(matchesSqlLike('/worktrees/tsk0005/sub/dir', '/worktrees/*')).toBe(true);
+    expect(matchesSqlLike('/other/tsk0005', '/worktrees/*')).toBe(false);
+  });
+
+  it('matches wildcard * with zero characters', () => {
+    expect(matchesSqlLike('/worktrees/', '/worktrees/*')).toBe(true);
+  });
+
+  it('matches single-character wildcard ?', () => {
+    expect(matchesSqlLike('/path/a', '/path/?')).toBe(true);
+    expect(matchesSqlLike('/path/ab', '/path/?')).toBe(false);
+  });
+
+  it('escapes regex metacharacters in literal parts', () => {
+    expect(matchesSqlLike('/foo.bar/baz', '/foo.bar/*')).toBe(true);
+    expect(matchesSqlLike('/fooXbar/baz', '/foo.bar/*')).toBe(false);
+    expect(matchesSqlLike('/foo+bar/baz', '/foo+bar/*')).toBe(true);
+    expect(matchesSqlLike('/foo[bar]/baz', '/foo[bar]/*')).toBe(true);
+  });
+
+  it('matches paths containing dashes (e.g. tsk0049-e2e)', () => {
+    expect(matchesSqlLike('/worktrees/tsk0049-e2e', '/worktrees/*')).toBe(true);
+    expect(matchesSqlLike('/worktrees/tsk0049-e2e/nested', '/worktrees/*')).toBe(true);
+    expect(matchesSqlLike('/worktrees/tsk0049-e2e', '/worktrees/*-e2e')).toBe(true);
+    expect(matchesSqlLike('/worktrees/tsk0049-e2e', '/worktrees/tsk*-e2e')).toBe(true);
+    expect(matchesSqlLike('/worktrees/tsk0049', '/worktrees/*-e2e')).toBe(false);
+  });
+});
+
+describe('detectShellGlobExpansion', () => {
+  it('returns undefined when args has length <= 1', async () => {
+    expect(await detectShellGlobExpansion([])).toBeUndefined();
+    expect(await detectShellGlobExpansion(['/path/to/one'])).toBeUndefined();
+  });
+
+  it('returns undefined when args have different parent directories', async () => {
+    expect(await detectShellGlobExpansion(['/dir1/a', '/dir2/b'])).toBeUndefined();
+  });
+
+  it('returns parent/* when args match the directory entries', async () => {
+    const parentDir = path.join(tmpDir, 'worktrees');
+    await fsp.mkdir(parentDir, { recursive: true });
+    await fsp.mkdir(path.join(parentDir, 'tsk0001'));
+    await fsp.mkdir(path.join(parentDir, 'tsk0002'));
+    await fsp.mkdir(path.join(parentDir, 'tsk0003'));
+
+    const args = [
+      path.join(parentDir, 'tsk0001'),
+      path.join(parentDir, 'tsk0002'),
+      path.join(parentDir, 'tsk0003'),
+    ];
+    const detected = await detectShellGlobExpansion(args);
+    expect(detected).toBe(path.join(parentDir, '*'));
+  });
+
+  it('returns undefined when args do not match all entries in directory', async () => {
+    const parentDir = path.join(tmpDir, 'worktrees');
+    await fsp.mkdir(parentDir, { recursive: true });
+    await fsp.mkdir(path.join(parentDir, 'tsk0001'));
+    await fsp.mkdir(path.join(parentDir, 'tsk0002'));
+    await fsp.mkdir(path.join(parentDir, 'tsk0003'));
+
+    const args = [path.join(parentDir, 'tsk0001'), path.join(parentDir, 'tsk0002')];
+    const detected = await detectShellGlobExpansion(args);
+    expect(detected).toBeUndefined();
+  });
+
+  it('returns undefined when parent directory does not exist', async () => {
+    const args = ['/nonexistent/dir/a', '/nonexistent/dir/b'];
+    expect(await detectShellGlobExpansion(args)).toBeUndefined();
+  });
+});
+
 describe('workdirMatches', () => {
   it('matches exact paths after normalization', () => {
     expect(workdirMatches('/home/user/project', ['/home/user/project'])).toBe(true);
@@ -134,6 +217,21 @@ describe('workdirMatches', () => {
 
   it('matches glob patterns with *', () => {
     expect(workdirMatches('/home/user/worktrees/feature-a', ['/home/user/worktrees/*'])).toBe(true);
+  });
+
+  it('matches nested subdirectories for wildcard patterns like SQL LIKE', () => {
+    expect(
+      workdirMatches('/home/user/worktrees/feature-a/sub/folder', ['/home/user/worktrees/*']),
+    ).toBe(true);
+  });
+
+  it('matches paths containing dashes (e.g. tsk0049-e2e) with wildcards', () => {
+    expect(workdirMatches('/home/user/worktrees/tsk0049-e2e', ['/home/user/worktrees/*'])).toBe(
+      true,
+    );
+    expect(
+      workdirMatches('/home/user/worktrees/tsk0049-e2e/nested/folder', ['/home/user/worktrees/*']),
+    ).toBe(true);
   });
 
   it('does not match glob patterns to non-matching paths', () => {
@@ -406,5 +504,71 @@ describe('runWorkdirCommand', () => {
     });
     expect(code).toBe(0);
     expect(lines.join('')).toContain('No working directories found in the session store');
+  });
+
+  it('add collapses shell-expanded sibling arguments into a single wildcard pattern', async () => {
+    const parentDir = path.join(tmpDir, 'worktrees');
+    await fsp.mkdir(parentDir, { recursive: true });
+    await fsp.mkdir(path.join(parentDir, 'tsk0001'));
+    await fsp.mkdir(path.join(parentDir, 'tsk0002'));
+
+    const { stream, lines } = writable();
+    const code = await runWorkdirCommand(
+      FIXTURE_ADAPTER,
+      ['add', path.join(parentDir, 'tsk0001'), path.join(parentDir, 'tsk0002')],
+      {
+        env: baseEnv,
+        stdout: stream,
+      },
+    );
+    expect(code).toBe(0);
+    const expectedPattern = path.join(parentDir, '*');
+    expect(lines.join('')).toContain(
+      `Detected shell glob expansion; storing wildcard pattern: '${expectedPattern}'`,
+    );
+    expect(lines.join('')).toContain(`Added: ${expectedPattern}`);
+    const config = await readWorkdirConfig(tmpDir, 'proj-test');
+    expect(config.workdirs).toEqual([expectedPattern]);
+  });
+
+  it('remove collapses shell-expanded sibling arguments into a single wildcard pattern', async () => {
+    const parentDir = path.join(tmpDir, 'worktrees');
+    await fsp.mkdir(parentDir, { recursive: true });
+    await fsp.mkdir(path.join(parentDir, 'tsk0001'));
+    await fsp.mkdir(path.join(parentDir, 'tsk0002'));
+    const expectedPattern = path.join(parentDir, '*');
+    await writeWorkdirConfig(tmpDir, 'proj-test', { workdirs: [expectedPattern] });
+
+    const { stream, lines } = writable();
+    const code = await runWorkdirCommand(
+      FIXTURE_ADAPTER,
+      ['remove', path.join(parentDir, 'tsk0001'), path.join(parentDir, 'tsk0002')],
+      {
+        env: baseEnv,
+        stdout: stream,
+      },
+    );
+    expect(code).toBe(0);
+    expect(lines.join('')).toContain('Removed 1 working directory pattern(s)');
+    const config = await readWorkdirConfig(tmpDir, 'proj-test');
+    expect(config.workdirs).toEqual([]);
+  });
+
+  it('list marks available workdirs matching a wildcard as [configured] and suppresses pattern from missing', async () => {
+    const adapter: CliHarnessAdapter = {
+      ...FIXTURE_ADAPTER,
+      listAvailableWorkdirs: async () => ['/worktrees/tsk0001/sub', '/unrelated/path'],
+    };
+    await writeWorkdirConfig(tmpDir, 'proj-test', { workdirs: ['/worktrees/*'] });
+    const { stream, lines } = writable();
+    const code = await runWorkdirCommand(adapter, ['list'], {
+      env: baseEnv,
+      stdout: stream,
+    });
+    expect(code).toBe(0);
+    const out = lines.join('');
+    expect(out).toContain('/worktrees/tsk0001/sub [configured]');
+    expect(out).toContain('/unrelated/path');
+    expect(out).not.toContain('Configured patterns not in session store:');
   });
 });

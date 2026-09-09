@@ -342,32 +342,91 @@ export function readDevinTables(
 export const SESSION_READ_PAGE_SIZE = 2000;
 
 /**
+ * Helper to build a SQL WHERE clause and parameters for filtering by working directories.
+ * Wildcards with `*` or `?` become `working_directory LIKE ?` (replacing `*` with `%` and `?` with `_`),
+ * and exact paths become `working_directory = ?`.
+ */
+export function buildWorkdirWhereClause(patterns: readonly string[]): {
+  clause: string;
+  params: string[];
+} {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  for (const pattern of patterns) {
+    if (pattern.includes('*') || pattern.includes('?')) {
+      clauses.push('working_directory LIKE ?');
+      params.push(pattern.replace(/\*/g, '%').replace(/\?/g, '_'));
+    } else {
+      clauses.push('working_directory = ?');
+      params.push(pattern.replace(/\/+$/, ''));
+    }
+  }
+  return {
+    clause: clauses.length > 0 ? `(${clauses.join(' OR ')})` : '1=1',
+    params,
+  };
+}
+
+/**
  * Reads all rows from the `sessions` table (lightweight — one row per
  * session, no large content columns). Used to enumerate sessions before
  * reading each session's heavy tables individually via
  * {@link readDevinTablesForSession}.
+ *
+ * When `patterns` is provided, scopes the read via SQL `WHERE working_directory LIKE ?`
+ * or `WHERE working_directory = ?`.
  */
 export function readAllSessions(
   db: DevinDatabaseSync,
   resolution: SchemaResolution,
+  patterns?: readonly string[],
 ): DevinSessionRow[] {
   if (!resolution.knownTables.includes('sessions')) {
     return [];
   }
+  if (patterns && patterns.length > 0) {
+    const { clause, params } = buildWorkdirWhereClause(patterns);
+    return readTable<DevinSessionRow>(
+      db,
+      `SELECT * FROM sessions WHERE working_directory IS NOT NULL AND ${clause} ORDER BY id`,
+      params,
+    );
+  }
   return readTable<DevinSessionRow>(db, 'SELECT * FROM sessions ORDER BY id');
+}
+
+/**
+ * Checks whether the `sessions` table contains at least one row.
+ */
+export function hasAnySessions(db: DevinDatabaseSync, resolution: SchemaResolution): boolean {
+  if (!resolution.knownTables.includes('sessions')) {
+    return false;
+  }
+  return db.prepare('SELECT 1 FROM sessions LIMIT 1').get() !== undefined;
 }
 
 /**
  * Lists all distinct, non-null `working_directory` values from the
  * `sessions` table — used by `workdir list` and `workdir add`'s interactive
  * selection. Lightweight: reads one column, no heavy content.
+ * When `patterns` is provided, scopes the results via SQL `LIKE` / `=`.
  */
 export function listWorkingDirectories(
   db: DevinDatabaseSync,
   resolution: SchemaResolution,
+  patterns?: readonly string[],
 ): string[] {
   if (!resolution.knownTables.includes('sessions')) {
     return [];
+  }
+  if (patterns && patterns.length > 0) {
+    const { clause, params } = buildWorkdirWhereClause(patterns);
+    const rows = readTable<{ working_directory: string | null }>(
+      db,
+      `SELECT DISTINCT working_directory FROM sessions WHERE working_directory IS NOT NULL AND ${clause} ORDER BY working_directory`,
+      params,
+    );
+    return rows.map((r) => r.working_directory).filter((w): w is string => w !== null);
   }
   const rows = readTable<{ working_directory: string | null }>(
     db,
