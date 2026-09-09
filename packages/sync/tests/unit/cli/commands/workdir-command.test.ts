@@ -159,9 +159,34 @@ describe('matchesSqlLike', () => {
 });
 
 describe('detectShellGlobExpansion', () => {
-  it('returns undefined when args has length <= 1', async () => {
+  it('returns undefined when args is empty', async () => {
     expect(await detectShellGlobExpansion([])).toBeUndefined();
-    expect(await detectShellGlobExpansion(['/path/to/one'])).toBeUndefined();
+  });
+
+  it('returns undefined for a single plain directory not in a worktree container', async () => {
+    const plainParent = path.join(tmpDir, 'projects');
+    await fsp.mkdir(plainParent, { recursive: true });
+    await fsp.mkdir(path.join(plainParent, 'my-repo'));
+    expect(await detectShellGlobExpansion([path.join(plainParent, 'my-repo')])).toBeUndefined();
+  });
+
+  it('returns parent/* for a single directory inside a worktree container', async () => {
+    const worktreeParent = path.join(tmpDir, '.claude', 'worktrees');
+    await fsp.mkdir(worktreeParent, { recursive: true });
+    const singleFolder = path.join(worktreeParent, 'workspace-rules-rollout');
+    await fsp.mkdir(singleFolder);
+    const detected = await detectShellGlobExpansion([singleFolder]);
+    expect(detected).toBe(path.join(worktreeParent, '*'));
+  });
+
+  it('returns parent/* for a single directory containing a git worktree .git file', async () => {
+    const customParent = path.join(tmpDir, 'custom-isolated');
+    await fsp.mkdir(customParent, { recursive: true });
+    const worktreeFolder = path.join(customParent, 'feat-branch');
+    await fsp.mkdir(worktreeFolder);
+    await fsp.writeFile(path.join(worktreeFolder, '.git'), 'gitdir: /somewhere/else\n');
+    const detected = await detectShellGlobExpansion([worktreeFolder]);
+    expect(detected).toBe(path.join(customParent, '*'));
   });
 
   it('returns undefined when args have different parent directories', async () => {
@@ -570,5 +595,32 @@ describe('runWorkdirCommand', () => {
     expect(out).toContain('/worktrees/tsk0001/sub [configured]');
     expect(out).toContain('/unrelated/path');
     expect(out).not.toContain('Configured patterns not in session store:');
+  });
+
+  it('add collapses a single worktree argument into a wildcard pattern and prunes redundant exact paths', async () => {
+    const parentDir = path.join(tmpDir, '.claude', 'worktrees');
+    await fsp.mkdir(parentDir, { recursive: true });
+    const singleFolder = path.join(parentDir, 'workspace-rules-rollout');
+    await fsp.mkdir(singleFolder);
+
+    // Pre-seed config with the exact directory path
+    await writeWorkdirConfig(tmpDir, 'proj-test', { workdirs: [singleFolder] });
+
+    const { stream, lines } = writable();
+    const code = await runWorkdirCommand(FIXTURE_ADAPTER, ['add', singleFolder], {
+      env: baseEnv,
+      stdout: stream,
+    });
+    expect(code).toBe(0);
+    const expectedPattern = path.join(parentDir, '*');
+    expect(lines.join('')).toContain(
+      `Detected shell glob expansion; storing wildcard pattern: '${expectedPattern}'`,
+    );
+    expect(lines.join('')).toContain(
+      `Pruned 1 redundant directory path(s) covered by wildcard: ${expectedPattern}`,
+    );
+    expect(lines.join('')).toContain(`Added: ${expectedPattern}`);
+    const config = await readWorkdirConfig(tmpDir, 'proj-test');
+    expect(config.workdirs).toEqual([expectedPattern]);
   });
 });
