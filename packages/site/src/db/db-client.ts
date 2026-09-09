@@ -195,9 +195,12 @@ export class DbClient {
     return this.call({ type: 'getSessionSyncManifest', sessionId }) as Promise<SyncManifest | null>;
   }
 
-  /** Returns the number of recorded sync runs for a session. */
-  getSyncRunCount(sessionId: string): Promise<number> {
-    return this.call({ type: 'getSyncRunCount', sessionId }) as Promise<number>;
+  /** Returns the `updated_at` timestamp for a session, or null if unset. */
+  getSessionUpdatedAt(sessionId: string): Promise<string | null> {
+    return this.call({
+      type: 'getSessionUpdatedAt',
+      sessionId,
+    }) as Promise<string | null>;
   }
 
   /** Marks every pending/processing session in a project as failed. */

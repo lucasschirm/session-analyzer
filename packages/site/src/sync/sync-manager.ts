@@ -246,7 +246,6 @@ interface SessionSyncContext {
   manifest: SyncManifest;
   mainPath: string;
   existing: DashboardSession | null;
-  localRunCount: number;
 }
 
 interface SessionFilesContext {
@@ -1039,14 +1038,12 @@ export class SyncManager extends EventTarget {
       remoteSessionId,
       manifest,
     );
-    const localRunCount = await this.db.getSyncRunCount(existing?.id ?? localSession.id);
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
     await this.dispatchOrHandleMainArtifact(sessionState, project, localSession, worker, {
       remoteSessionId,
       manifest,
       mainPath,
       existing,
-      localRunCount,
     });
   }
 
@@ -1149,7 +1146,7 @@ export class SyncManager extends EventTarget {
     localSessionId: string,
     ctx: SessionSyncContext,
   ): Promise<{ shouldSync: boolean; forceForConfig: boolean }> {
-    const shouldSync = await this.isSyncNeeded(ctx.existing, ctx.localRunCount, ctx.manifest);
+    const shouldSync = this.isSyncNeeded(ctx.existing, ctx.manifest);
     const forceForConfig = await this.shouldForceForConfigArtifacts(
       localSessionId,
       ctx.manifest,
@@ -1374,13 +1371,17 @@ export class SyncManager extends EventTarget {
     );
   }
 
-  private async isSyncNeeded(
-    existing: { sync_status?: string; id: string } | null,
-    localRunCount: number,
+  private isSyncNeeded(
+    existing: { sync_status?: string; sync_updated_at?: string } | null,
     manifest: SyncManifest,
-  ): Promise<boolean> {
+  ): boolean {
     if (!existing) return true;
-    if (localRunCount < manifest.syncRuns.length) return true;
+    if (
+      manifest.updatedAt &&
+      existing.sync_updated_at &&
+      manifest.updatedAt > existing.sync_updated_at
+    )
+      return true;
     return ['failed', 'pending', 'transcript_unavailable'].includes(existing.sync_status ?? '');
   }
 

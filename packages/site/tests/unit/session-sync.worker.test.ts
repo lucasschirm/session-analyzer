@@ -262,6 +262,7 @@ async function makeManifest(
     mainTranscriptRelativePath: mainPath,
     artifacts,
     syncRuns: [],
+    syncRunsCount: 0,
   };
 
   return { manifest, downloads };

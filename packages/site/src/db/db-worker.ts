@@ -124,10 +124,10 @@ const handlers: Record<DbRequest['type'], Handler> = {
       (request as DbRequestOf<'getSessionSyncManifest'>).sessionId,
     ),
   }),
-  getSyncRunCount: (request) => ({
+  getSessionUpdatedAt: (request) => ({
     id: request.id,
     ok: true,
-    result: manager.getSyncRunCount((request as DbRequestOf<'getSyncRunCount'>).sessionId),
+    result: manager.getSessionUpdatedAt((request as DbRequestOf<'getSessionUpdatedAt'>).sessionId),
   }),
   failStaleSessions: (request) => {
     const req = request as DbRequestOf<'failStaleSessions'>;

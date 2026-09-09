@@ -254,6 +254,7 @@ describe('ingestion to portfolio pipeline', () => {
           },
         ],
         syncRuns: [],
+        syncRunsCount: 0,
       },
       source: {
         sourceId: 'sync',

@@ -56,6 +56,8 @@ export interface DashboardSession {
   sync_status?: SessionSyncStatus;
   /** Detail text for a failed sync. */
   sync_details?: string;
+  /** ISO timestamp of the last manifest update, used for staleness checks. */
+  sync_updated_at?: string;
 }
 
 /**
@@ -249,7 +251,10 @@ export interface SyncManifest {
   transcriptsCaptured?: number | boolean;
   mainTranscriptRelativePath?: string;
   artifacts: unknown[];
-  syncRuns: unknown[];
+  /** @deprecated Use syncRunsCount. Kept for backward compat with old manifests. */
+  syncRuns?: unknown[];
+  syncRunsCount: number;
+  updatedAt?: string;
 }
 
 /**

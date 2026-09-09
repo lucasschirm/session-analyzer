@@ -78,6 +78,7 @@ function makeClaudeManifest(content: string, sha256: string, projectId: string, 
       },
     ],
     syncRuns: [],
+    syncRunsCount: 0,
   } as SyncManifest;
 }
 

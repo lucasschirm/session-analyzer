@@ -65,6 +65,7 @@ describe('SyncManager analytics bridge', () => {
       mainTranscriptRelativePath: artifact.relativePath,
       artifacts: [artifact],
       syncRuns: [],
+      syncRunsCount: 0,
     };
   }
 
@@ -162,6 +163,7 @@ describe('syncManager singleton analytics wiring', () => {
       mainTranscriptRelativePath: 'session/transcript.jsonl',
       artifacts: [],
       syncRuns: [],
+      syncRunsCount: 0,
     };
     // @ts-expect-error — accessing private field for regression test
     await syncManager.onSyncComplete('sess-1', manifest, 'p1');
@@ -340,6 +342,7 @@ describe('SyncManager session failure isolation', () => {
       transcriptsCaptured: true,
       artifacts: [],
       syncRuns: [],
+      syncRunsCount: 0,
     };
 
     // @ts-expect-error — testing private method
@@ -385,6 +388,7 @@ describe('SyncManager session failure isolation', () => {
       transcriptsCaptured: true,
       artifacts: [],
       syncRuns: [],
+      syncRunsCount: 0,
     };
 
     // @ts-expect-error — testing private method
