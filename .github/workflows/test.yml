@@ -147,6 +147,9 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
 
+      - name: Prevent Google Chrome apt repository hash mismatch flakes
+        run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+
       - name: Install Playwright browsers and system deps
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter site exec playwright install chromium --with-deps
