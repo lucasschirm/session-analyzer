@@ -54,6 +54,7 @@ The application ingests, parses, and generates statistics for session files from
 *   **Reactive UI:** The dashboard utilizes Lit's reactive properties to efficiently update statistics as new sessions are parsed and added to the SQLite-WASM database.
 *   **Drill-Down Views:** Every metric card on the Session Dashboard routes to an Indicator Details page showing the granular events behind the metric.
 *   **Transcripts:** Chat-like message view rendered via `marked` + sanitized with `dompurify`.
+*   **Session Failure Isolation (Non-negotiable Invariant):** A failed session must NEVER stop the whole sync or import process. Any session-level failure — including missing transcripts, corrupted archives, JSON parse failures, `MANIFEST_NOT_FOUND`, `INGEST_FAILED`, `HASH_MISMATCH`, download errors, or worker processing errors — must be isolated to that individual session. The failed session is recorded in SQLite and surfaced in UI status with its failure details, while the worker and main-thread pipelines proceed with all remaining sessions in the queue to completion.
 
 ## Project Structure
 This repo is a pnpm workspace monorepo. It currently contains three package
@@ -154,7 +155,7 @@ See the per-package `AGENTS.md` files for source maps and invariants.
   frontend-coding-style, harness-plugins-conformance, lifecycle-removal-snapshots,
   manifest-backed-classification, metric-meaning-versioning, missing-is-never-zero,
   never-display-raw-ids, no-canonical-metrics-in-lit, no-silent-empty-states,
-  schema-change-tests,
+  schema-change-tests, session-failure-isolation,
   sql-only-in-db-core, sync-progress-observability,
   transformers-never-write-sqlite, workspace-rules.
 - `.agents/skills/` — Project-specific reusable skills:
