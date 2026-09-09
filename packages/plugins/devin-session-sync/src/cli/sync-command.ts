@@ -197,11 +197,19 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
   // Resolve workdir patterns up front so sessions.db can filter rows directly
   // via SQL (`WHERE working_directory LIKE "/path/%"`).
   let activePatterns: string[] | undefined;
+  let configuredPatterns: string[] = [];
   let hasConfiguredPatterns = false;
   if (!syncAll) {
     const workdirConfig = await readWorkdirConfig(dataDir, config.projectId);
-    hasConfiguredPatterns = workdirConfig.workdirs.length > 0;
-    activePatterns = hasConfiguredPatterns ? workdirConfig.workdirs : [cwd];
+    configuredPatterns = workdirConfig.workdirs;
+    hasConfiguredPatterns = configuredPatterns.length > 0;
+    if (hasConfiguredPatterns) {
+      activePatterns = workdirMatches(cwd, configuredPatterns)
+        ? configuredPatterns
+        : [cwd, ...configuredPatterns];
+    } else {
+      activePatterns = [cwd];
+    }
   }
 
   // Reading the session list from sessions.db can take a moment on large
@@ -264,7 +272,7 @@ export async function runSyncCommand(options: SyncCommandOptions = {}): Promise<
       });
       if (hasConfiguredPatterns) {
         stdout.write(
-          `Filtering by ${activePatterns.length} workdir pattern(s): ${activePatterns.join(', ')}\n`,
+          `Filtering project folder and ${configuredPatterns.length} workdir pattern(s): ${configuredPatterns.join(', ')}\n`,
         );
       } else {
         stdout.write(`Filtering by current directory: ${cwd}\n`);
