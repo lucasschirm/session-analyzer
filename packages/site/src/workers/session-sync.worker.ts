@@ -28,6 +28,7 @@ import {
 import type {
   FileSummary,
   FileToDownload,
+  LocalFileHash,
   SessionFileDownloadedMessage,
   SessionSyncCompleteMessage,
   SessionSyncContinueMessage,
@@ -62,8 +63,7 @@ export interface S3Client {
 interface SessionSyncDecision {
   sync: boolean;
   exists: boolean;
-  filesToDownload?: FileToDownload[];
-  localFileEtas?: Record<string, string>;
+  localFileHashes?: Record<string, LocalFileHash>;
 }
 
 interface SessionState {
@@ -271,12 +271,7 @@ export class SessionSyncWorker {
         }
         return;
       }
-      await this.downloadSessionFiles(
-        sessionId,
-        manifest,
-        decision.filesToDownload,
-        decision.localFileEtas,
-      );
+      await this.downloadSessionFiles(sessionId, manifest, decision.localFileHashes);
     } catch (error) {
       if (this.cancelled) return;
       this.counts.failed++;
@@ -341,8 +336,7 @@ export class SessionSyncWorker {
       pending.resolve({
         sync: message.sync,
         exists: message.exists,
-        filesToDownload: message.filesToDownload,
-        localFileEtas: message.localFileEtas,
+        localFileHashes: message.localFileHashes,
       });
     }
   }
@@ -415,16 +409,10 @@ export class SessionSyncWorker {
   private async downloadSessionFiles(
     sessionId: string,
     manifest: SyncManifest,
-    filesToDownload?: FileToDownload[],
-    localFileEtas?: Record<string, string>,
+    localFileHashes?: Record<string, LocalFileHash>,
   ): Promise<void> {
     if (this.cancelled) return;
-    const files = await this.resolveRequestedFiles(
-      manifest,
-      filesToDownload,
-      sessionId,
-      localFileEtas,
-    );
+    const files = await this.resolveRequestedFiles(manifest, sessionId, localFileHashes);
     if (this.cancelled) return;
     if (files.length === 0) {
       this.emitSyncComplete(sessionId, []);
@@ -462,20 +450,16 @@ export class SessionSyncWorker {
 
   private async resolveRequestedFiles(
     manifest: SyncManifest,
-    filesToDownload: FileToDownload[] | undefined,
     sessionId: string,
-    localFileEtas?: Record<string, string>,
+    localFileHashes?: Record<string, LocalFileHash>,
   ): Promise<FileToDownload[]> {
-    if (filesToDownload === undefined) {
-      return this.resolveInScopeFiles(manifest, sessionId, localFileEtas);
-    }
-    return filesToDownload;
+    return this.resolveInScopeFiles(manifest, sessionId, localFileHashes);
   }
 
   private async resolveInScopeFiles(
     manifest: SyncManifest,
     sessionId: string,
-    localFileEtas?: Record<string, string>,
+    localFileHashes?: Record<string, LocalFileHash>,
   ): Promise<FileToDownload[]> {
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
     const fileMap = new Map<string, FileToDownload>();
@@ -486,12 +470,13 @@ export class SessionSyncWorker {
       }
     }
     await this.reconcileSessionFiles(fileMap, sessionId, mainPath);
-    // ETag-based skip: remove files whose S3 listing ETag matches the locally
-    // stored ETag. This avoids redundant GET calls for unchanged files when
-    // the sync manager couldn't pre-compute filesToDownload (no manifest hashes).
-    if (localFileEtas) {
+    // Hash-based skip: remove files whose local SHA-256 matches the manifest
+    // hash and whose status is 'processed'. Files with a different hash, a
+    // non-processed status (e.g. 'failed'), or no local entry are downloaded.
+    if (localFileHashes) {
       for (const [path, file] of fileMap) {
-        if (file.etag && localFileEtas[path] === file.etag) {
+        const local = localFileHashes[path];
+        if (local && local.sha256 === file.hash && local.status === 'processed') {
           fileMap.delete(path);
         }
       }

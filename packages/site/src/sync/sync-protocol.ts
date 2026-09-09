@@ -71,6 +71,19 @@ export interface SessionSyncContinueMessage {
   sync: boolean;
 }
 
+/**
+ * Local file state sent to the worker for hash-based diffing. The worker
+ * compares manifest artifact hashes against this map to decide which files
+ * to download. Replaces the previous `filesToDownload` + `localFileEtas`
+ * pre-computed lists, moving the diff logic to the worker which already
+ * has the manifest.
+ */
+export interface LocalFileHash {
+  sha256: string;
+  etag?: string;
+  status: string;
+}
+
 /** Main→Worker: decision after `SESSION_MANIFEST_READY`. */
 export interface SessionSyncMessage {
   type: 'SESSION_SYNC';
@@ -79,10 +92,11 @@ export interface SessionSyncMessage {
   sessionId: string;
   sync: boolean;
   exists: boolean;
-  filesToDownload?: FileToDownload[];
-  /** Local file records with ETags, used by the worker to skip unchanged files
-   * when falling back to listing-based discovery (no manifest hashes). */
-  localFileEtas?: Record<string, string>;
+  /**
+   * Local file hashes keyed by logical path, used by the worker to skip
+   * unchanged files. When absent, the worker downloads all in-scope files.
+   */
+  localFileHashes?: Record<string, LocalFileHash>;
 }
 
 /** Main→Worker: abort the sync and release resources. */
