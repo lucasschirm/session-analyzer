@@ -97,6 +97,9 @@ jobs:
         env:
           CI: true
 
+      - name: Run publish script unit tests
+        run: node --test scripts/publish-packages.test.mjs
+
       - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v4

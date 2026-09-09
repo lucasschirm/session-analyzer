@@ -97,26 +97,4 @@ jobs:
           fi
 
       - name: Publish packages
-        run: |
-          set +e
-          max_attempts=2
-          for attempt in $(seq 1 "$max_attempts"); do
-            output=$(pnpm run version:publish 2>&1)
-            status=$?
-            echo "$output"
-            if [ $status -eq 0 ]; then
-              exit 0
-            fi
-            if echo "$output" | grep -qiE "cannot publish over|previously published|EPUBLISHCONFLICT"; then
-              echo "Version already published on npm; treating as success."
-              exit 0
-            fi
-            if [ "$attempt" -eq "$max_attempts" ]; then
-              echo "=== npm debug logs (real auth/publish error is usually here) ==="
-              tail -n 80 /home/runner/.npm/_logs/*-debug-0.log 2>/dev/null || true
-              echo "::error::pnpm run version:publish failed after $max_attempts attempts"
-              exit $status
-            fi
-            echo "::warning::Publish attempt $attempt failed (exit $status); retrying in 15s..."
-            sleep 15
-          done
+        run: node scripts/publish-packages.mjs
