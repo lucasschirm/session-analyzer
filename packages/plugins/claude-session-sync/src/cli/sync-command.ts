@@ -36,6 +36,10 @@ export interface SyncCommandOptions {
   stdout?: NodeJS.WritableStream;
   stderr?: NodeJS.WritableStream;
   force?: boolean;
+  /** Sync all sessions regardless of working directory. Claude's hook-driven
+   * model always syncs the current session, so this is accepted for CLI
+   * dispatch compatibility but currently a no-op for Claude. */
+  all?: boolean;
   /** Defaults to `ClaudeHarnessProfile`. See `.agents/rules` DS-B5 (#143): this used
    * to hardcode `harness: 'claude', harness_version: '0.1.0'` in the loop below. */
   harnessProfile?: HarnessProfile;

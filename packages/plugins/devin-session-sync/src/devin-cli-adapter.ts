@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import type { CliConfigPaths, CliHarnessAdapter } from '@lucasschirm/sal-sync';
-
+import { listDevinWorkingDirectories } from './cli/workdir-command.js';
 import { DevinHarnessProfile } from './devin-profile.js';
 
 const HELP_TEXT = `devin-sync — manually sync Devin CLI sessions to S3 storage
@@ -10,8 +10,19 @@ Usage:
   devin-sync <command> [options]
 
 Commands:
-  sync                                    Upload all local sessions to S3
+  sync                                    Upload local sessions for the current project to S3.
+                                           Only syncs sessions whose working_directory matches
+                                           the project's workdir config (or the current cwd if
+                                           no config exists). Use --all to sync every session.
   sync --force                            Re-upload all sessions, ignoring local state
+  sync --all                              Sync all sessions regardless of working directory
+  workdir list                            List all working directories from sessions.db +
+                                           configured patterns for this project
+  workdir add                             Interactive checkbox: select which working
+                                           directories map to this SAL_PROJECT_ID
+  workdir add <path>                      Add a working directory (resolves ., ~, relative)
+  workdir add /path/to/worktrees/*        Add a glob/wildcard pattern
+  workdir remove <path>                   Remove a working directory from this project's config
   list                                    List all projects in storage
   list --current                          List sessions for the current project (SAL_PROJECT_ID)
   list <project-id>                       List sessions for a project
@@ -58,6 +69,9 @@ Configuration is resolved in precedence order (highest first):
 Security: SAL_STORAGE_ENDPOINT, SAL_STORAGE_ACCESS_KEY_ID, and
 SAL_STORAGE_SECRET_ACCESS_KEY are only read from process.env or
 .devin/config.local.json — never from a file that might be committed to git.
+
+Working directory configuration is stored at:
+  ~/.sal-sync/projects/<SAL_PROJECT_ID>/config.json
 `;
 
 function resolveDevinConfigPaths(cwd: string, homedir: string): CliConfigPaths {
@@ -92,4 +106,5 @@ export const DevinCliAdapter: CliHarnessAdapter = {
   localConfigDisplayPath: '.devin/config.local.json',
   migrateManifestHarness: DevinHarnessProfile.harness,
   helpText: HELP_TEXT,
+  listAvailableWorkdirs: listDevinWorkingDirectories,
 };

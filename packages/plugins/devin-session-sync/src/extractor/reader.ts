@@ -357,6 +357,25 @@ export function readAllSessions(
   return readTable<DevinSessionRow>(db, 'SELECT * FROM sessions ORDER BY id');
 }
 
+/**
+ * Lists all distinct, non-null `working_directory` values from the
+ * `sessions` table — used by `workdir list` and `workdir add`'s interactive
+ * selection. Lightweight: reads one column, no heavy content.
+ */
+export function listWorkingDirectories(
+  db: DevinDatabaseSync,
+  resolution: SchemaResolution,
+): string[] {
+  if (!resolution.knownTables.includes('sessions')) {
+    return [];
+  }
+  const rows = readTable<{ working_directory: string | null }>(
+    db,
+    'SELECT DISTINCT working_directory FROM sessions WHERE working_directory IS NOT NULL ORDER BY working_directory',
+  );
+  return rows.map((r) => r.working_directory).filter((w): w is string => w !== null);
+}
+
 /** Resolves the schema once so per-session reads don't re-query the refinery
  * ledger on every session. */
 export function resolveSchema(db: DevinDatabaseSync): SchemaResolution {

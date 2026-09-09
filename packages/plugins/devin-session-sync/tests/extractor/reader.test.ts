@@ -5,6 +5,7 @@ import {
   assertSqliteAvailable,
   computeSchemaDescriptor,
   DevinSqliteUnavailableError,
+  listWorkingDirectories,
   openDevinDatabase,
   readAllSessions,
   readDevinTables,
@@ -481,6 +482,38 @@ describe('per-session reads (readDevinTablesForSession)', () => {
     const sessions = readAllSessions(fixture.db, resolution);
     expect(sessions).toHaveLength(3);
     expect(sessions.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
+  });
+
+  it('listWorkingDirectories returns distinct, non-null working_directory values sorted', () => {
+    const s1 = session('s1');
+    s1.working_directory = '/home/user/proj-b';
+    const s2 = session('s2');
+    s2.working_directory = '/home/user/proj-a';
+    const s3 = session('s3');
+    s3.working_directory = '/home/user/proj-b'; // duplicate of s1
+    const s4 = session('s4');
+    s4.working_directory = null; // null should be excluded
+    const fixture = buildFixtureDb({ sessions: [s1, s2, s3, s4] });
+    cleanup = fixture.close;
+
+    const resolution = resolveSchema(fixture.db);
+    const dirs = listWorkingDirectories(fixture.db, resolution);
+    expect(dirs).toEqual(['/home/user/proj-a', '/home/user/proj-b']);
+  });
+
+  it('listWorkingDirectories returns empty when sessions table is not in knownTables', () => {
+    // Simulate a degraded schema resolution where 'sessions' isn't in the
+    // known table set (e.g. an unrecognized refinery version with no
+    // sessions table). The function should return [] without querying.
+    const fixture = buildFixtureDb({ sessions: [] });
+    cleanup = fixture.close;
+    const resolution = resolveSchema(fixture.db);
+    const degradedResolution = {
+      ...resolution,
+      knownTables: resolution.knownTables.filter((t) => t !== 'sessions'),
+    };
+    const dirs = listWorkingDirectories(fixture.db, degradedResolution);
+    expect(dirs).toEqual([]);
   });
 
   it('paginates message_nodes in batches of the given limit', () => {

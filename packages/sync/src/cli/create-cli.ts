@@ -11,11 +11,12 @@ import type { CliHarnessAdapter } from './harness-adapter.js';
  * `adapter` parameter to {@link createCliMain} below).
  */
 export interface CliCommands {
-  runSyncCommand: (options: { force: boolean }) => Promise<number>;
+  runSyncCommand: (options: { force: boolean; all: boolean }) => Promise<number>;
   runListCommand: (argv: string[]) => Promise<number>;
   runDownloadCommand: (argv: string[]) => Promise<number>;
   runRemoveCommand: (argv: string[]) => Promise<number>;
   runMigrateCommand: (argv: string[]) => Promise<number>;
+  runWorkdirCommand: (argv: string[]) => Promise<number>;
 }
 
 function dispatchCommand(
@@ -26,7 +27,10 @@ function dispatchCommand(
 ): Promise<number> {
   switch (command) {
     case 'sync':
-      return commands.runSyncCommand({ force: rest.includes('--force') || rest.includes('-f') });
+      return commands.runSyncCommand({
+        force: rest.includes('--force') || rest.includes('-f'),
+        all: rest.includes('--all'),
+      });
     case 'list':
       return commands.runListCommand(rest);
     case 'download':
@@ -35,6 +39,8 @@ function dispatchCommand(
       return commands.runRemoveCommand(rest);
     case 'migrate':
       return commands.runMigrateCommand(rest);
+    case 'workdir':
+      return commands.runWorkdirCommand(rest);
     default:
       process.stderr.write(`Unknown command: ${command}\n\n`);
       process.stderr.write(adapter.helpText);

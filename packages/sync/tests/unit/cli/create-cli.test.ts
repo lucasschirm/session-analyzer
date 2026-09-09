@@ -33,6 +33,7 @@ function makeCommands() {
     runDownloadCommand: vi.fn().mockResolvedValue(0),
     runRemoveCommand: vi.fn().mockResolvedValue(0),
     runMigrateCommand: vi.fn().mockResolvedValue(0),
+    runWorkdirCommand: vi.fn().mockResolvedValue(0),
   };
 }
 
@@ -70,7 +71,21 @@ describe('createCliMain', () => {
     const commands = makeCommands();
     const main = createCliMain(FIXTURE_ADAPTER, commands, () => '1.0.0');
     await main(['sync', '--force']);
-    expect(commands.runSyncCommand).toHaveBeenCalledWith({ force: true });
+    expect(commands.runSyncCommand).toHaveBeenCalledWith({ force: true, all: false });
+  });
+
+  it('dispatches sync with --all flag', async () => {
+    const commands = makeCommands();
+    const main = createCliMain(FIXTURE_ADAPTER, commands, () => '1.0.0');
+    await main(['sync', '--all']);
+    expect(commands.runSyncCommand).toHaveBeenCalledWith({ force: false, all: true });
+  });
+
+  it('dispatches workdir to the workdir command runner', async () => {
+    const commands = makeCommands();
+    const main = createCliMain(FIXTURE_ADAPTER, commands, () => '1.0.0');
+    await main(['workdir', 'list']);
+    expect(commands.runWorkdirCommand).toHaveBeenCalledWith(['list']);
   });
 
   it('dispatches list/download/remove/migrate to the matching command runner', async () => {

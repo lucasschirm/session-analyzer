@@ -259,6 +259,7 @@ describe('Devin sync pipeline: sessions.db -> manifest -> artifact set', () => {
       storageAdapter: storage,
       stdout,
       harnessProfile,
+      all: true,
     });
     expect(syncCode).toBe(0);
   });
@@ -273,6 +274,7 @@ describe('Devin sync pipeline: sessions.db -> manifest -> artifact set', () => {
       homeDir,
       storageAdapter: storage,
       harnessProfile,
+      all: true,
     });
     expect(syncCode).toBe(0);
 
@@ -352,6 +354,7 @@ describe('Devin sync pipeline: sessions.db -> manifest -> artifact set', () => {
           throw new Error('devin cli unavailable');
         },
       },
+      all: true,
     });
 
     // The whole point of the sync (the real session artifacts) still
