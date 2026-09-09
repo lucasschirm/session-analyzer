@@ -1563,7 +1563,12 @@ export class SyncManager extends EventTarget {
   }
 
   private broadcastRunProgress(): void {
-    this.broadcast({ type: 'run-progress', snapshot: this.buildSnapshot() });
+    const snapshot = this.buildSnapshot();
+    this.broadcast({ type: 'run-progress', snapshot });
+    // Also notify local UI listeners — the throttled progress path is the
+    // only one that updates filesFound/filesDownloaded counts, so without a
+    // local dispatch the progress bar never advances during a run.
+    this.dispatchEvent(new CustomEvent('change', { detail: snapshot }));
   }
 
   private async handleSessionFileDownloaded(

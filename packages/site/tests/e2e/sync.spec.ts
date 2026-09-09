@@ -153,11 +153,14 @@ async function waitForSyncCompleted(page: Page, timeout = 30000): Promise<void> 
 }
 
 /**
- * Wait for the progress bar to completely hide (including the 6-second
- * completed-summary display). Use this when you just need the sync to be
- * finished and don't need to inspect the modal.
+ * Wait for the sync to finish and dismiss the completed summary. The completed
+ * summary stays visible until the user clicks "Close" (it no longer auto-hides),
+ * so this waits for the completed state and then clicks the Close button.
  */
 async function waitForSyncIdle(page: Page, timeout = 30000): Promise<void> {
+  await waitForSyncCompleted(page, timeout);
+  const closeButton = page.locator('sync-progress-bar').getByRole('button', { name: 'Close' });
+  await closeButton.click();
   await expect(progressBar(page)).toBeHidden({ timeout });
 }
 
