@@ -260,8 +260,11 @@ function compareParity(browser: ParityState, plugin: ParityState): void {
   expect(plugin.workspaceKey).toBe(browser.workspaceKey);
   // Normalize updatedAt timestamps — they are generated independently by
   // the browser and plugin paths and may differ by a few milliseconds.
-  const browserManifest = { ...browser.manifest, updatedAt: undefined };
-  const pluginManifest = { ...plugin.manifest, updatedAt: undefined };
+  const browserManifest = {
+    ...(browser.manifest as Record<string, unknown>),
+    updatedAt: undefined,
+  };
+  const pluginManifest = { ...(plugin.manifest as Record<string, unknown>), updatedAt: undefined };
   expect(pluginManifest).toEqual(browserManifest);
   expect(textOf(plugin.sessionContent)).toBe(textOf(browser.sessionContent));
   expect(textOf(plugin.workspaceContent)).toBe(textOf(browser.workspaceContent));
