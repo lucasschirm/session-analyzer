@@ -313,7 +313,7 @@ export class ProjectSyncStatusModal extends LitElement {
         <div class="project-header">
           <span>${project.projectId}</span>
           <span class="project-meta">
-            ${project.sessionsDone + project.sessionsFailed}/${project.totalSessions} sessions
+            ${project.sessionsDone}/${project.totalSessions} sessions
             · ${formatCompactNumber(project.filesDownloaded)}/${formatCompactNumber(project.filesFound)} files
           </span>
         </div>

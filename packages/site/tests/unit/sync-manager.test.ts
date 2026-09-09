@@ -2,6 +2,7 @@ import type { ManifestArtifact, SyncManifest } from '@lucasschirm/sal-sync-core'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { analyticsClient } from '../../src/db/analytics-client';
 import type { AnalyticsRequest } from '../../src/db/analytics-protocol';
+import type { DbClient } from '../../src/db/db-client';
 import { requestPasskey, setPasskeyPrompt } from '../../src/sync/passkey-prompt';
 import {
   type DownloadedFile,
@@ -11,6 +12,36 @@ import {
   syncManager,
 } from '../../src/sync/sync-manager';
 import type { SessionSyncCompleteMessage } from '../../src/sync/sync-protocol';
+
+function createManager(options: Partial<SyncManagerOptions>): SyncManager {
+  const noopWorker = {
+    postMessage: () => undefined,
+    terminate: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    onmessage: null,
+    onerror: null,
+  } as unknown as Worker;
+
+  const noopS3: S3Client = {
+    listProjectFolders: async () => [],
+    listSessionFolders: async () => [],
+    getObject: async () => new ArrayBuffer(0),
+    putObject: async () => ({ etag: 'etag' }),
+  };
+
+  return new SyncManager({
+    createWorker: () => noopWorker,
+    createS3Client: () => noopS3,
+    createBroadcastChannel: () =>
+      ({
+        onmessage: null,
+        postMessage: () => undefined,
+        close: () => undefined,
+      }) as unknown as BroadcastChannel,
+    ...options,
+  });
+}
 
 /**
  * Regression tests for the sync-to-analytics bridge.
@@ -35,36 +66,6 @@ describe('SyncManager analytics bridge', () => {
       artifacts: [artifact],
       syncRuns: [],
     };
-  }
-
-  function createManager(options: Partial<SyncManagerOptions>): SyncManager {
-    const noopWorker = {
-      postMessage: () => undefined,
-      terminate: () => undefined,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-      onmessage: null,
-      onerror: null,
-    } as unknown as Worker;
-
-    const noopS3: S3Client = {
-      listProjectFolders: async () => [],
-      listSessionFolders: async () => [],
-      getObject: async () => new ArrayBuffer(0),
-      putObject: async () => ({ etag: 'etag' }),
-    };
-
-    return new SyncManager({
-      createWorker: () => noopWorker,
-      createS3Client: () => noopS3,
-      createBroadcastChannel: () =>
-        ({
-          onmessage: null,
-          postMessage: () => undefined,
-          close: () => undefined,
-        }) as unknown as BroadcastChannel,
-      ...options,
-    });
   }
 
   it('onFileDownloaded hook is invoked with the downloaded file and projectId', async () => {
@@ -251,5 +252,210 @@ describe('syncManager singleton passkey prompt wiring', () => {
     setPasskeyPrompt(async () => false);
     const result = await requestPasskey();
     expect(result).toBe(false);
+  });
+});
+
+/**
+ * Tests for the session failure isolation invariant:
+ * A failed session must NEVER stop the whole process.
+ */
+describe('SyncManager session failure isolation', () => {
+  function createMockDb(): DbClient {
+    return {
+      getSessionBySyncId: vi.fn().mockResolvedValue(null),
+      upsertSessionStub: vi.fn().mockResolvedValue(undefined),
+      setSessionSyncStatus: vi.fn().mockResolvedValue(undefined),
+      getSyncRunCount: vi.fn().mockResolvedValue(0),
+      updateSessionManifest: vi.fn().mockResolvedValue(undefined),
+      getSessionFiles: vi.fn().mockResolvedValue([]),
+      upsertSessionFile: vi.fn().mockResolvedValue(undefined),
+      failStaleSessions: vi.fn().mockResolvedValue(undefined),
+      setProjectSyncStatus: vi.fn().mockResolvedValue(undefined),
+    } as unknown as DbClient;
+  }
+
+  function createTestProject(mockWorker: Worker) {
+    return {
+      projectId: 'proj-1',
+      localProjectId: 'local-proj-1',
+      worker: mockWorker,
+      status: 'running' as const,
+      sessions: new Map(),
+      totalSessions: 3,
+      sessionsDone: 0,
+      sessionsFailed: 0,
+      filesFound: 0,
+      filesDownloaded: 0,
+      filesFailed: 0,
+      bytesReceived: 0,
+      isNew: false,
+    };
+  }
+
+  it('handleSessionSyncFailed increments sessionsDone and sessionsFailed, persisting stub', async () => {
+    const mockDb = createMockDb();
+    const manager = createManager({ dbClient: mockDb });
+    const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;
+    const project = createTestProject(mockWorker);
+
+    // @ts-expect-error — testing private method
+    await manager.handleSessionSyncFailed(project, {
+      type: 'SESSION_SYNC_FAILED',
+      connectionId: 'c1',
+      projectId: 'proj-1',
+      sessionId: 'sess-manifest-fail',
+      error: { code: 'MANIFEST_NOT_FOUND', message: 'Not found' },
+    });
+
+    expect(project.sessionsFailed).toBe(1);
+    expect(project.sessionsDone).toBe(1);
+    expect(mockDb.upsertSessionStub).toHaveBeenCalledTimes(1);
+    expect(mockDb.setSessionSyncStatus).toHaveBeenCalledWith(
+      'sync-local-proj-1-sess-manifest-fail',
+      'failed',
+      expect.stringContaining('MANIFEST_NOT_FOUND'),
+    );
+    expect(mockWorker.terminate).not.toHaveBeenCalled();
+  });
+
+  it('handleSessionSyncComplete with INGEST_FAILED isolates failure without terminating worker', async () => {
+    const mockDb = createMockDb();
+    const onSyncComplete = vi
+      .fn()
+      .mockRejectedValue(new Error('ingestion issues: missing_root_transcript'));
+    const manager = createManager({ onSyncComplete, dbClient: mockDb });
+    const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;
+    const project = createTestProject(mockWorker);
+
+    // @ts-expect-error — accessing private method for test setup
+    const session = manager.getOrCreateSessionState(project, 'sess-ingest-fail', 'local-sess-1');
+    session.manifest = {
+      schemaVersion: 2,
+      projectId: 'proj-1',
+      sessionId: 'sess-ingest-fail',
+      harness: 'claude',
+      harnessVersion: '1',
+      syncVersion: '0.1.0',
+      pluginVersion: '1',
+      transcriptsCaptured: true,
+      artifacts: [],
+      syncRuns: [],
+    };
+
+    // @ts-expect-error — testing private method
+    await manager.handleSessionSyncComplete(project, {
+      type: 'SESSION_SYNC_COMPLETE',
+      connectionId: 'c1',
+      projectId: 'proj-1',
+      sessionId: 'sess-ingest-fail',
+      files: [],
+    });
+
+    expect(project.sessionsFailed).toBe(1);
+    expect(project.sessionsDone).toBe(1);
+    expect(session.syncStatus).toBe('failed');
+    expect(mockDb.setSessionSyncStatus).toHaveBeenCalledWith(
+      'local-sess-1',
+      'failed',
+      expect.stringContaining('INGEST_FAILED'),
+    );
+    expect(mockWorker.terminate).not.toHaveBeenCalled();
+  });
+
+  it('handleSessionManifestReady unblocks worker on failure and isolates error', async () => {
+    const mockDb = createMockDb();
+    // @ts-expect-error — mock failure in DB
+    mockDb.upsertSessionStub.mockRejectedValue(new Error('Database write error'));
+    const postedToWorker: unknown[] = [];
+    const mockWorker = {
+      postMessage: (msg: unknown) => postedToWorker.push(msg),
+      terminate: vi.fn(),
+    } as unknown as Worker;
+    const manager = createManager({ dbClient: mockDb });
+    const project = createTestProject(mockWorker);
+
+    const manifest: SyncManifest = {
+      schemaVersion: 2,
+      projectId: 'proj-1',
+      sessionId: 'sess-err',
+      harness: 'claude',
+      harnessVersion: '1',
+      syncVersion: '0.1.0',
+      pluginVersion: '1',
+      transcriptsCaptured: true,
+      artifacts: [],
+      syncRuns: [],
+    };
+
+    // @ts-expect-error — testing private method
+    await manager.handleSessionManifestReady({} as never, project, mockWorker, {
+      sessionId: 'sess-err',
+      manifest,
+    });
+
+    expect(project.sessionsFailed).toBe(1);
+    expect(project.sessionsDone).toBe(1);
+    expect(postedToWorker).toContainEqual(
+      expect.objectContaining({
+        type: 'SESSION_SYNC',
+        sessionId: 'sess-err',
+        sync: false,
+      }),
+    );
+    expect(mockWorker.terminate).not.toHaveBeenCalled();
+  });
+
+  it('handleSessionFound retries failed sessions even with syncOnlyNew', async () => {
+    const mockDb = createMockDb();
+    const postedToWorker: Array<{ sessionId: string; sync: boolean }> = [];
+    const mockWorker = {
+      postMessage: (msg: { sessionId: string; sync: boolean }) => postedToWorker.push(msg),
+      terminate: vi.fn(),
+    } as unknown as Worker;
+    const manager = createManager({ dbClient: mockDb });
+    const project = createTestProject(mockWorker);
+    const run = { syncOnlyNew: true, connectionId: 'c1' };
+
+    // 1. Session not in DB -> sync: true
+    // @ts-expect-error — testing private method
+    await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's-new' });
+
+    // 2. Session exists with status 'failed' -> sync: true (allows retry)
+    // @ts-expect-error — mock return
+    mockDb.getSessionBySyncId.mockResolvedValueOnce({ id: 's2-id', sync_status: 'failed' });
+    // @ts-expect-error — testing private method
+    await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's-failed' });
+
+    // 3. Session exists with status 'in_sync' -> sync: false (skip)
+    // @ts-expect-error — mock return
+    mockDb.getSessionBySyncId.mockResolvedValueOnce({ id: 's3-id', sync_status: 'in_sync' });
+    // @ts-expect-error — testing private method
+    await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's-synced' });
+
+    expect(postedToWorker).toEqual([
+      expect.objectContaining({ sessionId: 's-new', sync: true }),
+      expect.objectContaining({ sessionId: 's-failed', sync: true }),
+      expect.objectContaining({ sessionId: 's-synced', sync: false }),
+    ]);
+  });
+
+  it('isolateWorkerMessageError isolates unexpected session-level message errors', async () => {
+    const mockDb = createMockDb();
+    const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;
+    const manager = createManager({ dbClient: mockDb });
+    const project = createTestProject(mockWorker);
+
+    // @ts-expect-error — testing private method
+    await manager.isolateWorkerMessageError(
+      { connectionId: 'c1' } as never,
+      project,
+      mockWorker,
+      { type: 'SESSION_MANIFEST_READY', sessionId: 'sess-unexpected' } as never,
+      new Error('Unexpected parse crash'),
+    );
+
+    expect(project.sessionsFailed).toBe(1);
+    expect(project.sessionsDone).toBe(1);
+    expect(mockWorker.terminate).not.toHaveBeenCalled();
   });
 });

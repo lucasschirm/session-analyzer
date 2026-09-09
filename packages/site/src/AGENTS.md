@@ -106,6 +106,15 @@ Routes are hash-based (`#/...`) for GitHub Pages compatibility:
 - SQL must stay parameterized; never interpolate values into query strings.
 - Lit components follow one-component-per-file with kebab-case filenames matching the tag name.
 
+## Session failure isolation policy (non-negotiable)
+
+A failed session must **never** stop the whole sync or import process.
+
+- Any error encountered during session import, remote sync, manifest downloading, parsing, file downloading, artifact retention, or analytics ingestion MUST be isolated to that individual session.
+- Session-specific failures must never cause the Web Worker to terminate, deadlock, or crash the project sync queue.
+- The failed session must be recorded in SQLite with its failure status and error details, and counted toward `sessionsDone` (as completed) as well as `sessionsFailed`.
+- The main thread and Web Worker must continue processing all other sessions in the queue until the entire batch or project run completes.
+
 ## Display labeling policy (non-negotiable)
 
 Internal ids (component ids like `comp-7b749f662cc27c79`, session uuids,

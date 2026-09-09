@@ -64,6 +64,7 @@ tests/
   secrets, or signed URLs.
 - **DTO-only for UI**: UI components consume only DTOs and the data-source
   client contract — never SQL types or metric formulas.
+- **Session failure isolation**: Ingestion failures for a session (e.g. missing root transcript, unsupported harness, unclassified artifact) produce a failed IngestionReceipt for that session; callers must isolate them so session-level errors never abort a multi-session batch or stop other sessions.
 
 ## Key relationships
 

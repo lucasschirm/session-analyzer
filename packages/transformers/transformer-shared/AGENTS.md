@@ -74,6 +74,7 @@ Claude conformance fixtures/data) live in
   wall-clock time.
 - **Cross-harness comparability**: metrics keyed by `comparability_group_id`;
   mixed groups never aggregate.
+- **Session failure isolation**: A transformation error or invalid artifact bundle in one session must produce structured session issues and never impede or crash transformation of other sessions.
 
 ## Key relationships
 

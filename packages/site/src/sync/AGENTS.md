@@ -12,3 +12,11 @@ Remote sync orchestration. Downloaded session buffers are retained by the analyt
 
 - `sync-manager.ts` uses `db/db-client.ts` methods for project and session sync-state persistence.
 - `sync-manager.ts` uses `credential-crypto.ts` to unlock S3 credentials before building a fetch client.
+
+## Session Failure Isolation Invariant
+
+A failed session must NEVER stop the whole sync process.
+- **Worker/Main-thread communication:** The worker must never hang awaiting sync decisions from the main thread (watchdogs/timeouts guard requests). The main thread must always respond with sync decisions, even when local processing or DB lookups fail.
+- **No fatal escalation for session errors:** Session-scoped errors (`MANIFEST_NOT_FOUND`, `DOWNLOAD_FAILED`, `HASH_MISMATCH`, `INGEST_FAILED`, parsing failures) must never trigger `handleWorkerFatal` or kill the worker.
+- **Queue continuity:** When a session fails, its status and details are recorded, `sessionsFailed` and `sessionsDone` are incremented, and the concurrency pool continues executing all remaining sessions until the run finishes cleanly.
+
