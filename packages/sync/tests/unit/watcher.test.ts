@@ -191,7 +191,7 @@ describe('TranscriptWatcher', () => {
     const startPromise = watcher.start();
 
     // Let initial scan complete before appending.
-    await sleep(50);
+    await sleep(150);
     await appendFile(transcriptPath, '{"type":"message"}\n');
     await sleep(400);
 
@@ -244,7 +244,7 @@ describe('TranscriptWatcher', () => {
     });
 
     const startPromise = watcher.start();
-    await sleep(50);
+    await sleep(150);
     await appendFile(syntheticTranscriptPath, 'line one\n');
     await sleep(400);
 
@@ -276,7 +276,7 @@ describe('TranscriptWatcher', () => {
     });
 
     const startPromise = watcher.start();
-    await sleep(50);
+    await sleep(150);
 
     await appendFile(
       transcriptPath,
@@ -315,7 +315,7 @@ describe('TranscriptWatcher', () => {
     });
 
     const startPromise = watcher.start();
-    await sleep(50);
+    await sleep(150);
 
     await appendFile(agentPath, '{"type":"subagent"}\n');
     await sleep(400);
@@ -388,7 +388,7 @@ describe('TranscriptWatcher', () => {
     });
 
     const startPromise = watcher.start();
-    await sleep(50);
+    await sleep(150);
 
     await appendFile(transcriptPath, '{"type":"final"}\n');
     // Wait for the poll to pick up the change but not for the debounce to fire.
