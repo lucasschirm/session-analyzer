@@ -1059,3 +1059,73 @@ describe('SessionSyncWorker', () => {
     expect(hasTimestamps).toBe(true);
   });
 });
+
+describe('SessionSyncWorker watchdog timers', () => {
+  let client: MockS3Client;
+
+  beforeEach(() => {
+    client = new MockS3Client();
+    client.setAutoResolve(true);
+    vi.useRealTimers();
+  });
+
+  it('waitForSync watchdog times out when main thread never replies, emitting SESSION_SYNC_FAILED', async () => {
+    client.setListPages([{ prefixes: ['sess-timeout'], continuationToken: undefined }]);
+    const { worker } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-timeout', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'data\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-timeout', manifest, downloads);
+
+    vi.useFakeTimers();
+    try {
+      // @ts-expect-error — testing private waitForSync method
+      const syncPromise = worker.waitForSync('sess-timeout');
+      const rejection = expect(syncPromise).rejects.toThrow(
+        'Timed out waiting for sync decision on session sess-timeout',
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waitForContinue watchdog times out when main thread never replies, resolving to true', async () => {
+    const { worker } = createWorker(client);
+
+    vi.useFakeTimers();
+    try {
+      // @ts-expect-error — testing private waitForContinue method
+      const continuePromise = worker.waitForContinue('sess-continue');
+      await vi.advanceTimersByTimeAsync(30_000);
+      const result = await continuePromise;
+      expect(result).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears pending watchdog timers on CANCEL', async () => {
+    client.setListPages([{ prefixes: ['sess-cancel'], continuationToken: undefined }]);
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-cancel', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'data\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-cancel', manifest, downloads);
+
+    const promise = worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    // @ts-expect-error — checking private map
+    expect(worker.sessionSync.size).toBe(1);
+
+    worker.handleMessage(cancelMessage());
+    await promise;
+
+    // @ts-expect-error — checking private map
+    expect(worker.sessionSync.size).toBe(0);
+    // @ts-expect-error — checking private map
+    expect(worker.sessionContinue.size).toBe(0);
+  });
+});

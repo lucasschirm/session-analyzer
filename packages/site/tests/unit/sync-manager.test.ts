@@ -458,4 +458,98 @@ describe('SyncManager session failure isolation', () => {
     expect(project.sessionsDone).toBe(1);
     expect(mockWorker.terminate).not.toHaveBeenCalled();
   });
+
+  it('multi-session queue continuity: when one session fails, subsequent sessions proceed to completion', async () => {
+    const mockDb = createMockDb();
+    const onSyncComplete = vi.fn().mockImplementation(async (localId: string) => {
+      if (localId.includes('sess-1')) {
+        throw new Error('ingestion failed for sess-1');
+      }
+    });
+    const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;
+    const manager = createManager({ onSyncComplete, dbClient: mockDb });
+    const project = createTestProject(mockWorker);
+    project.totalSessions = 3;
+
+    // Simulate Session 1 failing at onSyncComplete (INGEST_FAILED)
+    const session1 = {
+      type: 'SESSION_SYNC_COMPLETE' as const,
+      sessionId: 'sess-1',
+      files: [],
+    };
+    // @ts-expect-error — testing private method
+    const state1 = manager.getOrCreateSessionState(project, 'sess-1', 'local-sess-1');
+    state1.syncStatus = 'processing';
+    // @ts-expect-error — testing private method
+    await manager.handleSessionSyncComplete(project, session1);
+
+    expect(state1.syncStatus).toBe('failed');
+    expect(project.sessionsFailed).toBe(1);
+    expect(project.sessionsDone).toBe(1);
+
+    // Simulate Session 2 succeeding
+    const session2 = {
+      type: 'SESSION_SYNC_COMPLETE' as const,
+      sessionId: 'sess-2',
+      files: [],
+    };
+    // @ts-expect-error — testing private method
+    const state2 = manager.getOrCreateSessionState(project, 'sess-2', 'local-sess-2');
+    state2.syncStatus = 'processing';
+    // @ts-expect-error — testing private method
+    await manager.handleSessionSyncComplete(project, session2);
+
+    expect(state2.syncStatus).toBe('in_sync');
+    expect(project.sessionsFailed).toBe(1);
+    expect(project.sessionsDone).toBe(2);
+
+    // Simulate Session 3 succeeding
+    const session3 = {
+      type: 'SESSION_SYNC_COMPLETE' as const,
+      sessionId: 'sess-3',
+      files: [],
+    };
+    // @ts-expect-error — testing private method
+    const state3 = manager.getOrCreateSessionState(project, 'sess-3', 'local-sess-3');
+    state3.syncStatus = 'processing';
+    // @ts-expect-error — testing private method
+    await manager.handleSessionSyncComplete(project, session3);
+
+    expect(state3.syncStatus).toBe('in_sync');
+    expect(project.totalSessions).toBe(3);
+    expect(project.sessionsDone).toBe(3);
+    expect(project.sessionsFailed).toBe(1);
+    expect(mockWorker.terminate).not.toHaveBeenCalled();
+  });
+
+  it('manifest failure followed by worker SESSION_SYNC_COMPLETE does not double-increment sessionsDone', async () => {
+    const mockDb = createMockDb();
+    const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;
+    const manager = createManager({ dbClient: mockDb });
+    const project = createTestProject(mockWorker);
+
+    // Manifest failure occurs
+    // @ts-expect-error — testing private method
+    await manager.handleManifestReadyFailed(
+      project,
+      mockWorker,
+      'sess-double-count-check',
+      new Error('Manifest read error'),
+    );
+
+    expect(project.sessionsDone).toBe(1);
+    expect(project.sessionsFailed).toBe(1);
+
+    // Worker replies to sync: false with SESSION_SYNC_COMPLETE
+    // @ts-expect-error — testing private method
+    await manager.handleSessionSyncComplete(project, {
+      type: 'SESSION_SYNC_COMPLETE',
+      sessionId: 'sess-double-count-check',
+      files: [],
+    });
+
+    // sessionsDone must remain 1, not 2
+    expect(project.sessionsDone).toBe(1);
+    expect(project.sessionsFailed).toBe(1);
+  });
 });

@@ -146,6 +146,7 @@ interface SessionSyncState extends SessionProgressState {
   firstFile: boolean;
   pendingFiles: number;
   completeReceived: boolean;
+  doneCounted?: boolean;
   manifest?: SyncManifest;
   /** In-flight `onFileDownloaded` (retain) promises; awaited before ingestion. */
   retainPromises: Promise<void>[];
@@ -800,16 +801,20 @@ export class SyncManager extends EventTarget {
     worker: Worker,
     message: SyncMessageFromWorker,
   ): Promise<void> {
+    if ('sessionId' in message && typeof message.sessionId === 'string') {
+      await this.dispatchSessionWorkerMessage(run, project, worker, message);
+    } else {
+      await this.dispatchProjectWorkerMessage(run, project, worker, message);
+    }
+  }
+
+  private async dispatchSessionWorkerMessage(
+    run: SyncRun,
+    project: ProjectSyncState,
+    worker: Worker,
+    message: SyncMessageFromWorker,
+  ): Promise<void> {
     switch (message.type) {
-      case 'CONNECTED':
-        this.handleConnected();
-        break;
-      case 'SESSION_BATCH_FOUND':
-        this.handleSessionBatch(project, message);
-        break;
-      case 'PROJECT_FOLDER_FOUND':
-        this.handleProjectFolderFound(project, message);
-        break;
       case 'SESSION_FOUND':
         await this.handleSessionFound(run, project, worker, message);
         break;
@@ -828,13 +833,30 @@ export class SyncManager extends EventTarget {
       case 'SESSION_SYNC_FAILED':
         await this.handleSessionSyncFailed(project, message);
         break;
+    }
+  }
+
+  private async dispatchProjectWorkerMessage(
+    run: SyncRun,
+    project: ProjectSyncState,
+    worker: Worker,
+    message: SyncMessageFromWorker,
+  ): Promise<void> {
+    switch (message.type) {
+      case 'CONNECTED':
+        this.handleConnected();
+        break;
+      case 'SESSION_BATCH_FOUND':
+        this.handleSessionBatch(project, message);
+        break;
+      case 'PROJECT_FOLDER_FOUND':
+        this.handleProjectFolderFound(project, message);
+        break;
       case 'WORKER_DONE':
         await this.handleWorkerDone(run, project, worker, message);
         break;
       case 'WORKER_ERROR':
         await this.handleWorkerError(run, project, worker, message);
-        break;
-      default:
         break;
     }
   }
@@ -849,6 +871,7 @@ export class SyncManager extends EventTarget {
     const errorObj = error instanceof Error ? error : new Error(String(error));
     if ('sessionId' in message && typeof message.sessionId === 'string') {
       console.error(`Session error isolated for ${message.sessionId}:`, errorObj);
+      this.unblockWorkerOnMessageError(worker, message);
       await this.handleSessionSyncFailed(project, {
         type: 'SESSION_SYNC_FAILED',
         connectionId: run.connectionId,
@@ -859,6 +882,19 @@ export class SyncManager extends EventTarget {
       return;
     }
     this.handleWorkerFatal(run, project, worker, errorObj);
+  }
+
+  private unblockWorkerOnMessageError(worker: Worker, message: SyncMessageFromWorker): void {
+    if (!('sessionId' in message) || typeof message.sessionId !== 'string') return;
+    if (message.type === 'SESSION_FOUND') {
+      worker.postMessage({
+        type: 'SESSION_SYNC_CONTINUE',
+        sessionId: message.sessionId,
+        sync: false,
+      });
+    } else if (message.type === 'SESSION_MANIFEST_READY') {
+      worker.postMessage(this.buildSyncMessage(message.sessionId, false, false, []));
+    }
   }
 
   private handleConnected(): void {
@@ -890,31 +926,52 @@ export class SyncManager extends EventTarget {
     message: { sessionId: string },
   ): Promise<void> {
     if (!run.syncOnlyNew) return;
+    const shouldSync = await this.resolveSessionShouldSync(
+      project.localProjectId,
+      message.sessionId,
+    );
+    this.sendSessionContinue(
+      worker,
+      run.connectionId,
+      project.projectId,
+      message.sessionId,
+      shouldSync,
+    );
+  }
+
+  private async resolveSessionShouldSync(
+    localProjectId: string,
+    sessionId: string,
+  ): Promise<boolean> {
     try {
-      const local = await this.db.getSessionBySyncId(project.localProjectId, message.sessionId);
-      const shouldSync =
+      const local = await this.db.getSessionBySyncId(localProjectId, sessionId);
+      return (
         local === null ||
         local.sync_status === 'failed' ||
         local.sync_status === 'transcript_unavailable' ||
-        local.sync_status === 'pending';
-      const continueMessage: SessionSyncContinueMessage = {
-        type: 'SESSION_SYNC_CONTINUE',
-        connectionId: run.connectionId,
-        projectId: project.projectId,
-        sessionId: message.sessionId,
-        sync: shouldSync,
-      };
-      worker.postMessage(continueMessage);
+        local.sync_status === 'pending'
+      );
     } catch (error) {
-      console.error(`Error checking local session ${message.sessionId}:`, error);
-      worker.postMessage({
-        type: 'SESSION_SYNC_CONTINUE',
-        connectionId: run.connectionId,
-        projectId: project.projectId,
-        sessionId: message.sessionId,
-        sync: true,
-      });
+      console.error(`Error checking local session ${sessionId}:`, error);
+      return true;
     }
+  }
+
+  private sendSessionContinue(
+    worker: Worker,
+    connectionId: string,
+    projectId: string,
+    sessionId: string,
+    sync: boolean,
+  ): void {
+    const message: SessionSyncContinueMessage = {
+      type: 'SESSION_SYNC_CONTINUE',
+      connectionId,
+      projectId,
+      sessionId,
+      sync,
+    };
+    worker.postMessage(message);
   }
 
   private async handleSessionManifestReady(
@@ -937,50 +994,97 @@ export class SyncManager extends EventTarget {
     manifest: SyncManifest,
   ): Promise<void> {
     const { localSession, existing } = await this.ensureSessionStub(
-      project,
+      project.localProjectId,
       remoteSessionId,
       manifest,
     );
-    const existingId = existing?.id ?? localSession.id;
-    const localRunCount = await this.db.getSyncRunCount(existingId);
-    await this.db.updateSessionManifest(localSession.id, manifest);
-
-    const sessionState = this.getOrCreateSessionState(
+    const sessionState = this.initSessionManifestState(
       project,
       remoteSessionId,
       localSession.id,
+      manifest,
       existing === null,
     );
-    sessionState.manifest = manifest;
-
-    const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
-    const mainArtifact = this.findMainArtifact(manifest, mainPath);
-    if (!mainArtifact) {
-      await this.handleTranscriptUnavailable(sessionState, localSession, worker, remoteSessionId);
-      return;
-    }
-    await this.dispatchSessionSync(sessionState, project, localSession, worker, {
+    await this.db.updateSessionManifest(localSession.id, manifest);
+    const localRunCount = await this.db.getSyncRunCount(existing?.id ?? localSession.id);
+    await this.dispatchOrHandleMainArtifact(sessionState, project, localSession, worker, {
       remoteSessionId,
       manifest,
-      mainPath,
       existing,
       localRunCount,
     });
   }
 
-  private async ensureSessionStub(
+  private initSessionManifestState(
     project: ProjectSyncState,
     remoteSessionId: string,
+    localSessionId: string,
     manifest: SyncManifest,
-  ): Promise<{ localSession: DashboardSession; existing: DashboardSession | null }> {
-    const existing = await this.db.getSessionBySyncId(project.localProjectId, remoteSessionId);
-    const stub = this.buildSessionStub(project.localProjectId, remoteSessionId, manifest, existing);
-    await this.db.upsertSessionStub(stub);
-    const localSession = await this.db.getSessionBySyncId(project.localProjectId, remoteSessionId);
-    if (!localSession) {
-      throw new Error(`Failed to locate session stub for ${remoteSessionId}`);
+    isNew: boolean,
+  ): SessionSyncState {
+    const sessionState = this.getOrCreateSessionState(
+      project,
+      remoteSessionId,
+      localSessionId,
+      isNew,
+    );
+    sessionState.manifest = manifest;
+    return sessionState;
+  }
+
+  private async dispatchOrHandleMainArtifact(
+    sessionState: SessionSyncState,
+    project: ProjectSyncState,
+    localSession: DashboardSession,
+    worker: Worker,
+    ctx: {
+      remoteSessionId: string;
+      manifest: SyncManifest;
+      existing: DashboardSession | null;
+      localRunCount: number;
+    },
+  ): Promise<void> {
+    const mainPath = ctx.manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
+    const mainArtifact = this.findMainArtifact(ctx.manifest, mainPath);
+    if (!mainArtifact) {
+      await this.handleTranscriptUnavailable(
+        sessionState,
+        localSession,
+        worker,
+        ctx.remoteSessionId,
+      );
+      return;
     }
+    await this.dispatchSessionSync(sessionState, project, localSession, worker, {
+      remoteSessionId: ctx.remoteSessionId,
+      manifest: ctx.manifest,
+      mainPath,
+      existing: ctx.existing,
+      localRunCount: ctx.localRunCount,
+    });
+  }
+
+  private async ensureSessionStub(
+    projectId: string,
+    remoteSessionId: string,
+    manifest?: SyncManifest | null,
+  ): Promise<{ localSession: DashboardSession; existing: DashboardSession | null }> {
+    const existing = await this.db.getSessionBySyncId(projectId, remoteSessionId);
+    const stub = this.buildSessionStub(projectId, remoteSessionId, manifest, existing);
+    await this.db.upsertSessionStub(stub);
+    const queried = await this.db.getSessionBySyncId(projectId, remoteSessionId);
+    const localSession = queried ?? (stub as unknown as DashboardSession);
     return { localSession, existing };
+  }
+
+  private async ensureStubForFailure(
+    project: ProjectSyncState,
+    sessionId: string,
+    existingLocalId?: string,
+  ): Promise<string> {
+    if (existingLocalId) return existingLocalId;
+    const { localSession } = await this.ensureSessionStub(project.localProjectId, sessionId);
+    return localSession.id;
   }
 
   private async shouldForceForConfigArtifacts(
@@ -1016,13 +1120,12 @@ export class SyncManager extends EventTarget {
       localRunCount: number;
     },
   ): Promise<void> {
-    const shouldSync = await this.isSyncNeeded(ctx.existing, ctx.localRunCount, ctx.manifest);
-    const forceForConfig = await this.shouldForceForConfigArtifacts(
+    const { shouldSync, forceForConfig } = await this.checkSyncRequirement(
       localSession.id,
       ctx.manifest,
       ctx.mainPath,
-      shouldSync,
       ctx.existing,
+      ctx.localRunCount,
     );
     if (!shouldSync && !forceForConfig) {
       await this.markSessionInSync(
@@ -1046,6 +1149,24 @@ export class SyncManager extends EventTarget {
     });
   }
 
+  private async checkSyncRequirement(
+    localSessionId: string,
+    manifest: SyncManifest,
+    mainPath: string,
+    existing: DashboardSession | null,
+    localRunCount: number,
+  ): Promise<{ shouldSync: boolean; forceForConfig: boolean }> {
+    const shouldSync = await this.isSyncNeeded(existing, localRunCount, manifest);
+    const forceForConfig = await this.shouldForceForConfigArtifacts(
+      localSessionId,
+      manifest,
+      mainPath,
+      shouldSync,
+      existing,
+    );
+    return { shouldSync, forceForConfig };
+  }
+
   private async requestSessionFiles(
     sessionState: SessionSyncState,
     project: ProjectSyncState,
@@ -1059,11 +1180,7 @@ export class SyncManager extends EventTarget {
       forceForConfig: boolean;
     },
   ): Promise<void> {
-    const wasFailed = ctx.existing?.sync_status === 'failed';
-    const forceFull = wasFailed || ctx.forceForConfig;
-    const filesToDownload = forceFull
-      ? undefined
-      : await this.computeFilesToDownload(localSession.id, ctx.manifest, ctx.mainPath);
+    const filesToDownload = await this.resolveFilesToDownload(localSession.id, ctx);
     if (filesToDownload !== undefined && filesToDownload.length === 0) {
       await this.markSessionInSync(
         sessionState,
@@ -1077,15 +1194,45 @@ export class SyncManager extends EventTarget {
       );
       return;
     }
+    await this.sendDownloadRequestToWorker(
+      sessionState,
+      localSession.id,
+      worker,
+      ctx,
+      filesToDownload,
+    );
+  }
+
+  private async resolveFilesToDownload(
+    localSessionId: string,
+    ctx: {
+      manifest: SyncManifest;
+      mainPath: string;
+      existing: DashboardSession | null;
+      forceForConfig: boolean;
+    },
+  ): Promise<FileToDownload[] | undefined> {
+    const wasFailed = ctx.existing?.sync_status === 'failed';
+    if (wasFailed || ctx.forceForConfig) return undefined;
+    return this.computeFilesToDownload(localSessionId, ctx.manifest, ctx.mainPath);
+  }
+
+  private async sendDownloadRequestToWorker(
+    sessionState: SessionSyncState,
+    localSessionId: string,
+    worker: Worker,
+    ctx: { remoteSessionId: string; existing: DashboardSession | null },
+    filesToDownload?: FileToDownload[],
+  ): Promise<void> {
     sessionState.syncStatus = 'pending';
-    await this.db.setSessionSyncStatus(localSession.id, 'pending');
-    const localFileEtas = await this.buildLocalFileEtas(localSession.id);
+    await this.db.setSessionSyncStatus(localSessionId, 'pending');
+    const localFileEtas = await this.buildLocalFileEtas(localSessionId);
     worker.postMessage(
       this.buildSyncMessage(
         ctx.remoteSessionId,
         true,
         ctx.existing !== null,
-        filesToDownload ?? undefined,
+        filesToDownload,
         localFileEtas,
       ),
     );
@@ -1102,17 +1249,45 @@ export class SyncManager extends EventTarget {
     const details = this.formatSyncDetails('MANIFEST_FAILED', message);
     console.error(`Session manifest processing failed for ${remoteSessionId}: ${details}`, error);
     const session = this.getOrCreateSessionState(project, remoteSessionId);
-    session.syncStatus = 'failed';
     session.completeReceived = true;
-    project.sessionsFailed++;
-    project.sessionsDone++;
-    if (session.localSessionId) {
-      await this.db
-        .setSessionSyncStatus(session.localSessionId, 'failed', details)
-        .catch(() => undefined);
-    }
+    this.markSessionFailed(project, session);
+    await this.persistSessionFailure(project, session, remoteSessionId, details);
     worker.postMessage(this.buildSyncMessage(remoteSessionId, false, false, []));
     this.emitChange();
+  }
+
+  private async persistSessionFailure(
+    project: ProjectSyncState,
+    session: SessionSyncState,
+    remoteSessionId: string,
+    details: string,
+  ): Promise<void> {
+    try {
+      const localId = await this.ensureStubForFailure(
+        project,
+        remoteSessionId,
+        session.localSessionId,
+      );
+      session.localSessionId = localId;
+      await this.db.setSessionSyncStatus(localId, 'failed', details).catch(() => undefined);
+    } catch (e) {
+      console.error(`Failed to record session failure for ${remoteSessionId}:`, e);
+    }
+  }
+
+  private markSessionFailed(project: ProjectSyncState, session: SessionSyncState): void {
+    if (session.syncStatus !== 'failed') {
+      session.syncStatus = 'failed';
+      project.sessionsFailed++;
+    }
+    this.markSessionDone(project, session);
+  }
+
+  private markSessionDone(project: ProjectSyncState, session: SessionSyncState): void {
+    if (!session.doneCounted) {
+      session.doneCounted = true;
+      project.sessionsDone++;
+    }
   }
 
   private async handleTranscriptUnavailable(
@@ -1156,15 +1331,15 @@ export class SyncManager extends EventTarget {
   private buildSessionStub(
     projectId: string,
     sessionId: string,
-    manifest: SyncManifest,
-    existing: DashboardSession | null,
+    manifest?: SyncManifest | null,
+    existing?: DashboardSession | null,
   ): SessionStub {
-    const source = existing?.source ?? manifest.harness ?? 'claude';
-    const title = existing?.title ?? manifest.sessionId;
+    const source = existing?.source ?? manifest?.harness ?? 'claude';
+    const title = existing?.title ?? manifest?.sessionId ?? sessionId;
     const startedAt =
-      this.stubTimestamp(existing?.started_at) ?? manifest.startedAt ?? new Date().toISOString();
+      this.stubTimestamp(existing?.started_at) ?? manifest?.startedAt ?? new Date().toISOString();
     const endedAt =
-      this.stubTimestamp(existing?.ended_at) ?? manifest.endedAt ?? new Date().toISOString();
+      this.stubTimestamp(existing?.ended_at) ?? manifest?.endedAt ?? new Date().toISOString();
     return {
       id: `sync-${projectId}-${sessionId}`,
       project_id: projectId,
@@ -1441,11 +1616,30 @@ export class SyncManager extends EventTarget {
       this.dispatchRetainPromise(project, session, message);
       this.emitChange();
     } catch (error) {
-      console.error(
-        `Error handling downloaded file ${message.file} for ${message.sessionId}:`,
-        error,
-      );
+      await this.handleFileDownloadFailure(project, message, error);
     }
+  }
+
+  private async handleFileDownloadFailure(
+    project: ProjectSyncState,
+    message: SessionFileDownloadedMessage,
+    error: unknown,
+  ): Promise<void> {
+    console.error(
+      `Error handling downloaded file ${message.file} for ${message.sessionId}:`,
+      error,
+    );
+    project.filesFailed++;
+    const session = project.sessions.get(message.sessionId);
+    if (!session) return;
+    session.filesFailed++;
+    const messageText = error instanceof Error ? error.message : String(error);
+    const details = this.formatSyncDetails('FILE_SAVE_FAILED', messageText);
+    this.markSessionFailed(project, session);
+    await this.db
+      .setSessionSyncStatus(session.localSessionId, 'failed', details)
+      .catch(() => undefined);
+    this.emitChange();
   }
 
   private dispatchRetainPromise(
@@ -1548,7 +1742,7 @@ export class SyncManager extends EventTarget {
     await this.settleRetainPromises(session);
 
     if (session.syncStatus === 'transcript_unavailable' || session.syncStatus === 'failed') {
-      project.sessionsDone++;
+      this.markSessionDone(project, session);
       this.emitChange();
       return;
     }
@@ -1560,7 +1754,7 @@ export class SyncManager extends EventTarget {
       return;
     }
 
-    project.sessionsDone++;
+    this.markSessionDone(project, session);
     await this.maybeCompleteSession(session);
     this.emitChange();
   }
@@ -1595,9 +1789,7 @@ export class SyncManager extends EventTarget {
     const messageText = error instanceof Error ? error.message : String(error);
     const details = this.formatSyncDetails('INGEST_FAILED', messageText);
     console.error(`Session sync ingest failed for ${sessionId}: ${details}`, error);
-    session.syncStatus = 'failed';
-    project.sessionsFailed++;
-    project.sessionsDone++;
+    this.markSessionFailed(project, session);
     await this.db
       .setSessionSyncStatus(session.localSessionId, 'failed', details)
       .catch(() => undefined);
@@ -1660,45 +1852,10 @@ export class SyncManager extends EventTarget {
     const session = this.getOrCreateSessionState(project, message.sessionId);
     const details = this.formatSyncDetails(message.error.code, message.error.message);
     console.error(`Session sync failed for ${message.sessionId}: ${details}`);
-    session.syncStatus = 'failed';
     session.completeReceived = true;
-    project.sessionsFailed++;
-    project.sessionsDone++;
-    try {
-      const localId = await this.ensureFailedSessionStub(
-        project.localProjectId,
-        message.sessionId,
-        session.localSessionId,
-      );
-      session.localSessionId = localId;
-      await this.db.setSessionSyncStatus(localId, 'failed', details);
-    } catch (error) {
-      console.error(`Failed to record session failure for ${message.sessionId}:`, error);
-    }
+    this.markSessionFailed(project, session);
+    await this.persistSessionFailure(project, session, message.sessionId, details);
     this.emitChange();
-  }
-
-  private async ensureFailedSessionStub(
-    projectId: string,
-    sessionId: string,
-    existingLocalId: string,
-  ): Promise<string> {
-    if (existingLocalId) return existingLocalId;
-    const existing = await this.db.getSessionBySyncId(projectId, sessionId);
-    if (existing) return existing.id;
-    const stub: SessionStub = {
-      id: `sync-${projectId}-${sessionId}`,
-      project_id: projectId,
-      source: 'claude',
-      title: sessionId,
-      started_at: new Date().toISOString(),
-      ended_at: new Date().toISOString(),
-      sync_session_id: sessionId,
-      external_id: sessionId,
-      sync_status: 'pending',
-    };
-    await this.db.upsertSessionStub(stub);
-    return stub.id;
   }
 
   private async handleWorkerDone(
