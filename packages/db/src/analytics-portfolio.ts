@@ -25,6 +25,7 @@ import type {
   ProjectListPage,
   TimeSeriesPoint,
 } from './analytics.js';
+import { getPortfolioUtilizationReport } from './analytics-utilization.js';
 import {
   type AnalyticsToken,
   type Coverage,
@@ -1249,5 +1250,6 @@ export function createPortfolioView(queryable: Queryable): PortfolioView {
     getComponentUtilization: (query) => getComponentUtilization(queryable, query),
     getModelHarnessCohorts: (query) => getModelHarnessCohorts(queryable, query),
     getProjectList: (query) => getProjectList(queryable, query),
+    getUtilizationReport: (query) => getPortfolioUtilizationReport(queryable, query),
   };
 }

@@ -28,6 +28,7 @@ import type {
   SessionTrendSeries,
   TimeSeriesPoint,
 } from './analytics.js';
+import { getProjectUtilizationReport } from './analytics-utilization.js';
 import {
   type BuildCohortInput,
   buildMatchedCohort,
@@ -898,5 +899,7 @@ export function createProjectBehaviorView(queryable: Queryable): ProjectBehavior
       getConfigurationTimeline(queryable, projectId, query),
     getOutliers: (projectId, query) => getOutliers(queryable, projectId, query),
     getComparisons: (projectId, query) => getComparisons(queryable, projectId, query),
+    getUtilizationReport: (projectId, query) =>
+      getProjectUtilizationReport(queryable, projectId, query),
   };
 }

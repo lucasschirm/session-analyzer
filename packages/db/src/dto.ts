@@ -61,3 +61,54 @@ export function makeMetricValueDto(
     isExact: token.measurementClass === 'observed',
   };
 }
+
+export type ComponentDomain = 'tool' | 'skill' | 'agent';
+
+export interface ComponentUtilizationTiersDto {
+  readonly totalAvailable: number;
+  readonly totalUsed: number;
+  readonly totalUnused: number;
+  readonly usedLt10Pct: number;
+  readonly usedLt25Pct: number;
+  readonly usedLt50Pct: number;
+  readonly usedGte50Pct: number;
+  readonly insufficientSample: number;
+}
+
+export interface ComponentUtilizationItemDto {
+  readonly componentId: string;
+  readonly kind: ComponentDomain;
+  readonly displayName: string;
+  readonly nativeId?: string;
+  readonly offeredSessions: number;
+  readonly usedSessions: number;
+  readonly usageRate: number;
+  readonly tier: 'unused' | 'lt10' | 'lt25' | 'lt50' | 'gte50' | 'insufficient_sample';
+}
+
+export interface DomainUtilizationSummaryDto {
+  readonly domain: ComponentDomain;
+  readonly tiers: ComponentUtilizationTiersDto;
+  readonly sampleSessions: number;
+  readonly eligibleSessions: number;
+  readonly minSampleSizeConfig: number;
+  readonly components: readonly ComponentUtilizationItemDto[];
+}
+
+export interface SessionDomainUtilizationDto {
+  readonly domain: ComponentDomain;
+  readonly availableCount: number;
+  readonly usedCount: number;
+  readonly unusedCount: number;
+  readonly availableComponents: readonly string[];
+  readonly usedComponents: readonly string[];
+  readonly unusedComponents: readonly string[];
+}
+
+export interface ScopeUtilizationReportDto {
+  readonly scopeType: 'session' | 'harness' | 'project' | 'portfolio';
+  readonly scopeId: string;
+  readonly token: AnalyticsToken;
+  readonly domains: Record<ComponentDomain, DomainUtilizationSummaryDto>;
+  readonly sessionDomains?: Record<ComponentDomain, SessionDomainUtilizationDto>;
+}

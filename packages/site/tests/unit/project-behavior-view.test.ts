@@ -5,6 +5,7 @@ import type {
   MetricValueDto,
   OutlierPage,
   ProjectBehaviorSummary,
+  ScopeUtilizationReportDto,
   SessionTrendSeries,
 } from '@lucasschirm/sal-db';
 import type { LitElement } from 'lit';
@@ -18,6 +19,7 @@ const projectMock = vi.hoisted(() => ({
   getConfigurationTimeline: vi.fn(),
   getOutliers: vi.fn(),
   getComparisons: vi.fn(),
+  getUtilizationReport: vi.fn(),
 }));
 
 const resolveProjectIdMock = vi.hoisted(() => vi.fn());
@@ -204,6 +206,67 @@ function comparisonFixture(overrides: Partial<ComparisonPage> = {}): ComparisonP
   };
 }
 
+function utilizationFixture(): ScopeUtilizationReportDto {
+  return {
+    scopeType: 'project',
+    scopeId: 'p1',
+    token: tokenFixture(),
+    domains: {
+      tool: {
+        domain: 'tool',
+        tiers: {
+          totalAvailable: 5,
+          totalUsed: 3,
+          totalUnused: 1,
+          usedLt10Pct: 0,
+          usedLt25Pct: 1,
+          usedLt50Pct: 0,
+          usedGte50Pct: 2,
+          insufficientSample: 1,
+        },
+        sampleSessions: 10,
+        eligibleSessions: 10,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+      skill: {
+        domain: 'skill',
+        tiers: {
+          totalAvailable: 2,
+          totalUsed: 1,
+          totalUnused: 1,
+          usedLt10Pct: 0,
+          usedLt25Pct: 0,
+          usedLt50Pct: 0,
+          usedGte50Pct: 1,
+          insufficientSample: 0,
+        },
+        sampleSessions: 10,
+        eligibleSessions: 10,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+      agent: {
+        domain: 'agent',
+        tiers: {
+          totalAvailable: 1,
+          totalUsed: 1,
+          totalUnused: 0,
+          usedLt10Pct: 0,
+          usedLt25Pct: 0,
+          usedLt50Pct: 0,
+          usedGte50Pct: 1,
+          insufficientSample: 0,
+        },
+        sampleSessions: 10,
+        eligibleSessions: 10,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+    },
+  };
+}
+
 function stubProjectBehaviorLoad(): void {
   resolveProjectIdMock.mockResolvedValue('p1');
   projectMock.getSummary.mockResolvedValue(summaryFixture());
@@ -211,6 +274,7 @@ function stubProjectBehaviorLoad(): void {
   projectMock.getConfigurationTimeline.mockResolvedValue(timelineFixture());
   projectMock.getOutliers.mockResolvedValue(outlierFixture());
   projectMock.getComparisons.mockResolvedValue(comparisonFixture());
+  projectMock.getUtilizationReport.mockResolvedValue(utilizationFixture());
 }
 
 beforeEach(() => {

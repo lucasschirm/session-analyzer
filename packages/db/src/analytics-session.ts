@@ -46,6 +46,7 @@ import type {
   SessionValidation,
   SessionValidationSummary,
 } from './analytics.js';
+import { getSessionUtilizationReport } from './analytics-utilization.js';
 import { ArtifactDiffRepository } from './artifact-diff.js';
 import type {
   AnalyticsToken,
@@ -443,6 +444,8 @@ export function createSessionEvidenceView(queryable: Queryable): SessionEvidence
     getValidationSummary: (sessionId, query) => getValidationSummary(queryable, sessionId, query),
     getEvidencePages: (sessionId, query) => getEvidencePages(queryable, sessionId, query),
     getTranscriptPages: (sessionId, query) => getTranscriptPages(queryable, sessionId, query),
+    getUtilizationReport: (sessionId, query) =>
+      getSessionUtilizationReport(queryable, sessionId, query),
   };
 }
 

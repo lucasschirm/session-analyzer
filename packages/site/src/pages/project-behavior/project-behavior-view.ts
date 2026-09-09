@@ -5,11 +5,13 @@ import { navigateTo } from '../../router';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
+import '../../components/component-utilization-panel';
 import type {
   ComparisonPage,
   ConfigurationTimeline,
   OutlierPage,
   ProjectBehaviorSummary,
+  ScopeUtilizationReportDto,
   SessionTrendSeries,
 } from '@lucasschirm/sal-db';
 import type { ChartSeries, ChartState } from '../../components/charts/chart-types';
@@ -242,6 +244,11 @@ export class ProjectBehaviorPage extends PageLitElement {
 
   @state() private comparisons: PanelState<ComparisonPage> = { data: null, state: 'idle' };
 
+  @state() private utilization: PanelState<ScopeUtilizationReportDto> = {
+    data: null,
+    state: 'idle',
+  };
+
   private hashListener = () => this.handleHashChange();
 
   connectedCallback(): void {
@@ -258,19 +265,20 @@ export class ProjectBehaviorPage extends PageLitElement {
   }
 
   willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
     if (changed.has('projectId') && this.projectId) {
       void this.load();
     }
   }
 
   private handleHashChange(): void {
-    if (window.location.hash.startsWith(`#/projects/${this.projectId}`)) {
+    if (window.location.hash.startsWith('#/projects/')) {
       void this.load();
     }
   }
 
   private async load(): Promise<void> {
-    if (this.loading || !this.projectId) return;
+    if (this.loading) return;
     this.loading = true;
     this.globalState = 'loading';
     this.globalError = null;
@@ -306,19 +314,25 @@ export class ProjectBehaviorPage extends PageLitElement {
     this.filters = { ...parsed, projectId: this.projectId };
     const query = projectBehaviorParamsToQuery(this.filters);
 
-    const [summary, trends, timeline, outliers, comparisons] = await Promise.allSettled([
-      analyticsClient.project.getSummary(analyticsProjectId, query),
-      analyticsClient.project.getSessionTrendSeries(analyticsProjectId, query),
-      analyticsClient.project.getConfigurationTimeline(analyticsProjectId, query),
-      analyticsClient.project.getOutliers(analyticsProjectId, query),
-      analyticsClient.project.getComparisons(analyticsProjectId, query),
-    ]);
+    const [summary, trends, timeline, outliers, comparisons, utilization] =
+      await Promise.allSettled([
+        analyticsClient.project.getSummary(analyticsProjectId, query),
+        analyticsClient.project.getSessionTrendSeries(analyticsProjectId, query),
+        analyticsClient.project.getConfigurationTimeline(analyticsProjectId, query),
+        analyticsClient.project.getOutliers(analyticsProjectId, query),
+        analyticsClient.project.getComparisons(analyticsProjectId, query),
+        analyticsClient.project.getUtilizationReport(analyticsProjectId, query),
+      ]);
 
     this.summary = panelStateFromResult(summary, (d) => d.headlineMetrics.length === 0);
     this.trends = panelStateFromResult(trends, (d) => d.series.length === 0);
     this.timeline = panelStateFromResult(timeline, (d) => d.events.length === 0);
     this.outliers = panelStateFromResult(outliers, (d) => d.items.length === 0);
     this.comparisons = panelStateFromResult(comparisons, (d) => d.items.length === 0);
+    this.utilization = panelStateFromResult(
+      utilization,
+      (d) => !d || Object.keys(d.domains).length === 0,
+    );
 
     const states = [
       this.summary.state,
@@ -326,6 +340,7 @@ export class ProjectBehaviorPage extends PageLitElement {
       this.timeline.state,
       this.outliers.state,
       this.comparisons.state,
+      this.utilization.state,
     ];
     if (states.every((s) => s === 'ok' || s === 'empty')) {
       this.globalState = states.some((s) => s === 'ok') ? 'ok' : 'empty';
@@ -735,6 +750,10 @@ export class ProjectBehaviorPage extends PageLitElement {
         ${this.renderFilters()}
         ${this.loading ? html`<p class="notice">Loading project behavior…</p>` : ''}
         ${this.renderOverview()}
+        <component-utilization-panel
+          .report=${this.utilization.data}
+          heading="Project Component Utilization (Tools, Skills, Agents)"
+        ></component-utilization-panel>
         ${this.renderTrends()}
         ${this.renderConfigurationTimeline()}
         ${this.renderCohorts()}
