@@ -3,6 +3,7 @@ import type {
   ContextTimingSeries,
   EvidencePage,
   RootChildBreakdown,
+  ScopeUtilizationReportDto,
   SessionEvidenceSummary,
   SessionEvidenceView as SessionEvidenceViewApi,
   SessionTree,
@@ -13,6 +14,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
+import '../../components/component-utilization-panel';
 import { analyticsClient } from '../../db/analytics-client';
 import { navigateTo } from '../../router';
 import {
@@ -293,6 +295,11 @@ export class SessionEvidenceView extends PageLitElement {
 
   @state() private sessionTree: PanelState<SessionTree> = { data: null, state: 'idle' };
 
+  @state() private utilization: PanelState<ScopeUtilizationReportDto> = {
+    data: null,
+    state: 'idle',
+  };
+
   private hashListener = () => this.handleHashChange();
 
   connectedCallback(): void {
@@ -305,28 +312,21 @@ export class SessionEvidenceView extends PageLitElement {
     window.removeEventListener('hashchange', this.hashListener);
   }
 
-  private handleHashChange(): void {
-    const match = window.location.hash.match(/^#\/sessions\/([^/?]+)/);
-    if (match) {
-      try {
-        if (decodeURIComponent(match[1]) === this.sessionId) {
-          this.load();
-        }
-      } catch {
-        if (match[1] === this.sessionId) {
-          this.load();
-        }
-      }
+  willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    if (changed.has('sessionId') && this.sessionId) {
+      void this.load();
     }
   }
 
-  willUpdate(changed: PropertyValues): void {
-    if (changed.has('sessionId') && this.sessionId) {
-      this.load();
+  private handleHashChange(): void {
+    if (window.location.hash.startsWith('#/sessions/')) {
+      void this.load();
     }
   }
 
   private async load(): Promise<void> {
+    if (!this.sessionId) return;
     if (this.loading) return;
     this.loading = true;
     this.globalState = 'loading';
@@ -349,6 +349,7 @@ export class SessionEvidenceView extends PageLitElement {
       evidence,
       transcript,
       sessionTree,
+      utilization,
     ] = await Promise.allSettled([
       sessionApi.getSummary(this.sessionId, query),
       sessionApi.getContextTimingSeries(this.sessionId, query),
@@ -358,6 +359,7 @@ export class SessionEvidenceView extends PageLitElement {
       sessionApi.getEvidencePages(this.sessionId, query),
       sessionApi.getTranscriptPages(this.sessionId, query),
       searchApi.getRootSessionTree(this.sessionId),
+      sessionApi.getUtilizationReport(this.sessionId, query),
     ]);
 
     this.summary = panelStateFromResult(summary);
@@ -368,6 +370,7 @@ export class SessionEvidenceView extends PageLitElement {
     this.evidence = panelStateFromResult(evidence);
     this.transcript = panelStateFromResult(transcript);
     this.sessionTree = panelStateFromResult(sessionTree);
+    this.utilization = panelStateFromResult(utilization);
 
     this.isTombstone =
       hasTombstone(this.evidence) ||
@@ -383,6 +386,7 @@ export class SessionEvidenceView extends PageLitElement {
       this.evidence.state,
       this.transcript.state,
       this.sessionTree.state,
+      this.utilization.state,
     ];
 
     if (states.every((s) => s === 'ok' || s === 'empty')) {
@@ -698,6 +702,10 @@ export class SessionEvidenceView extends PageLitElement {
         ${this.loading ? html`<p class="notice">Loading session evidence…</p>` : ''}
 
         ${this.renderOverview()}
+        <component-utilization-panel
+          .report=${this.utilization.data}
+          heading="Session Component Availability & Invocations"
+        ></component-utilization-panel>
         ${this.renderContextTiming()}
         ${this.renderRootChild()}
         ${this.renderComponentFacts()}

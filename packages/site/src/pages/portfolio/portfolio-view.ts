@@ -5,12 +5,14 @@ import { navigateTo } from '../../router';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
+import '../../components/component-utilization-panel';
 import type {
   ComponentUtilizationPage,
   ModelHarnessCohortPage,
   PortfolioOverview,
   PortfolioTrendSeries,
   ProjectListPage,
+  ScopeUtilizationReportDto,
 } from '@lucasschirm/sal-db';
 import type {
   ChartEvidenceLink,
@@ -220,6 +222,11 @@ export class PortfolioView extends PageLitElement {
 
   @state() private projects: PanelState<ProjectListPage> = { data: null, state: 'idle' };
 
+  @state() private utilization: PanelState<ScopeUtilizationReportDto> = {
+    data: null,
+    state: 'idle',
+  };
+
   private pendingReload = false;
 
   private hashListener = () => this.handleHashChange();
@@ -249,16 +256,16 @@ export class PortfolioView extends PageLitElement {
     if (window.location.hash !== '#/' && !window.location.hash.startsWith('#/?')) {
       return;
     }
-    this.load();
-  }
-
-  private async load(): Promise<void> {
     if (this.loading) {
       this.pendingReload = true;
       return;
     }
+    this.load();
+  }
+
+  private async load(): Promise<void> {
+    if (this.loading) return;
     this.loading = true;
-    this.pendingReload = false;
     this.globalState = 'loading';
     this.globalError = null;
 
@@ -266,19 +273,23 @@ export class PortfolioView extends PageLitElement {
     this.filters = params;
     const query = portfolioParamsToQuery(params);
 
-    const [overview, trends, components, cohorts, projects] = await Promise.allSettled([
-      analyticsClient.portfolio.getOverview(query),
-      analyticsClient.portfolio.getTrends(query),
-      analyticsClient.portfolio.getComponentUtilization(query),
-      analyticsClient.portfolio.getModelHarnessCohorts(query),
-      analyticsClient.portfolio.getProjectList({ ...query, limit: 50 }),
-    ]);
+    const [overview, trends, components, cohorts, projects, utilization] = await Promise.allSettled(
+      [
+        analyticsClient.portfolio.getOverview(query),
+        analyticsClient.portfolio.getTrends(query),
+        analyticsClient.portfolio.getComponentUtilization(query),
+        analyticsClient.portfolio.getModelHarnessCohorts(query),
+        analyticsClient.portfolio.getProjectList({ ...query, limit: 50 }),
+        analyticsClient.portfolio.getUtilizationReport(query),
+      ],
+    );
 
     this.overview = panelStateFromResult(overview);
     this.trends = panelStateFromResult(trends);
     this.components = panelStateFromResult(components);
     this.cohorts = panelStateFromResult(cohorts);
     this.projects = panelStateFromResult(projects);
+    this.utilization = panelStateFromResult(utilization);
 
     const states = [
       this.overview.state,
@@ -286,6 +297,7 @@ export class PortfolioView extends PageLitElement {
       this.components.state,
       this.cohorts.state,
       this.projects.state,
+      this.utilization.state,
     ];
     if (states.every((s) => s === 'ok' || s === 'empty')) {
       this.globalState = states.some((s) => s === 'ok') ? 'ok' : 'empty';
@@ -448,6 +460,10 @@ export class PortfolioView extends PageLitElement {
             `,
           )}
         </div>
+        <component-utilization-panel
+          .report=${this.utilization.data}
+          heading="Component Utilization (Tools, Skills, Agents)"
+        ></component-utilization-panel>
         ${
           overview.unusedOfferedComponents.length > 0
             ? html`

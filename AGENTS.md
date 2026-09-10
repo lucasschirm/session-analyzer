@@ -55,6 +55,7 @@ The application ingests, parses, and generates statistics for session files from
 *   **Drill-Down Views:** Every metric card on the Session Dashboard routes to an Indicator Details page showing the granular events behind the metric.
 *   **Transcripts:** Chat-like message view rendered via `marked` + sanitized with `dompurify`.
 *   **Session Failure Isolation (Non-negotiable Invariant):** A failed session must NEVER stop the whole sync or import process. Any session-level failure — including missing transcripts, corrupted archives, JSON parse failures, `MANIFEST_NOT_FOUND`, `INGEST_FAILED`, `HASH_MISMATCH`, download errors, or worker processing errors — must be isolated to that individual session. The failed session is recorded in SQLite and surfaced in UI status with its failure details, while the worker and main-thread pipelines proceed with all remaining sessions in the queue to completion.
+*   **Analytics Processing Versioning & Forced Reprocessing (Non-negotiable Invariant):** Every change to the analytics bucket, rollups, aggregations, metric derivations, dimension calculations, pricing models, or component classifications MUST yield a new version by bumping `ANALYTICS_PROCESSING_VERSION` in `packages/db/src/processing-version.ts`. On startup, the analytics worker compares `ANALYTICS_PROCESSING_VERSION` against the stored version in SQLite `schema_metadata` (`sal-analytics-processing`) and automatically executes a rebuild of all derived rollups and session contributions (`rebuildAnalyticsDerivedData`), broadcasting live progress to the site UI.
 
 ## Project Structure
 This repo is a pnpm workspace monorepo. It currently contains three package
@@ -138,6 +139,9 @@ The monorepo also contains the analytics data platform packages:
 - `packages/parsers/devin-session-parser/` (`@lucasschirm/sal-devin-session-parser`) — Pure, dependency-free Devin CLI parser: `devin-session-jsonl/v1` lines, ATIF v1.7 native transcripts, `models.json` (DS-F4-forward-compatible three-state pricing), and `schema-descriptor.json`. No SQLite/SQL; never depends on `db-core`/`db`/`packages/plugins/*`.
 - `packages/plugins/claude-session-sync/` (`@lucasschirm/claude-session-sync`) — Claude Code plugin bundles for the sync engine.
 - `packages/plugins/devin-session-sync/` (`@lucasschirm/devin-session-sync`) — Devin CLI plugin adapter; currently hosts the `sessions.db` -> `devin-session-jsonl/v1` extractor (`src/extractor/`), read-only via `node:sqlite` (see the `sql-only-in-db-core` carve-out). Plugin manifest/hooks/CLI land separately.
+
+### Analytics Processing Versioning Invariant
+Every change to the analytics bucket, rollups, aggregations, dimension calculations, pricing models, or component classification logic MUST yield a new version by bumping `ANALYTICS_PROCESSING_VERSION` in `packages/db/src/processing-version.ts`. This forces the browser analytics worker on boot to detect that stored derived data is out of date and trigger an automatic, progress-tracked reprocessing pass across existing databases.
 
 See the per-package `AGENTS.md` files for source maps and invariants.
 

@@ -1,3 +1,4 @@
+import { ProjectConfigurationStore } from './configurations.js';
 import type {
   MaybePromise,
   SqliteExecutor,
@@ -634,6 +635,7 @@ export class ProjectStore {
         input.updatedAt ?? now,
       ],
     );
+    await ProjectConfigurationStore.seedDefaults(queryable, input.id);
   }
 
   static async getById(

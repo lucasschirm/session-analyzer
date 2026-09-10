@@ -12,7 +12,7 @@ import {
  * the stored version is older, runs {@link rebuildAnalyticsDerivedData}
  * before serving queries.
  */
-export const ANALYTICS_PROCESSING_VERSION = 2;
+export const ANALYTICS_PROCESSING_VERSION = 3;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.

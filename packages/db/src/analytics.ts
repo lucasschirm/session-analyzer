@@ -7,7 +7,13 @@ import {
   createProjectSessionSearchView,
   createSessionEvidenceView,
 } from './analytics-session.js';
-import type { AnalyticsToken, Coverage, EvidenceLink, MetricValueDto } from './dto.js';
+import type {
+  AnalyticsToken,
+  Coverage,
+  EvidenceLink,
+  MetricValueDto,
+  ScopeUtilizationReportDto,
+} from './dto.js';
 import { createSha256ContentHasher } from './ingestion.js';
 import type { ContentHasher } from './ports.js';
 import { createProjectBehaviorView } from './project-behavior.js';
@@ -379,6 +385,7 @@ export interface PortfolioView {
   getComponentUtilization(query: AnalyticsQuery): Promise<ComponentUtilizationPage>;
   getModelHarnessCohorts(query: AnalyticsQuery): Promise<ModelHarnessCohortPage>;
   getProjectList(query: AnalyticsQuery): Promise<ProjectListPage>;
+  getUtilizationReport(query?: AnalyticsQuery): Promise<ScopeUtilizationReportDto>;
 }
 
 export interface ProjectBehaviorView {
@@ -390,6 +397,10 @@ export interface ProjectBehaviorView {
   ): Promise<ConfigurationTimeline>;
   getOutliers(projectId: string, query: AnalyticsQuery): Promise<OutlierPage>;
   getComparisons(projectId: string, query: AnalyticsQuery): Promise<ComparisonPage>;
+  getUtilizationReport(
+    projectId: string,
+    query?: AnalyticsQuery,
+  ): Promise<ScopeUtilizationReportDto>;
 }
 
 export interface SessionEvidenceView {
@@ -403,6 +414,10 @@ export interface SessionEvidenceView {
   ): Promise<SessionValidationSummary>;
   getEvidencePages(sessionId: string, query?: AnalyticsQuery): Promise<EvidencePage>;
   getTranscriptPages(sessionId: string, query?: AnalyticsQuery): Promise<EvidencePage>;
+  getUtilizationReport(
+    sessionId: string,
+    query?: AnalyticsQuery,
+  ): Promise<ScopeUtilizationReportDto>;
 }
 
 export interface ComponentEcosystemView {

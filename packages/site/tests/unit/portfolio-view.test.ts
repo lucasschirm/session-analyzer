@@ -6,6 +6,7 @@ import type {
   PortfolioOverview,
   PortfolioTrendSeries,
   ProjectListPage,
+  ScopeUtilizationReportDto,
 } from '@lucasschirm/sal-db';
 import type { LitElement } from 'lit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +19,7 @@ const portfolioMock = vi.hoisted(() => ({
   getComponentUtilization: vi.fn(),
   getModelHarnessCohorts: vi.fn(),
   getProjectList: vi.fn(),
+  getUtilizationReport: vi.fn(),
 }));
 
 const mockAnalyticsClient = vi.hoisted(() => {
@@ -190,12 +192,74 @@ function projectsFixture(overrides: Partial<ProjectListPage> = {}): ProjectListP
   };
 }
 
+function utilizationFixture(): ScopeUtilizationReportDto {
+  return {
+    scopeType: 'portfolio',
+    scopeId: 'portfolio',
+    token: tokenFixture(),
+    domains: {
+      tool: {
+        domain: 'tool',
+        tiers: {
+          totalAvailable: 5,
+          totalUsed: 3,
+          totalUnused: 1,
+          usedLt10Pct: 0,
+          usedLt25Pct: 1,
+          usedLt50Pct: 0,
+          usedGte50Pct: 2,
+          insufficientSample: 1,
+        },
+        sampleSessions: 10,
+        eligibleSessions: 10,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+      skill: {
+        domain: 'skill',
+        tiers: {
+          totalAvailable: 2,
+          totalUsed: 1,
+          totalUnused: 1,
+          usedLt10Pct: 0,
+          usedLt25Pct: 0,
+          usedLt50Pct: 0,
+          usedGte50Pct: 1,
+          insufficientSample: 0,
+        },
+        sampleSessions: 10,
+        eligibleSessions: 10,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+      agent: {
+        domain: 'agent',
+        tiers: {
+          totalAvailable: 1,
+          totalUsed: 1,
+          totalUnused: 0,
+          usedLt10Pct: 0,
+          usedLt25Pct: 0,
+          usedLt50Pct: 0,
+          usedGte50Pct: 1,
+          insufficientSample: 0,
+        },
+        sampleSessions: 10,
+        eligibleSessions: 10,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+    },
+  };
+}
+
 function stubPortfolioLoad(): void {
   portfolioMock.getOverview.mockResolvedValue(overviewFixture());
   portfolioMock.getTrends.mockResolvedValue(trendsFixture());
   portfolioMock.getComponentUtilization.mockResolvedValue(componentsFixture());
   portfolioMock.getModelHarnessCohorts.mockResolvedValue(cohortsFixture());
   portfolioMock.getProjectList.mockResolvedValue(projectsFixture());
+  portfolioMock.getUtilizationReport.mockResolvedValue(utilizationFixture());
 }
 
 beforeEach(() => {
