@@ -2,6 +2,7 @@ import type {
   ContributionScope,
   InsertProjectDailyRollupInput,
   InsertProjectDimensionRollupInput,
+  InsertRollupContributionInput,
   RollupPolicy,
   RootInclusion,
   SqliteExecutor,
@@ -974,8 +975,9 @@ export async function applySessionRollupContributions(
     policy,
     sessionModels,
   );
+  const contributionInputs: InsertRollupContributionInput[] = [];
   for (const group of groups.values()) {
-    await RollupContributionStore.insert(tx, {
+    contributionInputs.push({
       id: contributionId(
         input,
         group.comparabilityGroupId,
@@ -1000,6 +1002,7 @@ export async function applySessionRollupContributions(
       valueCount: group.valueCount,
     });
   }
+  await RollupContributionStore.insertMany(tx, contributionInputs);
   if (!input.skipBucketRecompute) {
     const allKeys = dedupeKeys([...oldKeys, ...builtKeys]);
     for (const key of allKeys) {

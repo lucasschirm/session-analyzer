@@ -523,6 +523,61 @@ describe('rollups schema and stores', () => {
     ).rejects.toThrow();
   });
 
+  it('inserts multiple rollup contributions in batch using insertMany', async () => {
+    const {
+      executor,
+      sessionId,
+      generationId,
+      projectId,
+      analysisReleaseId,
+      metricDefinitionId,
+      exactComparabilityGroupId,
+    } = await createSeededExecutor();
+
+    const contributions = [
+      {
+        sessionId,
+        generationId,
+        projectId,
+        analysisReleaseId,
+        comparabilityGroupId: exactComparabilityGroupId,
+        metricDefinitionId,
+        contributionScope: 'root_only' as const,
+        bucketType: 'daily',
+        bucketValue: '2026-08-25',
+        additiveValue: 42,
+        valueCount: 1,
+      },
+      {
+        sessionId,
+        generationId,
+        projectId,
+        analysisReleaseId,
+        comparabilityGroupId: exactComparabilityGroupId,
+        metricDefinitionId,
+        contributionScope: 'inclusive' as const,
+        bucketType: 'daily',
+        bucketValue: '2026-08-25',
+        additiveValue: 84,
+        valueCount: 2,
+      },
+    ];
+
+    const ids = await RollupContributionStore.insertMany(executor, contributions, 1);
+    expect(ids.length).toBe(2);
+
+    const first = await RollupContributionStore.getById(executor, ids[0]!);
+    const second = await RollupContributionStore.getById(executor, ids[1]!);
+    expect(first?.additiveValue).toBe(42);
+    expect(first?.bucketValue).toBe('2026-08-25');
+    expect(second?.additiveValue).toBe(84);
+    expect(second?.valueCount).toBe(2);
+
+    // Empty array returns [] without error
+    const emptyIds = await RollupContributionStore.insertMany(executor, []);
+    expect(emptyIds).toEqual([]);
+  });
+
   it('resolves rollup policies with dimension caps and bucket labels', async () => {
     const { executor, analysisReleaseId, rollupPolicyId } = await createSeededExecutor();
 

@@ -83,7 +83,7 @@ describe('processing-version', () => {
       total: 1,
       phase: 1,
       totalPhases: 2,
-      unit: 'sessions parsing',
+      unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(2, {
       step: 'Rebuilding session rollups',
@@ -91,7 +91,7 @@ describe('processing-version', () => {
       total: 1,
       phase: 1,
       totalPhases: 2,
-      unit: 'sessions parsing',
+      unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(3, {
       step: 'Recomputing project rollups',
