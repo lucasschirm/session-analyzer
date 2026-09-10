@@ -189,12 +189,6 @@ async function loadMetricDefinitions(
   return map;
 }
 
-function distributionValue(distribution: ProjectDistribution, aggregation: string): number | null {
-  const lower = aggregation.toLowerCase();
-  if (lower === 'sum' || lower === 'count') return distribution.sum;
-  return distribution.mean;
-}
-
 function measurementClassForAggregate(
   baseClass: MeasurementClass,
   aggregation: string,
@@ -295,10 +289,12 @@ export async function getProjectBehaviorSummary(
   // aggregation='distribution' — none exist — so the overview always showed
   // "No metrics available." Daily rollups aggregate per metric definition
   // across day buckets; we sum them to produce project-level totals.
-  const allRollups = await ProjectDailyRollupStore.listByProject(queryable, projectId);
+  const [allRollups, sessions] = await Promise.all([
+    ProjectDailyRollupStore.listByProject(queryable, projectId),
+    SessionStore.listByProject(queryable, projectId),
+  ]);
   const range = resolveTimeRange(query, 0, Number.MAX_SAFE_INTEGER);
   const rollups = allRollups.filter((r) => isRollupInQuery(r, query, range));
-  const sessions = await SessionStore.listByProject(queryable, projectId);
 
   const definitionIds = rollups.map((r) => r.metricDefinitionId);
   const definitions = await loadMetricDefinitions(queryable, definitionIds);
@@ -312,6 +308,7 @@ export async function getProjectBehaviorSummary(
       sum: number;
       count: number;
       knownBuckets: number;
+      sampleRollup: ProjectDailyRollup;
     }
   >();
   for (const rollup of rollups) {
@@ -331,6 +328,7 @@ export async function getProjectBehaviorSummary(
         sum: contribution,
         count: 1,
         knownBuckets: rollup.valueCount > 0 ? 1 : 0,
+        sampleRollup: rollup,
       });
     }
   }
@@ -339,7 +337,7 @@ export async function getProjectBehaviorSummary(
   let totalEligibleN = 0;
   let totalKnownN = 0;
 
-  for (const { definition, sum, count, knownBuckets } of perMetric.values()) {
+  for (const { definition, sum, count, knownBuckets, sampleRollup } of perMetric.values()) {
     const lower = definition.aggregation.toLowerCase();
     const value = lower === 'sum' || lower === 'count' ? sum : count > 0 ? sum / count : null;
     const measurementClass = measurementClassForAggregate(
@@ -347,17 +345,10 @@ export async function getProjectBehaviorSummary(
       definition.aggregation,
     );
     const analysisReleaseId =
-      rollups.find((r) => r.metricDefinitionId === definition.id)?.analysisReleaseId ??
-      query.analysisReleaseId ??
-      'unknown';
-    const generationId =
-      rollups.find((r) => r.metricDefinitionId === definition.id)?.generationId ??
-      query.generationId ??
-      'unknown';
+      sampleRollup.analysisReleaseId ?? query.analysisReleaseId ?? 'unknown';
+    const generationId = sampleRollup.generationId ?? query.generationId ?? 'unknown';
     const comparabilityGroupId =
-      rollups.find((r) => r.metricDefinitionId === definition.id)?.comparabilityGroupId ??
-      query.comparabilityGroupId ??
-      'unknown';
+      sampleRollup.comparabilityGroupId ?? query.comparabilityGroupId ?? 'unknown';
     const token = makeToken(
       analysisReleaseId,
       generationId,

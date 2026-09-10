@@ -82,12 +82,30 @@ export class AnalyticsChart extends LitElement {
 
   @state() private summaryVisible = false;
 
+  private cachedSeriesForOption: ChartSeries | null = null;
+  private cachedOption: ReturnType<typeof toEChartsOption> | null = null;
+
+  private cachedSeriesForSummary: ChartSeries | null = null;
+  private cachedStateForSummary: ChartState | null = null;
+  private cachedSummary = '';
+
   private get option() {
-    return this.series ? toEChartsOption(this.series) : null;
+    if (!this.series) return null;
+    if (this.series !== this.cachedSeriesForOption) {
+      this.cachedSeriesForOption = this.series;
+      this.cachedOption = toEChartsOption(this.series);
+    }
+    return this.cachedOption;
   }
 
   private get summary(): string {
-    return this.series ? textualSummary(this.series, this.state) : '';
+    if (!this.series) return '';
+    if (this.series !== this.cachedSeriesForSummary || this.state !== this.cachedStateForSummary) {
+      this.cachedSeriesForSummary = this.series;
+      this.cachedStateForSummary = this.state;
+      this.cachedSummary = textualSummary(this.series, this.state);
+    }
+    return this.cachedSummary;
   }
 
   private toggleSummary(e: Event): void {

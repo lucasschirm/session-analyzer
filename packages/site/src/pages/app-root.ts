@@ -213,7 +213,7 @@ export class AppRoot extends LitElement {
       border: 1px solid var(--md-sys-color-outline, #2a303c);
       border-radius: 12px;
       padding: 32px;
-      width: min(440px, 90vw);
+      width: min(460px, 90vw);
       text-align: center;
       box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
     }
@@ -225,15 +225,56 @@ export class AppRoot extends LitElement {
     }
 
     .reprocess-panel .reprocess-reason {
-      margin: 0 0 20px;
+      margin: 0 0 16px;
       font-size: 14px;
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
     }
 
+    .reprocess-panel .reprocess-phase {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--md-sys-color-primary, #4f8cff);
+      background: rgba(79, 140, 255, 0.1);
+      border: 1px solid rgba(79, 140, 255, 0.25);
+      border-radius: 12px;
+      padding: 3px 10px;
+      margin-bottom: 10px;
+    }
+
+    .reprocess-panel .reprocess-step-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .reprocess-panel .reprocess-spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--md-sys-color-outline, #2a303c);
+      border-top-color: var(--md-sys-color-primary, #4f8cff);
+      border-radius: 50%;
+      animation: reprocess-spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes reprocess-spin {
+      from {
+        transform: rotate(0deg);
+      }
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
     .reprocess-panel .reprocess-step {
       font-size: 14px;
+      font-weight: 500;
       color: var(--md-sys-color-on-surface, #e6e9ef);
-      margin-bottom: 12px;
     }
 
     .reprocess-panel .reprocess-bar {
@@ -252,9 +293,24 @@ export class AppRoot extends LitElement {
       transition: width 0.3s ease;
     }
 
-    .reprocess-panel .reprocess-percent {
+    .reprocess-panel .reprocess-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
       font-size: 13px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .reprocess-panel .reprocess-counts {
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      font-size: 12px;
+    }
+
+    .reprocess-panel .reprocess-percent {
+      color: var(--md-sys-color-primary, #4f8cff);
+      font-weight: 600;
+      margin-left: auto;
     }
 
     .reprocess-panel .reprocess-error {
@@ -273,10 +329,15 @@ export class AppRoot extends LitElement {
       background: var(--md-sys-color-primary, #4f8cff);
       color: #fff;
       border: none;
-      padding: 8px 24px;
-      border-radius: 8px;
+      border-radius: 6px;
+      padding: 8px 16px;
       font-size: 14px;
+      font-weight: 500;
       cursor: pointer;
+    }
+
+    .reprocess-panel button:hover {
+      background: #3b74db;
     }
   `;
 
@@ -385,6 +446,16 @@ export class AppRoot extends LitElement {
 
   @state() private reprocessPercent = 0;
 
+  @state() private reprocessCompleted = 0;
+
+  @state() private reprocessTotal = 0;
+
+  @state() private reprocessPhase?: number;
+
+  @state() private reprocessTotalPhases?: number;
+
+  @state() private reprocessUnit?: string;
+
   @state() private reprocessError: string | null = null;
 
   @state() private passkeyOpen = false;
@@ -440,6 +511,11 @@ export class AppRoot extends LitElement {
     this.reprocessing = true;
     this.reprocessReason = detail.reason ?? 'Updating analytics data…';
     this.reprocessStep = '';
+    this.reprocessCompleted = 0;
+    this.reprocessTotal = 0;
+    this.reprocessPhase = undefined;
+    this.reprocessTotalPhases = undefined;
+    this.reprocessUnit = undefined;
     this.reprocessPercent = 0;
     this.reprocessError = null;
   };
@@ -449,8 +525,16 @@ export class AppRoot extends LitElement {
       step: string;
       completed: number;
       total: number;
+      phase?: number;
+      totalPhases?: number;
+      unit?: string;
     };
     this.reprocessStep = detail.step;
+    this.reprocessCompleted = detail.completed;
+    this.reprocessTotal = detail.total;
+    this.reprocessPhase = detail.phase;
+    this.reprocessTotalPhases = detail.totalPhases;
+    this.reprocessUnit = detail.unit;
     this.reprocessPercent =
       detail.total > 0 ? Math.round((detail.completed / detail.total) * 100) : 0;
   };
@@ -621,27 +705,44 @@ export class AppRoot extends LitElement {
       ${
         this.reprocessing
           ? html`
-          <div class="reprocess-overlay">
+          <div class="reprocess-overlay" role="dialog" aria-modal="true" aria-labelledby="reprocess-title">
             <div class="reprocess-panel">
-              <h2>Updating analytics data</h2>
+              <h2 id="reprocess-title">Updating analytics data</h2>
               <p class="reprocess-reason">${this.reprocessReason}</p>
               ${
                 this.reprocessError
                   ? html`
                     <div class="reprocess-error">${this.reprocessError}</div>
-                    <button @click=${this.dismissReprocessError}>Close</button>
+                    <button type="button" @click=${this.dismissReprocessError}>Close</button>
                   `
                   : html`
-                    <div class="reprocess-step">
-                      ${this.reprocessStep || 'Preparing…'}
+                    ${
+                      this.reprocessPhase && this.reprocessTotalPhases
+                        ? html`<div class="reprocess-phase">Phase ${this.reprocessPhase} of ${this.reprocessTotalPhases}</div>`
+                        : ''
+                    }
+                    <div class="reprocess-step-row">
+                      <span class="reprocess-spinner" aria-hidden="true"></span>
+                      <span class="reprocess-step">
+                        ${this.reprocessStep || 'Preparing…'}
+                      </span>
                     </div>
-                    <div class="reprocess-bar">
+                    <div class="reprocess-bar" role="progressbar" aria-valuenow="${this.reprocessPercent}" aria-valuemin="0" aria-valuemax="100">
                       <div
                         class="reprocess-bar-fill"
                         style="width: ${this.reprocessPercent}%"
                       ></div>
                     </div>
-                    <div class="reprocess-percent">${this.reprocessPercent}%</div>
+                    <div class="reprocess-meta">
+                      <span class="reprocess-counts">
+                        ${
+                          this.reprocessTotal > 0
+                            ? `${this.reprocessCompleted.toLocaleString()} / ${this.reprocessTotal.toLocaleString()}${this.reprocessUnit ? ` ${this.reprocessUnit}` : ''}`
+                            : ''
+                        }
+                      </span>
+                      <span class="reprocess-percent">${this.reprocessPercent}%</span>
+                    </div>
                   `
               }
             </div>

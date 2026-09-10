@@ -307,8 +307,9 @@ async function resolveEvidenceState(
   queryable: Queryable,
   sessionId: string,
   query: AnalyticsQuery | undefined,
+  existingSession?: SessionContext,
 ): Promise<EvidenceState> {
-  const session = await getSessionContext(queryable, sessionId);
+  const session = existingSession ?? (await getSessionContext(queryable, sessionId));
   if (!session) return { status: 'ok', generationId: null };
 
   const generationId = query?.generationId ?? session.currentGenerationId;
@@ -339,25 +340,18 @@ async function resolveEvidenceState(
 
   const portfolioId = await getPortfolioIdForProject(queryable, session.projectId);
   if (portfolioId) {
-    const tombstoned = await SourceTombstoneStore.isTombstoned(
+    const tombstone = await SourceTombstoneStore.getTombstone(
       queryable,
       portfolioId,
       session.ingestionSourceId,
       'session',
       session.nativeSessionId,
     );
-    if (tombstoned) {
-      const tombstone = await SourceTombstoneStore.getTombstone(
-        queryable,
-        portfolioId,
-        session.ingestionSourceId,
-        'session',
-        session.nativeSessionId,
-      );
+    if (tombstone) {
       return {
         status: 'tombstone',
-        reason: tombstone?.reason ?? 'Session source has been deleted',
-        deletedAt: tombstone?.deletedAt,
+        reason: tombstone.reason ?? 'Session source has been deleted',
+        deletedAt: tombstone.deletedAt,
         generationId,
       };
     }
@@ -454,9 +448,11 @@ async function getSessionEvidenceSummary(
   sessionId: string,
   query: AnalyticsQuery | undefined,
 ): Promise<SessionEvidenceSummary> {
-  const state = await resolveEvidenceState(queryable, sessionId, query);
-  const session = await getSessionContext(queryable, sessionId);
-  const { rootSessionId, parentSessionId } = await getRootAndParent(queryable, sessionId);
+  const [session, { rootSessionId, parentSessionId }] = await Promise.all([
+    getSessionContext(queryable, sessionId),
+    getRootAndParent(queryable, sessionId),
+  ]);
+  const state = await resolveEvidenceState(queryable, sessionId, query, session);
 
   const analysisReleaseId = query?.analysisReleaseId ?? 'unknown';
   const generationId = state.generationId ?? query?.generationId ?? 'unknown';

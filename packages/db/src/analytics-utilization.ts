@@ -6,7 +6,6 @@ import type {
   ComponentUtilizationItemDto,
   ComponentUtilizationTiersDto,
   DomainUtilizationSummaryDto,
-  EvidenceLink,
   ScopeUtilizationReportDto,
   SessionDomainUtilizationDto,
 } from './dto.js';

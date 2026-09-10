@@ -230,4 +230,71 @@ describe('app-root', () => {
     await flush(app);
     expect(root.querySelector('.reprocess-overlay')).toBeNull();
   });
+
+  it('updates step description and progress bar on reprocess-progress events', async () => {
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    analyticsClient.dispatchEvent(
+      new CustomEvent('reprocess-started', { detail: { reason: 'Analytics data format updated' } }),
+    );
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    expect(root.querySelector('.reprocess-step')?.textContent?.trim()).toBe('Preparing…');
+    expect(root.querySelector('.reprocess-percent')?.textContent?.trim()).toBe('0%');
+
+    // Emit initial progress at 0%
+    analyticsClient.dispatchEvent(
+      new CustomEvent('reprocess-progress', {
+        detail: {
+          step: 'Rebuilding session rollups',
+          completed: 0,
+          total: 10,
+          phase: 1,
+          totalPhases: 2,
+          unit: 'sessions parsing',
+        },
+      }),
+    );
+    await flush(app);
+
+    expect(root.querySelector('.reprocess-phase')?.textContent?.trim()).toBe('Phase 1 of 2');
+    expect(root.querySelector('.reprocess-step')?.textContent?.trim()).toBe(
+      'Rebuilding session rollups',
+    );
+    expect(root.querySelector('.reprocess-counts')?.textContent?.trim()).toBe(
+      '0 / 10 sessions parsing',
+    );
+    expect(root.querySelector('.reprocess-percent')?.textContent?.trim()).toBe('0%');
+    expect(root.querySelector('.reprocess-spinner')).not.toBeNull();
+
+    // Emit progress at 50%
+    analyticsClient.dispatchEvent(
+      new CustomEvent('reprocess-progress', {
+        detail: {
+          step: 'Rebuilding session rollups',
+          completed: 5,
+          total: 10,
+          phase: 1,
+          totalPhases: 2,
+          unit: 'sessions parsing',
+        },
+      }),
+    );
+    await flush(app);
+
+    expect(root.querySelector('.reprocess-percent')?.textContent?.trim()).toBe('50%');
+    expect(root.querySelector('.reprocess-counts')?.textContent?.trim()).toBe(
+      '5 / 10 sessions parsing',
+    );
+    const fill = root.querySelector<HTMLElement>('.reprocess-bar-fill');
+    expect(fill?.style.width).toBe('50%');
+
+    // Emit successful completion
+    analyticsClient.dispatchEvent(new CustomEvent('reprocess-completed', { detail: { ok: true } }));
+    await flush(app);
+
+    expect(root.querySelector('.reprocess-overlay')).toBeNull();
+  });
 });

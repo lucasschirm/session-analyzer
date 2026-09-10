@@ -32,6 +32,7 @@ export interface ApplyRollupContributionsInput {
   readonly isRoot?: boolean;
   readonly generationToken?: string;
   readonly rollupPolicy?: RollupPolicy;
+  readonly skipBucketRecompute?: boolean;
 }
 
 export interface RollupReconciliationMismatch {
@@ -215,7 +216,7 @@ function dimensionValueFor(
     // sessionModels. When sessionModels is provided, return the first model
     // (the caller iterates over all); when empty, return null so the
     // contribution lands in the Unknown bucket.
-    if (sessionModels && sessionModels.length > 0) return sessionModels[0]!;
+    if (sessionModels && sessionModels.length > 0) return sessionModels[0] ?? null;
     return null;
   }
   return sessionDimensionValue(session, dimensionName);
@@ -999,9 +1000,11 @@ export async function applySessionRollupContributions(
       valueCount: group.valueCount,
     });
   }
-  const allKeys = dedupeKeys([...oldKeys, ...builtKeys]);
-  for (const key of allKeys) {
-    await recomputeAffectedBucket(tx, key, policy, generationToken);
+  if (!input.skipBucketRecompute) {
+    const allKeys = dedupeKeys([...oldKeys, ...builtKeys]);
+    for (const key of allKeys) {
+      await recomputeAffectedBucket(tx, key, policy, generationToken);
+    }
   }
 }
 

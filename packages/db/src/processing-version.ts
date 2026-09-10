@@ -1,8 +1,16 @@
-import type { SqliteExecutor, SqliteTransaction } from '@lucasschirm/sal-db-core';
+import type { RollupPolicy, SqliteExecutor, SqliteTransaction } from '@lucasschirm/sal-db-core';
 import {
   applySessionRollupContributions,
+  loadOrDefaultRollupPolicy,
   rebuildProjectPortfolioRollups,
 } from './rollup-reconciliation.js';
+
+declare const console:
+  | {
+      warn?: (...args: unknown[]) => void;
+      error?: (...args: unknown[]) => void;
+    }
+  | undefined;
 
 /**
  * Analytics-derived-data processing version. Bump this whenever the logic
@@ -31,6 +39,9 @@ export interface RebuildProgress {
   readonly step: string;
   readonly completed: number;
   readonly total: number;
+  readonly phase?: number;
+  readonly totalPhases?: number;
+  readonly unit?: string;
 }
 
 export type RebuildProgressCallback = (progress: RebuildProgress) => void;
@@ -142,23 +153,60 @@ export async function rebuildAnalyticsDerivedData(
     else projectGroups.set(key, [session]);
   }
 
+  // Cache rollup policies by analysisReleaseId to avoid redundant policy lookups
+  // for every session and project group.
+  const policyCache = new Map<string, RollupPolicy>();
+  async function getPolicy(releaseId: string): Promise<RollupPolicy> {
+    let policy = policyCache.get(releaseId);
+    if (!policy) {
+      policy = await loadOrDefaultRollupPolicy(executor, releaseId);
+      policyCache.set(releaseId, policy);
+    }
+    return policy;
+  }
+
   // Step 1: re-apply rollup contributions per session. This repopulates the
   // model dimension from model_requests and is the bulk of the work.
+  // We pass skipBucketRecompute: true because Step 2 recomputes all project and
+  // portfolio rollups in bulk in a single efficient pass.
   const totalSessions = sessions.length;
   let completed = 0;
+  onProgress?.({
+    step: 'Rebuilding session rollups',
+    completed: 0,
+    total: totalSessions,
+    phase: 1,
+    totalPhases: 2,
+    unit: 'sessions parsing',
+  });
   for (const session of sessions) {
-    await executor.transaction(async (tx) => {
-      await applySessionRollupContributions(tx, {
-        sessionId: session.id,
-        generationId: session.currentGenerationId,
-        analysisReleaseId: session.analysisReleaseId,
+    try {
+      const policy = await getPolicy(session.analysisReleaseId);
+      await executor.transaction(async (tx) => {
+        await applySessionRollupContributions(tx, {
+          sessionId: session.id,
+          generationId: session.currentGenerationId,
+          analysisReleaseId: session.analysisReleaseId,
+          skipBucketRecompute: true,
+          rollupPolicy: policy,
+        });
       });
-    });
+    } catch (err) {
+      // Invariant: Session Failure Isolation. A single failed session must never
+      // halt the rebuild or leave the analytics data platform permanently stuck.
+      console?.warn?.(
+        `[rebuildAnalyticsDerivedData] Failed to rebuild contributions for session ${session.id}:`,
+        err,
+      );
+    }
     completed += 1;
     onProgress?.({
       step: 'Rebuilding session rollups',
       completed,
       total: totalSessions,
+      phase: 1,
+      totalPhases: 2,
+      unit: 'sessions parsing',
     });
   }
 
@@ -166,20 +214,41 @@ export async function rebuildAnalyticsDerivedData(
   const groupList = [...projectGroups.values()];
   const totalGroups = groupList.length;
   let groupsCompleted = 0;
+  onProgress?.({
+    step: 'Recomputing project rollups',
+    completed: 0,
+    total: totalGroups,
+    phase: 2,
+    totalPhases: 2,
+    unit: 'analytics calculations',
+  });
   for (const group of groupList) {
-    const first = group[0]!;
-    await rebuildProjectPortfolioRollups(
-      executor,
-      first.projectId,
-      first.portfolioId,
-      first.analysisReleaseId,
-      first.currentGenerationId,
-    );
+    try {
+      const first = group[0];
+      if (!first) continue;
+      const policy = await getPolicy(first.analysisReleaseId);
+      await rebuildProjectPortfolioRollups(
+        executor,
+        first.projectId,
+        first.portfolioId,
+        first.analysisReleaseId,
+        first.currentGenerationId,
+        policy,
+      );
+    } catch (err) {
+      console?.warn?.(
+        '[rebuildAnalyticsDerivedData] Failed to rebuild rollups for project group:',
+        err,
+      );
+    }
     groupsCompleted += 1;
     onProgress?.({
       step: 'Recomputing project rollups',
       completed: groupsCompleted,
       total: totalGroups,
+      phase: 2,
+      totalPhases: 2,
+      unit: 'analytics calculations',
     });
   }
 
