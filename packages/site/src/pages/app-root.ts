@@ -147,6 +147,11 @@ export class AppRoot extends LitElement {
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
+    .settings-button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
     .settings-button svg {
       width: 20px;
       height: 20px;
@@ -177,24 +182,118 @@ export class AppRoot extends LitElement {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 60vh;
-      gap: 16px;
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-      font-size: 16px;
+      min-height: 65vh;
+      padding: 24px;
+    }
+
+    .loading-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      background: var(--md-sys-color-surface, #171a21);
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-radius: 16px;
+      padding: 40px 48px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+      max-width: 420px;
+      width: 100%;
+    }
+
+    .spinner-container {
+      position: relative;
+      width: 56px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .spinner-glow {
+      position: absolute;
+      inset: -8px;
+      background: radial-gradient(circle, rgba(79, 140, 255, 0.25) 0%, transparent 70%);
+      border-radius: 50%;
+      animation: pulse-glow 2s ease-in-out infinite alternate;
     }
 
     .app-loading .spinner {
-      width: 32px;
-      height: 32px;
-      border: 3px solid var(--md-sys-color-outline, #2a303c);
+      width: 44px;
+      height: 44px;
+      border: 3px solid rgba(79, 140, 255, 0.15);
       border-top-color: var(--md-sys-color-primary, #4f8cff);
+      border-right-color: var(--md-sys-color-primary, #4f8cff);
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
+    }
+
+    .loading-text {
+      margin-bottom: 20px;
+    }
+
+    .loading-title {
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      letter-spacing: -0.01em;
+      margin-bottom: 6px;
+    }
+
+    .loading-subtitle {
+      font-size: 13px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      line-height: 1.4;
+    }
+
+    .loading-bar {
+      width: 160px;
+      height: 3px;
+      background: rgba(79, 140, 255, 0.12);
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .loading-bar-pulse {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      width: 50%;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--md-sys-color-primary, #4f8cff) 50%,
+        transparent 100%
+      );
+      border-radius: 3px;
+      animation: loading-shimmer 1.6s ease-in-out infinite;
     }
 
     @keyframes spin {
       to {
         transform: rotate(360deg);
+      }
+    }
+
+    @keyframes pulse-glow {
+      0% {
+        transform: scale(0.9);
+        opacity: 0.5;
+      }
+      100% {
+        transform: scale(1.15);
+        opacity: 0.9;
+      }
+    }
+
+    @keyframes loading-shimmer {
+      0% {
+        transform: translateX(-100%);
+      }
+      100% {
+        transform: translateX(250%);
       }
     }
 
@@ -213,7 +312,7 @@ export class AppRoot extends LitElement {
       border: 1px solid var(--md-sys-color-outline, #2a303c);
       border-radius: 12px;
       padding: 32px;
-      width: min(440px, 90vw);
+      width: min(460px, 90vw);
       text-align: center;
       box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
     }
@@ -225,15 +324,56 @@ export class AppRoot extends LitElement {
     }
 
     .reprocess-panel .reprocess-reason {
-      margin: 0 0 20px;
+      margin: 0 0 16px;
       font-size: 14px;
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
     }
 
+    .reprocess-panel .reprocess-phase {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--md-sys-color-primary, #4f8cff);
+      background: rgba(79, 140, 255, 0.1);
+      border: 1px solid rgba(79, 140, 255, 0.25);
+      border-radius: 12px;
+      padding: 3px 10px;
+      margin-bottom: 10px;
+    }
+
+    .reprocess-panel .reprocess-step-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .reprocess-panel .reprocess-spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--md-sys-color-outline, #2a303c);
+      border-top-color: var(--md-sys-color-primary, #4f8cff);
+      border-radius: 50%;
+      animation: reprocess-spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes reprocess-spin {
+      from {
+        transform: rotate(0deg);
+      }
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
     .reprocess-panel .reprocess-step {
       font-size: 14px;
+      font-weight: 500;
       color: var(--md-sys-color-on-surface, #e6e9ef);
-      margin-bottom: 12px;
     }
 
     .reprocess-panel .reprocess-bar {
@@ -252,9 +392,24 @@ export class AppRoot extends LitElement {
       transition: width 0.3s ease;
     }
 
-    .reprocess-panel .reprocess-percent {
+    .reprocess-panel .reprocess-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
       font-size: 13px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .reprocess-panel .reprocess-counts {
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      font-size: 12px;
+    }
+
+    .reprocess-panel .reprocess-percent {
+      color: var(--md-sys-color-primary, #4f8cff);
+      font-weight: 600;
+      margin-left: auto;
     }
 
     .reprocess-panel .reprocess-error {
@@ -273,10 +428,15 @@ export class AppRoot extends LitElement {
       background: var(--md-sys-color-primary, #4f8cff);
       color: #fff;
       border: none;
-      padding: 8px 24px;
-      border-radius: 8px;
+      border-radius: 6px;
+      padding: 8px 16px;
       font-size: 14px;
+      font-weight: 500;
       cursor: pointer;
+    }
+
+    .reprocess-panel button:hover {
+      background: #3b74db;
     }
   `;
 
@@ -385,6 +545,16 @@ export class AppRoot extends LitElement {
 
   @state() private reprocessPercent = 0;
 
+  @state() private reprocessCompleted = 0;
+
+  @state() private reprocessTotal = 0;
+
+  @state() private reprocessPhase?: number;
+
+  @state() private reprocessTotalPhases?: number;
+
+  @state() private reprocessUnit?: string;
+
   @state() private reprocessError: string | null = null;
 
   @state() private passkeyOpen = false;
@@ -396,11 +566,15 @@ export class AppRoot extends LitElement {
 
   async firstUpdated(): Promise<void> {
     try {
+      const analyticsInit = analyticsClient.ensureReady().catch((err) => {
+        console.warn('Analytics engine eager initialization warning:', err);
+      });
       await dbClient.ensureReady();
       await syncManager.init();
       this.currentPath = currentHashPath();
       await this.loadProjects();
       void this.syncProjectSelector();
+      await analyticsInit;
       this.appReady = true;
     } catch (error) {
       this.dbError = `Failed to initialize database: ${(error as Error).message}`;
@@ -440,6 +614,11 @@ export class AppRoot extends LitElement {
     this.reprocessing = true;
     this.reprocessReason = detail.reason ?? 'Updating analytics data…';
     this.reprocessStep = '';
+    this.reprocessCompleted = 0;
+    this.reprocessTotal = 0;
+    this.reprocessPhase = undefined;
+    this.reprocessTotalPhases = undefined;
+    this.reprocessUnit = undefined;
     this.reprocessPercent = 0;
     this.reprocessError = null;
   };
@@ -449,8 +628,16 @@ export class AppRoot extends LitElement {
       step: string;
       completed: number;
       total: number;
+      phase?: number;
+      totalPhases?: number;
+      unit?: string;
     };
     this.reprocessStep = detail.step;
+    this.reprocessCompleted = detail.completed;
+    this.reprocessTotal = detail.total;
+    this.reprocessPhase = detail.phase;
+    this.reprocessTotalPhases = detail.totalPhases;
+    this.reprocessUnit = detail.unit;
     this.reprocessPercent =
       detail.total > 0 ? Math.round((detail.completed / detail.total) * 100) : 0;
   };
@@ -562,6 +749,7 @@ export class AppRoot extends LitElement {
   }
 
   private handleSettingsClick(): void {
+    if (!this.appReady) return;
     navigateTo('/settings/data-sources');
   }
 
@@ -588,6 +776,7 @@ export class AppRoot extends LitElement {
             class="settings-button"
             title="Settings"
             aria-label="Settings"
+            ?disabled=${!this.appReady}
             @click=${this.handleSettingsClick}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -608,9 +797,20 @@ export class AppRoot extends LitElement {
               ? html`<div class="app-error">${this.dbError}</div>`
               : !this.appReady
                 ? html`
-                  <div class="app-loading">
-                    <div class="spinner"></div>
-                    <span>Loading…</span>
+                  <div class="app-loading" role="status" aria-live="polite">
+                    <div class="loading-card">
+                      <div class="spinner-container">
+                        <div class="spinner-glow"></div>
+                        <div class="spinner"></div>
+                      </div>
+                      <div class="loading-text">
+                        <div class="loading-title">Session Analyzer</div>
+                        <div class="loading-subtitle">Initializing workspace and analytics engine…</div>
+                      </div>
+                      <div class="loading-bar">
+                        <div class="loading-bar-pulse"></div>
+                      </div>
+                    </div>
                   </div>
                 `
                 : this.router.outlet()
@@ -621,27 +821,44 @@ export class AppRoot extends LitElement {
       ${
         this.reprocessing
           ? html`
-          <div class="reprocess-overlay">
+          <div class="reprocess-overlay" role="dialog" aria-modal="true" aria-labelledby="reprocess-title">
             <div class="reprocess-panel">
-              <h2>Updating analytics data</h2>
+              <h2 id="reprocess-title">Updating analytics data</h2>
               <p class="reprocess-reason">${this.reprocessReason}</p>
               ${
                 this.reprocessError
                   ? html`
                     <div class="reprocess-error">${this.reprocessError}</div>
-                    <button @click=${this.dismissReprocessError}>Close</button>
+                    <button type="button" @click=${this.dismissReprocessError}>Close</button>
                   `
                   : html`
-                    <div class="reprocess-step">
-                      ${this.reprocessStep || 'Preparing…'}
+                    ${
+                      this.reprocessPhase && this.reprocessTotalPhases
+                        ? html`<div class="reprocess-phase">Phase ${this.reprocessPhase} of ${this.reprocessTotalPhases}</div>`
+                        : ''
+                    }
+                    <div class="reprocess-step-row">
+                      <span class="reprocess-spinner" aria-hidden="true"></span>
+                      <span class="reprocess-step">
+                        ${this.reprocessStep || 'Preparing…'}
+                      </span>
                     </div>
-                    <div class="reprocess-bar">
+                    <div class="reprocess-bar" role="progressbar" aria-valuenow="${this.reprocessPercent}" aria-valuemin="0" aria-valuemax="100">
                       <div
                         class="reprocess-bar-fill"
                         style="width: ${this.reprocessPercent}%"
                       ></div>
                     </div>
-                    <div class="reprocess-percent">${this.reprocessPercent}%</div>
+                    <div class="reprocess-meta">
+                      <span class="reprocess-counts">
+                        ${
+                          this.reprocessTotal > 0
+                            ? `${this.reprocessCompleted.toLocaleString()} / ${this.reprocessTotal.toLocaleString()}${this.reprocessUnit ? ` ${this.reprocessUnit}` : ''}`
+                            : ''
+                        }
+                      </span>
+                      <span class="reprocess-percent">${this.reprocessPercent}%</span>
+                    </div>
                   `
               }
             </div>

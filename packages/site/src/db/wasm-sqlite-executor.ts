@@ -437,6 +437,8 @@ export class WasmSqliteExecutor implements SqliteExecutor {
   private applyPragmas(): void {
     this.db.exec(`PRAGMA foreign_keys = ${REQUIRED_PRAGMAS.foreign_keys};`);
     this.db.exec(`PRAGMA journal_mode = ${DEFAULT_JOURNAL_MODE};`);
+    this.db.exec('PRAGMA synchronous = NORMAL;');
+    this.db.exec('PRAGMA cache_size = -10000;');
     const rows = this.db.exec({
       sql: 'PRAGMA journal_mode',
       returnValue: 'resultRows',

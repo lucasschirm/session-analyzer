@@ -185,7 +185,7 @@ async function createGeneration(
   });
 }
 
-async function createRealMetricValue(
+async function _createRealMetricValue(
   executor: WasmSqliteExecutor,
   metricDefinitionId: string,
   generationId: string,
@@ -519,7 +519,7 @@ describe('analytics-portfolio', () => {
 
   it('returns model and harness cohorts from dimension rollups', async () => {
     const statPolicyId = await createStatisticalPolicy(executor);
-    const defId = await createMetricDefinition(executor, {
+    const _defId = await createMetricDefinition(executor, {
       metricId: 'm-cost',
       statisticalPolicyId: statPolicyId,
       aggregation: 'sum',

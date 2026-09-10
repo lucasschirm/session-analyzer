@@ -114,10 +114,18 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
         this.handleResponse(event.data);
       };
       worker.onerror = (event) => {
-        this.rejectAll(String(event.message ?? 'worker error'));
+        const errorMsg = String(event.message ?? 'Worker initialization or runtime error');
+        this.dispatchEvent(
+          new CustomEvent('reprocess-completed', { detail: { ok: false, error: errorMsg } }),
+        );
+        this.rejectAll(errorMsg);
       };
       worker.onmessageerror = () => {
-        this.rejectAll('worker message deserialization error');
+        const errorMsg = 'Worker message deserialization error';
+        this.dispatchEvent(
+          new CustomEvent('reprocess-completed', { detail: { ok: false, error: errorMsg } }),
+        );
+        this.rejectAll(errorMsg);
       };
       this.worker = worker;
     }
@@ -182,7 +190,14 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
         const msg = response as AnalyticsReprocessProgressBroadcast;
         this.dispatchEvent(
           new CustomEvent('reprocess-progress', {
-            detail: { step: msg.step, completed: msg.completed, total: msg.total },
+            detail: {
+              step: msg.step,
+              completed: msg.completed,
+              total: msg.total,
+              phase: msg.phase,
+              totalPhases: msg.totalPhases,
+              unit: msg.unit,
+            },
           }),
         );
         return;

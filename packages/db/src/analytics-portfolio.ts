@@ -542,6 +542,21 @@ async function countDistinctModelsInPortfolio(
   query: AnalyticsQuery,
 ): Promise<number> {
   const generationId = query.generationId;
+  const rollupSql = generationId
+    ? `SELECT COUNT(DISTINCT dimension_value) AS c
+       FROM portfolio_dimension_rollups
+       WHERE portfolio_id = ? AND dimension_name = 'model' AND is_unknown = 0
+         AND generation_id = ?`
+    : `SELECT COUNT(DISTINCT dimension_value) AS c
+       FROM portfolio_dimension_rollups
+       WHERE portfolio_id = ? AND dimension_name = 'model' AND is_unknown = 0`;
+  const rollupParams = generationId ? [portfolioId, generationId] : [portfolioId];
+  const { rows: rollupRows } = await queryable.exec(rollupSql, rollupParams);
+  const rollupCount = asNumber(rollupRows[0]?.c);
+  if (rollupCount > 0) {
+    return rollupCount;
+  }
+
   const typeIn = MODEL_EVENT_TYPES.map(() => '?').join(', ');
   const sql = generationId
     ? `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
@@ -703,13 +718,23 @@ export async function getPortfolioOverview(
   const rollupMetrics = await loadHeadlineMetricsFromRollups(queryable, portfolioId, query);
   headlineMetrics.push(...rollupMetrics);
 
-  const projectCount = await countProjectsInPortfolio(queryable, portfolioId);
-  const sessionCount = await countSessionsInPortfolio(queryable, portfolioId, query);
-  const componentCounts = await countComponentsByKind(queryable, portfolioId);
-  const unusedOfferedComponents = await findUnusedOfferedComponents(queryable, portfolioId, query);
-  const totalTokens = await sumTotalTokensInPortfolio(queryable, portfolioId, query);
-  const modelCount = await countDistinctModelsInPortfolio(queryable, portfolioId, query);
-  const harnessCount = await countDistinctHarnessesInPortfolio(queryable, portfolioId, query);
+  const [
+    projectCount,
+    sessionCount,
+    componentCounts,
+    unusedOfferedComponents,
+    totalTokens,
+    modelCount,
+    harnessCount,
+  ] = await Promise.all([
+    countProjectsInPortfolio(queryable, portfolioId),
+    countSessionsInPortfolio(queryable, portfolioId, query),
+    countComponentsByKind(queryable, portfolioId),
+    findUnusedOfferedComponents(queryable, portfolioId, query),
+    sumTotalTokensInPortfolio(queryable, portfolioId, query),
+    countDistinctModelsInPortfolio(queryable, portfolioId, query),
+    countDistinctHarnessesInPortfolio(queryable, portfolioId, query),
+  ]);
 
   const countToken: AnalyticsToken = {
     ...overviewToken,
