@@ -147,6 +147,11 @@ export class AppRoot extends LitElement {
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
+    .settings-button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
     .settings-button svg {
       width: 20px;
       height: 20px;
@@ -177,24 +182,118 @@ export class AppRoot extends LitElement {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 60vh;
-      gap: 16px;
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-      font-size: 16px;
+      min-height: 65vh;
+      padding: 24px;
+    }
+
+    .loading-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      background: var(--md-sys-color-surface, #171a21);
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-radius: 16px;
+      padding: 40px 48px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+      max-width: 420px;
+      width: 100%;
+    }
+
+    .spinner-container {
+      position: relative;
+      width: 56px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .spinner-glow {
+      position: absolute;
+      inset: -8px;
+      background: radial-gradient(circle, rgba(79, 140, 255, 0.25) 0%, transparent 70%);
+      border-radius: 50%;
+      animation: pulse-glow 2s ease-in-out infinite alternate;
     }
 
     .app-loading .spinner {
-      width: 32px;
-      height: 32px;
-      border: 3px solid var(--md-sys-color-outline, #2a303c);
+      width: 44px;
+      height: 44px;
+      border: 3px solid rgba(79, 140, 255, 0.15);
       border-top-color: var(--md-sys-color-primary, #4f8cff);
+      border-right-color: var(--md-sys-color-primary, #4f8cff);
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
+    }
+
+    .loading-text {
+      margin-bottom: 20px;
+    }
+
+    .loading-title {
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      letter-spacing: -0.01em;
+      margin-bottom: 6px;
+    }
+
+    .loading-subtitle {
+      font-size: 13px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      line-height: 1.4;
+    }
+
+    .loading-bar {
+      width: 160px;
+      height: 3px;
+      background: rgba(79, 140, 255, 0.12);
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .loading-bar-pulse {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      width: 50%;
+      background: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--md-sys-color-primary, #4f8cff) 50%,
+        transparent 100%
+      );
+      border-radius: 3px;
+      animation: loading-shimmer 1.6s ease-in-out infinite;
     }
 
     @keyframes spin {
       to {
         transform: rotate(360deg);
+      }
+    }
+
+    @keyframes pulse-glow {
+      0% {
+        transform: scale(0.9);
+        opacity: 0.5;
+      }
+      100% {
+        transform: scale(1.15);
+        opacity: 0.9;
+      }
+    }
+
+    @keyframes loading-shimmer {
+      0% {
+        transform: translateX(-100%);
+      }
+      100% {
+        transform: translateX(250%);
       }
     }
 
@@ -467,11 +566,15 @@ export class AppRoot extends LitElement {
 
   async firstUpdated(): Promise<void> {
     try {
+      const analyticsInit = analyticsClient.ensureReady().catch((err) => {
+        console.warn('Analytics engine eager initialization warning:', err);
+      });
       await dbClient.ensureReady();
       await syncManager.init();
       this.currentPath = currentHashPath();
       await this.loadProjects();
       void this.syncProjectSelector();
+      await analyticsInit;
       this.appReady = true;
     } catch (error) {
       this.dbError = `Failed to initialize database: ${(error as Error).message}`;
@@ -646,6 +749,7 @@ export class AppRoot extends LitElement {
   }
 
   private handleSettingsClick(): void {
+    if (!this.appReady) return;
     navigateTo('/settings/data-sources');
   }
 
@@ -672,6 +776,7 @@ export class AppRoot extends LitElement {
             class="settings-button"
             title="Settings"
             aria-label="Settings"
+            ?disabled=${!this.appReady}
             @click=${this.handleSettingsClick}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -692,9 +797,20 @@ export class AppRoot extends LitElement {
               ? html`<div class="app-error">${this.dbError}</div>`
               : !this.appReady
                 ? html`
-                  <div class="app-loading">
-                    <div class="spinner"></div>
-                    <span>Loading…</span>
+                  <div class="app-loading" role="status" aria-live="polite">
+                    <div class="loading-card">
+                      <div class="spinner-container">
+                        <div class="spinner-glow"></div>
+                        <div class="spinner"></div>
+                      </div>
+                      <div class="loading-text">
+                        <div class="loading-title">Session Analyzer</div>
+                        <div class="loading-subtitle">Initializing workspace and analytics engine…</div>
+                      </div>
+                      <div class="loading-bar">
+                        <div class="loading-bar-pulse"></div>
+                      </div>
+                    </div>
                   </div>
                 `
                 : this.router.outlet()

@@ -103,6 +103,12 @@ beforeEach(() => {
     activeRun: null,
     queuedRuns: [],
   });
+  vi.spyOn(analyticsClient, 'ensureReady').mockResolvedValue({
+    backendName: 'wasm-memory',
+    durability: 'ephemeral',
+    journalMode: 'delete',
+    storage: 'memory',
+  });
 });
 
 describe('app-root', () => {
@@ -296,5 +302,50 @@ describe('app-root', () => {
     await flush(app);
 
     expect(root.querySelector('.reprocess-overlay')).toBeNull();
+  });
+
+  it('eagerly initializes analytics client on mount', async () => {
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    expect(analyticsClient.ensureReady).toHaveBeenCalled();
+  });
+
+  it('renders polished loading card and disables settings while app is initializing', async () => {
+    let resolveAnalytics!: () => void;
+    vi.spyOn(analyticsClient, 'ensureReady').mockReturnValue(
+      new Promise((resolve) => {
+        resolveAnalytics = () =>
+          resolve({
+            backendName: 'wasm-memory',
+            durability: 'ephemeral',
+            journalMode: 'delete',
+            storage: 'memory',
+          });
+      }),
+    );
+
+    const app = document.createElement('app-root') as AppRoot;
+    document.body.appendChild(app);
+    await app.updateComplete;
+
+    const root = app.shadowRoot as ShadowRoot;
+    const loadingCard = root.querySelector('.app-loading .loading-card');
+    expect(loadingCard).not.toBeNull();
+    expect(root.querySelector('.loading-title')?.textContent).toBe('Session Analyzer');
+    expect(root.querySelector('.loading-subtitle')?.textContent).toContain(
+      'Initializing workspace and analytics engine',
+    );
+    expect(root.querySelector('.spinner-glow')).not.toBeNull();
+
+    const settingsButton = root.querySelector<HTMLButtonElement>('.settings-button');
+    expect(settingsButton?.hasAttribute('disabled')).toBe(true);
+
+    // Now resolve initialization
+    resolveAnalytics();
+    await flush(app);
+
+    expect(root.querySelector('.app-loading')).toBeNull();
+    expect(settingsButton?.hasAttribute('disabled')).toBe(false);
   });
 });
