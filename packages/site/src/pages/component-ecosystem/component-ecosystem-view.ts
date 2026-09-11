@@ -3,6 +3,7 @@ import type {
   ArtifactDiff,
   ComponentDistributionPage,
   ComponentEcosystemSummary,
+  ComponentIdentitySummary,
   ComponentProjectSessionPage,
   ComponentScopePage,
   ComponentUtilizationDetail,
@@ -313,6 +314,19 @@ export class ComponentEcosystemView extends PageLitElement {
 
   @state() private summary: PanelState<ComponentEcosystemSummary> = { data: null, state: 'idle' };
 
+  /**
+   * The resolved human-friendly label for `componentId` (see
+   * `never-display-raw-ids.md`) -- never rendered as the raw id itself.
+   * Deliberately excluded from `updateGlobalStateFromPanels()`'s states: a
+   * hiccup resolving the display label is a cosmetic degradation (falls back
+   * to a generic "Artifact" heading), not a reason to flip the whole page to
+   * the error/partial banner the six data panels below already own.
+   */
+  @state() private identity: PanelState<ComponentIdentitySummary | undefined> = {
+    data: null,
+    state: 'idle',
+  };
+
   @state() private versions: PanelState<ComponentVersionPage> = { data: null, state: 'idle' };
 
   @state() private scopes: PanelState<ComponentScopePage> = { data: null, state: 'idle' };
@@ -443,18 +457,28 @@ export class ComponentEcosystemView extends PageLitElement {
 
   private async fetchDetailPanels(query: AnalyticsQuery): Promise<void> {
     const componentId = this.componentId;
-    const [summary, versions, scopes, utilization, distributions, projectSessions, lifecycle] =
-      await Promise.allSettled([
-        analyticsClient.component.getSummary(query),
-        analyticsClient.component.getVersions(componentId, query),
-        analyticsClient.component.getScopes(componentId, query),
-        analyticsClient.component.getUtilization(componentId, query),
-        analyticsClient.component.getDistributions(componentId, query),
-        analyticsClient.component.getProjectsSessions(componentId, query),
-        analyticsClient.component.getLifecycleComparisons(componentId, query),
-      ]);
+    const [
+      summary,
+      identity,
+      versions,
+      scopes,
+      utilization,
+      distributions,
+      projectSessions,
+      lifecycle,
+    ] = await Promise.allSettled([
+      analyticsClient.component.getSummary(query),
+      analyticsClient.component.getIdentity(componentId, query),
+      analyticsClient.component.getVersions(componentId, query),
+      analyticsClient.component.getScopes(componentId, query),
+      analyticsClient.component.getUtilization(componentId, query),
+      analyticsClient.component.getDistributions(componentId, query),
+      analyticsClient.component.getProjectsSessions(componentId, query),
+      analyticsClient.component.getLifecycleComparisons(componentId, query),
+    ]);
 
     this.summary = panelStateFromResult(summary);
+    this.identity = panelStateFromResult(identity);
     this.versions = panelStateFromResult(versions);
     this.scopes = panelStateFromResult(scopes);
     this.utilization = panelStateFromResult(utilization);
@@ -574,19 +598,15 @@ export class ComponentEcosystemView extends PageLitElement {
     this.finalizeAndNavigate(next);
   }
 
-  private componentKind(): string | undefined {
-    if (this.filters.kind) return this.filters.kind;
-    const top = this.summary.data?.topByUtilization;
-    if (!top) return undefined;
-    const match = top.find((m) => {
-      const parts = m.label.split(' ');
-      const id = parts.slice(1).join(' ');
-      return id === this.componentId;
-    });
-    if (match) {
-      return match.label.split(' ')[0];
-    }
-    return undefined;
+  /**
+   * The human-friendly label for `componentId` (e.g. `skill/multi-issue-
+   * agent`), resolved via `analyticsClient.component.getIdentity()` --
+   * `undefined` while that fetch is in flight or unresolved. Callers must
+   * never fall back to `this.componentId` itself; see
+   * `never-display-raw-ids.md`.
+   */
+  private componentLabel(): string | undefined {
+    return this.identity.data?.name;
   }
 
   private chartState(state: LoadState): ChartState | null {
@@ -607,7 +627,7 @@ export class ComponentEcosystemView extends PageLitElement {
   private renderBreadcrumbs() {
     const origin = this.filters.origin;
     const originLink = originHref(this.filters);
-    const kind = this.componentKind();
+    const label = this.componentLabel();
 
     return html`
       <nav class="breadcrumbs" aria-label="Breadcrumbs">
@@ -624,7 +644,7 @@ export class ComponentEcosystemView extends PageLitElement {
           this.componentId
             ? html`
               <span aria-hidden="true">/</span>
-              <span class="current">${this.componentId}${kind ? ` (${kind})` : ''}</span>
+              <span class="current">${label ?? 'Artifact'}</span>
             `
             : ''
         }
@@ -1126,7 +1146,13 @@ ${this.diff.unifiedDiff.split('\n').map((line) => {
       <div class="component-ecosystem-view">
         ${this.renderBreadcrumbs()}
         <h1>
-          ${this.componentId ? `Artifact: ${this.componentId}` : 'Artifact Ecosystem'}
+          ${
+            this.componentId
+              ? this.componentLabel()
+                ? `Artifact: ${this.componentLabel()}`
+                : 'Artifact'
+              : 'Artifact Ecosystem'
+          }
         </h1>
         ${
           this.globalState === 'error' && this.globalError

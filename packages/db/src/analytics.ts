@@ -235,6 +235,17 @@ export interface ComponentEcosystemSummary {
   readonly topByUtilization: readonly MetricValueDto[];
 }
 
+/**
+ * A human-friendly identity label for a single component, resolved from its
+ * `kind`/`nativeId`/`displayName` -- never the raw component id. See
+ * `never-display-raw-ids.md`: the site must render `name`, not `componentId`.
+ */
+export interface ComponentIdentitySummary {
+  readonly componentId: string;
+  readonly kind: string;
+  readonly name: string;
+}
+
 export interface ComponentVersion {
   readonly version: string;
   readonly sessionCount: number;
@@ -407,6 +418,10 @@ export interface SessionEvidenceView {
 
 export interface ComponentEcosystemView {
   getSummary(query: AnalyticsQuery): Promise<ComponentEcosystemSummary>;
+  getIdentity(
+    componentId: string,
+    query?: AnalyticsQuery,
+  ): Promise<ComponentIdentitySummary | undefined>;
   getVersions(componentId: string, query?: AnalyticsQuery): Promise<ComponentVersionPage>;
   getScopes(componentId: string, query?: AnalyticsQuery): Promise<ComponentScopePage>;
   getUtilization(componentId: string, query?: AnalyticsQuery): Promise<ComponentUtilizationDetail>;

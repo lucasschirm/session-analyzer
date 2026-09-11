@@ -3,6 +3,7 @@ import type {
   ComponentDistributionPage,
   ComponentDistributionRow,
   ComponentEcosystemSummary,
+  ComponentIdentitySummary,
   ComponentProjectSessionPage,
   ComponentScopePage,
   ComponentUtilizationDetail,
@@ -17,6 +18,7 @@ import type { ComponentEcosystemView } from '../../src/pages/component-ecosystem
 
 const componentMock = vi.hoisted(() => ({
   getSummary: vi.fn(),
+  getIdentity: vi.fn(),
   getVersions: vi.fn(),
   getScopes: vi.fn(),
   getUtilization: vi.fn(),
@@ -139,6 +141,17 @@ function versionsFixture(overrides: Partial<ComponentVersionPage> = {}): Compone
   };
 }
 
+function identityFixture(
+  overrides: Partial<ComponentIdentitySummary> = {},
+): ComponentIdentitySummary {
+  return {
+    componentId: 'read_file',
+    kind: 'tool',
+    name: 'tool/read_file',
+    ...overrides,
+  };
+}
+
 function scopesFixture(overrides: Partial<ComponentScopePage> = {}): ComponentScopePage {
   return {
     items: [
@@ -228,6 +241,7 @@ function lifecycleFixture(
 
 function stubComponentLoad(): void {
   componentMock.getSummary.mockResolvedValue(summaryFixture());
+  componentMock.getIdentity.mockResolvedValue(identityFixture());
   componentMock.getVersions.mockResolvedValue(versionsFixture());
   componentMock.getScopes.mockResolvedValue(scopesFixture());
   componentMock.getUtilization.mockResolvedValue(utilizationFixture());
@@ -555,8 +569,12 @@ describe('component-ecosystem-view', () => {
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    expect(root.textContent).toContain('Artifact: read_file');
-    expect(root.textContent).toContain('(tool)');
+    // Never the raw componentId as the primary label -- see
+    // never-display-raw-ids.md. `identityFixture()`'s resolved name
+    // ('tool/read_file') is what must render, both in the h1 and the
+    // breadcrumb's "current" span.
+    expect(root.textContent).toContain('Artifact: tool/read_file');
+    expect(root.textContent).not.toContain('Artifact: read_file');
     expect(root.textContent).toContain('Versions');
     expect(root.textContent).toContain('Installation scope');
     expect(root.textContent).toContain('Utilization');
@@ -575,6 +593,34 @@ describe('component-ecosystem-view', () => {
 
     const sessionLink = root.querySelector('a[href^="#/sessions/"]') as HTMLAnchorElement;
     expect(sessionLink).not.toBeNull();
+  });
+
+  it('never renders the raw componentId, in the h1 or the breadcrumb, once identity resolves', async () => {
+    window.location.hash = '#/artifacts/comp-7b749f662cc27c79?kind=tool';
+    componentMock.getIdentity.mockResolvedValue(
+      identityFixture({ componentId: 'comp-7b749f662cc27c79', name: 'tool/multi-issue-agent' }),
+    );
+    const view = Object.assign(document.createElement('component-ecosystem-view'), {
+      componentId: 'comp-7b749f662cc27c79',
+    }) as ComponentEcosystemView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    expect(root.textContent).toContain('tool/multi-issue-agent');
+    expect(root.textContent).not.toContain('comp-7b749f662cc27c79');
+  });
+
+  it('falls back to a generic label, never the raw componentId, while identity is unresolved', async () => {
+    window.location.hash = '#/artifacts/comp-7b749f662cc27c79?kind=tool';
+    componentMock.getIdentity.mockResolvedValue(undefined);
+    const view = Object.assign(document.createElement('component-ecosystem-view'), {
+      componentId: 'comp-7b749f662cc27c79',
+    }) as ComponentEcosystemView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    expect(root.textContent).toContain('Artifact');
+    expect(root.textContent).not.toContain('comp-7b749f662cc27c79');
   });
 
   it('preserves originating filters in breadcrumbs', async () => {
