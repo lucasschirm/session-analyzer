@@ -23,7 +23,6 @@ import {
   componentFactsToChartSeries,
   componentFactsToRows,
   contextGrowthToChartSeries,
-  contextTimingToChartSeries,
   summaryToMetricCards,
 } from './session-evidence-chart-helpers';
 import {
@@ -536,6 +535,7 @@ export class SessionEvidenceView extends PageLitElement {
               label=${card.label}
               value=${card.value}
               sub=${card.sub}
+              description=${card.description || ''}
               .clickable=${Boolean(card.href)}
               @card-click=${() => this.goToMetric(card)}
             ></metrics-card>

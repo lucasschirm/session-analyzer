@@ -368,7 +368,6 @@ export class EchartsBase extends LitElement {
       <tr
         class="table-row interactive"
         tabindex="0"
-        role="button"
         @click=${() => this.handleTableRowClick(index, row)}
         @keydown=${(e: KeyboardEvent) => this.handleTableRowKeyDown(e, index, row)}
       >
@@ -376,7 +375,7 @@ export class EchartsBase extends LitElement {
         <td>${row.y}</td>
         <td>${row.label}</td>
         <td>
-          ${row.evidenceHref ? html`<a href="${row.evidenceHref}" tabindex="-1">${row.series}</a>` : row.series}
+          ${row.evidenceHref ? html`<a href="${row.evidenceHref}">${row.series}</a>` : row.series}
         </td>
       </tr>
     `;

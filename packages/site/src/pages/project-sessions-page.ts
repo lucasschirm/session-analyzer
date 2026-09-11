@@ -233,10 +233,11 @@ export class ProjectSessionsPage extends PageLitElement {
   @state() private resolvedProjectId: string | null = null;
 
   private searchDebounceTimer: number | undefined;
+  private loadSeq = 0;
 
   connectedCallback(): void {
     super.connectedCallback();
-    if (this.projectId) {
+    if (this.hasUpdated && this.projectId) {
       void this.load();
     }
   }
@@ -284,11 +285,13 @@ export class ProjectSessionsPage extends PageLitElement {
 
   private async load(): Promise<void> {
     if (!this.projectId) return;
+    const seq = ++this.loadSeq;
     this.loading = true;
     this.error = null;
 
     try {
       await this.resolveProjectNameAndId();
+      if (seq !== this.loadSeq) return;
       const targetProjectId = this.resolvedProjectId ?? this.projectId;
       const query: AnalyticsQuery = {
         limit: PAGE_SIZE,
@@ -298,12 +301,16 @@ export class ProjectSessionsPage extends PageLitElement {
       };
 
       const page = await analyticsClient.search.getProjectSessionList(targetProjectId, query);
+      if (seq !== this.loadSeq) return;
       this.sessions = [...page.items];
       this.totalCount = page.totalCount ?? page.items.length;
     } catch (err) {
+      if (seq !== this.loadSeq) return;
       this.error = err instanceof Error ? err.message : String(err);
     } finally {
-      this.loading = false;
+      if (seq === this.loadSeq) {
+        this.loading = false;
+      }
     }
   }
 

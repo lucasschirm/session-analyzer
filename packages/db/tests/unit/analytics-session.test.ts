@@ -796,6 +796,32 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
     expect(childTree.nodes[0]?.children.length).toBe(1);
   });
 
+  it('filters project session list by timeRange with independent bounds', async () => {
+    const baseDate = new Date(BASE_TIME).toISOString();
+    const futureDate = new Date(BASE_TIME + 86400000).toISOString();
+    const pastDate = new Date(BASE_TIME - 86400000).toISOString();
+
+    const inRange = await ds.search.getProjectSessionList(PROJECT_ID, {
+      timeRange: { start: pastDate, end: futureDate },
+    });
+    expect(inRange.items.length).toBe(2);
+
+    const futureOnly = await ds.search.getProjectSessionList(PROJECT_ID, {
+      timeRange: { start: futureDate, end: '' },
+    });
+    expect(futureOnly.items.length).toBe(0);
+
+    const pastOnly = await ds.search.getProjectSessionList(PROJECT_ID, {
+      timeRange: { start: '', end: pastDate },
+    });
+    expect(pastOnly.items.length).toBe(0);
+
+    const matchingStartOnly = await ds.search.getProjectSessionList(PROJECT_ID, {
+      timeRange: { start: baseDate, end: '' },
+    });
+    expect(matchingStartOnly.items.length).toBe(2);
+  });
+
   it('returns artifact metadata and diff', async () => {
     const metadata = await ds.artifact.getMetadata('artifact-as-1');
     expect(metadata.artifactId).toBe('artifact-as-1');

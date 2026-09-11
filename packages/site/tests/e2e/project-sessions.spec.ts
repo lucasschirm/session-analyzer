@@ -130,6 +130,27 @@ test.describe('Dedicated Project Sessions Page (UX-028)', () => {
     await expect(sessionsPage.locator('project-sessions-table tbody tr').first()).toBeVisible({
       timeout: 5000,
     });
+
+    // Date filter interaction
+    const fromInput = sessionsPage.locator('.filter-bar input[type="date"]').nth(0);
+    await fromInput.fill('2099-01-01');
+    await fromInput.dispatchEvent('change');
+    await expect(sessionsPage.locator('.empty-state')).toBeVisible({ timeout: 5000 });
+
+    // Reset date filter
+    await sessionsPage.locator('.filter-bar button', { hasText: 'Reset' }).click();
+    await expect(sessionsPage.locator('project-sessions-table tbody tr').first()).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Verify pagination controls
+    const paginationBar = sessionsPage.locator('.pagination-bar');
+    await expect(paginationBar).toBeVisible();
+    await expect(paginationBar).toContainText('Page 1 of 1 (1 session)');
+    const prevBtn = paginationBar.locator('.pagination-btn', { hasText: 'Previous' });
+    const nextBtn = paginationBar.locator('.pagination-btn', { hasText: 'Next' });
+    await expect(prevBtn).toBeDisabled();
+    await expect(nextBtn).toBeDisabled();
   });
 
   test('displays error banner affordance on query failure without masquerading as empty state', async ({
@@ -188,6 +209,10 @@ test.describe('Project Sessions Table (UX-029)', () => {
     const tooltipTitle = await titleLink.getAttribute('title');
     expect(tooltipTitle).not.toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}/i);
 
+    // Verify subagents badge is visible
+    const subagentsBadge = firstRow.locator('.subagents-badge');
+    await expect(subagentsBadge).toBeVisible();
+
     // Clicking row navigates to session evidence view
     await firstRow.click();
     await expect(page).toHaveURL(/#\/sessions\//);
@@ -242,6 +267,23 @@ test.describe('Session Context Growth Chart and Detail Drawer (UX-030)', () => {
 
     // Close button should be focused
     const closeBtn = drawerPanel.locator('.close-button');
+    await expect(closeBtn).toBeFocused();
+
+    // Verify Tab key keeps focus trapped within drawer
+    await page.keyboard.press('Tab');
+    const focusedAfterTab = await drawer.evaluate((el: HTMLElement) => {
+      const active = el.shadowRoot?.activeElement;
+      return active ? active.tagName.toLowerCase() : null;
+    });
+    expect(focusedAfterTab).not.toBeNull();
+
+    // Verify Shift+Tab key keeps focus trapped within drawer
+    await page.keyboard.press('Shift+Tab');
+    const focusedAfterShiftTab = await drawer.evaluate((el: HTMLElement) => {
+      const active = el.shadowRoot?.activeElement;
+      return active ? active.tagName.toLowerCase() : null;
+    });
+    expect(focusedAfterShiftTab).not.toBeNull();
     await expect(closeBtn).toBeFocused();
 
     // Press Escape to close drawer

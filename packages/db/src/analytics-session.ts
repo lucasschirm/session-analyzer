@@ -827,18 +827,17 @@ async function extractPointsFromChartSeriesFallback(
   }));
 }
 
-async function getContextTimingSeries(
-  queryable: Queryable,
-  sessionId: string,
+function buildContextTimingToken(
   query: AnalyticsQuery | undefined,
-): Promise<ContextTimingSeries> {
-  const state = await resolveEvidenceState(queryable, sessionId, query);
+  sessionId: string,
+  generationId: string | null,
+) {
   const tokens = pageTokens(query, {
     analysisReleaseId: 'unknown',
-    generationId: state.generationId ?? 'unknown',
+    generationId: generationId ?? 'unknown',
     comparabilityGroupId: 'session-context-timing',
   });
-  const token = makeToken(
+  return makeToken(
     tokens.analysisReleaseId,
     tokens.generationId,
     tokens.comparabilityGroupId,
@@ -849,16 +848,30 @@ async function getContextTimingSeries(
     ANALYTICS_DTO_VERSION,
     [evidenceLink('session', sessionId, `Session ${sessionId}`)],
   );
+}
 
+async function fetchContextTimingPoints(
+  queryable: Queryable,
+  sessionId: string,
+  generationId: string,
+): Promise<ContextTimingPoint[]> {
+  const points = await extractPointsFromNormalizedEvents(queryable, sessionId, generationId);
+  return points.length > 0
+    ? points
+    : extractPointsFromChartSeriesFallback(queryable, sessionId, generationId);
+}
+
+async function getContextTimingSeries(
+  queryable: Queryable,
+  sessionId: string,
+  query: AnalyticsQuery | undefined,
+): Promise<ContextTimingSeries> {
+  const state = await resolveEvidenceState(queryable, sessionId, query);
+  const token = buildContextTimingToken(query, sessionId, state.generationId);
   if (state.status !== 'ok' || !state.generationId) {
     return { token, points: [] };
   }
-
-  let points = await extractPointsFromNormalizedEvents(queryable, sessionId, state.generationId);
-  if (points.length === 0) {
-    points = await extractPointsFromChartSeriesFallback(queryable, sessionId, state.generationId);
-  }
-
+  const points = await fetchContextTimingPoints(queryable, sessionId, state.generationId);
   return { token, points };
 }
 
@@ -2014,55 +2027,118 @@ interface ProjectSessionWhereResult {
   offset: number;
 }
 
-function buildProjectSessionWhere(
-  query: AnalyticsQuery,
-  projectId: string,
-): ProjectSessionWhereResult {
+function extractProjectSessionFilters(query: AnalyticsQuery) {
   const harness = filterValue(query, 'harness') ?? '';
   const mode = filterValue(query, 'mode') ?? '';
   const taskCohort = filterValue(query, 'taskCohort') ?? '';
   const finality = filterValue(query, 'finality') ?? '';
   const search = filterValue(query, 'search');
-  const sessionsScope = filterValue(query, 'sessions') ?? '';
+  const rawScope = filterValue(query, 'sessions') ?? '';
   const { start, end } = filterTimeRange(query);
-  const searchPattern = search ? `%${search}%` : '';
+  return {
+    harness,
+    mode,
+    taskCohort,
+    finality,
+    searchPattern: search ? `%${search}%` : '',
+    sessionsScope: rawScope === 'all' ? '' : rawScope,
+    start,
+    end,
+  };
+}
 
-  const whereClause = `
-    WHERE s.project_id = ?
-      AND (? = '' OR s.harness = ?)
-      AND (? = '' OR s.mode = ?)
-      AND (? = '' OR s.task_cohort = ?)
-      AND (? = '' OR s.finality = ?)
-      AND (? IS NULL OR s.occurrence_time >= ?)
-      AND (? IS NULL OR s.occurrence_time <= ?)
-      AND (? = '' OR s.id LIKE ? OR s.ai_title LIKE ? OR s.slug LIKE ?)
-      AND (? = '' OR (? = 'main' AND sr.parent_session_id IS NULL) OR (? = 'sub_agents' AND sr.parent_session_id IS NOT NULL))
-  `;
-
-  const bindParams = [
+function createProjectSessionBindParams(
+  projectId: string,
+  f: ReturnType<typeof extractProjectSessionFilters>,
+): SqliteValue[] {
+  return [
     projectId,
-    harness,
-    harness,
-    mode,
-    mode,
-    taskCohort,
-    taskCohort,
-    finality,
-    finality,
-    start,
-    start,
-    end,
-    end,
-    searchPattern,
-    searchPattern,
-    searchPattern,
-    searchPattern,
-    sessionsScope === 'all' ? '' : sessionsScope,
-    sessionsScope === 'all' ? '' : sessionsScope,
-    sessionsScope === 'all' ? '' : sessionsScope,
+    f.harness,
+    f.harness,
+    f.mode,
+    f.mode,
+    f.taskCohort,
+    f.taskCohort,
+    f.finality,
+    f.finality,
+    f.start,
+    f.start,
+    f.end,
+    f.end,
+    f.searchPattern,
+    f.searchPattern,
+    f.searchPattern,
+    f.searchPattern,
+    f.sessionsScope,
+    f.sessionsScope,
+    f.sessionsScope,
   ];
+}
 
-  return { whereClause, bindParams, limit: pageLimit(query), offset: pageOffset(query) };
+const PROJECT_SESSION_WHERE_SQL = `
+  WHERE s.project_id = ?
+    AND (? = '' OR s.harness = ?)
+    AND (? = '' OR s.mode = ?)
+    AND (? = '' OR s.task_cohort = ?)
+    AND (? = '' OR s.finality = ?)
+    AND (? IS NULL OR s.occurrence_time >= ?)
+    AND (? IS NULL OR s.occurrence_time <= ?)
+    AND (? = '' OR s.id LIKE ? OR s.ai_title LIKE ? OR s.slug LIKE ?)
+    AND (? = '' OR (? = 'main' AND sr.parent_session_id IS NULL) OR (? = 'sub_agents' AND sr.parent_session_id IS NOT NULL))
+`;
+
+function buildProjectSessionWhere(
+  query: AnalyticsQuery,
+  projectId: string,
+): ProjectSessionWhereResult {
+  const f = extractProjectSessionFilters(query);
+  return {
+    whereClause: PROJECT_SESSION_WHERE_SQL,
+    bindParams: createProjectSessionBindParams(projectId, f),
+    limit: pageLimit(query),
+    offset: pageOffset(query),
+  };
+}
+
+async function fetchProjectSessionRows(
+  queryable: Queryable,
+  whereClause: string,
+  bindParams: SqliteValue[],
+  limit: number,
+  offset: number,
+) {
+  const listSql = `SELECT s.id, s.harness, s.finality, s.mode, s.task_cohort,
+              s.start_time, s.end_time, s.occurrence_time, s.created_at,
+              s.ai_title, s.slug,
+              sr.root_session_id, sr.parent_session_id,
+              (SELECT COUNT(*) FROM session_relations cr WHERE cr.parent_session_id = s.id) AS subagent_count
+       FROM sessions s
+       LEFT JOIN session_relations sr ON sr.session_id = s.id
+       ${whereClause}
+       ORDER BY s.occurrence_time DESC, s.created_at DESC, s.id
+       LIMIT ? OFFSET ?`;
+  const countSql = `SELECT COUNT(*) AS total FROM sessions s LEFT JOIN session_relations sr ON sr.session_id = s.id ${whereClause}`;
+  return Promise.all([
+    queryable.exec(listSql, [...bindParams, limit + 1, offset]),
+    queryable.exec(countSql, bindParams),
+  ]);
+}
+
+function buildProjectSessionListPage(
+  rows: readonly SqliteRow[],
+  countRows: readonly SqliteRow[],
+  limit: number,
+  offset: number,
+  tokens: { generationId: string; analysisReleaseId: string },
+): ProjectSessionListPage {
+  return {
+    items: rows.slice(0, limit).map(mapProjectSessionRow),
+    totalCount: asNumber(countRows[0]?.total),
+    nextCursor: rows.length > limit ? String(offset + limit) : undefined,
+    previousCursor: offset > 0 ? String(Math.max(0, offset - limit)) : undefined,
+    generationToken: tokens.generationId,
+    analysisReleaseToken: tokens.analysisReleaseId,
+  };
 }
 
 async function getProjectSessionList(
@@ -2076,35 +2152,14 @@ async function getProjectSessionList(
     comparabilityGroupId: query.comparabilityGroupId ?? 'project-sessions',
   });
   const { whereClause, bindParams, limit, offset } = buildProjectSessionWhere(query, projectId);
-
-  const [{ rows }, { rows: countRows }] = await Promise.all([
-    queryable.exec(
-      `SELECT s.id, s.harness, s.finality, s.mode, s.task_cohort,
-              s.start_time, s.end_time, s.occurrence_time, s.created_at,
-              s.ai_title, s.slug,
-              sr.root_session_id, sr.parent_session_id,
-              (SELECT COUNT(*) FROM session_relations cr WHERE cr.parent_session_id = s.id) AS subagent_count
-       FROM sessions s
-       LEFT JOIN session_relations sr ON sr.session_id = s.id
-       ${whereClause}
-       ORDER BY s.occurrence_time DESC, s.created_at DESC, s.id
-       LIMIT ? OFFSET ?`,
-      [...bindParams, limit + 1, offset],
-    ),
-    queryable.exec(
-      `SELECT COUNT(*) AS total FROM sessions s LEFT JOIN session_relations sr ON sr.session_id = s.id ${whereClause}`,
-      bindParams,
-    ),
-  ]);
-
-  return {
-    items: rows.slice(0, limit).map(mapProjectSessionRow),
-    totalCount: asNumber(countRows[0]?.total),
-    nextCursor: rows.length > limit ? String(offset + limit) : undefined,
-    previousCursor: offset > 0 ? String(Math.max(0, offset - limit)) : undefined,
-    generationToken: tokens.generationId,
-    analysisReleaseToken: tokens.analysisReleaseId,
-  };
+  const [{ rows }, { rows: countRows }] = await fetchProjectSessionRows(
+    queryable,
+    whereClause,
+    bindParams,
+    limit,
+    offset,
+  );
+  return buildProjectSessionListPage(rows, countRows, limit, offset, tokens);
 }
 
 async function getRootSessionTree(queryable: Queryable, sessionId: string): Promise<SessionTree> {

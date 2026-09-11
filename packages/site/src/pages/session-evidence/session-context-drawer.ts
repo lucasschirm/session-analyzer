@@ -165,6 +165,10 @@ export class SessionContextDrawer extends LitElement {
       color: var(--md-sys-color-primary, #4f8cff);
     }
 
+    .stat-value.timestamp {
+      font-size: 13px;
+    }
+
     .stat-card.full-width {
       grid-column: 1 / -1;
     }
@@ -306,7 +310,12 @@ export class SessionContextDrawer extends LitElement {
       this.shadowRoot?.querySelectorAll<HTMLElement>(
         'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
       ) ?? [],
-    ).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null);
+    ).filter(
+      (el) =>
+        !el.hasAttribute('disabled') &&
+        !el.hasAttribute('hidden') &&
+        el.getAttribute('aria-hidden') !== 'true',
+    );
     if (focusables.length === 0) return;
     const first = focusables[0];
     const last = focusables[focusables.length - 1];
@@ -345,86 +354,34 @@ export class SessionContextDrawer extends LitElement {
     );
   };
 
-  private renderTokenStats(m: ContextTimingPoint) {
+  private renderStatCard(label: string, value: string, highlight = false) {
     return html`
       <div class="stat-card">
-        <span class="stat-label">Context Tokens</span>
-        <span class="stat-value highlight">
-          ${m.contextTokens !== null ? formatChartValue(m.contextTokens) : '—'}
-        </span>
+        <span class="stat-label">${label}</span>
+        <span class="stat-value ${highlight ? 'highlight' : ''}">${value}</span>
       </div>
-      <div class="stat-card">
-        <span class="stat-label">Generation Tokens</span>
-        <span class="stat-value">
-          ${m.generationTokens !== null ? formatChartValue(m.generationTokens) : '—'}
-        </span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-label">Total Tokens</span>
-        <span class="stat-value">
-          ${m.totalTokens !== null ? formatChartValue(m.totalTokens) : '—'}
-        </span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-label">Input Tokens</span>
-        <span class="stat-value">
-          ${m.inputTokens !== null && m.inputTokens !== undefined ? formatChartValue(m.inputTokens) : '—'}
-        </span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-label">Cache Read</span>
-        <span class="stat-value">
-          ${m.cacheReadTokens !== null && m.cacheReadTokens !== undefined ? formatChartValue(m.cacheReadTokens) : '—'}
-        </span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-label">Cache Creation</span>
-        <span class="stat-value">
-          ${m.cacheCreationTokens !== null && m.cacheCreationTokens !== undefined ? formatChartValue(m.cacheCreationTokens) : '—'}
-        </span>
-      </div>
+    `;
+  }
+
+  private renderTokenStats(m: ContextTimingPoint) {
+    const fmt = (v: number | null | undefined) => (v != null ? formatChartValue(v) : '—');
+    return html`
+      ${this.renderStatCard('Context Tokens', fmt(m.contextTokens), true)}
+      ${this.renderStatCard('Generation Tokens', fmt(m.generationTokens))}
+      ${this.renderStatCard('Total Tokens', fmt(m.totalTokens))}
+      ${this.renderStatCard('Input Tokens', fmt(m.inputTokens))}
+      ${this.renderStatCard('Cache Read', fmt(m.cacheReadTokens))}
+      ${this.renderStatCard('Cache Creation', fmt(m.cacheCreationTokens))}
     `;
   }
 
   private renderMetadataStats(m: ContextTimingPoint) {
     const formattedDate = m.timestamp ? formatDateTime(m.timestamp) : '';
     return html`
-      ${
-        m.thinkingTokens !== null && m.thinkingTokens !== undefined
-          ? html`
-        <div class="stat-card">
-          <span class="stat-label">Thinking Tokens</span>
-          <span class="stat-value">${formatChartValue(m.thinkingTokens)}</span>
-        </div>`
-          : ''
-      }
-      ${
-        m.effort
-          ? html`
-        <div class="stat-card">
-          <span class="stat-label">Reasoning Effort</span>
-          <span class="stat-value">${m.effort}</span>
-        </div>`
-          : ''
-      }
-      ${
-        m.model
-          ? html`
-        <div class="stat-card full-width">
-          <span class="stat-label">Model</span>
-          <span class="stat-value">${m.model}</span>
-        </div>`
-          : ''
-      }
-      ${
-        formattedDate
-          ? html`
-        <div class="stat-card full-width">
-          <span class="stat-label">Timestamp</span>
-          <span class="stat-value" style="font-size: 13px;">${formattedDate}</span>
-        </div>`
-          : ''
-      }
+      ${m.thinkingTokens != null ? this.renderStatCard('Thinking Tokens', formatChartValue(m.thinkingTokens)) : ''}
+      ${m.effort ? this.renderStatCard('Reasoning Effort', m.effort) : ''}
+      ${m.model ? html`<div class="stat-card full-width"><span class="stat-label">Model</span><span class="stat-value">${m.model}</span></div>` : ''}
+      ${formattedDate ? html`<div class="stat-card full-width"><span class="stat-label">Timestamp</span><span class="stat-value timestamp">${formattedDate}</span></div>` : ''}
     `;
   }
 
@@ -439,6 +396,20 @@ export class SessionContextDrawer extends LitElement {
     `;
   }
 
+  private renderHeader(index: number, role: string) {
+    return html`
+      <div class="drawer-header">
+        <div class="header-info">
+          <h2 class="drawer-title">Message #${index}</h2>
+          <span class="role-badge ${role}">${role}</span>
+        </div>
+        <button class="close-button" type="button" aria-label="Close message details" @click=${this.close}>
+          ✕
+        </button>
+      </div>
+    `;
+  }
+
   render() {
     if (!this.message) return null;
     const m = this.message;
@@ -447,27 +418,8 @@ export class SessionContextDrawer extends LitElement {
 
     return html`
       <div class="drawer-backdrop" @click=${this.close} aria-hidden="true"></div>
-      <aside
-        class="drawer-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Message ${index} details"
-      >
-        <div class="drawer-header">
-          <div class="header-info">
-            <h2 class="drawer-title">Message #${index}</h2>
-            <span class="role-badge ${role}">${role}</span>
-          </div>
-          <button
-            class="close-button"
-            type="button"
-            aria-label="Close message details"
-            @click=${this.close}
-          >
-            ✕
-          </button>
-        </div>
-
+      <aside class="drawer-panel" role="dialog" aria-modal="true" aria-label="Message ${index} details">
+        ${this.renderHeader(index, role)}
         <div class="drawer-body">
           <div class="stats-grid">
             ${this.renderTokenStats(m)}
