@@ -19,6 +19,21 @@ const PASSKEY = 'e2e-passkey';
  */
 const DEFAULT_MAX_LIST_KEYS = 1_000;
 
+/**
+ * Production contract: a project listing page holds at most
+ * `DEFAULT_MAX_LIST_KEYS` keys, so a re-sync of `sessionCount` sessions
+ * (each contributing `filesPerSession` files plus its own manifest.json),
+ * plus the project-level manifest.json itself (the `+ 1`), issues this many
+ * `list:<projectId>/` requests. For UX-025's small fixture this evaluates
+ * to 1 because `FixtureBucket` does not truncate listings (see AGENTS.md /
+ * §9 backlog item) — the formula documents the production contract; true
+ * multi-page straddling is proven at the unit level by SYNC-013
+ * (`session-sync.worker.test.ts`).
+ */
+function expectedProjectListingRequests(sessionCount: number, filesPerSession: number): number {
+  return Math.ceil((sessionCount * (filesPerSession + 1) + 1) / DEFAULT_MAX_LIST_KEYS);
+}
+
 function attachLoggers(page: Page): void {
   page.on('pageerror', (err) => {
     console.error(`[pageerror] ${err.message}`);
@@ -1194,19 +1209,9 @@ test('UX-025: re-sync of an unchanged bucket issues one project listing and zero
   await clickRowSyncAndConfirm(page, { syncOnlyNew: false });
   await waitForSyncIdle(page);
 
-  // Production contract: a project listing page holds at most
-  // DEFAULT_MAX_LIST_KEYS keys, so a re-sync of `sessionCount` sessions
-  // (each contributing `filesPerSession` files plus its own
-  // manifest.json), plus the project-level manifest.json itself (the
-  // `+ 1`), issues this many `list:<projectId>/` requests. This evaluates
-  // to 1 for this test's small fixture key count because `FixtureBucket`
-  // does not truncate listings (see AGENTS.md / §9 backlog item) — the
-  // formula documents the production contract; true multi-page
-  // straddling is proven at the unit level by SYNC-013
-  // (`session-sync.worker.test.ts`).
-  const sessionCount = sessionIds.length;
-  const expectedListingRequests = Math.ceil(
-    (sessionCount * (filesPerSession + 1) + 1) / DEFAULT_MAX_LIST_KEYS,
+  const expectedListingRequests = expectedProjectListingRequests(
+    sessionIds.length,
+    filesPerSession,
   );
   const projectListingGets = bucket
     .getRequests({ method: 'GET' })
