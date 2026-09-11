@@ -280,6 +280,19 @@ explicit follow-up items rather than a silent deferral:
   fingerprint (D1/D2) this feature ships, which skips the manifest GET one
   level above per-file diffing. It stays deferred; no issue in this
   feature owns finishing it.
+- The worker's D4 discovery buffers a finalized session's listing entries
+  (and fingerprint) in `sessionListingData` from the moment the object
+  listing finalizes it until the bounded worker pool actually dequeues and
+  processes it (`runSession`'s `finally` block is what releases the entry).
+  For a project whose session count far exceeds the pool's concurrency,
+  this holds buffered listing entries for every discovered-but-not-yet-
+  processed session simultaneously — a memory-scaling characteristic not
+  present in the prior per-session on-demand listing, and not exercised by
+  any test in this feature (flagged in PR #417's final review). This is an
+  inherent consequence of D4's settled "one listing, buffer-and-finalize"
+  design, not a defect introduced by an implementation choice, so it is not
+  changed here; no issue in this feature owns quantifying or bounding it
+  for very large projects.
 
 SYNC-006/007/008 (DS-F3, issue #158) were registered and implemented in
 the same PR — the Devin plugin's sync→manifest→artifact-set journey and

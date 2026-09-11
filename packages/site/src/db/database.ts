@@ -1078,6 +1078,15 @@ export class DatabaseManager {
     manifest: SyncManifest,
   ): (string | number | null)[] {
     return [
+      ...DatabaseManager.manifestIdentityBindParams(manifest),
+      ...DatabaseManager.manifestContentBindParams(manifest),
+      manifest.updatedAt ?? null,
+      sessionId,
+    ];
+  }
+
+  private static manifestIdentityBindParams(manifest: SyncManifest): (string | number | null)[] {
+    return [
       manifest.sessionId,
       manifest.schemaVersion,
       manifest.harness ?? null,
@@ -1086,6 +1095,11 @@ export class DatabaseManager {
       manifest.startedAt ?? null,
       manifest.endedAt ?? null,
       manifest.durationMs ?? null,
+    ];
+  }
+
+  private static manifestContentBindParams(manifest: SyncManifest): (string | number | null)[] {
+    return [
       manifest.endReason ?? null,
       manifest.syncVersion ?? null,
       manifest.pluginVersion ?? null,
@@ -1094,8 +1108,6 @@ export class DatabaseManager {
       safeJsonStringify(manifest.artifacts),
       safeJsonStringify(manifest.syncRuns ?? []),
       manifest.syncRunsCount ?? 0,
-      manifest.updatedAt ?? null,
-      sessionId,
     ];
   }
 

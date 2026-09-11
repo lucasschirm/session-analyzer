@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_LIST_KEYS } from '@lucasschirm/sal-sync-core';
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import { verifyExportContents } from './helpers/export-verify.js';
 import { assertHeartbeat, syncProgressFilesParser } from './helpers/heartbeat.js';
@@ -10,14 +11,6 @@ import {
 } from './sync-fixtures.js';
 
 const PASSKEY = 'e2e-passkey';
-
-/**
- * Mirrors `packages/sync-core/src/storage/fetch-client.ts:8`'s
- * `DEFAULT_MAX_LIST_KEYS` (1_000 keys per `ListObjectsV2` page). There is no
- * exported constant to import from `packages/site`, so it is re-declared
- * here for UX-025's request-count formula.
- */
-const DEFAULT_MAX_LIST_KEYS = 1_000;
 
 /**
  * Production contract: a project listing page holds at most
