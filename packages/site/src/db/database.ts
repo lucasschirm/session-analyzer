@@ -1056,40 +1056,53 @@ export class DatabaseManager {
     const exists = db.selectObject('SELECT id FROM sessions WHERE id = ?', [sessionId]);
     if (!exists) throw new Error(`Session not found: ${sessionId}`);
 
-    db.exec({
-      sql: `UPDATE sessions SET
-        sync_session_id = ?, sync_schema_version = ?, sync_harness = ?, sync_harness_version = ?,
-        sync_manifest_model = ?, sync_started_at = ?, sync_ended_at = ?, sync_duration_ms = ?,
-        sync_end_reason = ?, sync_engine_version = ?, sync_plugin_version = ?,
-        sync_transcripts_captured = ?, sync_main_transcript_relative_path = ?, sync_artifacts = ?,
-        sync_runs = ?, sync_runs_count = ?, updated_at = ?
-        WHERE id = ?`,
-      bind: [
-        manifest.sessionId,
-        manifest.schemaVersion,
-        manifest.harness ?? null,
-        manifest.harnessVersion ?? null,
-        manifest.model ?? null,
-        manifest.startedAt ?? null,
-        manifest.endedAt ?? null,
-        manifest.durationMs ?? null,
-        manifest.endReason ?? null,
-        manifest.syncVersion ?? null,
-        manifest.pluginVersion ?? null,
-        Number(manifest.transcriptsCaptured ?? 0),
-        manifest.mainTranscriptRelativePath ?? null,
-        safeJsonStringify(manifest.artifacts),
-        safeJsonStringify(manifest.syncRuns ?? []),
-        manifest.syncRunsCount ?? 0,
-        manifest.updatedAt ?? null,
-        sessionId,
-      ],
+    db.transaction(() => {
+      db.exec({
+        sql: DatabaseManager.MANIFEST_UPDATE_SQL,
+        bind: DatabaseManager.manifestUpdateBindParams(sessionId, manifest),
+      });
+      if (fingerprint) this.writeManifestFingerprint(sessionId, fingerprint);
     });
-    if (fingerprint) this.writeManifestFingerprint(sessionId, fingerprint);
+  }
+
+  private static readonly MANIFEST_UPDATE_SQL = `UPDATE sessions SET
+    sync_session_id = ?, sync_schema_version = ?, sync_harness = ?, sync_harness_version = ?,
+    sync_manifest_model = ?, sync_started_at = ?, sync_ended_at = ?, sync_duration_ms = ?,
+    sync_end_reason = ?, sync_engine_version = ?, sync_plugin_version = ?,
+    sync_transcripts_captured = ?, sync_main_transcript_relative_path = ?, sync_artifacts = ?,
+    sync_runs = ?, sync_runs_count = ?, updated_at = ?
+    WHERE id = ?`;
+
+  private static manifestUpdateBindParams(
+    sessionId: string,
+    manifest: SyncManifest,
+  ): (string | number | null)[] {
+    return [
+      manifest.sessionId,
+      manifest.schemaVersion,
+      manifest.harness ?? null,
+      manifest.harnessVersion ?? null,
+      manifest.model ?? null,
+      manifest.startedAt ?? null,
+      manifest.endedAt ?? null,
+      manifest.durationMs ?? null,
+      manifest.endReason ?? null,
+      manifest.syncVersion ?? null,
+      manifest.pluginVersion ?? null,
+      Number(manifest.transcriptsCaptured ?? 0),
+      manifest.mainTranscriptRelativePath ?? null,
+      safeJsonStringify(manifest.artifacts),
+      safeJsonStringify(manifest.syncRuns ?? []),
+      manifest.syncRunsCount ?? 0,
+      manifest.updatedAt ?? null,
+      sessionId,
+    ];
   }
 
   /** Writes only the manifest fingerprint columns, leaving every other
-   *  sync mirror column on the row untouched. */
+   *  sync mirror column on the row untouched. Called inside the same
+   *  transaction as the base manifest UPDATE (when a fingerprint is
+   *  supplied) so both writes commit or neither does. */
   private writeManifestFingerprint(sessionId: string, fingerprint: ManifestFingerprint): void {
     this.requireDb().exec({
       sql: 'UPDATE sessions SET sync_manifest_etag = ?, sync_manifest_last_modified = ? WHERE id = ?',
