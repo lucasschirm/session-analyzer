@@ -33,6 +33,13 @@ import {
  * `#/artifacts/<id>?leftVersion=...&rightVersion=...` with the same two real
  * ids -- `loadDiff()` only requires `filters.leftVersion`/`rightVersion` to
  * be set, independent of whether `componentId` resolves to a real component.
+ * That same navigation also carries real-browser regression coverage for a
+ * routing bug this cutover found and fixed along the way: `componentId`
+ * (`@property`) was missing its `attribute: 'component-id'` override, so
+ * every `#/artifacts/:componentId` deep link (reachable from Portfolio,
+ * Project Behavior, and this same Component Ecosystem panel) silently fell
+ * back to the generic "Artifact Ecosystem" heading instead of the
+ * component-specific one -- only unit-tested at the jsdom level until now.
  */
 
 const PASSKEY = 'e2e-passkey-artifact-diff';
@@ -341,6 +348,15 @@ test.describe('UX-026: Artifact Diff real data (OPFS-backed blob store)', () => 
       rightVersion: ids.rightArtifact,
     });
     await page.goto(`/#/artifacts/ux-026-spot-check?${ecosystemParams.toString()}`);
+
+    // Real-browser regression coverage for the routing bug this same
+    // cutover surfaced and fixed: `componentId` (`@property({ attribute:
+    // 'component-id' })`) was missing that `attribute:` override, so every
+    // `#/artifacts/:componentId` deep link silently fell back to the
+    // generic "Artifact Ecosystem" summary heading instead of the
+    // component-specific one -- unit-tested at the jsdom level, but never
+    // through a real attribute-upgrade path until now.
+    await expect(page.locator('h1')).toHaveText('Artifact: ux-026-spot-check');
 
     const ecosystemDiffPanel = page.locator('.diff-panel').first();
     await expect(ecosystemDiffPanel).toBeVisible({ timeout: 15000 });

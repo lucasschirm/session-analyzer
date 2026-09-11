@@ -321,6 +321,37 @@ describe('component-ecosystem-view', () => {
     );
   });
 
+  it('reloads with the new component when componentId changes on an already-mounted instance', async () => {
+    // Regression coverage: navigating directly between two different
+    // populated :componentId routes (e.g. browser back/forward) on an
+    // already-mounted instance. In the real app, a parent's own reactive
+    // re-render patches this element's `component-id` attribute in place
+    // (no full remount) -- it never dispatches a `hashchange` event itself,
+    // so the existing `handleHashChange()` listener (which only fires on
+    // an actual 'hashchange' event) cannot pick this transition up on its
+    // own. Simulate exactly that: change the property directly with no
+    // navigation API involved at all (deliberately not touching
+    // window.location/history -- doing so triggers this test
+    // environment's own hashchange-like reaction, which would confound
+    // this test with the unrelated hashchange-listener path this test
+    // does not intend to exercise), isolating `willUpdate`'s own
+    // reactivity to the componentId change.
+    window.location.hash = '#/artifacts/read_file';
+    const view = Object.assign(document.createElement('component-ecosystem-view'), {
+      componentId: 'read_file',
+    }) as ComponentEcosystemView;
+    await mount(view);
+    expect(componentMock.getVersions).toHaveBeenCalledWith('read_file', expect.anything());
+
+    componentMock.getVersions.mockClear();
+    view.componentId = 'code-review';
+    await view.updateComplete;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await view.updateComplete;
+
+    expect(componentMock.getVersions).toHaveBeenCalledWith('code-review', expect.anything());
+  });
+
   it('keeps the componentId in the URL when a filter changes on a component-detail route', async () => {
     // Regression coverage: filters used to be computed from a field
     // initializer that ran before the (now-fixed) component-id attribute

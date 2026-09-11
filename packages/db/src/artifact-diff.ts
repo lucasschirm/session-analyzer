@@ -933,6 +933,29 @@ export interface CanPurgeScope {
   readonly projectId?: string;
 }
 
+/** Builds `writeBlobIfNew`'s metadata-row insert. `content` is `null` when a
+ * `blobStore` durably persisted the bytes instead; real bytes otherwise. */
+function buildBlobInsertInput(
+  sha256: string,
+  retentionClass: ArtifactRetentionClass,
+  bytes: Uint8Array,
+  canonicalized: CanonicalizedArtifact,
+  bytesStoredElsewhere: boolean,
+): InsertArtifactBlobInput {
+  return {
+    sha256,
+    mediaType: null,
+    retentionClass,
+    content: bytesStoredElsewhere ? null : bytes,
+    size: bytes.length,
+    redactionScheme: canonicalized.sensitiveDigestScheme,
+    keyDomainId: canonicalized.keyDomainId,
+    sensitiveDigest: canonicalized.sensitiveDigest,
+    redactionChangeMarker: canonicalized.redactionChangeMarker,
+    isRedacted: canonicalized.sensitiveDigest !== null,
+  };
+}
+
 /**
  * `record()`'s write path (see `writeBlobIfNew` below) is gated purely on
  * whether a `blobStore` is injected -- it has no way to know whether that
@@ -1005,19 +1028,16 @@ export class ArtifactDiffRepository {
         content: canonicalized.content,
       });
     }
-    const insert: InsertArtifactBlobInput = {
-      sha256: blobSha256,
-      mediaType: null,
-      retentionClass,
-      content: this.blobStore ? null : bytes,
-      size: bytes.length,
-      redactionScheme: canonicalized.sensitiveDigestScheme,
-      keyDomainId: canonicalized.keyDomainId,
-      sensitiveDigest: canonicalized.sensitiveDigest,
-      redactionChangeMarker: canonicalized.redactionChangeMarker,
-      isRedacted: canonicalized.sensitiveDigest !== null,
-    };
-    await DbArtifactBlobStore.insert(queryable, insert);
+    await DbArtifactBlobStore.insert(
+      queryable,
+      buildBlobInsertInput(
+        blobSha256,
+        retentionClass,
+        bytes,
+        canonicalized,
+        Boolean(this.blobStore),
+      ),
+    );
   }
 
   async record(

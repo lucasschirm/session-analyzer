@@ -8,7 +8,7 @@ import type {
   ComponentVersionPage,
   LifecycleComparisonPage,
 } from '@lucasschirm/sal-db';
-import { css, html } from 'lit';
+import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
@@ -339,6 +339,25 @@ export class ComponentEcosystemView extends PageLitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this.hashListener);
+  }
+
+  /**
+   * Reacts to `componentId` itself changing on an already-mounted instance
+   * (e.g. browser back/forward between two different populated
+   * `:componentId` routes), mirroring `session-evidence-view.ts`'s
+   * `sessionId` hook. The `hashchange` listener above only re-reads
+   * `this.componentId` at the moment it fires, which can race the router's
+   * own attribute update (Lit applies property/attribute changes as a
+   * microtask) and observe the *previous* id — `willUpdate` fires with the
+   * update already applied, so it can't observe a stale value. `load()`'s
+   * own `if (this.loading) return` guard makes this safe to call alongside
+   * `connectedCallback()`'s initial load with no duplicate fetch.
+   */
+  willUpdate(changed: PropertyValues): void {
+    if (changed.has('componentId') && this.componentId) {
+      this.filters = parseComponentEcosystemHash(window.location.hash, this.componentId);
+      void this.load();
+    }
   }
 
   private handleHashChange(): void {
