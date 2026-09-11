@@ -36,6 +36,7 @@ import type {
   FilterField,
   FilterMetadata,
   FilterOperator,
+  HarnessOption,
   LifecycleComparisonPage,
   LifecycleComparisonRow,
   MetadataView,
@@ -2230,7 +2231,29 @@ export function createMetadataView(queryable: Queryable): MetadataView {
   return {
     getFilterMetadata: (query) => getFilterMetadata(queryable, query),
     getCoverageExplanation: (metricId, query) => getCoverageExplanation(queryable, metricId, query),
+    getHarnesses: (query) => getHarnesses(queryable, query),
   };
+}
+
+async function getHarnesses(
+  queryable: Queryable,
+  query: AnalyticsQuery | undefined,
+): Promise<readonly HarnessOption[]> {
+  const projectId = filterValue(query, 'projectId');
+  const { rows } = await queryable.exec(
+    `SELECT s.harness, COUNT(*) AS session_count
+     FROM sessions s
+     ${projectId ? 'JOIN projects p ON p.id = s.project_id' : ''}
+     WHERE 1=1
+       ${projectId ? 'AND p.id = ?' : ''}
+     GROUP BY s.harness
+     ORDER BY s.harness`,
+    projectId ? [projectId] : [],
+  );
+  return rows.map((row: SqliteRow) => ({
+    harness: asString(row.harness),
+    sessionCount: asNumber(row.session_count),
+  }));
 }
 
 async function getFilterMetadata(
