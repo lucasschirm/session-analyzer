@@ -93,6 +93,13 @@ function buildInsertSql(table: string, columns: readonly Column[]): string {
   return `INSERT INTO ${table} (${insertColumns.join(', ')}) VALUES (${placeholders})`;
 }
 
+function buildInsertManySql(table: string, columns: readonly Column[], rowCount: number): string {
+  const insertColumns = columns.map((c) => c.name);
+  const rowPlaceholders = `(${columns.map(() => '?').join(', ')})`;
+  const allPlaceholders = Array(rowCount).fill(rowPlaceholders).join(', ');
+  return `INSERT INTO ${table} (${insertColumns.join(', ')}) VALUES ${allPlaceholders}`;
+}
+
 function valueToSql(value: unknown, column: Column): SqliteValue {
   if (value === null || value === undefined) return null;
   if (column.isBoolean) return value ? 1 : 0;
@@ -1157,6 +1164,49 @@ export class RollupContributionStore {
       toInsertParams<InsertRollupContributionInput>(ROLLUP_CONTRIBUTION_COLUMNS, input, id, now),
     );
     return id;
+  }
+
+  static async insertMany(
+    queryable: Queryable,
+    inputs: readonly InsertRollupContributionInput[],
+    chunkSize = 50,
+  ): Promise<string[]> {
+    if (inputs.length === 0) return [];
+    const now = Date.now();
+    const ids: string[] = [];
+    for (let i = 0; i < inputs.length; i += chunkSize) {
+      const slice = inputs.slice(i, i + chunkSize);
+      const params: SqliteValue[] = [];
+      for (const input of slice) {
+        const record = input as unknown as Record<string, unknown>;
+        const id =
+          (record.id as string | undefined) ??
+          `ru-${deterministicId(
+            'rollup-contribution',
+            input.sessionId,
+            input.analysisReleaseId,
+            input.comparabilityGroupId,
+            input.contributionScope,
+            String(now),
+          )}`;
+        ids.push(id);
+        params.push(
+          ...toInsertParams<InsertRollupContributionInput>(
+            ROLLUP_CONTRIBUTION_COLUMNS,
+            input,
+            id,
+            now,
+          ),
+        );
+      }
+      const sql = buildInsertManySql(
+        'rollup_contributions',
+        ROLLUP_CONTRIBUTION_COLUMNS,
+        slice.length,
+      );
+      await queryable.exec(sql, params);
+    }
+    return ids;
   }
 
   static async getById(queryable: Queryable, id: string): Promise<RollupContribution | undefined> {

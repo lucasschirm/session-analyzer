@@ -349,7 +349,8 @@ export class FailureInjectionExecutor implements SqliteExecutor {
       this.rollupReadSeen &&
       !this.firstRuInsertSeen &&
       isStringStartingWith(firstParam, 'ru-') &&
-      paramCount === 16 &&
+      paramCount % 16 === 0 &&
+      paramCount >= 16 &&
       result.rows.length === 0
     ) {
       this.firstRuInsertSeen = true;

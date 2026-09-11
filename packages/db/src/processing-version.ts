@@ -122,6 +122,62 @@ async function listSessionsForRebuild(executor: SqliteExecutor): Promise<readonl
   }));
 }
 
+async function rebuildSingleSession(
+  executor: SqliteExecutor,
+  session: SessionRow,
+  policy: RollupPolicy,
+): Promise<void> {
+  await executor.transaction(async (tx) => {
+    await applySessionRollupContributions(tx, {
+      sessionId: session.id,
+      generationId: session.currentGenerationId,
+      analysisReleaseId: session.analysisReleaseId,
+      skipBucketRecompute: true,
+      rollupPolicy: policy,
+    });
+  });
+}
+
+async function rebuildSessionBatchWithFallback(
+  executor: SqliteExecutor,
+  chunk: readonly SessionRow[],
+  getPolicy: (releaseId: string) => Promise<RollupPolicy>,
+): Promise<void> {
+  try {
+    await executor.transaction(async (tx) => {
+      for (const session of chunk) {
+        const policy = await getPolicy(session.analysisReleaseId);
+        await applySessionRollupContributions(tx, {
+          sessionId: session.id,
+          generationId: session.currentGenerationId,
+          analysisReleaseId: session.analysisReleaseId,
+          skipBucketRecompute: true,
+          rollupPolicy: policy,
+        });
+      }
+    });
+  } catch (chunkErr) {
+    // Invariant: Session Failure Isolation. If a batched transaction fails,
+    // fall back to processing that chunk session-by-session so bad sessions
+    // are isolated and valid sessions in the batch are still committed.
+    console?.warn?.(
+      '[rebuildAnalyticsDerivedData] Batched chunk failed, falling back to session-by-session:',
+      chunkErr,
+    );
+    for (const session of chunk) {
+      try {
+        const policy = await getPolicy(session.analysisReleaseId);
+        await rebuildSingleSession(executor, session, policy);
+      } catch (err) {
+        console?.warn?.(
+          `[rebuildAnalyticsDerivedData] Failed to rebuild contributions for session ${session.id}:`,
+          err,
+        );
+      }
+    }
+  }
+}
+
 /**
  * Rebuilds all analytics-derived data (rollup contributions, daily/dimension
  * rollups) for every committed session in the database. Idempotent: deleting
@@ -169,6 +225,8 @@ export async function rebuildAnalyticsDerivedData(
   // model dimension from model_requests and is the bulk of the work.
   // We pass skipBucketRecompute: true because Step 2 recomputes all project and
   // portfolio rollups in bulk in a single efficient pass.
+  // Sessions are processed in batches per transaction to eliminate thousands of
+  // intermediate OPFS disk sync flushes while preserving Session Failure Isolation.
   const totalSessions = sessions.length;
   let completed = 0;
   onProgress?.({
@@ -177,36 +235,21 @@ export async function rebuildAnalyticsDerivedData(
     total: totalSessions,
     phase: 1,
     totalPhases: 2,
-    unit: 'sessions parsing',
+    unit: 'sessions processed',
   });
-  for (const session of sessions) {
-    try {
-      const policy = await getPolicy(session.analysisReleaseId);
-      await executor.transaction(async (tx) => {
-        await applySessionRollupContributions(tx, {
-          sessionId: session.id,
-          generationId: session.currentGenerationId,
-          analysisReleaseId: session.analysisReleaseId,
-          skipBucketRecompute: true,
-          rollupPolicy: policy,
-        });
-      });
-    } catch (err) {
-      // Invariant: Session Failure Isolation. A single failed session must never
-      // halt the rebuild or leave the analytics data platform permanently stuck.
-      console?.warn?.(
-        `[rebuildAnalyticsDerivedData] Failed to rebuild contributions for session ${session.id}:`,
-        err,
-      );
-    }
-    completed += 1;
+
+  const BATCH_SIZE = 50;
+  for (let i = 0; i < sessions.length; i += BATCH_SIZE) {
+    const chunk = sessions.slice(i, i + BATCH_SIZE);
+    await rebuildSessionBatchWithFallback(executor, chunk, getPolicy);
+    completed += chunk.length;
     onProgress?.({
       step: 'Rebuilding session rollups',
       completed,
       total: totalSessions,
       phase: 1,
       totalPhases: 2,
-      unit: 'sessions parsing',
+      unit: 'sessions processed',
     });
   }
 
