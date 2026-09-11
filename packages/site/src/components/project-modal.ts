@@ -1,6 +1,7 @@
 import { CAS_NAMESPACE_ROOT, validateProjectId } from '@lucasschirm/sal-sync-core';
-import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
+import { css, html, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
+import { ModalBase, type ModalStyles } from './modal-base';
 
 /**
  * Detail emitted by `project-create` when the modal is in create or
@@ -42,36 +43,13 @@ export interface ProjectEditEventDetail extends ProjectCreateEventDetail {
  * @fires modal-close
  */
 @customElement('project-modal')
-export class ProjectModal extends LitElement {
-  static styles = css`
-    :host {
-      display: contents;
-    }
+export class ProjectModal extends ModalBase {
+  overlayClass = 'project-modal';
 
-    .project-modal {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.6);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 100;
-      padding: 16px;
-    }
-
-    .panel {
-      background: var(--md-sys-color-surface, #171a21);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 12px;
-      padding: 24px;
-      width: min(480px, 100%);
-      max-height: calc(100vh - 32px);
-      overflow-y: auto;
-      box-sizing: border-box;
-      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
-    }
-
-    h2 {
+  static styles: ModalStyles = [
+    ModalBase.styles,
+    css`
+      h2 {
       margin: 0 0 16px;
       font-size: 18px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
@@ -162,9 +140,8 @@ export class ProjectModal extends LitElement {
       color: var(--md-sys-color-on-surface, #e6e9ef);
       border: 1px solid var(--md-sys-color-outline, #2a303c);
     }
-  `;
-
-  @property({ type: Boolean, reflect: true }) open = false;
+    `,
+  ];
 
   @property({ type: String }) mode: 'create' | 'edit' | 'sync-discovery' = 'create';
 
@@ -214,6 +191,8 @@ export class ProjectModal extends LitElement {
   @query('#project-name-input') private nameInput!: HTMLInputElement;
 
   willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    this.ariaLabel = this.mode === 'edit' ? 'Edit Project' : 'New Project';
     if (changed.has('open') && this.open) {
       this.resetFields();
       this.takenIdsPromise = this.loadTakenIds();
@@ -226,10 +205,8 @@ export class ProjectModal extends LitElement {
     }
   }
 
-  updated(changed: PropertyValues): void {
-    if (changed.has('open') && this.open) {
-      this.updateComplete.then(() => this.nameInput?.focus());
-    }
+  protected focusFirst(): void {
+    this.nameInput?.focus();
   }
 
   private resetFields(): void {
@@ -304,18 +281,6 @@ export class ProjectModal extends LitElement {
     return id !== this.initialReadableId && this.takenIds.has(id);
   }
 
-  private handleOverlayClick(event: MouseEvent): void {
-    if (event.target === event.currentTarget) {
-      this.close();
-    }
-  }
-
-  private handleKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      this.close();
-    }
-  }
-
   private handleNameInput(event: Event): void {
     this.name = (event.target as HTMLInputElement).value;
   }
@@ -356,10 +321,6 @@ export class ProjectModal extends LitElement {
       return;
     }
     this.emitCreate(detail);
-  }
-
-  private close(): void {
-    this.dispatchEvent(new CustomEvent('modal-close', { bubbles: true, composed: true }));
   }
 
   private emitCreate(detail: ProjectCreateEventDetail): void {
@@ -446,26 +407,17 @@ export class ProjectModal extends LitElement {
     `;
   }
 
-  render() {
-    if (!this.open) return html``;
+  renderPanel(): TemplateResult {
     const title = this.mode === 'edit' ? 'Edit Project' : 'New Project';
 
     return html`
-      <div
-        class="project-modal"
-        @click=${this.handleOverlayClick}
-        @keydown=${this.handleKeydown}
-      >
-        <div class="panel" role="dialog" aria-modal="true" aria-label=${title}>
-          <h2>${title}</h2>
-          <form @submit=${this.handleSubmit}>
-            ${this.renderIdField()}
-            ${this.renderNameField()}
-            ${this.renderDescriptionField()}
-            ${this.renderActions()}
-          </form>
-        </div>
-      </div>
+      <h2>${title}</h2>
+      <form @submit=${this.handleSubmit}>
+        ${this.renderIdField()}
+        ${this.renderNameField()}
+        ${this.renderDescriptionField()}
+        ${this.renderActions()}
+      </form>
     `;
   }
 }

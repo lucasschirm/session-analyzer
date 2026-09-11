@@ -1,8 +1,9 @@
 import { type S3ClientConfig, S3Error, S3FetchClient } from '@lucasschirm/sal-sync-core';
-import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
+import { css, html, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
+import { ModalBase, type ModalStyles } from './modal-base';
 import './delete-confirmation-modal';
 import './passkey-modal';
 import './sync-confirm-modal';
@@ -143,33 +144,15 @@ function validateForm(form: FormData, isNew: boolean, inMemory: boolean): Record
  * @fires modal-close
  */
 @customElement('connect-modal')
-export class ConnectModal extends LitElement {
-  static styles = css`
-    :host {
-      display: contents;
-    }
+export class ConnectModal extends ModalBase {
+  overlayClass = 'connect-modal';
+  ariaLabel = 'Connections';
 
-    .connect-modal {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.6);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 100;
-      padding: 16px;
-    }
+  static styles: ModalStyles = css`
+    ${ModalBase.styles}
 
     .panel {
-      background: var(--md-sys-color-surface, #171a21);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 12px;
-      padding: 24px;
       width: min(560px, 100%);
-      max-height: calc(100vh - 32px);
-      overflow-y: auto;
-      box-sizing: border-box;
-      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
     }
 
     h2 {
@@ -420,8 +403,6 @@ export class ConnectModal extends LitElement {
     }
   `;
 
-  @property({ type: Boolean, reflect: true }) open = false;
-
   /**
    * When true, renders the connection management UI inline (no fixed overlay,
    * no close button) for embedding in a page like Settings > Data Sources.
@@ -601,17 +582,9 @@ export class ConnectModal extends LitElement {
     this.syncConfirmConnectionName = '';
   }
 
-  private handleOverlayClick(event: MouseEvent): void {
-    if (event.target === event.currentTarget) this.close();
-  }
-
-  private handleKeydown(event: KeyboardEvent): void {
+  protected handleKeydown(event: KeyboardEvent): void {
     if (this.deleteDialogOpen) return;
-    if (event.key === 'Escape') this.close();
-  }
-
-  private close(): void {
-    this.dispatchEvent(new CustomEvent('modal-close', { bubbles: true, composed: true }));
+    super.handleKeydown(event);
   }
 
   private isNew(): boolean {
@@ -1170,73 +1143,53 @@ export class ConnectModal extends LitElement {
   }
 
   render(): TemplateResult {
-    if (!this.open && !this.inline) return html``;
     if (this.inline) {
       return html`
         <div class="connect-inline">
           ${this.view === 'list' ? this.renderList() : this.renderForm()}
-          <passkey-modal
-            .open=${this.passkeyOpen}
-            .mode=${this.passkeyMode}
-            @passkey-created=${this.handlePasskeySuccess}
-            @passkey-unlocked=${this.handlePasskeySuccess}
-            @passkey-forgotten=${this.handlePasskeyForgotten}
-            @modal-close=${this.handlePasskeyClose}
-          ></passkey-modal>
-
-          <delete-confirmation-modal
-            .open=${this.deleteDialogOpen}
-            .message=${this.deleteItem ? `Delete "${this.deleteItem.name}"? This cannot be undone.` : ''}
-            .confirmLabel=${'Delete Connection'}
-            .titleText=${'Delete connection?'}
-            .trigger=${this.deleteTrigger}
-            @delete-confirmed=${this.handleDeleteConfirm}
-            @modal-close=${this.handleDeleteCancel}
-          ></delete-confirmation-modal>
-
-          <sync-confirm-modal
-            ?open=${this.syncConfirmConnectionId !== ''}
-            .connectionId=${this.syncConfirmConnectionId}
-            .connectionName=${this.syncConfirmConnectionName}
-            @sync-confirmed=${this.handleSyncConfirmed}
-            @modal-close=${this.handleSyncConfirmClose}
-          ></sync-confirm-modal>
+          ${this.renderChildModals()}
         </div>
       `;
     }
     return html`
-      <div class="connect-modal" @click=${this.handleOverlayClick} @keydown=${this.handleKeydown}>
-        <div class="panel" role="dialog" aria-modal="true" aria-label="Connections">
-          ${this.view === 'list' ? this.renderList() : this.renderForm()}
-        </div>
-        <passkey-modal
-          .open=${this.passkeyOpen}
-          .mode=${this.passkeyMode}
-          @passkey-created=${this.handlePasskeySuccess}
-          @passkey-unlocked=${this.handlePasskeySuccess}
-          @passkey-forgotten=${this.handlePasskeyForgotten}
-          @modal-close=${this.handlePasskeyClose}
-        ></passkey-modal>
-
-        <delete-confirmation-modal
-          .open=${this.deleteDialogOpen}
-          .message=${this.deleteItem ? `Delete "${this.deleteItem.name}"? This cannot be undone.` : ''}
-          .confirmLabel=${'Delete Connection'}
-          .titleText=${'Delete connection?'}
-          .trigger=${this.deleteTrigger}
-          @delete-confirmed=${this.handleDeleteConfirm}
-          @modal-close=${this.handleDeleteCancel}
-        ></delete-confirmation-modal>
-
-        <sync-confirm-modal
-          ?open=${this.syncConfirmConnectionId !== ''}
-          .connectionId=${this.syncConfirmConnectionId}
-          .connectionName=${this.syncConfirmConnectionName}
-          @sync-confirmed=${this.handleSyncConfirmed}
-          @modal-close=${this.handleSyncConfirmClose}
-        ></sync-confirm-modal>
-      </div>
+      ${super.render()}
+      ${this.renderChildModals()}
     `;
+  }
+
+  private renderChildModals(): TemplateResult {
+    return html`
+      <passkey-modal
+        .open=${this.passkeyOpen}
+        .mode=${this.passkeyMode}
+        @passkey-created=${this.handlePasskeySuccess}
+        @passkey-unlocked=${this.handlePasskeySuccess}
+        @passkey-forgotten=${this.handlePasskeyForgotten}
+        @modal-close=${this.handlePasskeyClose}
+      ></passkey-modal>
+
+      <delete-confirmation-modal
+        .open=${this.deleteDialogOpen}
+        .message=${this.deleteItem ? `Delete "${this.deleteItem.name}"? This cannot be undone.` : ''}
+        .confirmLabel=${'Delete Connection'}
+        .titleText=${'Delete connection?'}
+        .trigger=${this.deleteTrigger}
+        @delete-confirmed=${this.handleDeleteConfirm}
+        @modal-close=${this.handleDeleteCancel}
+      ></delete-confirmation-modal>
+
+      <sync-confirm-modal
+        ?open=${this.syncConfirmConnectionId !== ''}
+        .connectionId=${this.syncConfirmConnectionId}
+        .connectionName=${this.syncConfirmConnectionName}
+        @sync-confirmed=${this.handleSyncConfirmed}
+        @modal-close=${this.handleSyncConfirmClose}
+      ></sync-confirm-modal>
+    `;
+  }
+
+  renderPanel(): TemplateResult {
+    return this.view === 'list' ? this.renderList() : this.renderForm();
   }
 
   private renderList(): TemplateResult {
