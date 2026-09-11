@@ -65,7 +65,11 @@ const baseYAxis = {
   nameTextStyle: { color: AXIS_TEXT_COLOR },
 };
 const baseDataZoom = [
-  { type: 'inside', start: 0, end: 100, zoomOnMouseWheel: false },
+  // Wheel zoom and pan are disabled site-wide so scrolling the page does not
+  // accidentally change the chart. The slider below still lets users change
+  // the visible window. Any new chart that adds an inside dataZoom must keep
+  // zoomOnMouseWheel and moveOnMouseWheel false (see chart-helpers.test.ts).
+  { type: 'inside', start: 0, end: 100, zoomOnMouseWheel: false, moveOnMouseWheel: false },
   {
     type: 'slider',
     start: 0,

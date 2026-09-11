@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { toEChartsOption } from '../../src/components/charts/chart-helpers';
 import {
+  CHART_TYPE_OPTIONS,
   type ChartBucket,
   type ChartSeries,
   type ChartState,
@@ -252,6 +253,26 @@ describe('toEChartsOption', () => {
       expect(inside).toBeDefined();
       expect(slider).toBeDefined();
       expect(inside?.zoomOnMouseWheel).toBe(false);
+    },
+  );
+
+  it.each(CHART_TYPE_OPTIONS)(
+    'never enables mouse-wheel zoom or pan on an inside dataZoom for %s',
+    (chartType) => {
+      const series = makeSeries({
+        chartType,
+        buckets: [makeBucket({ x: 'a', y: 10, label: 'A', series: 'S1' })],
+      });
+      const option = toEChartsOption(series) as Record<string, unknown>;
+      const dataZoom = option.dataZoom as
+        | Array<{ type?: string; zoomOnMouseWheel?: boolean; moveOnMouseWheel?: boolean }>
+        | undefined;
+      if (!dataZoom) return;
+      for (const d of dataZoom) {
+        if (d.type !== 'inside') continue;
+        expect(d.zoomOnMouseWheel).toBe(false);
+        expect(d.moveOnMouseWheel ?? false).toBe(false);
+      }
     },
   );
 
