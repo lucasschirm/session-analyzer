@@ -28,12 +28,17 @@ const searchMock = vi.hoisted(() => ({
 
 const resolveProjectIdMock = vi.hoisted(() => vi.fn());
 
+const metadataMock = vi.hoisted(() => ({
+  getHarnesses: vi.fn(),
+}));
+
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
   analyticsClient: {
     project: projectMock,
     search: searchMock,
     resolveProjectId: resolveProjectIdMock,
+    metadata: metadataMock,
   },
 }));
 
@@ -294,6 +299,10 @@ function stubProjectBehaviorLoad(): void {
     ],
     totalCount: 1,
   });
+  metadataMock.getHarnesses.mockResolvedValue([
+    { harness: 'claude-code', sessionCount: 10 },
+    { harness: 'devin', sessionCount: 5 },
+  ]);
 }
 
 beforeEach(() => {

@@ -375,37 +375,50 @@ export async function getProjectUtilizationReport(
 ): Promise<ScopeUtilizationReportDto> {
   const config = await getProjectUtilizationConfig(queryable, projectId);
 
-  const { rows: countRows } = await queryable.exec(
-    'SELECT COUNT(DISTINCT id) AS n FROM sessions WHERE project_id = ?',
-    [projectId],
-  );
+  const harnessFilter =
+    (query?.filters?.find((f) => f.field === 'harness' && f.operator === 'eq')?.value as string) ??
+    null;
+
+  let sessionCountSql = 'SELECT COUNT(DISTINCT id) AS n FROM sessions WHERE project_id = ?';
+  const sessionCountParams: SqliteValue[] = [projectId];
+  if (harnessFilter) {
+    sessionCountSql += ' AND harness = ?';
+    sessionCountParams.push(harnessFilter);
+  }
+  const { rows: countRows } = await queryable.exec(sessionCountSql, sessionCountParams);
   const totalSessions = asNumber(countRows[0]?.n);
 
-  const { rows } = await queryable.exec(
-    `SELECT
-       ci.id AS component_id,
-       ci.kind,
-       ci.native_id,
-       ci.display_name,
-       COUNT(DISTINCT sce.session_id) AS offered_sessions,
-       COUNT(DISTINCT CASE
-         WHEN COALESCE(scs.invocation_count, 0) > 0
-              OR inv.id IS NOT NULL
-              OR sce.status = 'loaded'
-         THEN sce.session_id
-       END) AS used_sessions
-     FROM session_component_exposures sce
-     JOIN sessions s ON s.id = sce.session_id
-     JOIN component_identities ci ON ci.id = sce.component_id
-     LEFT JOIN session_component_stats scs
-       ON scs.session_id = sce.session_id AND scs.component_id = sce.component_id
-     LEFT JOIN invocations inv
-       ON inv.session_id = sce.session_id AND inv.component_id = sce.component_id
-     WHERE s.project_id = ?
-       AND ci.kind IN ('tool', 'skill', 'agent')
-     GROUP BY ci.id, ci.kind, ci.native_id, ci.display_name`,
-    [projectId],
-  );
+  let querySql = `
+    SELECT
+      ci.id AS component_id,
+      ci.kind,
+      ci.native_id,
+      ci.display_name,
+      COUNT(DISTINCT sce.session_id) AS offered_sessions,
+      COUNT(DISTINCT CASE
+        WHEN COALESCE(scs.invocation_count, 0) > 0
+             OR inv.id IS NOT NULL
+             OR sce.status = 'loaded'
+        THEN sce.session_id
+      END) AS used_sessions
+    FROM session_component_exposures sce
+    JOIN sessions s ON s.id = sce.session_id
+    JOIN component_identities ci ON ci.id = sce.component_id
+    LEFT JOIN session_component_stats scs
+      ON scs.session_id = sce.session_id AND scs.component_id = sce.component_id
+    LEFT JOIN invocations inv
+      ON inv.session_id = sce.session_id AND inv.component_id = sce.component_id
+    WHERE s.project_id = ?
+      AND ci.kind IN ('tool', 'skill', 'agent')
+  `;
+  const queryParams: SqliteValue[] = [projectId];
+  if (harnessFilter) {
+    querySql += ' AND s.harness = ?';
+    queryParams.push(harnessFilter);
+  }
+  querySql += ' GROUP BY ci.id, ci.kind, ci.native_id, ci.display_name';
+
+  const { rows } = await queryable.exec(querySql, queryParams);
 
   const statRows: ComponentStatRow[] = rows.map((r) => ({
     component_id: asString(r.component_id),

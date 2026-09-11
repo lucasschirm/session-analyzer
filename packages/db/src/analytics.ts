@@ -467,9 +467,15 @@ export interface ProjectSessionSearchView {
   getChildSessionTree(sessionId: string): Promise<SessionTree>;
 }
 
+export interface HarnessOption {
+  readonly harness: string;
+  readonly sessionCount: number;
+}
+
 export interface MetadataView {
   getFilterMetadata(query?: AnalyticsQuery): Promise<FilterMetadata>;
   getCoverageExplanation(metricId: string, query?: AnalyticsQuery): Promise<CoverageExplanation>;
+  getHarnesses(query?: AnalyticsQuery): Promise<readonly HarnessOption[]>;
 }
 
 export interface AnalyticsDataSource {

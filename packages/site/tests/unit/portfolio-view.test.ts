@@ -22,9 +22,17 @@ const portfolioMock = vi.hoisted(() => ({
   getUtilizationReport: vi.fn(),
 }));
 
+const metadataMock = vi.hoisted(() => ({
+  getHarnesses: vi.fn(),
+}));
+
 const mockAnalyticsClient = vi.hoisted(() => {
-  const client = new EventTarget() as { portfolio: typeof portfolioMock } & EventTarget;
+  const client = new EventTarget() as {
+    portfolio: typeof portfolioMock;
+    metadata: typeof metadataMock;
+  } & EventTarget;
   client.portfolio = portfolioMock;
+  client.metadata = metadataMock;
   return client;
 });
 
@@ -260,6 +268,10 @@ function stubPortfolioLoad(): void {
   portfolioMock.getModelHarnessCohorts.mockResolvedValue(cohortsFixture());
   portfolioMock.getProjectList.mockResolvedValue(projectsFixture());
   portfolioMock.getUtilizationReport.mockResolvedValue(utilizationFixture());
+  metadataMock.getHarnesses.mockResolvedValue([
+    { harness: 'claude-code', sessionCount: 10 },
+    { harness: 'devin', sessionCount: 5 },
+  ]);
 }
 
 beforeEach(() => {

@@ -1,3 +1,4 @@
+import LitTypeahead from '@lucasschirm/litjs-typeahead';
 import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { analyticsClient } from '../../db/analytics-client';
@@ -12,6 +13,7 @@ import type {
   ComparisonPage,
   ConfigurationTimeline,
   Filter,
+  HarnessOption,
   OutlierPage,
   ProjectBehaviorSummary,
   ProjectSessionListItem,
@@ -130,6 +132,34 @@ export class ProjectBehaviorPage extends PageLitElement {
       padding: 8px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
       font: inherit;
+    }
+
+    .filter-bar select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239aa4b2' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      padding-right: 28px;
+    }
+
+    @media (max-width: 640px) {
+      .filter-bar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .filter-bar label {
+        min-width: 0;
+      }
+    }
+
+    @media (max-width: 400px) {
+      .filter-bar {
+        grid-template-columns: 1fr;
+      }
     }
 
     .filter-bar button {
@@ -329,6 +359,8 @@ export class ProjectBehaviorPage extends PageLitElement {
 
   private sessionSearchDebounceTimer: number | undefined;
 
+  @state() private harnessOptions: readonly HarnessOption[] = [];
+
   private hashListener = () => this.handleHashChange();
 
   connectedCallback(): void {
@@ -394,7 +426,7 @@ export class ProjectBehaviorPage extends PageLitElement {
     this.filters = { ...parsed, projectId: this.projectId };
     const query = projectBehaviorParamsToQuery(this.filters);
 
-    const [summary, trends, timeline, outliers, comparisons, utilization] =
+    const [summary, trends, timeline, outliers, comparisons, utilization, , harnesses] =
       await Promise.allSettled([
         analyticsClient.project.getSummary(analyticsProjectId, query),
         analyticsClient.project.getSessionTrendSeries(analyticsProjectId, query),
@@ -403,6 +435,13 @@ export class ProjectBehaviorPage extends PageLitElement {
         analyticsClient.project.getComparisons(analyticsProjectId, query),
         analyticsClient.project.getUtilizationReport(analyticsProjectId, query),
         this.loadSessions(analyticsProjectId),
+        analyticsClient.metadata.getHarnesses({
+          ...query,
+          filters: [
+            ...(query.filters ?? []),
+            { field: 'projectId', operator: 'eq', value: analyticsProjectId },
+          ],
+        }),
       ]);
 
     this.summary = panelStateFromResult(summary, (d) => d.headlineMetrics.length === 0);
@@ -414,6 +453,9 @@ export class ProjectBehaviorPage extends PageLitElement {
       utilization,
       (d) => !d || Object.keys(d.domains).length === 0,
     );
+    if (harnesses.status === 'fulfilled') {
+      this.harnessOptions = harnesses.value ?? [];
+    }
 
     const states = [
       this.summary.state,
@@ -544,12 +586,13 @@ export class ProjectBehaviorPage extends PageLitElement {
         </label>
         <label>
           Harness
-          <input
-            type="text"
+          <lit-typeahead
+            .items=${this.harnessOptions.map((opt) => ({ label: opt.harness, value: opt.harness }))}
             .value=${this.filters.harness ?? ''}
-            @change=${(e: Event) =>
-              this.updateFilter('harness', (e.target as HTMLInputElement).value)}
-          />
+            placeholder="All"
+            @change=${(e: CustomEvent<{ value: string }>) =>
+              this.updateFilter('harness', e.detail.value)}
+          ></lit-typeahead>
         </label>
         <label>
           Model
