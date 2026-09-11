@@ -22,6 +22,7 @@ import type {
   StoredS3Credentials,
   SyncManifest,
 } from '../types';
+import { readOpfsFileBytes, removeOpfsFileIfExists } from './opfs-file-io';
 
 export type StorageBackend = 'opfs' | 'memory';
 export type FallbackReason = 'locked' | 'unsupported';
@@ -289,6 +290,10 @@ export class DatabaseManager {
   private db: Database | null = null;
   protected sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>> | null = null;
   private storageBackend: StorageBackend = 'memory';
+  /** The filename this database was opened under (see `initialize`); used to
+   * derive a fixed, well-known `VACUUM INTO` temp path in
+   * `exportControlDatabaseOptimized`. */
+  private filename = '/session-analyzer.sqlite3';
 
   get storage(): StorageBackend {
     return this.storageBackend;
@@ -303,6 +308,7 @@ export class DatabaseManager {
   async initialize(filename = '/session-analyzer.sqlite3'): Promise<StorageBackend> {
     if (this.db) return this.storage;
 
+    this.filename = filename;
     if (!this.sqlite3) this.sqlite3 = await sqlite3InitModule();
 
     this.db = this.openDatabase(filename);
@@ -1165,6 +1171,75 @@ export class DatabaseManager {
     const sqlite3 = this.sqlite3;
     if (!sqlite3 || !db.pointer) throw new Error('Database not initialized');
     return sqlite3.capi.sqlite3_js_db_export(db.pointer);
+  }
+
+  /**
+   * Reclaims free pages and defragments the control database file. Plain
+   * `VACUUM`, same pattern as the `PRAGMA` calls above - safe to call at any
+   * time, but blocks every other control-DB operation until it completes
+   * because `db-worker.ts` serializes all requests through one queue.
+   */
+  vacuum(): void {
+    this.requireDb().exec('VACUUM;');
+  }
+
+  /**
+   * Exports the control database as bytes without SQLite's whole-database
+   * `sqlite3_js_db_export` serialize path, which requires one contiguous
+   * heap allocation the size of the whole database and fails with
+   * SQLITE_NOMEM once the WASM heap's 2 GiB ceiling is approached.
+   *
+   * When OPFS-backed: runs `VACUUM INTO 'file:<temp>?vfs=opfs'` - ordinary
+   * page-by-page VFS I/O, not a contiguous allocation - into a fixed,
+   * well-known temp filename (this database's own filename plus
+   * `.vacuum-tmp`, not a unique name per attempt) so a crash mid-export
+   * self-heals on the next run, then reads the temp file's bytes directly
+   * from OPFS and removes it (always, even if the read fails).
+   *
+   * The explicit `vfs=opfs` URI parameter is required: `VACUUM INTO` does
+   * not inherit the source connection's VFS, and a bare path would silently
+   * target the default VFS instead of OPFS. `tempPath` is always this app's
+   * own fixed control-database filename (never user input), so the literal
+   * interpolation below mirrors sqlite-wasm's own documented pattern for
+   * targeting a non-default VFS (e.g. `file:local?vfs=kvvfs`).
+   *
+   * When memory-backed (OPFS unavailable or locked): falls back to the
+   * unchanged `exportControlDatabase()` path. A memory-backed database is
+   * bounded by tab lifetime and, in practice, far smaller, so the original
+   * SQLITE_NOMEM risk is accepted as out of scope for that mode.
+   *
+   * Like `vacuum()` above, this runs through `db-worker.ts`'s single request
+   * queue, so a Download click on the control DB stalls every other pending
+   * control-DB operation (sync writes, session stubs, etc.) for the full
+   * VACUUM INTO duration. Accepted as consistent with that existing
+   * architecture, not a new regression introduced by the Download flow.
+   */
+  async exportControlDatabaseOptimized(): Promise<Uint8Array> {
+    if (this.storage === 'memory') {
+      return this.exportControlDatabase();
+    }
+
+    const db = this.requireDb();
+    const tempPath = `${this.filename}.vacuum-tmp`;
+    try {
+      db.exec(`VACUUM INTO 'file:${tempPath}?vfs=opfs';`);
+      return await readOpfsFileBytes(tempPath);
+    } finally {
+      await removeOpfsFileIfExists(tempPath);
+    }
+  }
+
+  /**
+   * Returns the control database's on-disk size in bytes via a cheap
+   * `PRAGMA page_count` / `PRAGMA page_size` read - no export, so it never
+   * risks the SQLITE_NOMEM failure that `exportControlDatabase()` can hit on
+   * a large database.
+   */
+  getSizeBytes(): number {
+    const db = this.requireDb();
+    const pageCount = Number(db.selectValue('PRAGMA page_count') ?? 0);
+    const pageSize = Number(db.selectValue('PRAGMA page_size') ?? 0);
+    return pageCount * pageSize;
   }
 
   close(): void {

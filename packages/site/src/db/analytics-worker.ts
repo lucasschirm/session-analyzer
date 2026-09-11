@@ -68,6 +68,15 @@ interface AnalyticsWorkerState {
 
 let statePromise: Promise<AnalyticsWorkerState> | null = null;
 
+// Unlike db-worker.ts, this worker does not serialize requests through one
+// promise chain — each inbound message dispatches independently. A manual
+// vacuum/export-optimize spans an async gap (VACUUM INTO -> OPFS read ->
+// OPFS remove), during which another optimize request could otherwise
+// interleave and corrupt the shared temp file. This flag rejects an
+// overlapping attempt instead.
+let optimizeInFlight = false;
+const OPTIMIZE_IN_PROGRESS_ERROR = 'Optimization already in progress';
+
 function buildBackendReport(executor: WasmSqliteExecutor): AnalyticsBackendReport {
   const { backend } = executor;
   return {
@@ -149,6 +158,12 @@ export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState
       await rebuildAnalyticsDerivedData(executor, postReprocessProgress);
       postReprocessCompleted();
       postDataChanged();
+      try {
+        await executor.vacuum();
+      } catch (vacuumError) {
+        // A VACUUM failure must never block worker startup.
+        console.error('Post-rebuild VACUUM failed', vacuumError);
+      }
     } catch (err) {
       postReprocessCompleted(err instanceof Error ? err.message : String(err));
     }
@@ -533,6 +548,51 @@ async function handleDeleteProject(
   }
 }
 
+async function handleVacuumAnalyticsDatabase(
+  state: AnalyticsWorkerState,
+): Promise<AnalyticsResponse> {
+  if (optimizeInFlight) {
+    return { id: 0, ok: false, error: OPTIMIZE_IN_PROGRESS_ERROR };
+  }
+  optimizeInFlight = true;
+  try {
+    state.executor.vacuum();
+    return { id: 0, ok: true };
+  } catch (error) {
+    return toErrorResponse(error);
+  } finally {
+    optimizeInFlight = false;
+  }
+}
+
+async function handleExportAnalyticsDatabaseOptimized(
+  state: AnalyticsWorkerState,
+): Promise<AnalyticsResponse> {
+  if (optimizeInFlight) {
+    return { id: 0, ok: false, error: OPTIMIZE_IN_PROGRESS_ERROR };
+  }
+  optimizeInFlight = true;
+  try {
+    const bytes = await state.executor.exportDatabaseOptimized();
+    return { id: 0, ok: true, bytes };
+  } catch (error) {
+    return toErrorResponse(error);
+  } finally {
+    optimizeInFlight = false;
+  }
+}
+
+async function handleGetAnalyticsDatabaseSize(
+  state: AnalyticsWorkerState,
+): Promise<AnalyticsResponse> {
+  try {
+    const result = state.executor.getSizeBytes();
+    return { id: 0, ok: true, result };
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
 export async function handleAnalyticsRequest(
   request: AnalyticsRequest,
 ): Promise<AnalyticsResponse> {
@@ -571,6 +631,12 @@ export async function handleAnalyticsRequest(
         } catch (error) {
           return toErrorResponse(error);
         }
+      case 'vacuumAnalyticsDatabase':
+        return await handleVacuumAnalyticsDatabase(state);
+      case 'exportAnalyticsDatabaseOptimized':
+        return await handleExportAnalyticsDatabaseOptimized(state);
+      case 'getAnalyticsDatabaseSize':
+        return await handleGetAnalyticsDatabaseSize(state);
       case 'close':
         await state.executor.close();
         statePromise = null;

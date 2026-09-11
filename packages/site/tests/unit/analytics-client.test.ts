@@ -316,6 +316,84 @@ describe('AnalyticsClient', () => {
     }
   });
 
+  it('vacuum() posts vacuumAnalyticsDatabase and resolves on success', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.vacuum();
+    expect(worker.posted[1].type).toBe('vacuumAnalyticsDatabase');
+    worker.respond({ id: worker.posted[1].id, ok: true });
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it('vacuum() rejects when the worker reports an error (e.g. optimize already in progress)', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.vacuum();
+    worker.respond({
+      id: worker.posted[1].id,
+      ok: false,
+      error: 'Optimization already in progress',
+    });
+
+    await expect(promise).rejects.toThrow('Optimization already in progress');
+  });
+
+  it('exportAnalyticsDatabaseOptimized() posts the request and unwraps bytes', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.exportAnalyticsDatabaseOptimized();
+    expect(worker.posted[1].type).toBe('exportAnalyticsDatabaseOptimized');
+    const bytes = new Uint8Array([1, 2, 3]);
+    worker.respond({ id: worker.posted[1].id, ok: true, bytes });
+
+    await expect(promise).resolves.toBe(bytes);
+  });
+
+  it('exportAnalyticsDatabaseOptimized() returns an empty array when the worker omits bytes', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.exportAnalyticsDatabaseOptimized();
+    worker.respond({ id: worker.posted[1].id, ok: true });
+
+    await expect(promise).resolves.toEqual(new Uint8Array());
+  });
+
+  it('exportAnalyticsDatabaseOptimized() rejects when the worker reports an error', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.exportAnalyticsDatabaseOptimized();
+    worker.respond({ id: worker.posted[1].id, ok: false, error: 'VACUUM INTO failed' });
+
+    await expect(promise).rejects.toThrow('VACUUM INTO failed');
+  });
+
+  it('getAnalyticsDatabaseSize() posts the request and returns the numeric result', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.getAnalyticsDatabaseSize();
+    expect(worker.posted[1].type).toBe('getAnalyticsDatabaseSize');
+    worker.respond({ id: worker.posted[1].id, ok: true, result: 40960 });
+
+    await expect(promise).resolves.toBe(40960);
+  });
+
+  it('getAnalyticsDatabaseSize() rejects when the worker reports an error', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.getAnalyticsDatabaseSize();
+    worker.respond({ id: worker.posted[1].id, ok: false, error: 'PRAGMA failed' });
+
+    await expect(promise).rejects.toThrow('PRAGMA failed');
+  });
+
   it('resolves a query that responds before the timeout', async () => {
     vi.useFakeTimers();
     try {
