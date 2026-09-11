@@ -47,6 +47,9 @@ export class PasskeyModal extends LitElement {
       border-radius: 12px;
       padding: 24px;
       width: min(480px, 100%);
+      max-height: calc(100vh - 32px);
+      overflow-y: auto;
+      box-sizing: border-box;
       box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
     }
 
