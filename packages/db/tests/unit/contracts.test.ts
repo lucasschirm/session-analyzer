@@ -113,6 +113,7 @@ describe('db facade contracts', () => {
 
     const component: ComponentEcosystemView = {
       getSummary: () => stub(),
+      getIdentity: () => stub(),
       getVersions: () => stub(),
       getScopes: () => stub(),
       getUtilization: () => stub(),

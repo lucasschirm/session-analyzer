@@ -17,6 +17,7 @@
  * `packages/db-core/tests/unit/manifest.test.ts`) — only the browser-only
  * OPFS file I/O is doubled.
  */
+import { ArtifactDiffRepository, createSha256ContentHasher } from '@lucasschirm/sal-db';
 import {
   ArtifactBlobStore as DbArtifactBlobStore,
   FRESH_SCHEMA_SQL,
@@ -586,5 +587,180 @@ describe('writeArtifactBlobFile', () => {
 
     expect(opfs.files.get('sha-backfill')).toEqual(bytes);
     expect(opfs.getDirectoryHandle).toHaveBeenCalledWith('artifact-blobs', { create: true });
+  });
+});
+
+/**
+ * Minimal manifest-graph fixture rows `ArtifactDiffRepository.record()` and
+ * `.getCanonicalizedArtifact()` require (tenant -> portfolio -> ingestion
+ * source -> environment/project/source project -> session -> source
+ * manifest -> manifest artifact). Mirrors the seeding helpers in
+ * `packages/db/tests/unit/artifact-diff.test.ts` -- duplicated here (not
+ * imported) because that file lives in a different package and this test's
+ * point is specifically to exercise the *real* `createOpfsArtifactBlobStore`
+ * from `packages/site`, which `packages/db`'s own tests must not import
+ * (see issue #399's Rules: `packages/db` never imports a concrete store
+ * from `packages/site`).
+ */
+async function seedDiffFixture(executor: WasmSqliteExecutor): Promise<{
+  sourceManifestId: string;
+  manifestArtifactId: string;
+}> {
+  const ids = {
+    tenant: 'ten-opfs-diff',
+    portfolio: 'pf-opfs-diff',
+    ingestionSource: 'src-opfs-diff',
+    environment: 'env-opfs-diff',
+    project: 'prj-opfs-diff',
+    sourceProject: 'sp-opfs-diff',
+    session: 'sess-opfs-diff',
+    sourceManifest: 'sm-opfs-diff',
+    manifestArtifact: 'ma-opfs-diff',
+  };
+  await executor.exec(
+    'INSERT INTO tenants (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
+    [ids.tenant, 'Test', 0, 0],
+  );
+  await executor.exec(
+    'INSERT INTO portfolios (id, tenant_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    [ids.portfolio, ids.tenant, 'Test', 0, 0],
+  );
+  await executor.exec(
+    `INSERT INTO ingestion_sources (
+      id, portfolio_id, native_source_id, display_name, type, authority,
+      supports_cursor, supports_checkpoint, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [ids.ingestionSource, ids.portfolio, 'default', 'Default', 'sync', 'local', 0, 0, 0, 0],
+  );
+  await executor.exec(
+    'INSERT INTO environments (id, ingestion_source_id, native_environment_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    [ids.environment, ids.ingestionSource, 'dev', 0, 0],
+  );
+  await executor.exec(
+    'INSERT INTO projects (id, portfolio_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    [ids.project, ids.portfolio, 'Test', 0, 0],
+  );
+  await executor.exec(
+    'INSERT INTO source_projects (id, project_id, ingestion_source_id, native_project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    [ids.sourceProject, ids.project, ids.ingestionSource, 'test', 0, 0],
+  );
+  await executor.exec(
+    'INSERT INTO sessions (id, project_id, ingestion_source_id, environment_id, harness, native_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [
+      ids.session,
+      ids.project,
+      ids.ingestionSource,
+      ids.environment,
+      'claude-code',
+      ids.session,
+      0,
+      0,
+    ],
+  );
+  await executor.exec(
+    `INSERT INTO source_manifests (
+      id, ingestion_source_id, environment_id, source_project_id, session_id,
+      manifest_schema_version, finality, occurrence_time, capture_time, ingestion_time, sequence_number,
+      native_project_id, native_session_id,
+      harness, harness_version, transcripts_captured, main_transcript_relative_path, manifest_hash,
+      reprocessing_status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      ids.sourceManifest,
+      ids.ingestionSource,
+      ids.environment,
+      ids.sourceProject,
+      ids.session,
+      3,
+      'final',
+      0,
+      0,
+      0,
+      0,
+      'test',
+      ids.session,
+      'claude-code',
+      '0.1.0',
+      0,
+      null,
+      'mh-opfs-diff',
+      'local',
+      0,
+      0,
+    ],
+  );
+  await executor.exec(
+    `INSERT INTO manifest_artifacts (
+      id, source_manifest_id, manifest_project_id, manifest_session_id, harness, harness_version,
+      manifest_schema_version, scope, relative_path, sha256, size, status,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      ids.manifestArtifact,
+      ids.sourceManifest,
+      ids.project,
+      ids.session,
+      'claude-code',
+      '0.1.0',
+      3,
+      'workspace',
+      '.claude/settings.json',
+      'sha256-placeholder',
+      1,
+      'uploaded',
+      0,
+      0,
+    ],
+  );
+  return { sourceManifestId: ids.sourceManifest, manifestArtifactId: ids.manifestArtifact };
+}
+
+describe('ArtifactDiffRepository with the real createOpfsArtifactBlobStore', () => {
+  it('round-trips real bytes through record() -> OPFS -> getCanonicalizedArtifact(), with SQL content left NULL', async () => {
+    stubOpfs();
+    const executor = await createExecutor();
+    const { sourceManifestId, manifestArtifactId } = await seedDiffFixture(executor);
+
+    const blobStore = createOpfsArtifactBlobStore(executor);
+    const hasher = createSha256ContentHasher();
+    const repository = new ArtifactDiffRepository(hasher, blobStore);
+    const content = JSON.stringify({ model: 'claude-3-5-sonnet', scope: 'project' });
+
+    const [referenceId] = await repository.record(
+      executor,
+      'pf-opfs-diff',
+      { sourceManifestId, manifestArtifactId, observingSessionId: 'sess-opfs-diff' },
+      {
+        harness: 'claude-code',
+        kind: 'settings',
+        content,
+        relativePath: '.claude/settings.json',
+        classifierVersion: '1.0.0',
+        canonicalizerVersion: '1.0.0',
+      },
+    );
+
+    const sha256 = await hasher.hash(content);
+    const { rows } = await executor.exec('SELECT content FROM artifact_blobs WHERE sha256 = ?', [
+      sha256,
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.content).toBeNull();
+
+    // The bytes must actually be retrievable straight from the store, not
+    // just indirectly through the repository.
+    const resolved = await blobStore.read(sha256);
+    expect(resolved).toBeDefined();
+    expect(new TextDecoder().decode(resolved?.content as Uint8Array)).toBe(content);
+
+    const canonicalized = await repository.getCanonicalizedArtifact(
+      executor,
+      'pf-opfs-diff',
+      referenceId,
+    );
+    expect(canonicalized).toBeDefined();
+    expect(canonicalized?.isPurged).toBe(false);
+    expect(canonicalized?.rawSha256).toBe(sha256);
+    expect(canonicalized?.content).toEqual(new TextEncoder().encode(content));
   });
 });

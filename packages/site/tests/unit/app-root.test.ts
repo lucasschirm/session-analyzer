@@ -185,6 +185,32 @@ describe('app-root', () => {
     expect(leftNav).not.toBeNull();
   });
 
+  it('binds the :componentId route param to component-ecosystem-view via the component-id attribute', async () => {
+    // Regression coverage for a routing wiring bug found while verifying
+    // issue #399's UX-026 E2E coverage: app-root.ts's route render callback
+    // sets the `component-id` (kebab-case) attribute, but
+    // component-ecosystem-view.ts's `componentId` property must declare a
+    // matching `attribute: 'component-id'` override -- Lit's default
+    // attribute name for a camelCase property is a plain lowercase
+    // (`componentid`, no dash, see @lit/reactive-element's
+    // `__attributeNameForProperty`), which a literal `component-id`
+    // attribute binding in a lit-html template never satisfies. Without the
+    // override, every `#/artifacts/:componentId` deep link in the app
+    // (Portfolio/Project Behavior/Component Ecosystem "View component"
+    // links, all built by `componentHref`) silently falls back to the
+    // generic summary view instead of the selected component's detail view.
+    window.location.hash = '#/artifacts/comp-routing-test';
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    const view = root.querySelector('component-ecosystem-view') as HTMLElement & {
+      componentId: string;
+    };
+    expect(view).not.toBeNull();
+    expect(view.componentId).toBe('comp-routing-test');
+  });
+
   it('does not render the left nav on session routes', async () => {
     window.location.hash = '#/sessions/s1';
     const app = await mount(document.createElement('app-root') as AppRoot);

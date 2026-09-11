@@ -16,6 +16,7 @@ import type {
   ComponentEcosystemView,
   ComponentFactPage,
   ComponentFactRow,
+  ComponentIdentitySummary,
   ComponentProjectSessionPage,
   ComponentProjectSessionRow,
   ComponentScope,
@@ -46,6 +47,7 @@ import type {
   SessionValidation,
   SessionValidationSummary,
 } from './analytics.js';
+import { componentDisplayName } from './analytics-portfolio.js';
 import { ArtifactDiffRepository } from './artifact-diff.js';
 import type {
   AnalyticsToken,
@@ -1024,6 +1026,7 @@ async function getTranscriptPages(
 export function createComponentEcosystemView(queryable: Queryable): ComponentEcosystemView {
   return {
     getSummary: (query) => getComponentEcosystemSummary(queryable, query),
+    getIdentity: (componentId, query) => getComponentIdentity(queryable, componentId, query),
     getVersions: (componentId, query) => getComponentVersions(queryable, componentId, query),
     getScopes: (componentId, query) => getComponentScopes(queryable, componentId, query),
     getUtilization: (componentId, query) => getComponentUtilization(queryable, componentId, query),
@@ -1119,6 +1122,29 @@ async function getComponentEcosystemSummary(
   );
 
   return { token, countsByKind, topByUtilization };
+}
+
+async function getComponentIdentity(
+  queryable: Queryable,
+  componentId: string,
+  query: AnalyticsQuery | undefined,
+): Promise<ComponentIdentitySummary | undefined> {
+  const portfolioId = await resolvePortfolioId(queryable, query);
+  if (!portfolioId) return undefined;
+
+  const identity = await ComponentIdentityStore.getById(queryable, portfolioId, componentId);
+  if (!identity) return undefined;
+
+  return {
+    componentId,
+    kind: identity.kind,
+    name: componentDisplayName(
+      identity.kind,
+      identity.nativeId,
+      identity.displayName ?? '',
+      componentId,
+    ),
+  };
 }
 
 async function getComponentVersions(

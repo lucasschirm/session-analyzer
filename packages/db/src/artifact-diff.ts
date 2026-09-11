@@ -933,6 +933,45 @@ export interface CanPurgeScope {
   readonly projectId?: string;
 }
 
+/** Builds `writeBlobIfNew`'s metadata-row insert. `content` is `null` when a
+ * `blobStore` durably persisted the bytes instead; real bytes otherwise. */
+function buildBlobInsertInput(
+  sha256: string,
+  retentionClass: ArtifactRetentionClass,
+  bytes: Uint8Array,
+  canonicalized: CanonicalizedArtifact,
+  bytesStoredElsewhere: boolean,
+): InsertArtifactBlobInput {
+  return {
+    sha256,
+    mediaType: null,
+    retentionClass,
+    content: bytesStoredElsewhere ? null : bytes,
+    size: bytes.length,
+    redactionScheme: canonicalized.sensitiveDigestScheme,
+    keyDomainId: canonicalized.keyDomainId,
+    sensitiveDigest: canonicalized.sensitiveDigest,
+    redactionChangeMarker: canonicalized.redactionChangeMarker,
+    isRedacted: canonicalized.sensitiveDigest !== null,
+  };
+}
+
+/**
+ * `record()`'s write path (see `writeBlobIfNew` below) is gated purely on
+ * whether a `blobStore` is injected -- it has no way to know whether that
+ * store durably retains bytes out-of-band. When it does (e.g. the
+ * OPFS-backed `createOpfsArtifactBlobStore`, the only store production ever
+ * injects here), this is safe: `retain()` persists the bytes durably before
+ * the authoritative SQL row is written with `content: null`. When it does
+ * not -- e.g. `packages/site/src/db/artifact-adapters.ts`'s
+ * `createBrowserArtifactBlobStore`, whose bytes live only in this same SQL
+ * `content` column -- injecting it here causes real, irrecoverable content
+ * loss: `retain()` writes real bytes into `content`, and the authoritative
+ * insert that runs immediately after unconditionally nulls it again
+ * (`INSERT OR REPLACE` always wins on every column). Do not inject a
+ * `blobStore` here unless it durably retains bytes somewhere other than
+ * this table's own `content` column.
+ */
 export class ArtifactDiffRepository {
   private readonly canonicalizer: ArtifactCanonicalizer;
   private readonly diffEngine: ArtifactDiffEngine;
@@ -955,6 +994,75 @@ export class ArtifactDiffRepository {
     return this.blobStore;
   }
 
+  /**
+   * Thin wrapper forwarding to `blobStore.retain()` with a synthesized
+   * `ResolvedArtifact`; a no-op when no `blobStore` is configured. Kept
+   * separate from `writeBlobIfNew` only so that method's own doc comment can
+   * name this call out explicitly as the first of its two writes.
+   */
+  private async retainBytesIfStorePresent(
+    sha256: string,
+    size: number,
+    content: ArtifactContent,
+  ): Promise<void> {
+    if (!this.blobStore) return;
+    await this.blobStore.retain({
+      sha256,
+      size,
+      relativePath: '',
+      mediaType: 'application/octet-stream',
+      content,
+    });
+  }
+
+  /**
+   * Content-address dedup guard: writes blob bytes/metadata only when no row
+   * for this sha256 exists yet. When `this.blobStore` is provided, retains
+   * the bytes there **first** (`retainBytesIfStorePresent`, above), then
+   * writes the authoritative metadata row **second** with `content: null` --
+   * ordering matters, since `DbArtifactBlobStore.insert` is
+   * `INSERT OR REPLACE` and whichever write lands last wins on every column
+   * (see issue #399). If `blobStore.retain()` throws, this method throws
+   * before ever writing the authoritative row, so no metadata row is left
+   * claiming bytes live in a blob store that never actually received them --
+   * the next `record()` call for this sha256 retries cleanly since
+   * `existing` still resolves to `undefined`. When `blobStore` is not
+   * provided, behavior is unchanged: real bytes land directly in
+   * `insert.content`.
+   *
+   * The two-write ordering is intentional, not an inefficiency to remove:
+   * `blobStore.retain()` does its own metadata-row upsert internally, with a
+   * default `retentionClass` and no redaction fields -- correct for a store
+   * that only knows the raw bytes. This method's own authoritative
+   * `DbArtifactBlobStore.insert()` (with the real `retentionClass` and every
+   * redaction field) runs second and wins via `INSERT OR REPLACE`. Getting
+   * it backwards reintroduces the data-loss bug this design was built to
+   * avoid. Covered by `packages/db/tests/unit/artifact-diff.test.ts`'s "with
+   * a non-default retentionClass and redaction input..." test, which passes
+   * a `retentionClass`/`sensitiveSource` that differ from
+   * `createFakeBlobStore`'s own placeholder-row defaults and asserts the
+   * final row carries the real values, not the placeholder's -- reversing
+   * this ordering fails that assertion (and also the failure-injection test
+   * below it, since a reversed order leaves a metadata row behind even when
+   * `retain()` throws).
+   */
+  private async writeBlobIfNew(
+    queryable: SqliteExecutor | SqliteTransaction,
+    blobSha256: string,
+    retentionClass: ArtifactRetentionClass,
+    canonicalized: CanonicalizedArtifact,
+  ): Promise<void> {
+    if (canonicalized.content === null) return;
+    const existing = await DbArtifactBlobStore.getBySha256(queryable, blobSha256);
+    if (existing) return;
+
+    const bytes = asBytes(canonicalized.content);
+    await this.retainBytesIfStorePresent(blobSha256, bytes.length, canonicalized.content);
+    const hasStore = Boolean(this.blobStore);
+    const insert = buildBlobInsertInput(blobSha256, retentionClass, bytes, canonicalized, hasStore);
+    await DbArtifactBlobStore.insert(queryable, insert);
+  }
+
   async record(
     queryable: SqliteExecutor | SqliteTransaction,
     portfolioId: string,
@@ -962,29 +1070,39 @@ export class ArtifactDiffRepository {
     input: ArtifactCanonicalizationInput,
   ): Promise<readonly string[]> {
     const canonicalized = await this.canonicalizer.canonicalize(input);
-    const retentionClass = context.retentionClass ?? 'retained';
     const blobSha256 = (context.blobSha256 ?? canonicalized.rawSha256) || null;
-
     if (canonicalized.content !== null && blobSha256) {
-      const existing = await DbArtifactBlobStore.getBySha256(queryable, blobSha256);
-      if (!existing) {
-        const insert: InsertArtifactBlobInput = {
-          sha256: blobSha256,
-          mediaType: null,
-          retentionClass,
-          content: asBytes(canonicalized.content),
-          size: asBytes(canonicalized.content).length,
-          redactionScheme: canonicalized.sensitiveDigestScheme,
-          keyDomainId: canonicalized.keyDomainId,
-          sensitiveDigest: canonicalized.sensitiveDigest,
-          redactionChangeMarker: canonicalized.redactionChangeMarker,
-          isRedacted: canonicalized.sensitiveDigest !== null,
-        };
-        await DbArtifactBlobStore.insert(queryable, insert);
-      }
+      const retentionClass = context.retentionClass ?? 'retained';
+      await this.writeBlobIfNew(queryable, blobSha256, retentionClass, canonicalized);
     }
 
-    const referenceId = await ArtifactReferenceStore.insert(queryable, portfolioId, {
+    const referenceId = await this.insertPrimaryReference(
+      queryable,
+      portfolioId,
+      context,
+      input,
+      blobSha256,
+      canonicalized,
+    );
+    const componentIds = await this.insertComponentReferences(
+      queryable,
+      portfolioId,
+      context,
+      blobSha256,
+      canonicalized,
+    );
+    return [referenceId, ...componentIds];
+  }
+
+  private async insertPrimaryReference(
+    queryable: SqliteExecutor | SqliteTransaction,
+    portfolioId: string,
+    context: ArtifactDiffRecordContext,
+    input: ArtifactCanonicalizationInput,
+    blobSha256: string | null,
+    canonicalized: CanonicalizedArtifact,
+  ): Promise<string> {
+    return ArtifactReferenceStore.insert(queryable, portfolioId, {
       sourceManifestId: context.sourceManifestId,
       manifestArtifactId: context.manifestArtifactId,
       blobSha256,
@@ -1002,30 +1120,56 @@ export class ArtifactDiffRepository {
       caseSensitivity: canonicalized.caseSensitivity,
       relationship: 'contains',
     });
+  }
 
-    const ids: string[] = [referenceId];
+  private insertComponentReference(
+    queryable: SqliteExecutor | SqliteTransaction,
+    portfolioId: string,
+    context: ArtifactDiffRecordContext,
+    blobSha256: string | null,
+    canonicalized: CanonicalizedArtifact,
+    component: ComponentCanonicalizationResult,
+  ): Promise<string> {
+    return ArtifactReferenceStore.insert(queryable, portfolioId, {
+      sourceManifestId: context.sourceManifestId,
+      manifestArtifactId: context.manifestArtifactId,
+      blobSha256,
+      observingSessionId: context.observingSessionId,
+      componentKind: component.kind,
+      componentId: component.componentId ?? `${component.kind}:${component.sourcePointer}`,
+      componentVersion: context.componentVersion,
+      sourcePointer: component.sourcePointer,
+      rawSha256: component.rawSha256,
+      normalizedSha256: component.normalizedSha256,
+      behaviorSha256: component.behaviorSha256,
+      canonicalizationVersion: canonicalized.canonicalizationVersion,
+      classifierVersion: canonicalized.classifierVersion,
+      rulesApplied: canonicalized.rulesApplied,
+      caseSensitivity: canonicalized.caseSensitivity,
+      relationship: 'canonicalized',
+    });
+  }
+
+  private async insertComponentReferences(
+    queryable: SqliteExecutor | SqliteTransaction,
+    portfolioId: string,
+    context: ArtifactDiffRecordContext,
+    blobSha256: string | null,
+    canonicalized: CanonicalizedArtifact,
+  ): Promise<readonly string[]> {
+    const ids: string[] = [];
     for (const component of canonicalized.components) {
-      const componentReferenceId = await ArtifactReferenceStore.insert(queryable, portfolioId, {
-        sourceManifestId: context.sourceManifestId,
-        manifestArtifactId: context.manifestArtifactId,
-        blobSha256,
-        observingSessionId: context.observingSessionId,
-        componentKind: component.kind,
-        componentId: component.componentId ?? `${component.kind}:${component.sourcePointer}`,
-        componentVersion: context.componentVersion,
-        sourcePointer: component.sourcePointer,
-        rawSha256: component.rawSha256,
-        normalizedSha256: component.normalizedSha256,
-        behaviorSha256: component.behaviorSha256,
-        canonicalizationVersion: canonicalized.canonicalizationVersion,
-        classifierVersion: canonicalized.classifierVersion,
-        rulesApplied: canonicalized.rulesApplied,
-        caseSensitivity: canonicalized.caseSensitivity,
-        relationship: 'canonicalized',
-      });
-      ids.push(componentReferenceId);
+      ids.push(
+        await this.insertComponentReference(
+          queryable,
+          portfolioId,
+          context,
+          blobSha256,
+          canonicalized,
+          component,
+        ),
+      );
     }
-
     return ids;
   }
 
