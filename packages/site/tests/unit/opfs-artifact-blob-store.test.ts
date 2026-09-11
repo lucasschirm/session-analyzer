@@ -245,6 +245,41 @@ describe('createOpfsArtifactBlobStore', () => {
 
       insertSpy.mockRestore();
     });
+
+    it('serializes overlapping retains of the same new sha256, so a failing call never rolls back a concurrent successful one', async () => {
+      // Without serialization, two overlapping retains of the same *new*
+      // sha256 could each observe "no existing row" before either inserts
+      // one -- so the failing call's rollback (correct in isolation) could
+      // delete the file the other call's successful insert now depends on.
+      const store = createOpfsArtifactBlobStore(executor);
+      const insertSpy = vi
+        .spyOn(DbArtifactBlobStore, 'insert')
+        .mockRejectedValueOnce(new Error('first attempt fails'));
+
+      const failing = store.retain({
+        sha256: 'sha-race',
+        size: 5,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: encodeText('first'),
+      });
+      const succeeding = store.retain({
+        sha256: 'sha-race',
+        size: 6,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: encodeText('second'),
+      });
+
+      await expect(failing).rejects.toThrow('first attempt fails');
+      await succeeding;
+
+      expect(opfs.files.get('sha-race')).toEqual(encodeText('second'));
+      const row = await DbArtifactBlobStore.getBySha256(executor, 'sha-race');
+      expect(row).toBeDefined();
+
+      insertSpy.mockRestore();
+    });
   });
 
   describe('read', () => {
