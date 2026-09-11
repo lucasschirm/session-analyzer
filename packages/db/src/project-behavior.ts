@@ -52,6 +52,13 @@ import {
 
 type Queryable = SqliteExecutor | SqliteTransaction;
 
+function filterValue(query: AnalyticsQuery | undefined, field: string): string | null {
+  const filter = query?.filters?.find((f) => f.field === field);
+  if (!filter) return null;
+  if (typeof filter.value === 'string') return filter.value;
+  return null;
+}
+
 function asString(value: SqliteValue): string {
   return value === null || value === undefined ? '' : String(value);
 }
@@ -289,9 +296,20 @@ export async function getProjectBehaviorSummary(
   // aggregation='distribution' — none exist — so the overview always showed
   // "No metrics available." Daily rollups aggregate per metric definition
   // across day buckets; we sum them to produce project-level totals.
-  const [allRollups, sessions] = await Promise.all([
+  const harness = filterValue(query, 'harness');
+
+  // When a harness filter is active, restrict to sessions matching that
+  // harness so the session count and eligible N reflect only the filtered
+  // subset. Rollups are not harness-scoped (they don't carry a harness
+  // dimension), so rollup-based headline metrics remain portfolio-wide
+  // until a schema migration adds harness to the rollup tables.
+  let sessions = await SessionStore.listByProject(queryable, projectId);
+  if (harness) {
+    sessions = sessions.filter((s) => s.harness === harness);
+  }
+
+  const [allRollups] = await Promise.all([
     ProjectDailyRollupStore.listByProject(queryable, projectId),
-    SessionStore.listByProject(queryable, projectId),
   ]);
   const range = resolveTimeRange(query, 0, Number.MAX_SAFE_INTEGER);
   const rollups = allRollups.filter((r) => isRollupInQuery(r, query, range));
@@ -459,7 +477,11 @@ export async function getConfigurationTimeline(
   query: AnalyticsQuery,
 ): Promise<ConfigurationTimeline> {
   const range = resolveTimeRange(query, 0, Date.now());
-  const sessions = await SessionStore.listByProject(queryable, projectId);
+  const harness = filterValue(query, 'harness');
+  let sessions = await SessionStore.listByProject(queryable, projectId);
+  if (harness) {
+    sessions = sessions.filter((s) => s.harness === harness);
+  }
   const sessionIds = sessions
     .filter((s) => {
       if (s.occurrenceTime === null) return true;
@@ -576,6 +598,16 @@ export async function getOutliers(
   const metricPlaceholders = metricDefinitionIds.map(() => '?').join(',');
   const groupPlaceholders = comparabilityGroupIds.map(() => '?').join(',');
 
+  const harness = filterValue(query, 'harness');
+  const harnessClause = harness ? 'AND s.harness = ?' : '';
+  const outlierParams: SqliteValue[] = [
+    projectId,
+    ...metricDefinitionIds,
+    ...comparabilityGroupIds,
+    analysisReleaseId,
+  ];
+  if (harness) outlierParams.push(harness);
+
   const { rows: valueRows } = await queryable.exec(
     `SELECT
        mv.id, mv.session_id, mv.metric_definition_id, mv.comparability_group_id,
@@ -590,8 +622,9 @@ export async function getOutliers(
        AND mv.comparability_group_id IN (${groupPlaceholders})
        AND tg.analysis_release_id = ?
        AND s.current_generation_id = mv.generation_id
-       AND mv.is_unavailable = 0 AND mv.is_not_applicable = 0`,
-    [projectId, ...metricDefinitionIds, ...comparabilityGroupIds, analysisReleaseId],
+       AND mv.is_unavailable = 0 AND mv.is_not_applicable = 0
+       ${harnessClause}`,
+    outlierParams,
   );
 
   const valuesByGroup = new Map<string, SqliteRow[]>();

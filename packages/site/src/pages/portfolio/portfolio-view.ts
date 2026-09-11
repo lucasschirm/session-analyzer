@@ -1,3 +1,4 @@
+import LitTypeahead from '@lucasschirm/litjs-typeahead';
 import { css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { analyticsClient } from '../../db/analytics-client';
@@ -8,6 +9,7 @@ import '../../components/metrics-card';
 import '../../components/component-utilization-panel';
 import type {
   ComponentUtilizationPage,
+  HarnessOption,
   ModelHarnessCohortPage,
   PortfolioOverview,
   PortfolioTrendSeries,
@@ -88,6 +90,34 @@ export class PortfolioView extends PageLitElement {
       padding: 8px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
       font: inherit;
+    }
+
+    .filter-bar select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239aa4b2' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      padding-right: 28px;
+    }
+
+    @media (max-width: 640px) {
+      .filter-bar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .filter-bar label {
+        min-width: 0;
+      }
+    }
+
+    @media (max-width: 400px) {
+      .filter-bar {
+        grid-template-columns: 1fr;
+      }
     }
 
     .filter-bar button {
@@ -227,6 +257,8 @@ export class PortfolioView extends PageLitElement {
     state: 'idle',
   };
 
+  @state() private harnessOptions: readonly HarnessOption[] = [];
+
   private pendingReload = false;
 
   private hashListener = () => this.handleHashChange();
@@ -273,16 +305,16 @@ export class PortfolioView extends PageLitElement {
     this.filters = params;
     const query = portfolioParamsToQuery(params);
 
-    const [overview, trends, components, cohorts, projects, utilization] = await Promise.allSettled(
-      [
+    const [overview, trends, components, cohorts, projects, utilization, harnesses] =
+      await Promise.allSettled([
         analyticsClient.portfolio.getOverview(query),
         analyticsClient.portfolio.getTrends(query),
         analyticsClient.portfolio.getComponentUtilization(query),
         analyticsClient.portfolio.getModelHarnessCohorts(query),
         analyticsClient.portfolio.getProjectList({ ...query, limit: 50 }),
         analyticsClient.portfolio.getUtilizationReport(query),
-      ],
-    );
+        analyticsClient.metadata.getHarnesses(query),
+      ]);
 
     this.overview = panelStateFromResult(overview);
     this.trends = panelStateFromResult(trends);
@@ -290,6 +322,9 @@ export class PortfolioView extends PageLitElement {
     this.cohorts = panelStateFromResult(cohorts);
     this.projects = panelStateFromResult(projects);
     this.utilization = panelStateFromResult(utilization);
+    if (harnesses.status === 'fulfilled') {
+      this.harnessOptions = harnesses.value;
+    }
 
     const states = [
       this.overview.state,
@@ -353,11 +388,12 @@ export class PortfolioView extends PageLitElement {
         </label>
         <label>
           Harness
-          <input
-            type="text"
+          <lit-typeahead
+            .items=${this.harnessOptions.map((opt) => ({ label: opt.harness, value: opt.harness }))}
             .value=${this.filters.harness ?? ''}
-            @change=${(e: Event) => this.updateFilter('harness', (e.target as HTMLInputElement).value)}
-          />
+            placeholder="All"
+            @change=${(e: CustomEvent<{ value: string }>) => this.updateFilter('harness', e.detail.value)}
+          ></lit-typeahead>
         </label>
         <label>
           Model
