@@ -323,7 +323,7 @@ export class PortfolioView extends PageLitElement {
     this.projects = panelStateFromResult(projects);
     this.utilization = panelStateFromResult(utilization);
     if (harnesses.status === 'fulfilled') {
-      this.harnessOptions = harnesses.value;
+      this.harnessOptions = harnesses.value ?? [];
     }
 
     const states = [

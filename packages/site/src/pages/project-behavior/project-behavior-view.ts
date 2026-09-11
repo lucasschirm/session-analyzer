@@ -454,7 +454,7 @@ export class ProjectBehaviorPage extends PageLitElement {
       (d) => !d || Object.keys(d.domains).length === 0,
     );
     if (harnesses.status === 'fulfilled') {
-      this.harnessOptions = harnesses.value;
+      this.harnessOptions = harnesses.value ?? [];
     }
 
     const states = [
