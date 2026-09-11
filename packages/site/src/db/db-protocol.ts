@@ -6,6 +6,7 @@
 
 import type {
   Connection,
+  ManifestFingerprint,
   PasskeyState,
   Project,
   SessionFileRecord,
@@ -59,7 +60,13 @@ export type DbRequest =
       status: SessionSyncStatus;
       details?: string;
     }
-  | { id: number; type: 'updateSessionManifest'; sessionId: string; manifest: SyncManifest }
+  | {
+      id: number;
+      type: 'updateSessionManifest';
+      sessionId: string;
+      manifest: SyncManifest;
+      fingerprint?: ManifestFingerprint;
+    }
   | { id: number; type: 'getSessionSyncManifest'; sessionId: string }
   | { id: number; type: 'getSessionUpdatedAt'; sessionId: string }
   | { id: number; type: 'failStaleSessions'; projectId: string; details: string }

@@ -8,6 +8,7 @@
 import type {
   Connection,
   DashboardSession,
+  ManifestFingerprint,
   PasskeyState,
   Project,
   SessionFileRecord,
@@ -186,8 +187,17 @@ export class DbClient {
   }
 
   /** Writes all sync mirror columns from a manifest onto a session row. */
-  updateSessionManifest(sessionId: string, manifest: SyncManifest): Promise<void> {
-    return this.call({ type: 'updateSessionManifest', sessionId, manifest }) as Promise<void>;
+  updateSessionManifest(
+    sessionId: string,
+    manifest: SyncManifest,
+    fingerprint?: ManifestFingerprint,
+  ): Promise<void> {
+    return this.call({
+      type: 'updateSessionManifest',
+      sessionId,
+      manifest,
+      fingerprint,
+    }) as Promise<void>;
   }
 
   /** Reads the sync manifest mirror columns back as a `SyncManifest`. */
