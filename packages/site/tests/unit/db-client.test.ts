@@ -190,14 +190,90 @@ describe('DbClient', () => {
     await expect(promise).resolves.toEqual(bytes);
   });
 
-  it('exportControlDatabase resolves with empty bytes when omitted', async () => {
+  it('exportControlDatabase resolves with the result field when bytes is omitted', async () => {
+    // handleResponse's bytes-unwrap is now the general `response.bytes !==
+    // undefined` check (see db-client.ts) rather than a per-request-type
+    // special case, so a response with no `bytes` field at all falls
+    // through to `result` like any other request - this defensive branch
+    // never triggers in production, since the worker's exportControlDatabase
+    // handler always sets `bytes`.
     void client.ensureReady();
     worker.respond({ id: 1, ok: true, storage: 'opfs' });
 
     const promise = client.exportControlDatabase();
     worker.respond({ id: worker.posted[1].id, ok: true });
 
-    await expect(promise).resolves.toEqual(new Uint8Array());
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  // ---------------- vacuum ----------------
+
+  it('vacuum posts vacuumControlDatabase and resolves on success', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const promise = client.vacuum();
+    expect(worker.posted[1]).toMatchObject({ type: 'vacuumControlDatabase' });
+    worker.respond({ id: worker.posted[1].id, ok: true });
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it('vacuum rejects when the worker reports an error', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const promise = client.vacuum();
+    worker.respond({ id: worker.posted[1].id, ok: false, error: 'vacuum failed' });
+
+    await expect(promise).rejects.toThrow('vacuum failed');
+  });
+
+  // ---------------- exportControlDatabaseOptimized ----------------
+
+  it('exportControlDatabaseOptimized posts the request and resolves with bytes', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const bytes = new Uint8Array([4, 5, 6]);
+    const promise = client.exportControlDatabaseOptimized();
+    expect(worker.posted[1]).toMatchObject({ type: 'exportControlDatabaseOptimized' });
+    worker.respond({ id: worker.posted[1].id, ok: true, bytes });
+
+    await expect(promise).resolves.toEqual(bytes);
+  });
+
+  it('exportControlDatabaseOptimized rejects when the worker reports an error', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const promise = client.exportControlDatabaseOptimized();
+    worker.respond({ id: worker.posted[1].id, ok: false, error: 'VACUUM INTO failed' });
+
+    await expect(promise).rejects.toThrow('VACUUM INTO failed');
+  });
+
+  // ---------------- getControlDatabaseSize ----------------
+
+  it('getControlDatabaseSize posts the request and resolves with the size', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const promise = client.getControlDatabaseSize();
+    expect(worker.posted[1]).toMatchObject({ type: 'getControlDatabaseSize' });
+    worker.respond({ id: worker.posted[1].id, ok: true, result: 8192 });
+
+    await expect(promise).resolves.toBe(8192);
+  });
+
+  it('getControlDatabaseSize rejects when the worker reports an error', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const promise = client.getControlDatabaseSize();
+    worker.respond({ id: worker.posted[1].id, ok: false, error: 'size query failed' });
+
+    await expect(promise).rejects.toThrow('size query failed');
   });
 
   // ---------------- Typed method payloads ----------------

@@ -1,18 +1,62 @@
-import { css, html } from 'lit';
+import { css, html, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
+import { repeat } from 'lit/directives/repeat.js';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/delete-confirmation-modal';
 import { type AnalyticsBackendReport, analyticsClient } from '../../db/analytics-client';
 import { dbClient } from '../../db/db-client';
 
+/** Stable row identity — never the display label (`DatabaseRow.name`), per
+ * `.agents/rules/component-identity-not-display-name.md`'s "never key on
+ * display name alone" spirit. Used to look up the right client/RPC and as
+ * the `repeat()` key. */
+type DbId = 'control' | 'analytics';
+
+/** Lifecycle of a row's Size column value — distinct from the value itself so
+ * a failed size query never collapses onto the same "—" rendering as a
+ * legitimate loading or (theoretically impossible) null-size state. */
+type SizeState = 'loading' | 'ok' | 'error';
+
 interface DatabaseRow {
+  id: DbId;
   name: string;
   filename: string;
   backend: string;
   durability: string;
   size: number | null;
-  loading: boolean;
+  sizeState: SizeState;
 }
+
+type OverlayMode = 'optimize' | 'download';
+type OverlayPhase = 'running' | 'stalled' | 'success' | 'error';
+
+/** Drives the shared "Optimizing…"/"Preparing download…" overlay used by
+ * both the per-row Optimize button and the Download flow. */
+interface OverlayState {
+  dbId: DbId;
+  mode: OverlayMode;
+  phase: OverlayPhase;
+  message?: string;
+}
+
+/** Per-database action table, keyed by stable id rather than display label —
+ * the single source of truth for which client/RPC a row's buttons call. */
+interface DbActions {
+  label: string;
+  downloadPrefix: string;
+  vacuum: () => Promise<void>;
+  exportOptimized: () => Promise<Uint8Array>;
+  getSize: () => Promise<number>;
+}
+
+/** Stall safety net (per `sync-progress-observability.md`): VACUUM/VACUUM
+ * INTO have no page-by-page progress callback, so a client-side timer is the
+ * only way to make a genuine hang observably different from a slow-but-live
+ * run. */
+const OVERLAY_STALL_MS = 30_000;
+
+/** How long the success phase stays visible before the overlay auto-closes. */
+const OVERLAY_SUCCESS_DISMISS_MS = 900;
 
 /**
  * Settings > Storage page.
@@ -122,6 +166,10 @@ export class StoragePage extends PageLitElement {
       gap: 8px;
     }
 
+    .db-table .filename {
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+    }
+
     button {
       border: none;
       padding: 6px 14px;
@@ -164,6 +212,56 @@ export class StoragePage extends PageLitElement {
       margin-bottom: 16px;
       font-size: 13px;
     }
+
+    .size-error {
+      color: var(--md-sys-color-error, #ff6b6b);
+      font-weight: 600;
+    }
+
+    .storage-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 16px;
+    }
+
+    .storage-overlay-panel {
+      background: var(--md-sys-color-surface, #171a21);
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-radius: 12px;
+      padding: 24px;
+      width: min(420px, 100%);
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+      font-size: 14px;
+    }
+
+    .storage-overlay-panel p {
+      margin: 0 0 8px;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+    }
+
+    .storage-overlay-panel p:last-child {
+      margin-bottom: 0;
+    }
+
+    .overlay-stalled {
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      font-size: 13px;
+    }
+
+    .overlay-error {
+      color: var(--md-sys-color-error, #ff6b6b);
+    }
+
+    .overlay-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 12px;
+    }
   `,
   ];
 
@@ -179,9 +277,39 @@ export class StoragePage extends PageLitElement {
 
   @state() private deleting = false;
 
+  @state() private overlay: OverlayState | null = null;
+
+  private overlayStallTimer?: number;
+
+  private overlaySuccessTimer?: number;
+
+  /** Single source of truth for which client/RPC a row's buttons call —
+   * keyed by stable `DbId`, never by the mutable display label. */
+  private readonly dbActions: Record<DbId, DbActions> = {
+    control: {
+      label: 'Control DB',
+      downloadPrefix: 'session-analyzer',
+      vacuum: () => dbClient.vacuum(),
+      exportOptimized: () => dbClient.exportControlDatabaseOptimized(),
+      getSize: () => dbClient.getControlDatabaseSize(),
+    },
+    analytics: {
+      label: 'Analytics DB',
+      downloadPrefix: 'sal-analytics',
+      vacuum: () => analyticsClient.vacuum(),
+      exportOptimized: () => analyticsClient.exportAnalyticsDatabaseOptimized(),
+      getSize: () => analyticsClient.getAnalyticsDatabaseSize(),
+    },
+  };
+
   async connectedCallback(): Promise<void> {
     super.connectedCallback();
     void this.loadStorageInfo();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.clearOverlayTimers();
   }
 
   private async loadStorageInfo(): Promise<void> {
@@ -193,66 +321,66 @@ export class StoragePage extends PageLitElement {
           .then(() => analyticsClient.getBackend())
           .catch(() => null),
       ]);
+      if (!this.isConnected) return;
       this.controlBackend = controlStorage;
       this.analyticsBackend = analyticsReport;
+      this.databases = this.buildInitialRows(controlStorage, analyticsReport);
 
-      // Load database sizes via export byte length (guaranteed to work even
-      // when OPFS files are locked by sync access handles).
-      const databases: DatabaseRow[] = [
-        {
-          name: 'Control DB',
-          filename: '/session-analyzer.sqlite3',
-          backend: controlStorage === 'opfs' ? 'OPFS' : 'In-Memory',
-          durability: controlStorage === 'opfs' ? 'Persistent' : 'Ephemeral',
-          size: null,
-          loading: true,
-        },
-        {
-          name: 'Analytics DB',
-          filename: '/sal-analytics.sqlite3',
-          backend: analyticsReport
-            ? analyticsReport.backendName === 'wasm-opfs'
-              ? 'OPFS'
-              : 'In-Memory'
-            : 'Unknown',
-          durability: analyticsReport?.durability ?? 'Unknown',
-          size: null,
-          loading: true,
-        },
-      ];
-      this.databases = databases;
-
-      // Fetch sizes in parallel — non-fatal if either fails.
-      void this.loadControlSize();
-      void this.loadAnalyticsSize();
+      // Fetch sizes in parallel via the lightweight PRAGMA-based RPC (never
+      // the whole-database export path) — non-fatal if either fails.
+      void this.loadSize('control');
+      void this.loadSize('analytics');
     } catch (error) {
+      if (!this.isConnected) return;
       this.error = `Failed to load storage info: ${(error as Error).message}`;
     }
   }
 
-  private async loadControlSize(): Promise<void> {
-    try {
-      const bytes = await dbClient.exportControlDatabase();
-      this.databases = this.databases.map((db) =>
-        db.name === 'Control DB' ? { ...db, size: bytes.byteLength, loading: false } : db,
-      );
-    } catch {
-      this.databases = this.databases.map((db) =>
-        db.name === 'Control DB' ? { ...db, size: null, loading: false } : db,
-      );
-    }
+  private buildInitialRows(
+    controlStorage: 'opfs' | 'memory',
+    analyticsReport: AnalyticsBackendReport | null,
+  ): DatabaseRow[] {
+    return [
+      {
+        id: 'control',
+        name: this.dbActions.control.label,
+        filename: '/session-analyzer.sqlite3',
+        backend: controlStorage === 'opfs' ? 'OPFS' : 'In-Memory',
+        durability: controlStorage === 'opfs' ? 'Persistent' : 'Ephemeral',
+        size: null,
+        sizeState: 'loading',
+      },
+      {
+        id: 'analytics',
+        name: this.dbActions.analytics.label,
+        filename: '/sal-analytics.sqlite3',
+        backend: analyticsReport
+          ? analyticsReport.backendName === 'wasm-opfs'
+            ? 'OPFS'
+            : 'In-Memory'
+          : 'Unknown',
+        durability: analyticsReport?.durability ?? 'Unknown',
+        size: null,
+        sizeState: 'loading',
+      },
+    ];
   }
 
-  private async loadAnalyticsSize(): Promise<void> {
+  private setRowSize(id: DbId, size: number | null, sizeState: SizeState): void {
+    this.databases = this.databases.map((db) => (db.id === id ? { ...db, size, sizeState } : db));
+  }
+
+  /** Refreshes a single row's Size column via the cheap PRAGMA-based RPC.
+   * Used both on initial load and after a VACUUM (which changes page count). */
+  private async loadSize(id: DbId): Promise<void> {
+    this.setRowSize(id, null, 'loading');
     try {
-      const bytes = await analyticsClient.exportAnalyticsDatabase();
-      this.databases = this.databases.map((db) =>
-        db.name === 'Analytics DB' ? { ...db, size: bytes.byteLength, loading: false } : db,
-      );
+      const size = await this.dbActions[id].getSize();
+      if (!this.isConnected) return;
+      this.setRowSize(id, size, 'ok');
     } catch {
-      this.databases = this.databases.map((db) =>
-        db.name === 'Analytics DB' ? { ...db, size: null, loading: false } : db,
-      );
+      if (!this.isConnected) return;
+      this.setRowSize(id, null, 'error');
     }
   }
 
@@ -263,24 +391,104 @@ export class StoragePage extends PageLitElement {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   }
 
-  private async handleDownload(event: Event, dbName: string): Promise<void> {
-    event.stopPropagation();
-    try {
-      if (dbName === 'Control DB') {
-        await dbClient.exportAndDownload();
-      } else {
-        const bytes = await analyticsClient.exportAnalyticsDatabase();
-        const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = `sal-analytics-${new Date().toISOString().slice(0, 10)}.sqlite`;
-        anchor.click();
-        URL.revokeObjectURL(url);
-      }
-    } catch (error) {
-      this.error = `Failed to download database: ${(error as Error).message}`;
+  /** Builds the download-anchor and clicks it, exactly as the pre-existing
+   * analytics download path did: `Blob` → object URL → temp `<a>` → click →
+   * revoke. */
+  private triggerDownload(id: DbId, bytes: Uint8Array): void {
+    const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    const prefix = this.dbActions[id].downloadPrefix;
+    anchor.download = `${prefix}-${new Date().toISOString().slice(0, 10)}.sqlite`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private clearOverlayTimers(): void {
+    if (this.overlayStallTimer !== undefined) {
+      window.clearTimeout(this.overlayStallTimer);
+      this.overlayStallTimer = undefined;
     }
+    if (this.overlaySuccessTimer !== undefined) {
+      window.clearTimeout(this.overlaySuccessTimer);
+      this.overlaySuccessTimer = undefined;
+    }
+  }
+
+  /** Schedules a one-shot phase transition, applied only if the overlay still
+   * belongs to `dbId` and is still in `fromPhase` — guards against a stale
+   * timer from a finished/superseded operation clobbering current state.
+   * `toPhase: null` closes the overlay instead of transitioning it. */
+  private armPhaseTimer(
+    dbId: DbId,
+    fromPhase: OverlayPhase,
+    toPhase: OverlayPhase | null,
+    delayMs: number,
+  ): number {
+    return window.setTimeout(() => {
+      if (this.overlay?.dbId === dbId && this.overlay.phase === fromPhase) {
+        this.overlay = toPhase ? { ...this.overlay, phase: toPhase } : null;
+      }
+    }, delayMs);
+  }
+
+  /** Shared state machine for both the Optimize button and the Download flow:
+   * running → (stalled after `OVERLAY_STALL_MS` if still pending) →
+   * success (auto-closes) | error (stays open until dismissed). Guards every
+   * post-await continuation with `isConnected` so a result that resolves
+   * after the page navigates away never mutates state or triggers a
+   * surprise download. */
+  private async runOverlay(
+    dbId: DbId,
+    mode: OverlayMode,
+    action: () => Promise<void>,
+  ): Promise<void> {
+    this.clearOverlayTimers();
+    this.overlay = { dbId, mode, phase: 'running' };
+    this.overlayStallTimer = this.armPhaseTimer(dbId, 'running', 'stalled', OVERLAY_STALL_MS);
+
+    try {
+      await action();
+      if (!this.isConnected) return;
+      this.clearOverlayTimers();
+      this.overlay = { dbId, mode, phase: 'success' };
+      if (mode === 'optimize') void this.loadSize(dbId);
+      this.overlaySuccessTimer = this.armPhaseTimer(
+        dbId,
+        'success',
+        null,
+        OVERLAY_SUCCESS_DISMISS_MS,
+      );
+    } catch (error) {
+      if (!this.isConnected) return;
+      this.clearOverlayTimers();
+      this.overlay = { dbId, mode, phase: 'error', message: (error as Error).message };
+      if (mode === 'optimize') void this.loadSize(dbId);
+    }
+  }
+
+  private dismissOverlay(): void {
+    this.clearOverlayTimers();
+    this.overlay = null;
+  }
+
+  private async handleDownload(event: Event, id: DbId): Promise<void> {
+    event.stopPropagation();
+    await this.runOverlay(id, 'download', async () => {
+      const bytes = await this.dbActions[id].exportOptimized();
+      // Guard the download side effect itself, not just the overlay state
+      // that follows it — `runOverlay`'s own `isConnected` check runs after
+      // this closure returns, which would be too late to stop the anchor
+      // click if the page navigated away while the export was in flight.
+      if (!this.isConnected) return;
+      this.triggerDownload(id, bytes);
+    });
+  }
+
+  private async handleOptimize(event: Event, id: DbId): Promise<void> {
+    event.stopPropagation();
+    await this.runOverlay(id, 'optimize', () => this.dbActions[id].vacuum());
   }
 
   private handleDeleteClick(): void {
@@ -315,7 +523,7 @@ export class StoragePage extends PageLitElement {
       }
 
       // 5. Clear OPFS — remove all files in the origin private file system.
-      if (navigator.storage && navigator.storage.getDirectory) {
+      if (navigator.storage?.getDirectory) {
         try {
           const root = await navigator.storage.getDirectory();
           // Remove all entries recursively.
@@ -349,6 +557,91 @@ export class StoragePage extends PageLitElement {
       this.deleting = false;
       this.error = `Failed to delete data: ${(error as Error).message}`;
     }
+  }
+
+  /** Renders the Size column body: distinguishes loading, a resolved value
+   * (including a legitimate `0`), and a failed size query — never collapsing
+   * failure onto the same "—" a legitimate empty/loading state would show. */
+  private renderSizeCell(db: DatabaseRow): TemplateResult {
+    if (db.sizeState === 'loading') return html`Calculating…`;
+    if (db.sizeState === 'error') return html`<span class="size-error">Error</span>`;
+    return html`${this.formatSize(db.size)}`;
+  }
+
+  private isRowBusy(db: DatabaseRow): boolean {
+    if (db.sizeState === 'loading') return true;
+    return this.overlay?.dbId === db.id;
+  }
+
+  private overlayHeading(overlay: OverlayState): string {
+    const label = this.dbActions[overlay.dbId].label;
+    return overlay.mode === 'download' ? `Preparing ${label} download…` : `Optimizing ${label}…`;
+  }
+
+  /** Body of the shared overlay, one branch per state-machine phase. */
+  private renderOverlayBody(overlay: OverlayState): TemplateResult {
+    switch (overlay.phase) {
+      case 'running':
+        return html`<p>${this.overlayHeading(overlay)}</p>`;
+      case 'stalled':
+        return html`
+          <p>${this.overlayHeading(overlay)}</p>
+          <p class="overlay-stalled">This is taking longer than expected. The operation is still running.</p>
+        `;
+      case 'success':
+        return html`
+          <p>${overlay.mode === 'download' ? 'Download ready.' : 'Optimization complete.'}</p>
+        `;
+      case 'error':
+        return html`
+          <p class="overlay-error">Failed: ${overlay.message}</p>
+          <div class="overlay-actions">
+            <button
+              type="button"
+              class="secondary"
+              @click=${this.dismissOverlay}
+            >
+              Dismiss
+            </button>
+          </div>
+        `;
+    }
+  }
+
+  private renderOverlay(): TemplateResult | string {
+    const overlay = this.overlay;
+    if (!overlay) return '';
+    return html`
+      <div class="storage-overlay" role="status" aria-live="polite">
+        <div class="storage-overlay-panel">${this.renderOverlayBody(overlay)}</div>
+      </div>
+    `;
+  }
+
+  private renderDatabaseRow(db: DatabaseRow): TemplateResult {
+    return html`
+      <tr>
+        <td>${db.name}<br /><small class="filename">${db.filename}</small></td>
+        <td>${db.backend}</td>
+        <td>${this.renderSizeCell(db)}</td>
+        <td class="actions">
+          <button
+            class="secondary"
+            ?disabled=${this.isRowBusy(db)}
+            @click=${(event: Event) => this.handleDownload(event, db.id)}
+          >
+            Download
+          </button>
+          <button
+            class="secondary"
+            ?disabled=${this.isRowBusy(db)}
+            @click=${(event: Event) => this.handleOptimize(event, db.id)}
+          >
+            Optimize
+          </button>
+        </td>
+      </tr>
+    `;
   }
 
   render() {
@@ -418,23 +711,10 @@ export class StoragePage extends PageLitElement {
             </tr>
           </thead>
           <tbody>
-            ${this.databases.map(
-              (db) => html`
-                <tr>
-                  <td>${db.name}<br /><small style="color: var(--md-sys-color-on-surface-variant)">${db.filename}</small></td>
-                  <td>${db.backend}</td>
-                  <td>${db.loading ? 'Calculating…' : this.formatSize(db.size)}</td>
-                  <td class="actions">
-                    <button
-                      class="secondary"
-                      ?disabled=${db.loading}
-                      @click=${(event: Event) => this.handleDownload(event, db.name)}
-                    >
-                      Download
-                    </button>
-                  </td>
-                </tr>
-              `,
+            ${repeat(
+              this.databases,
+              (db) => db.id,
+              (db) => this.renderDatabaseRow(db),
             )}
           </tbody>
         </table>
@@ -459,6 +739,8 @@ export class StoragePage extends PageLitElement {
         @delete-confirmed=${this.handleDeleteConfirm}
         @modal-close=${this.handleDeleteCancel}
       ></delete-confirmation-modal>
+
+      ${this.renderOverlay()}
     `;
   }
 }

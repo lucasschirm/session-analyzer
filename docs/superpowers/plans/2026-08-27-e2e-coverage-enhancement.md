@@ -53,6 +53,7 @@ backfilled into §6.1 by this plan:
 | `passkey.spec.ts` | Locked-vault passkey prompt and "Forgot" vault deletion (UX-016) |
 | `portfolio-refresh.spec.ts` | Live portfolio metric/chart refresh after a second upload (UX-003) |
 | `sessions-filter.spec.ts` | Scope filter URL sync and reload persistence (UX-010) |
+| `storage-optimize.spec.ts` | Storage page per-row Optimize/Download overlay terminal states and Size-column loading/ok/error distinction (UX-025) |
 | `sync.spec.ts` | Full CAS sync journey, retry, cancel, offline, reload reconciliation, second-tab follower, plus catalog entries UX-004 (ingestion seam), UX-005 (heartbeat), UX-006 (export content), UX-008 (S3 5xx affordance) |
 | `transcript-xss.spec.ts` | Transcript XSS sanitization (UX-011) |
 | `ux-002-empty-error.spec.ts` | Empty vs. error state disambiguation (UX-002) |
@@ -137,6 +138,7 @@ created (issue #160); none are proposed-but-unimplemented.
 | UX-022 | Manual upload of a Devin bundle is detected, ingested, and reaches the session dashboard | `devin-journey.spec.ts` | `importDevinSession` (devin-manual-import.ts) | 4 | 4 | 4 | 64 | P0 | GREEN |
 | UX-023 | Devin transcript drill-down and pagination are visible; missing evidence rows are reported | `devin-journey.spec.ts` | `switchSessionEvidenceTab` (devin-manual-import.ts) | 4 | 4 | 4 | 64 | P0 | GREEN |
 | UX-024 | Devin drill-down empty states are structurally distinct from error states | `devin-journey.spec.ts` | empty/error affordance assertions | 4 | 4 | 4 | 64 | P0 | GREEN |
+| UX-025 | Storage page: per-row Optimize button, optimize-then-download flow (serialize-free `VACUUM`/`VACUUM INTO` export), and Size-column error-vs-loading distinction | `storage-optimize.spec.ts` | terminal success (Control DB Download fires a real, `verifyExportContents`-checked download; Analytics DB Optimize success re-queries and changes the displayed Size) + terminal failure (Download export failure renders a distinct, dismissable overlay banner, scoped away from the Size column's own error state, never a silent "—") + Size column loading/ok/error assertion (delayed fake-worker response makes the transient "Calculating…" phase observable before the dedicated `.size-error` state lands) + stall-safety-net phase transition at the 30s timeout via `page.clock.install()`/`fastForward` (no real 30s wait, no test-only seam) — deliberately **not** `assertHeartbeat` (heartbeat.ts), since the "Optimizing…" overlay has no advancing signal to assert against (see `.agents/rules/sync-progress-observability.md` and plan `wild-popping-sundae.md` §1e) | 4 | 4 | 4 | 64 | P0 | GREEN |
 
 ### 6.2 Tier B — Analytics Pipeline (`PIPE-###`)
 
@@ -232,7 +234,18 @@ blocked by `.agents/rules/e2e-coverage-required.md`.
 
 ## 9. Open gaps / backlog
 
-No entries are currently `PROPOSED`. As of this backfill (issue #160),
+UX-025 (Storage page Optimize/optimize-then-download/Size-column fix,
+`wild-popping-sundae.md` Phase 1) moved from `PROPOSED` to `GREEN` in a
+follow-up PR: the product change (per-row Optimize button, `VACUUM
+INTO`-based serialize-free export, and a `sizeState` field distinguishing a
+failed size query from loading/legitimate-empty) shipped first with the row
+registered but the spec deferred; `storage-optimize.spec.ts` now implements
+it end to end (Control DB real-download content check, Analytics DB
+Optimize-refreshes-Size, Download failure banner, Size loading/ok/error
+distinction, and the 30s stall transition via `page.clock`), completing
+§8's `PROPOSED` → `IMPLEMENTING` → `GREEN` lifecycle for this surface.
+
+As of the original backfill (issue #160),
 every ID in §6 corresponds to a pre-existing, currently-passing test;
 none were newly written by this change. New candidate surfaces (e.g. from
 the devin-sync feature, #138) register here first as `PROPOSED` with a

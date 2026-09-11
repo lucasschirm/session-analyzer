@@ -281,6 +281,31 @@ export class DbClient {
     return this.call({ type: 'getControlDb' }) as Promise<DbDatabaseHandle>;
   }
 
+  /**
+   * Reclaims free pages and defragments the control database file. Blocks
+   * every other control-DB operation app-wide until it finishes, because the
+   * worker serializes all requests through one queue.
+   */
+  vacuum(): Promise<void> {
+    return this.call({ type: 'vacuumControlDatabase' }) as Promise<void>;
+  }
+
+  /**
+   * Exports the control database as bytes without SQLite's whole-database
+   * serialize path: `VACUUM INTO` an OPFS temp file and read it back when
+   * OPFS-backed (sidesteps the SQLITE_NOMEM ceiling `exportControlDatabase`
+   * can hit), or the unchanged `exportControlDatabase()` path when
+   * memory-backed.
+   */
+  exportControlDatabaseOptimized(): Promise<Uint8Array> {
+    return this.call({ type: 'exportControlDatabaseOptimized' }) as Promise<Uint8Array>;
+  }
+
+  /** Returns the control database's on-disk size in bytes via a cheap PRAGMA read (no export). */
+  getControlDatabaseSize(): Promise<number> {
+    return this.call({ type: 'getControlDatabaseSize' }) as Promise<number>;
+  }
+
   /** Exports the SQLite file and triggers a browser download. */
   async exportAndDownload(): Promise<void> {
     const bytes = await this.exportControlDatabase();
@@ -342,8 +367,12 @@ export class DbClient {
     if (pendingCall.requestType === 'init') {
       this.fallbackReason = response.fallbackReason;
       pendingCall.resolve(response.storage ?? 'memory');
-    } else if (pendingCall.requestType === 'exportControlDatabase') {
-      pendingCall.resolve(response.bytes ?? new Uint8Array());
+    } else if (response.bytes !== undefined) {
+      // Generalized bytes-unwrap: any response carrying `bytes` (currently
+      // exportControlDatabase and exportControlDatabaseOptimized) resolves
+      // with the transferred bytes, so this isn't a growing per-request-type
+      // special case.
+      pendingCall.resolve(response.bytes);
     } else {
       pendingCall.resolve(response.result);
     }

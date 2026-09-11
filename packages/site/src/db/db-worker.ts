@@ -187,6 +187,20 @@ const handlers: Record<DbRequest['type'], Handler> = {
     const db = manager.getControlDb();
     return { id: request.id, ok: true, result: { filename: db.filename, pointer: db.pointer } };
   },
+  vacuumControlDatabase: (request) => {
+    manager.vacuum();
+    return { id: request.id, ok: true };
+  },
+  exportControlDatabaseOptimized: async (request) => ({
+    id: request.id,
+    ok: true,
+    bytes: await manager.exportControlDatabaseOptimized(),
+  }),
+  getControlDatabaseSize: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getSizeBytes(),
+  }),
 };
 
 async function handleRequest(request: DbRequest): Promise<DbResponse> {
