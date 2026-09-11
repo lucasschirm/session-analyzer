@@ -117,7 +117,7 @@ export class StoragePage extends PageLitElement {
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
     }
 
-    .db-table td.actions {
+    .db-table td.actions .actions-group {
       display: flex;
       gap: 8px;
     }
@@ -178,6 +178,10 @@ export class StoragePage extends PageLitElement {
   @state() private deleteDialogOpen = false;
 
   @state() private deleting = false;
+
+  @state() private singleDeleteTarget: DatabaseRow | null = null;
+
+  @state() private singleDeleting = false;
 
   async connectedCallback(): Promise<void> {
     super.connectedCallback();
@@ -289,6 +293,59 @@ export class StoragePage extends PageLitElement {
 
   private handleDeleteCancel(): void {
     this.deleteDialogOpen = false;
+  }
+
+  private handleSingleDeleteClick(db: DatabaseRow): void {
+    this.singleDeleteTarget = db;
+  }
+
+  private handleSingleDeleteCancel(): void {
+    this.singleDeleteTarget = null;
+  }
+
+  /**
+   * Removes a single SQLite database file (and its SQLite sidecar files)
+   * from the OPFS root. Non-fatal when OPFS is unavailable or the file does
+   * not exist — the worker reset already ensures a fresh DB on next boot.
+   */
+  private async removeOpfsFile(filename: string): Promise<void> {
+    if (!navigator.storage?.getDirectory) return;
+    try {
+      const root = await navigator.storage.getDirectory();
+      const path = filename.replace(/^\//, '');
+      const candidates = [path, `${path}-journal`, `${path}-wal`, `${path}-shm`];
+      await Promise.all(candidates.map((name) => root.removeEntry(name).catch(() => undefined)));
+    } catch {
+      // OPFS may not be available — non-fatal.
+    }
+  }
+
+  private async handleSingleDeleteConfirm(): Promise<void> {
+    const target = this.singleDeleteTarget;
+    if (!target) return;
+    this.singleDeleteTarget = null;
+    this.singleDeleting = true;
+
+    try {
+      if (target.name === 'Control DB') {
+        // 1. Terminate the db worker (releases OPFS file handles).
+        dbClient.reset();
+        // 2. Remove the OPFS file so a fresh empty DB is created on next boot.
+        await this.removeOpfsFile(target.filename);
+      } else {
+        // 1. Terminate the analytics worker (releases OPFS file handles).
+        analyticsClient.reset();
+        // 2. Remove the OPFS file so a fresh empty DB is created on next boot.
+        await this.removeOpfsFile(target.filename);
+      }
+
+      // Reload so the app re-initializes with a fresh DB for the deleted
+      // database while preserving the other database's OPFS file.
+      window.location.reload();
+    } catch (error) {
+      this.singleDeleting = false;
+      this.error = `Failed to delete database: ${(error as Error).message}`;
+    }
   }
 
   private async handleDeleteConfirm(): Promise<void> {
@@ -425,13 +482,22 @@ export class StoragePage extends PageLitElement {
                   <td>${db.backend}</td>
                   <td>${db.loading ? 'Calculating…' : this.formatSize(db.size)}</td>
                   <td class="actions">
-                    <button
-                      class="secondary"
-                      ?disabled=${db.loading}
-                      @click=${(event: Event) => this.handleDownload(event, db.name)}
-                    >
-                      Download
-                    </button>
+                    <div class="actions-group">
+                      <button
+                        class="secondary"
+                        ?disabled=${db.loading}
+                        @click=${(event: Event) => this.handleDownload(event, db.name)}
+                      >
+                        Download
+                      </button>
+                      <button
+                        class="danger"
+                        ?disabled=${db.loading || this.singleDeleting}
+                        @click=${() => this.handleSingleDeleteClick(db)}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               `,
@@ -458,6 +524,19 @@ export class StoragePage extends PageLitElement {
         .titleText=${'Delete all data?'}
         @delete-confirmed=${this.handleDeleteConfirm}
         @modal-close=${this.handleDeleteCancel}
+      ></delete-confirmation-modal>
+
+      <delete-confirmation-modal
+        .open=${this.singleDeleteTarget !== null}
+        .message=${
+          this.singleDeleteTarget
+            ? `This will permanently delete the ${this.singleDeleteTarget.name} (${this.singleDeleteTarget.filename}). All data stored in this database will be lost. This cannot be undone.`
+            : ''
+        }
+        .confirmLabel=${'Delete Database'}
+        .titleText=${this.singleDeleteTarget ? `Delete ${this.singleDeleteTarget.name}?` : 'Delete?'}
+        @delete-confirmed=${this.handleSingleDeleteConfirm}
+        @modal-close=${this.handleSingleDeleteCancel}
       ></delete-confirmation-modal>
     `;
   }
