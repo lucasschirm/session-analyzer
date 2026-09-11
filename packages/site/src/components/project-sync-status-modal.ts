@@ -46,6 +46,8 @@ export class ProjectSyncStatusModal extends LitElement {
       padding: 24px;
       width: min(640px, 100%);
       max-height: min(80vh, 600px);
+      overflow-y: auto;
+      box-sizing: border-box;
       display: flex;
       flex-direction: column;
       gap: 16px;
