@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { analyticsClient } from '../db/analytics-client';
 import { dbClient } from '../db/db-client';
+import { formatDate, formatSessionTitle } from '../lib/format';
 import { navigateTo } from '../router';
 import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 import type { Project } from '../types';
@@ -15,7 +16,7 @@ function formatRelativeDate(timestamp: number): string {
   if (diff < day) return 'Updated today';
   if (diff < 2 * day) return 'Updated yesterday';
   if (diff < 7 * day) return `Updated ${Math.floor(diff / day)} days ago`;
-  return new Date(timestamp).toLocaleDateString();
+  return formatDate(timestamp);
 }
 
 /**
@@ -331,8 +332,15 @@ export class LeftNav extends LitElement {
     const hasNewSessions = sessionCount > prevSessionCount;
     if (runEnded || hasNewProjects || hasNewSessions) {
       void this.loadProjects();
+      const uniqueProjectIds = new Set<string>();
       for (const key of this.expandedProjectSlugs) {
-        void this.loadSessionsForProject(key, undefined, undefined, true);
+        const match = this.projects.find(
+          (p) => p.id === key || (p.readable_id || p.id) === key || p.name === key,
+        );
+        uniqueProjectIds.add(match ? match.id : key);
+      }
+      for (const pId of uniqueProjectIds) {
+        void this.loadSessionsForProject(pId, undefined, undefined, true);
       }
     }
   };
@@ -356,13 +364,10 @@ export class LeftNav extends LitElement {
             (p) => (p.readable_id || p.id) === slug || p.id === slug || p.name === slug,
           );
           const pId = project ? project.id : slug;
-          const pName = project?.name;
           const next = new Set(this.expandedProjectSlugs);
           next.add(pId);
-          next.add(slug);
-          if (pName) next.add(pName);
           this.expandedProjectSlugs = next;
-          void this.loadSessionsForProject(pId, slug, pName);
+          void this.loadSessionsForProject(pId, slug, project?.name);
         }
       }
     } catch {
@@ -375,8 +380,6 @@ export class LeftNav extends LitElement {
   private handleProjectClick(slug: string, projectId: string, projectName?: string): void {
     const next = new Set(this.expandedProjectSlugs);
     next.add(projectId);
-    next.add(slug);
-    if (projectName) next.add(projectName);
     this.expandedProjectSlugs = next;
     void this.loadSessionsForProject(projectId, slug, projectName);
   }
@@ -390,14 +393,11 @@ export class LeftNav extends LitElement {
     e.preventDefault();
     e.stopPropagation();
     const next = new Set(this.expandedProjectSlugs);
-    if (next.has(projectId) || next.has(slug) || (projectName && next.has(projectName))) {
+    if (next.has(projectId) || next.has(slug)) {
       next.delete(projectId);
       next.delete(slug);
-      if (projectName) next.delete(projectName);
     } else {
       next.add(projectId);
-      next.add(slug);
-      if (projectName) next.add(projectName);
       void this.loadSessionsForProject(projectId, slug, projectName);
     }
     this.expandedProjectSlugs = next;
@@ -429,6 +429,49 @@ export class LeftNav extends LitElement {
     };
   }
 
+  private async resolveTargetProjectId(
+    projectId: string,
+    slug?: string,
+    projectName?: string,
+  ): Promise<string> {
+    const fromId = await analyticsClient?.resolveProjectId?.(projectId);
+    if (fromId) return fromId;
+    if (projectName) {
+      const fromName = await analyticsClient?.resolveProjectId?.(projectName);
+      if (fromName) return fromName;
+    }
+    if (slug) {
+      const fromSlug = await analyticsClient?.resolveProjectId?.(slug);
+      if (fromSlug) return fromSlug;
+    }
+    return projectId;
+  }
+
+  private storeLoadedSessions(keys: (string | undefined)[], items: ProjectSessionListItem[]): void {
+    const next = { ...this.projectSessions };
+    for (const key of keys) {
+      if (key) next[key] = items;
+    }
+    this.projectSessions = next;
+  }
+
+  private storeSessionError(keys: (string | undefined)[], error: unknown): void {
+    const msg = error instanceof Error ? error.message : String(error);
+    const next = { ...this.projectSessionsError };
+    for (const key of keys) {
+      if (key) next[key] = msg;
+    }
+    this.projectSessionsError = next;
+  }
+
+  private clearSessionErrors(keys: (string | undefined)[]): void {
+    const next = { ...this.projectSessionsError };
+    for (const key of keys) {
+      if (key) delete next[key];
+    }
+    this.projectSessionsError = next;
+  }
+
   private async loadSessionsForProject(
     projectId: string,
     slug?: string,
@@ -437,37 +480,17 @@ export class LeftNav extends LitElement {
   ): Promise<void> {
     if (this.shouldSkipSessionLoad(projectId, slug, force)) return;
     this.setSessionLoading(projectId, slug, true);
-    const nextErrors = { ...this.projectSessionsError };
-    delete nextErrors[projectId];
-    if (slug) delete nextErrors[slug];
-    if (projectName) delete nextErrors[projectName];
-    this.projectSessionsError = nextErrors;
+    const keys = [projectId, slug, projectName];
+    this.clearSessionErrors(keys);
 
     try {
-      const targetId =
-        (await analyticsClient?.resolveProjectId?.(projectId)) ||
-        (projectName ? await analyticsClient?.resolveProjectId?.(projectName) : null) ||
-        (slug ? await analyticsClient?.resolveProjectId?.(slug) : null) ||
-        projectId;
+      const targetId = await this.resolveTargetProjectId(projectId, slug, projectName);
       const page = await analyticsClient?.search?.getProjectSessionList?.(targetId, { limit: 20 });
       if (page) {
-        const items = [...page.items];
-        this.projectSessions = {
-          ...this.projectSessions,
-          [projectId]: items,
-          [targetId]: items,
-          ...(slug ? { [slug]: items } : {}),
-          ...(projectName ? { [projectName]: items } : {}),
-        };
+        this.storeLoadedSessions([...keys, targetId], [...page.items]);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.projectSessionsError = {
-        ...this.projectSessionsError,
-        [projectId]: msg,
-        ...(slug ? { [slug]: msg } : {}),
-        ...(projectName ? { [projectName]: msg } : {}),
-      };
+      this.storeSessionError(keys, err);
     } finally {
       this.setSessionLoading(projectId, slug, false);
     }
@@ -565,11 +588,10 @@ export class LeftNav extends LitElement {
                                               this.path === `/sessions/${session.sessionId}` ||
                                               this.path ===
                                                 `/sessions/${encodeURIComponent(session.sessionId)}`;
-                                            const displayTitle =
-                                              session.title ||
-                                              (session.startedAt
-                                                ? `Session ${new Date(session.startedAt).toLocaleDateString()}`
-                                                : 'Session');
+                                            const displayTitle = formatSessionTitle(
+                                              session.title,
+                                              session.startedAt,
+                                            );
                                             return html`
                                               <a
                                                 href="#/sessions/${encodeURIComponent(session.sessionId)}"

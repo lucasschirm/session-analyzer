@@ -180,6 +180,17 @@ export class EchartsBase extends LitElement {
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
+    .table-row.interactive {
+      cursor: pointer;
+    }
+
+    .table-row.interactive:hover,
+    .table-row.interactive:focus-visible {
+      background: var(--md-sys-color-surface-container-high, #29303d);
+      outline: 2px solid var(--md-sys-color-primary, #4f8cff);
+      outline-offset: -2px;
+    }
+
     a {
       color: var(--md-sys-color-primary, #4f8cff);
       text-decoration: none;
@@ -345,6 +356,32 @@ export class EchartsBase extends LitElement {
     `;
   }
 
+  private handleTableRowKeyDown(event: KeyboardEvent, index: number, row: TableRow): void {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      this.handleTableRowClick(index, row);
+    }
+  }
+
+  private renderTableRow(row: TableRow, index: number) {
+    return html`
+      <tr
+        class="table-row interactive"
+        tabindex="0"
+        role="button"
+        @click=${() => this.handleTableRowClick(index, row)}
+        @keydown=${(e: KeyboardEvent) => this.handleTableRowKeyDown(e, index, row)}
+      >
+        <td>${row.x}</td>
+        <td>${row.y}</td>
+        <td>${row.label}</td>
+        <td>
+          ${row.evidenceHref ? html`<a href="${row.evidenceHref}" tabindex="-1">${row.series}</a>` : row.series}
+        </td>
+      </tr>
+    `;
+  }
+
   private renderTable() {
     if (!this.series) return '';
     const rows = toTableRows(this.series);
@@ -364,23 +401,7 @@ export class EchartsBase extends LitElement {
             ${repeat(
               rows,
               (row, index) => `${index}-${row.series}-${row.x}`,
-              (row, index) => html`
-                <tr
-                  @click=${() => this.handleTableRowClick(index, row)}
-                  style=${row.evidenceHref ? 'cursor: pointer;' : ''}
-                >
-                  <td>${row.x}</td>
-                  <td>${row.y}</td>
-                  <td>${row.label}</td>
-                  <td>
-                    ${
-                      row.evidenceHref
-                        ? html`<a href="${row.evidenceHref}">${row.series}</a>`
-                        : row.series
-                    }
-                  </td>
-                </tr>
-              `,
+              (row, index) => this.renderTableRow(row, index),
             )}
           </tbody>
         </table>

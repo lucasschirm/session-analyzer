@@ -72,3 +72,21 @@ export function formatDateTime(value: string | number | undefined | null): strin
     minute: '2-digit',
   });
 }
+
+/** Formats a timestamp into a localized date string without time, guarding against NaN. */
+export function formatDate(value: string | number | undefined | null): string {
+  if (!value) return '';
+  const ts = typeof value === 'number' ? value : Date.parse(String(value));
+  if (Number.isNaN(ts)) return '';
+  return new Date(ts).toLocaleDateString();
+}
+
+/** Formats a human-readable session title with safe fallback to "Session <Date>" or "Session". */
+export function formatSessionTitle(
+  title: string | undefined | null,
+  startedAt: string | number | undefined | null,
+): string {
+  if (title?.trim()) return title.trim();
+  const dateStr = formatDate(startedAt);
+  return dateStr ? `Session ${dateStr}` : 'Session';
+}

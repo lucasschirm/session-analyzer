@@ -2,7 +2,7 @@ import type { ProjectSessionListItem } from '@lucasschirm/sal-db';
 import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
-import { formatDateTime } from '../lib/format';
+import { formatDateTime, formatSessionTitle } from '../lib/format';
 import { navigateTo } from '../router';
 
 /**
@@ -192,11 +192,7 @@ export class ProjectSessionsTable extends LitElement {
               this.sessions,
               (session) => session.sessionId,
               (session) => {
-                const title =
-                  session.title ||
-                  (session.startedAt
-                    ? `Session ${new Date(session.startedAt).toLocaleDateString()}`
-                    : 'Session');
+                const title = formatSessionTitle(session.title, session.startedAt);
                 const subagentCount = session.subagentCount ?? 0;
                 return html`
                   <tr @click=${(e: Event) => this.handleSessionClick(e, session.sessionId)}>

@@ -1,4 +1,9 @@
-import type { SqliteExecutor, SqliteRow, SqliteTransaction } from '@lucasschirm/sal-db-core';
+import type {
+  SqliteExecutor,
+  SqliteRow,
+  SqliteTransaction,
+  SqliteValue,
+} from '@lucasschirm/sal-db-core';
 import {
   ComponentIdentityStore,
   SessionComponentStatStore,
@@ -658,12 +663,14 @@ function createRawTimingPoint(msg: TimingMessage, req?: TimingRequest): RawTimin
   if (!req) {
     return { msg, req, contextTokens: null, generationTokens: null, totalTokens: null };
   }
-  const inp = asNumber(req.inputTokens);
-  const cr = asNumber(req.cacheReadTokens);
-  const cc = asNumber(req.cacheCreationTokens);
-  const contextTokens = inp + cr + cc;
+  const hasContext =
+    req.inputTokens != null || req.cacheReadTokens != null || req.cacheCreationTokens != null;
+  const contextTokens = hasContext
+    ? asNumber(req.inputTokens) + asNumber(req.cacheReadTokens) + asNumber(req.cacheCreationTokens)
+    : null;
   const generationTokens = asOptionalNumber(req.outputTokens) ?? null;
-  const totalTokens = contextTokens + (generationTokens ?? 0);
+  const totalTokens =
+    contextTokens !== null ? contextTokens + (generationTokens ?? 0) : generationTokens;
   return { msg, req, contextTokens, generationTokens, totalTokens };
 }
 
@@ -708,23 +715,16 @@ function toContextTimingPoint(raw: RawTimingPoint, index: number): ContextTiming
   };
 }
 
-async function extractPointsFromNormalizedEvents(
-  queryable: Queryable,
-  sessionId: string,
-  generationId: string,
-): Promise<ContextTimingPoint[]> {
-  const { rows } = await queryable.exec(
-    `SELECT id, event_type, raw_details
-     FROM normalized_events
-     WHERE session_id = ? AND ( ? IS NULL OR ? = '' OR generation_id = ? )
-       AND event_type IN ('turn', 'message', 'model_request', 'model_usage')
-     ORDER BY id`,
-    [sessionId, generationId, generationId, generationId],
-  );
-  if (rows.length === 0) return [];
+interface ParsedTimingData {
+  messages: TimingMessage[];
+  reqByTurn: Map<string, TimingRequest>;
+  reqByEvent: Map<string, TimingRequest>;
+  reqByOrder: Map<number, TimingRequest>;
+}
 
+function parseNormalizedTimingEvents(rows: readonly Record<string, unknown>[]): ParsedTimingData {
   const turnsMap = new Map<string, TimingTurn>();
-  const messagesList: TimingMessage[] = [];
+  const messages: TimingMessage[] = [];
   const reqByTurn = new Map<string, TimingRequest>();
   const reqByEvent = new Map<string, TimingRequest>();
   const reqByOrder = new Map<number, TimingRequest>();
@@ -746,18 +746,61 @@ async function extractPointsFromNormalizedEvents(
       if (sourceEventId) reqByEvent.set(sourceEventId, req);
       if (typeof req.requestOrder === 'number') reqByOrder.set(req.requestOrder, req);
     } else if (eventType === 'message') {
-      messagesList.push(parseTimingMessage(recordId, parentId, sourceEventId, payload, turnsMap));
+      messages.push(parseTimingMessage(recordId, parentId, sourceEventId, payload, turnsMap));
     }
   }
+  return { messages, reqByTurn, reqByEvent, reqByOrder };
+}
 
-  if (messagesList.length === 0) return [];
-  sortTimingMessages(messagesList);
+async function extractPointsFromNormalizedEvents(
+  queryable: Queryable,
+  sessionId: string,
+  generationId: string,
+): Promise<ContextTimingPoint[]> {
+  const { rows } = await queryable.exec(
+    `SELECT id, event_type, raw_details
+     FROM normalized_events
+     WHERE session_id = ? AND ( ? IS NULL OR ? = '' OR generation_id = ? )
+       AND event_type IN ('turn', 'message', 'model_request', 'model_usage')
+     ORDER BY id`,
+    [sessionId, generationId, generationId, generationId],
+  );
+  if (rows.length === 0) return [];
 
-  const rawPoints = messagesList.map((m) =>
+  const { messages, reqByTurn, reqByEvent, reqByOrder } = parseNormalizedTimingEvents(rows);
+  if (messages.length === 0) return [];
+  sortTimingMessages(messages);
+
+  const rawPoints = messages.map((m) =>
     createRawTimingPoint(m, resolveMessageRequest(m, reqByTurn, reqByEvent, reqByOrder)),
   );
   fillForwardContextTokens(rawPoints);
   return rawPoints.map(toContextTimingPoint);
+}
+
+interface BucketSeriesPoint {
+  total: number | null;
+  context: number | null;
+  generation: number | null;
+  timestamp?: string;
+}
+
+function aggregateChartSeriesBuckets(
+  rows: readonly Record<string, unknown>[],
+): Map<number, BucketSeriesPoint> {
+  const byBucket = new Map<number, BucketSeriesPoint>();
+  for (const row of rows) {
+    const bucket = asNumber(row.bucket_index);
+    const existing = byBucket.get(bucket) ?? { total: null, context: null, generation: null };
+    existing.timestamp = formatTimestamp(row.bucket_start);
+    const value = asOptionalNumber(row.metric_value);
+    const type = asString(row.series_type);
+    if (type === 'total_tokens') existing.total = value;
+    if (type === 'context_tokens') existing.context = value;
+    if (type === 'generation_tokens') existing.generation = value;
+    byBucket.set(bucket, existing);
+  }
+  return byBucket;
 }
 
 async function extractPointsFromChartSeriesFallback(
@@ -774,23 +817,7 @@ async function extractPointsFromChartSeriesFallback(
     [sessionId, generationId, generationId],
   );
 
-  const byBucket = new Map<
-    number,
-    { total: number | null; context: number | null; generation: number | null; timestamp?: string }
-  >();
-  for (const row of rows) {
-    const bucket = asNumber(row.bucket_index);
-    const existing = byBucket.get(bucket) ?? { total: null, context: null, generation: null };
-    existing.timestamp = formatTimestamp(row.bucket_start);
-    const value = asOptionalNumber(row.metric_value);
-    const type = asString(row.series_type);
-    if (type === 'total_tokens') existing.total = value;
-    if (type === 'context_tokens') existing.context = value;
-    if (type === 'generation_tokens') existing.generation = value;
-    byBucket.set(bucket, existing);
-  }
-
-  return Array.from(byBucket.entries()).map(([bucket, point]) => ({
+  return Array.from(aggregateChartSeriesBuckets(rows).entries()).map(([bucket, point]) => ({
     turnNumber: bucket,
     messageIndex: bucket,
     timestamp: point.timestamp,
@@ -1956,6 +1983,88 @@ function filterTimeRange(query: AnalyticsQuery | undefined): {
   };
 }
 
+function formatSessionFallbackTitle(startTime: unknown): string {
+  if (startTime === null || startTime === undefined || startTime === '') return 'Session';
+  const ts = typeof startTime === 'number' ? startTime : Date.parse(String(startTime));
+  if (Number.isNaN(ts) || ts <= 0) return 'Session';
+  return `Session ${new Date(ts).toLocaleDateString()}`;
+}
+
+function mapProjectSessionRow(row: SqliteRow): ProjectSessionListItem {
+  const rawTitle = asOptionalString(row.ai_title) || asOptionalString(row.slug);
+  const startTime = row.start_time ?? row.occurrence_time;
+  return {
+    sessionId: asString(row.id),
+    rootSessionId: asOptionalString(row.root_session_id) ?? asString(row.id),
+    parentSessionId: asOptionalString(row.parent_session_id) ?? undefined,
+    harness: asString(row.harness),
+    finality: finalityForList(asString(row.finality)),
+    title: rawTitle || formatSessionFallbackTitle(startTime),
+    subagentCount: asNumber(row.subagent_count),
+    startedAt: formatTimestamp(startTime),
+    endedAt: formatTimestamp(row.end_time),
+    coverage: sessionFinalityToCoverage(asString(row.finality)),
+  };
+}
+
+interface ProjectSessionWhereResult {
+  whereClause: string;
+  bindParams: SqliteValue[];
+  limit: number;
+  offset: number;
+}
+
+function buildProjectSessionWhere(
+  query: AnalyticsQuery,
+  projectId: string,
+): ProjectSessionWhereResult {
+  const harness = filterValue(query, 'harness') ?? '';
+  const mode = filterValue(query, 'mode') ?? '';
+  const taskCohort = filterValue(query, 'taskCohort') ?? '';
+  const finality = filterValue(query, 'finality') ?? '';
+  const search = filterValue(query, 'search');
+  const sessionsScope = filterValue(query, 'sessions') ?? '';
+  const { start, end } = filterTimeRange(query);
+  const searchPattern = search ? `%${search}%` : '';
+
+  const whereClause = `
+    WHERE s.project_id = ?
+      AND (? = '' OR s.harness = ?)
+      AND (? = '' OR s.mode = ?)
+      AND (? = '' OR s.task_cohort = ?)
+      AND (? = '' OR s.finality = ?)
+      AND (? IS NULL OR s.occurrence_time >= ?)
+      AND (? IS NULL OR s.occurrence_time <= ?)
+      AND (? = '' OR s.id LIKE ? OR s.ai_title LIKE ? OR s.slug LIKE ?)
+      AND (? = '' OR (? = 'main' AND sr.parent_session_id IS NULL) OR (? = 'sub_agents' AND sr.parent_session_id IS NOT NULL))
+  `;
+
+  const bindParams = [
+    projectId,
+    harness,
+    harness,
+    mode,
+    mode,
+    taskCohort,
+    taskCohort,
+    finality,
+    finality,
+    start,
+    start,
+    end,
+    end,
+    searchPattern,
+    searchPattern,
+    searchPattern,
+    searchPattern,
+    sessionsScope === 'all' ? '' : sessionsScope,
+    sessionsScope === 'all' ? '' : sessionsScope,
+    sessionsScope === 'all' ? '' : sessionsScope,
+  ];
+
+  return { whereClause, bindParams, limit: pageLimit(query), offset: pageOffset(query) };
+}
+
 async function getProjectSessionList(
   queryable: Queryable,
   projectId: string,
@@ -1966,53 +2075,7 @@ async function getProjectSessionList(
     generationId: query.generationId ?? 'unknown',
     comparabilityGroupId: query.comparabilityGroupId ?? 'project-sessions',
   });
-
-  const harness = filterValue(query, 'harness');
-  const mode = filterValue(query, 'mode');
-  const taskCohort = filterValue(query, 'taskCohort');
-  const finality = filterValue(query, 'finality');
-  const search = filterValue(query, 'search');
-  const sessionsScope = filterValue(query, 'sessions') ?? '';
-  const { start, end } = filterTimeRange(query);
-
-  const limit = pageLimit(query);
-  const offset = pageOffset(query);
-  const page = limit + 1;
-  const searchPattern = search ? `%${search}%` : '';
-
-  const whereClause = `
-    WHERE s.project_id = ?
-      AND (COALESCE(?, '') = '' OR s.harness = ?)
-      AND (COALESCE(?, '') = '' OR s.mode = ?)
-      AND (COALESCE(?, '') = '' OR s.task_cohort = ?)
-      AND (COALESCE(?, '') = '' OR s.finality = ?)
-      AND (? IS NULL OR ? IS NULL OR (s.occurrence_time >= ? AND s.occurrence_time <= ?))
-      AND (? = '' OR s.id LIKE ? OR s.ai_title LIKE ? OR s.slug LIKE ?)
-      AND (? = '' OR (? = 'main' AND sr.parent_session_id IS NULL) OR (? = 'sub_agents' AND sr.parent_session_id IS NOT NULL))
-  `;
-
-  const bindParams = [
-    projectId,
-    harness ?? '',
-    harness ?? '',
-    mode ?? '',
-    mode ?? '',
-    taskCohort ?? '',
-    taskCohort ?? '',
-    finality ?? '',
-    finality ?? '',
-    start,
-    end,
-    start ?? 0,
-    end ?? 0,
-    searchPattern,
-    searchPattern,
-    searchPattern,
-    searchPattern,
-    sessionsScope === 'all' ? '' : sessionsScope,
-    sessionsScope === 'all' ? '' : sessionsScope,
-    sessionsScope === 'all' ? '' : sessionsScope,
-  ];
+  const { whereClause, bindParams, limit, offset } = buildProjectSessionWhere(query, projectId);
 
   const [{ rows }, { rows: countRows }] = await Promise.all([
     queryable.exec(
@@ -2026,46 +2089,18 @@ async function getProjectSessionList(
        ${whereClause}
        ORDER BY s.occurrence_time DESC, s.created_at DESC, s.id
        LIMIT ? OFFSET ?`,
-      [...bindParams, page, offset],
+      [...bindParams, limit + 1, offset],
     ),
     queryable.exec(
-      `SELECT COUNT(*) AS total
-       FROM sessions s
-       LEFT JOIN session_relations sr ON sr.session_id = s.id
-       ${whereClause}`,
+      `SELECT COUNT(*) AS total FROM sessions s LEFT JOIN session_relations sr ON sr.session_id = s.id ${whereClause}`,
       bindParams,
     ),
   ]);
 
-  const totalCount = asNumber(countRows[0]?.total);
-  const hasMore = rows.length > limit;
-  const pageRows = rows.slice(0, limit);
-  function mapProjectSessionRow(row: SqliteRow): ProjectSessionListItem {
-    const rawTitle = asOptionalString(row.ai_title) || asOptionalString(row.slug);
-    const startTime = row.start_time ?? row.occurrence_time;
-    const fallbackTitle = startTime
-      ? `Session ${new Date(asString(startTime)).toLocaleDateString()}`
-      : 'Session';
-    return {
-      sessionId: asString(row.id),
-      rootSessionId: asOptionalString(row.root_session_id) ?? asString(row.id),
-      parentSessionId: asOptionalString(row.parent_session_id) ?? undefined,
-      harness: asString(row.harness),
-      finality: finalityForList(asString(row.finality)),
-      title: rawTitle || fallbackTitle,
-      subagentCount: asNumber(row.subagent_count),
-      startedAt: formatTimestamp(startTime),
-      endedAt: formatTimestamp(row.end_time),
-      coverage: sessionFinalityToCoverage(asString(row.finality)),
-    };
-  }
-
-  const items: ProjectSessionListItem[] = pageRows.map(mapProjectSessionRow);
-
   return {
-    items,
-    totalCount,
-    nextCursor: hasMore ? String(offset + limit) : undefined,
+    items: rows.slice(0, limit).map(mapProjectSessionRow),
+    totalCount: asNumber(countRows[0]?.total),
+    nextCursor: rows.length > limit ? String(offset + limit) : undefined,
     previousCursor: offset > 0 ? String(Math.max(0, offset - limit)) : undefined,
     generationToken: tokens.generationId,
     analysisReleaseToken: tokens.analysisReleaseId,

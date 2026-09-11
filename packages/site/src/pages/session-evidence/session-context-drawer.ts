@@ -3,6 +3,7 @@ import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { formatChartValue } from '../../components/charts/chart-types';
+import { formatDateTime } from '../../lib/format';
 import { renderMarkdown } from '../../lib/markdown';
 
 /**
@@ -310,6 +311,11 @@ export class SessionContextDrawer extends LitElement {
     const first = focusables[0];
     const last = focusables[focusables.length - 1];
     const active = this.shadowRoot?.activeElement;
+    if (!active || !focusables.includes(active as HTMLElement)) {
+      e.preventDefault();
+      first.focus();
+      return;
+    }
     if (e.shiftKey && active === first) {
       e.preventDefault();
       last.focus();
@@ -322,6 +328,8 @@ export class SessionContextDrawer extends LitElement {
   private handleKeyDown = (e: KeyboardEvent): void => {
     if (!this.message) return;
     if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
       this.close();
     } else if (e.key === 'Tab') {
       this.trapTabKey(e);
@@ -337,9 +345,102 @@ export class SessionContextDrawer extends LitElement {
     );
   };
 
+  private renderTokenStats(m: ContextTimingPoint) {
+    return html`
+      <div class="stat-card">
+        <span class="stat-label">Context Tokens</span>
+        <span class="stat-value highlight">
+          ${m.contextTokens !== null ? formatChartValue(m.contextTokens) : '—'}
+        </span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Generation Tokens</span>
+        <span class="stat-value">
+          ${m.generationTokens !== null ? formatChartValue(m.generationTokens) : '—'}
+        </span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Total Tokens</span>
+        <span class="stat-value">
+          ${m.totalTokens !== null ? formatChartValue(m.totalTokens) : '—'}
+        </span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Input Tokens</span>
+        <span class="stat-value">
+          ${m.inputTokens !== null && m.inputTokens !== undefined ? formatChartValue(m.inputTokens) : '—'}
+        </span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Cache Read</span>
+        <span class="stat-value">
+          ${m.cacheReadTokens !== null && m.cacheReadTokens !== undefined ? formatChartValue(m.cacheReadTokens) : '—'}
+        </span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Cache Creation</span>
+        <span class="stat-value">
+          ${m.cacheCreationTokens !== null && m.cacheCreationTokens !== undefined ? formatChartValue(m.cacheCreationTokens) : '—'}
+        </span>
+      </div>
+    `;
+  }
+
+  private renderMetadataStats(m: ContextTimingPoint) {
+    const formattedDate = m.timestamp ? formatDateTime(m.timestamp) : '';
+    return html`
+      ${
+        m.thinkingTokens !== null && m.thinkingTokens !== undefined
+          ? html`
+        <div class="stat-card">
+          <span class="stat-label">Thinking Tokens</span>
+          <span class="stat-value">${formatChartValue(m.thinkingTokens)}</span>
+        </div>`
+          : ''
+      }
+      ${
+        m.effort
+          ? html`
+        <div class="stat-card">
+          <span class="stat-label">Reasoning Effort</span>
+          <span class="stat-value">${m.effort}</span>
+        </div>`
+          : ''
+      }
+      ${
+        m.model
+          ? html`
+        <div class="stat-card full-width">
+          <span class="stat-label">Model</span>
+          <span class="stat-value">${m.model}</span>
+        </div>`
+          : ''
+      }
+      ${
+        formattedDate
+          ? html`
+        <div class="stat-card full-width">
+          <span class="stat-label">Timestamp</span>
+          <span class="stat-value" style="font-size: 13px;">${formattedDate}</span>
+        </div>`
+          : ''
+      }
+    `;
+  }
+
+  private renderContent() {
+    return html`
+      <div class="content-section">
+        <h3 class="section-heading">Message Content</h3>
+        <div class="content-box">
+          ${this.cachedRenderedHtml ? unsafeHTML(this.cachedRenderedHtml) : html`<p class="empty-text">No content recorded for this message.</p>`}
+        </div>
+      </div>
+    `;
+  }
+
   render() {
     if (!this.message) return null;
-
     const m = this.message;
     const index = m.messageIndex ?? m.turnNumber;
     const role = m.role ?? 'unknown';
@@ -369,117 +470,10 @@ export class SessionContextDrawer extends LitElement {
 
         <div class="drawer-body">
           <div class="stats-grid">
-            <div class="stat-card">
-              <span class="stat-label">Context Tokens</span>
-              <span class="stat-value highlight">
-                ${m.contextTokens !== null ? formatChartValue(m.contextTokens) : '—'}
-              </span>
-            </div>
-
-            <div class="stat-card">
-              <span class="stat-label">Generation Tokens</span>
-              <span class="stat-value">
-                ${m.generationTokens !== null ? formatChartValue(m.generationTokens) : '—'}
-              </span>
-            </div>
-
-            <div class="stat-card">
-              <span class="stat-label">Total Tokens</span>
-              <span class="stat-value">
-                ${m.totalTokens !== null ? formatChartValue(m.totalTokens) : '—'}
-              </span>
-            </div>
-
-            <div class="stat-card">
-              <span class="stat-label">Input Tokens</span>
-              <span class="stat-value">
-                ${
-                  m.inputTokens !== null && m.inputTokens !== undefined
-                    ? formatChartValue(m.inputTokens)
-                    : '—'
-                }
-              </span>
-            </div>
-
-            <div class="stat-card">
-              <span class="stat-label">Cache Read</span>
-              <span class="stat-value">
-                ${
-                  m.cacheReadTokens !== null && m.cacheReadTokens !== undefined
-                    ? formatChartValue(m.cacheReadTokens)
-                    : '—'
-                }
-              </span>
-            </div>
-
-            <div class="stat-card">
-              <span class="stat-label">Cache Creation</span>
-              <span class="stat-value">
-                ${
-                  m.cacheCreationTokens !== null && m.cacheCreationTokens !== undefined
-                    ? formatChartValue(m.cacheCreationTokens)
-                    : '—'
-                }
-              </span>
-            </div>
-
-            ${
-              m.thinkingTokens !== null && m.thinkingTokens !== undefined
-                ? html`
-                <div class="stat-card">
-                  <span class="stat-label">Thinking Tokens</span>
-                  <span class="stat-value">${formatChartValue(m.thinkingTokens)}</span>
-                </div>
-              `
-                : ''
-            }
-
-            ${
-              m.effort
-                ? html`
-                <div class="stat-card">
-                  <span class="stat-label">Reasoning Effort</span>
-                  <span class="stat-value">${m.effort}</span>
-                </div>
-              `
-                : ''
-            }
-
-            ${
-              m.model
-                ? html`
-                <div class="stat-card full-width">
-                  <span class="stat-label">Model</span>
-                  <span class="stat-value">${m.model}</span>
-                </div>
-              `
-                : ''
-            }
-
-            ${
-              m.timestamp
-                ? html`
-                <div class="stat-card full-width">
-                  <span class="stat-label">Timestamp</span>
-                  <span class="stat-value" style="font-size: 13px;">
-                    ${new Date(m.timestamp).toLocaleString()}
-                  </span>
-                </div>
-              `
-                : ''
-            }
+            ${this.renderTokenStats(m)}
+            ${this.renderMetadataStats(m)}
           </div>
-
-          <div class="content-section">
-            <h3 class="section-heading">Message Content</h3>
-            <div class="content-box">
-              ${
-                this.cachedRenderedHtml
-                  ? unsafeHTML(this.cachedRenderedHtml)
-                  : html`<p class="empty-text">No content recorded for this message.</p>`
-              }
-            </div>
-          </div>
+          ${this.renderContent()}
         </div>
       </aside>
     `;

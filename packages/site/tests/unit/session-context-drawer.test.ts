@@ -130,4 +130,19 @@ describe('session-context-drawer', () => {
 
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('stops propagation and prevents default on Escape key press', async () => {
+    const drawer = Object.assign(document.createElement('session-context-drawer'), {
+      message: sampleMessage,
+    }) as SessionContextDrawer;
+    await mount(drawer);
+
+    const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    const stopSpy = vi.spyOn(event, 'stopPropagation');
+    const prevSpy = vi.spyOn(event, 'preventDefault');
+    window.dispatchEvent(event);
+
+    expect(stopSpy).toHaveBeenCalled();
+    expect(prevSpy).toHaveBeenCalled();
+  });
 });

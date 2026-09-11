@@ -131,6 +131,31 @@ test.describe('Dedicated Project Sessions Page (UX-028)', () => {
       timeout: 5000,
     });
   });
+
+  test('displays error banner affordance on query failure without masquerading as empty state', async ({
+    page,
+  }) => {
+    const projectName = 'SessionsErrorTest';
+    await importSessionIntoProject(page, projectName, ['claude-rich-session.jsonl']);
+
+    await page.goto(`/#/projects/${encodeURIComponent(projectName)}/sessions`);
+    await waitForAppReady(page);
+
+    const sessionsPage = page.locator('project-sessions-page');
+    await expect(sessionsPage).toBeVisible({ timeout: 15000 });
+
+    // Inject query failure error state into the sessions table component
+    await page
+      .locator('project-sessions-table')
+      .evaluate((el: HTMLElement & { error: string | null }) => {
+        el.error = 'Failed to load sessions from database';
+      });
+
+    const errorBanner = page.locator('project-sessions-table .error-banner');
+    await expect(errorBanner).toBeVisible();
+    await expect(errorBanner).toContainText('Failed to load sessions');
+    await expect(page.locator('project-sessions-table .empty-state')).not.toBeVisible();
+  });
 });
 
 test.describe('Project Sessions Table (UX-029)', () => {

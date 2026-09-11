@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   estimateTokenCount,
   formatCompactNumber,
+  formatDate,
   formatDuration,
   formatEstimatedTokens,
   formatFullNumber,
+  formatSessionTitle,
 } from '../../src/lib/format';
 
 describe('formatCompactNumber', () => {
@@ -72,5 +74,41 @@ describe('formatEstimatedTokens', () => {
   it('prefixes the compact number with a tilde and labels it as an estimate', () => {
     expect(formatEstimatedTokens(265)).toBe('~265 tokens (est.)');
     expect(formatEstimatedTokens(1_357_717)).toBe('~1.4M tokens (est.)');
+  });
+});
+
+describe('formatDate', () => {
+  it('formats valid timestamp numbers and ISO strings into dates', () => {
+    const ts = Date.parse('2026-05-15T12:00:00Z');
+    expect(formatDate(ts)).toBe(new Date(ts).toLocaleDateString());
+    expect(formatDate('2026-05-15T12:00:00Z')).toBe(new Date(ts).toLocaleDateString());
+  });
+
+  it('safely handles null, undefined, empty, and invalid values without throwing or returning NaN', () => {
+    expect(formatDate(null)).toBe('');
+    expect(formatDate(undefined)).toBe('');
+    expect(formatDate('')).toBe('');
+    expect(formatDate('invalid-date')).toBe('');
+    expect(formatDate(NaN)).toBe('');
+  });
+});
+
+describe('formatSessionTitle', () => {
+  it('uses title when non-empty', () => {
+    expect(formatSessionTitle('My Session', Date.now())).toBe('My Session');
+    expect(formatSessionTitle('  Refactoring Auth  ', Date.now())).toBe('Refactoring Auth');
+  });
+
+  it('falls back to formatted date when title is absent or blank', () => {
+    const ts = Date.parse('2026-05-15T12:00:00Z');
+    const expected = `Session ${new Date(ts).toLocaleDateString()}`;
+    expect(formatSessionTitle(null, ts)).toBe(expected);
+    expect(formatSessionTitle('', ts)).toBe(expected);
+    expect(formatSessionTitle('   ', ts)).toBe(expected);
+  });
+
+  it('falls back to "Session" when both title and date are invalid or missing', () => {
+    expect(formatSessionTitle(null, null)).toBe('Session');
+    expect(formatSessionTitle('', 'invalid-date')).toBe('Session');
   });
 });
