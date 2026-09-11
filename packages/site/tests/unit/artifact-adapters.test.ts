@@ -7,7 +7,7 @@
 // wasm-adapter.conformance.test.ts for the same pattern). The rest of this
 // file has no DOM dependency, so running the whole file under node is safe.
 
-import type { ArtifactReference, ResolvedArtifact } from '@lucasschirm/sal-db';
+import type { ResolvedArtifact } from '@lucasschirm/sal-db';
 import { ArtifactDiffRepository, createSha256ContentHasher } from '@lucasschirm/sal-db';
 import type {
   ArtifactBlob,

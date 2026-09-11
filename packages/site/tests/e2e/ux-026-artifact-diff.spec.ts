@@ -30,7 +30,7 @@ import {
  * real ids back out of it -- never a guessed or hardcoded id.
  *
  * The Component Ecosystem inline lifecycle-diff panel
- * (`component-ecosystem-view.ts:414-430`'s `loadDiff()`) is spot-checked
+ * (`component-ecosystem-view.ts:523-539`'s `loadDiff()`) is spot-checked
  * here too (not a new suite): it hits the identical
  * `ArtifactVersionView.getDiff` -> `ArtifactDiffRepository.
  * getCanonicalizedArtifact()` path as `#/artifact-diff`, reached via
