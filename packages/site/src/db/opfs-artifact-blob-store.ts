@@ -137,13 +137,25 @@ function insertBlobMetadata(executor: SqliteExecutor, blob: ResolvedArtifact): P
 export function createOpfsArtifactBlobStore(executor: SqliteExecutor): ArtifactBlobStore {
   return {
     retain: async (blob) => {
+      // Checked before writing so a failed insert's rollback can tell a
+      // genuinely new blob apart from a re-retain of an already-known
+      // sha256 (routine under content-addressed dedup — the same
+      // skill/rule/config file gets retained again across many sessions).
+      const existedBefore =
+        (await DbArtifactBlobStore.getBySha256(executor, blob.sha256)) !== undefined;
       await writeArtifactBlobFile(blob.sha256, asBytes(blob.content));
       try {
         await insertBlobMetadata(executor, blob);
       } catch (error) {
-        // The metadata row is the source of truth; an orphaned OPFS file
-        // with no row is unreachable dead weight, not a partial success.
-        await removeArtifactBlobFileIfExists(blob.sha256);
+        // Only roll back the OPFS write for a genuinely new blob: an
+        // orphaned file with no row at all is unreachable dead weight. For
+        // a re-retain, the pre-existing row (and any other reference to
+        // this sha256) may still depend on the file already there — a
+        // transient insert failure must not delete still-referenced,
+        // previously-persisted content.
+        if (!existedBefore) {
+          await removeArtifactBlobFileIfExists(blob.sha256);
+        }
         throw error;
       }
       const { content: _content, ...reference } = blob;

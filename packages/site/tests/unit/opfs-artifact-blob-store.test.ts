@@ -185,9 +185,14 @@ describe('createOpfsArtifactBlobStore', () => {
       expect(opfs.files.get('sha-3')).toEqual(encodeText('second'));
     });
 
-    it('rolls back the OPFS write if the metadata insert fails', async () => {
+    it('rolls back the OPFS write if the metadata insert fails for a genuinely new blob', async () => {
       const store = createOpfsArtifactBlobStore(executor);
-      await executor.close();
+      // Target the insert specifically (not the whole executor) so the new
+      // pre-check `getBySha256` call this fix added still succeeds and
+      // correctly reports "no prior row" for this sha256.
+      const insertSpy = vi
+        .spyOn(DbArtifactBlobStore, 'insert')
+        .mockRejectedValueOnce(new Error('insert failed'));
 
       await expect(
         store.retain({
@@ -197,10 +202,48 @@ describe('createOpfsArtifactBlobStore', () => {
           mediaType: 'text/plain',
           content: encodeText('x'),
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow('insert failed');
 
       expect(opfs.files.has('sha-rollback')).toBe(false);
       expect(opfs.dirHandle.removeEntry).toHaveBeenCalledWith('sha-rollback');
+
+      insertSpy.mockRestore();
+    });
+
+    it('does not roll back the OPFS write when a re-retain of an already-known sha256 fails', async () => {
+      // Content-addressed dedup means the same sha256 gets retained again
+      // across many sessions. A transient insert failure on a re-retain
+      // must not delete the pre-existing, still-referenced file -- only a
+      // genuinely new blob's orphaned write should be rolled back.
+      const store = createOpfsArtifactBlobStore(executor);
+      const bytes = encodeText('already there');
+      await store.retain({
+        sha256: 'sha-reretain',
+        size: bytes.length,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: bytes,
+      });
+      expect(opfs.files.get('sha-reretain')).toEqual(bytes);
+
+      const insertSpy = vi
+        .spyOn(DbArtifactBlobStore, 'insert')
+        .mockRejectedValueOnce(new Error('transient insert failure'));
+
+      await expect(
+        store.retain({
+          sha256: 'sha-reretain',
+          size: bytes.length,
+          relativePath: 'p',
+          mediaType: 'text/plain',
+          content: bytes,
+        }),
+      ).rejects.toThrow('transient insert failure');
+
+      expect(opfs.files.has('sha-reretain')).toBe(true);
+      expect(opfs.dirHandle.removeEntry).not.toHaveBeenCalledWith('sha-reretain');
+
+      insertSpy.mockRestore();
     });
   });
 
