@@ -133,6 +133,45 @@ export async function openExportDatabase(input: string | Uint8Array): Promise<Ex
   return db;
 }
 
+export interface ManifestArtifactSummary {
+  readonly id: string;
+  readonly sha256: string;
+}
+
+/**
+ * Reads `manifest_artifacts` rows matching a relative path from an already-
+ * open export database, ordered by insertion. Per `sql-only-in-db-core.md`,
+ * this SQL stays confined to this helper file -- E2E specs call this typed
+ * function rather than inlining their own `SELECT` strings.
+ */
+export function selectManifestArtifactsByRelativePath(
+  db: ExportDatabase,
+  relativePath: string,
+): ManifestArtifactSummary[] {
+  const rows = db.selectObjects(
+    'SELECT id, sha256 FROM manifest_artifacts WHERE relative_path = ? ORDER BY created_at, id',
+    [relativePath],
+  );
+  return rows.map((row) => ({ id: String(row.id), sha256: String(row.sha256) }));
+}
+
+/**
+ * Reads the `artifact_blobs.content` column for a given sha256 from an
+ * already-open export database -- `undefined` if no row exists for that
+ * hash, `null` if the row exists but content has moved out of SQLite (the
+ * OPFS-backed store's expected shape post-cutover). Per
+ * `sql-only-in-db-core.md`, this SQL stays confined to this helper file.
+ */
+export function selectArtifactBlobContent(
+  db: ExportDatabase,
+  sha256: string,
+): Uint8Array | null | undefined {
+  const rows = db.selectObjects('SELECT content FROM artifact_blobs WHERE sha256 = ?', [sha256]);
+  if (rows.length === 0) return undefined;
+  const content = rows[0]?.content;
+  return content === null || content === undefined ? null : (content as Uint8Array);
+}
+
 /**
  * Opens a downloaded `.sqlite` export in the same SQLite WASM runtime used by
  * the site, reads the row count for every relevant control database table, and

@@ -1,5 +1,9 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
-import { openExportDatabase } from './helpers/export-verify.js';
+import {
+  openExportDatabase,
+  selectArtifactBlobContent,
+  selectManifestArtifactsByRelativePath,
+} from './helpers/export-verify.js';
 import {
   FixtureBucket,
   fixtureBuffer,
@@ -154,19 +158,14 @@ interface ArtifactIdPair {
 async function findSettingsArtifactIds(downloadPath: string): Promise<ArtifactIdPair> {
   const db = await openExportDatabase(downloadPath);
   try {
-    const rows = db.selectObjects(
-      'SELECT id, sha256 FROM manifest_artifacts WHERE relative_path = ? ORDER BY created_at, id',
-      [SETTINGS_PATH],
-    );
+    const rows = selectManifestArtifactsByRelativePath(db, SETTINGS_PATH);
     expect(rows).toHaveLength(2);
     expect(rows[0]?.sha256).not.toBe(rows[1]?.sha256);
 
     for (const row of rows) {
-      const blobRows = db.selectObjects('SELECT content FROM artifact_blobs WHERE sha256 = ?', [
-        row.sha256,
-      ]);
-      expect(blobRows).toHaveLength(1);
-      expect(blobRows[0]?.content).toBeNull();
+      const content = selectArtifactBlobContent(db, row.sha256);
+      expect(content).not.toBeUndefined();
+      expect(content).toBeNull();
     }
 
     const leftSha = sha256Hex(LEFT_CONTENT);

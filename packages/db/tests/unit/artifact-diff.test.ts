@@ -1,4 +1,7 @@
-import { FRESH_SCHEMA_SQL } from '@lucasschirm/sal-db-core';
+import {
+  ArtifactBlobStore as DbArtifactBlobStore,
+  FRESH_SCHEMA_SQL,
+} from '@lucasschirm/sal-db-core';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import {
@@ -28,8 +31,17 @@ function makeHasher() {
  * concrete store from packages/site (see packages/db/AGENTS.md) -- the
  * real-store, real-round-trip coverage lives in
  * packages/site/tests/unit/artifact-adapters.test.ts instead.
+ *
+ * `retain()` also performs a real `artifact_blobs` placeholder write via
+ * `DbArtifactBlobStore.insert` -- mirroring
+ * `createOpfsArtifactBlobStore.retain()`'s own `insertBlobMetadata` call
+ * (packages/site/src/db/opfs-artifact-blob-store.ts) with the same default
+ * retention class and no redaction fields. Without this, the fake never
+ * performs a second SQL write, so no test in this file could ever tell
+ * `writeBlobIfNew`'s correct write order (retain, then the authoritative
+ * insert) apart from a reversed one -- both would leave exactly one row.
  */
-function createFakeBlobStore(): ArtifactBlobStore & {
+function createFakeBlobStore(executor: WasmSqliteExecutor): ArtifactBlobStore & {
   readonly retainCalls: number[];
   readonly readCalls: string[];
   seed(artifact: ResolvedArtifact): void;
@@ -46,6 +58,13 @@ function createFakeBlobStore(): ArtifactBlobStore & {
     retain: async (blob) => {
       retainCalls.push(1);
       stored.set(blob.sha256, blob);
+      await DbArtifactBlobStore.insert(executor, {
+        sha256: blob.sha256,
+        size: blob.size,
+        mediaType: blob.mediaType,
+        retentionClass: 'retained',
+        content: null,
+      });
       const { content: _content, ...reference } = blob;
       return reference;
     },
@@ -625,7 +644,7 @@ describe('ArtifactDiffRepository', () => {
   it('with blobStore provided, retains bytes first then writes the authoritative row with content: null, and the read side falls back to blobStore.read()', async () => {
     const executor = await setup();
     const hasher = makeHasher();
-    const fake = createFakeBlobStore();
+    const fake = createFakeBlobStore(executor);
 
     const content = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'with-store' });
     const sourceManifestId = await insertSourceManifest(executor, 'sess-left', 0);
@@ -664,6 +683,58 @@ describe('ArtifactDiffRepository', () => {
     expect(canonicalized?.rawSha256).toBe(sha);
   });
 
+  it('with a non-default retentionClass and redaction input, the authoritative insert (not the store-side placeholder) determines the final row', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    // createFakeBlobStore's retain() mirrors production's
+    // insertBlobMetadata(): a placeholder row with retentionClass 'retained'
+    // and every redaction field null/false. Choosing a different
+    // retentionClass and real sensitiveSource input here means the final row
+    // can only match if writeBlobIfNew's authoritative insert -- which
+    // carries the real values -- runs AFTER retain(), not before. Reversing
+    // that order (retainBytesIfStorePresent after DbArtifactBlobStore.insert
+    // in packages/db/src/artifact-diff.ts) must fail this test.
+    const fake = createFakeBlobStore(executor);
+    const content = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'redacted' });
+    const sourceManifestId = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactId = await insertManifestArtifact(
+      executor,
+      sourceManifestId,
+      'sess-left',
+      '.claude/config.json',
+    );
+    const repository = new ArtifactDiffRepository(hasher, fake);
+    await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      {
+        sourceManifestId,
+        manifestArtifactId,
+        observingSessionId: 'sess-left',
+        retentionClass: 'transient',
+      },
+      baseInput(content, {
+        sensitiveSource: { scheme: 'aes-gcm', keyDomainId: 'domain-1', content: 'secret-value' },
+      }),
+    );
+
+    const sha = await hasher.hash(content);
+    const { rows } = await executor.exec(
+      `SELECT retention_class, redaction_scheme, key_domain_id, sensitive_digest,
+              redaction_change_marker, is_redacted
+       FROM artifact_blobs WHERE sha256 = ?`,
+      [sha],
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as Record<string, unknown>;
+    expect(row.retention_class).toBe('transient');
+    expect(row.redaction_scheme).toBe('aes-gcm');
+    expect(row.key_domain_id).toBe('domain-1');
+    expect(row.sensitive_digest).not.toBeNull();
+    expect(row.redaction_change_marker).toBe(1);
+    expect(row.is_redacted).toBe(1);
+  });
+
   it('with blobStore left undefined, behavior is unchanged: real bytes land directly in insert.content and blobStore.retain() is never invoked', async () => {
     const executor = await setup();
     const hasher = makeHasher();
@@ -696,7 +767,7 @@ describe('ArtifactDiffRepository', () => {
   it('the content-address dedup guard skips blobStore.retain() when a metadata row for that sha256 already exists', async () => {
     const executor = await setup();
     const hasher = makeHasher();
-    const fake = createFakeBlobStore();
+    const fake = createFakeBlobStore(executor);
     const repository = new ArtifactDiffRepository(hasher, fake);
     const sharedContent = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'shared' });
 
@@ -739,7 +810,7 @@ describe('ArtifactDiffRepository', () => {
   it('propagates a failed blobStore.retain() without writing a partial content:null metadata row', async () => {
     const executor = await setup();
     const hasher = makeHasher();
-    const fake = createFakeBlobStore();
+    const fake = createFakeBlobStore(executor);
     const failingBlobStore = {
       ...fake,
       retain: async () => {
@@ -787,7 +858,7 @@ describe('ArtifactDiffRepository', () => {
   it('consults blobStore.read() only when the metadata row content is already null (e.g. a row nulled by the sub-issue-4 backfill)', async () => {
     const executor = await setup();
     const hasher = makeHasher();
-    const fake = createFakeBlobStore();
+    const fake = createFakeBlobStore(executor);
     const repository = new ArtifactDiffRepository(hasher, fake);
 
     // Simulate a row already nulled by the backfill (sub-issue 4), never via

@@ -1019,9 +1019,14 @@ export class ArtifactDiffRepository {
    * This ordering is load-bearing, not an inefficiency to remove: getting
    * it backwards reintroduces the data-loss bug this design was built to
    * avoid (see this class's own doc comment above). Covered by
-   * `packages/db/tests/unit/artifact-diff.test.ts`'s ordering/dedup tests,
-   * which assert the row's final redaction/retention fields match the
-   * no-`blobStore` path exactly.
+   * `packages/db/tests/unit/artifact-diff.test.ts`'s "with a non-default
+   * retentionClass and redaction input..." test, which passes a
+   * `retentionClass`/`sensitiveSource` that differ from
+   * `createFakeBlobStore`'s own placeholder-row defaults and asserts the
+   * final row carries the real values, not the placeholder's -- reversing
+   * this ordering fails that assertion (and also the failure-injection test
+   * below it, since a reversed order leaves a metadata row behind even when
+   * `retain()` throws).
    */
   private async retainBytesIfStorePresent(
     sha256: string,
