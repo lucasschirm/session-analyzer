@@ -43,16 +43,10 @@ interface PanelState<T> {
   error?: string;
 }
 
-function resolveTimingPoint(
+function matchByHrefOrName(
   detail: Record<string, unknown>,
   points: readonly ContextTimingPoint[],
 ): ContextTimingPoint | undefined {
-  if (detail.messageId) {
-    return points.find((p) => p.messageId === detail.messageId);
-  }
-  if (typeof detail.messageIndex === 'number') {
-    return points.find((p) => (p.messageIndex ?? p.turnNumber) === detail.messageIndex);
-  }
   const href = (detail.href ?? (detail.evidenceLink as { href?: string } | undefined)?.href) as
     | string
     | undefined;
@@ -72,6 +66,21 @@ function resolveTimingPoint(
       return points.find((p) => (p.messageIndex ?? p.turnNumber) === parseInt(match[1], 10));
     }
   }
+  return undefined;
+}
+
+function resolveTimingPoint(
+  detail: Record<string, unknown>,
+  points: readonly ContextTimingPoint[],
+): ContextTimingPoint | undefined {
+  if (detail.messageId) {
+    return points.find((p) => p.messageId === detail.messageId);
+  }
+  if (typeof detail.messageIndex === 'number') {
+    return points.find((p) => (p.messageIndex ?? p.turnNumber) === detail.messageIndex);
+  }
+  const matched = matchByHrefOrName(detail, points);
+  if (matched) return matched;
   if (typeof detail.dataIndex === 'number' && points[detail.dataIndex]) {
     return points[detail.dataIndex];
   }

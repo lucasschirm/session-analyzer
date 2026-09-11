@@ -303,14 +303,13 @@ export class LeftNav extends LitElement {
         if (match) {
           const slug = decodeURIComponent(match[1]);
           const project = this.projects.find(
-            (p) => (p.readable_id || p.id) === slug || p.id === slug,
+            (p) => (p.readable_id || p.id) === slug || p.id === slug || p.name === slug,
           );
           const pId = project ? project.id : slug;
           const next = new Set(this.expandedProjectSlugs);
           next.add(pId);
-          next.add(slug);
           this.expandedProjectSlugs = next;
-          void this.loadSessionsForProject(pId, slug);
+          void this.loadSessionsForProject(pId, slug, project?.name);
         }
       } else if (/^\/sessions\/[^/]+/.test(this.path)) {
         this.projectsExpanded = true;

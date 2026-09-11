@@ -357,6 +357,7 @@ export class EchartsBase extends LitElement {
   }
 
   private handleTableRowKeyDown(event: KeyboardEvent, index: number, row: TableRow): void {
+    if (event.target !== event.currentTarget) return;
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       this.handleTableRowClick(index, row);
