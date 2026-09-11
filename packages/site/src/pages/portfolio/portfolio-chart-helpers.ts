@@ -1,11 +1,3 @@
-// TODO(#142 / DS-B4): this direct import of the Claude-specific
-// `tryMetricIdToLabel` violates the AnalyticsDataSource boundary
-// (`.agents/rules/no-canonical-metrics-in-lit.md`). It is repointed here
-// from the pre-split `@lucasschirm/sal-transformer` to
-// `@lucasschirm/sal-claude-transformer` as an interim step for the DS-F5
-// (#154) package split; #142 should remove this import entirely and route
-// label lookup through AnalyticsDataSource instead.
-import { tryMetricIdToLabel } from '@lucasschirm/sal-claude-transformer';
 import type {
   ComponentUtilizationPage,
   ComponentUtilizationRow,
@@ -19,7 +11,11 @@ import type {
 } from '@lucasschirm/sal-db';
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
-import { metricDescription } from '../../lib/metric-descriptions';
+import {
+  metricDescription,
+  metricLabel as sharedMetricLabel,
+  stripScopeSuffix as sharedStripScopeSuffix,
+} from '../../lib/metric-descriptions';
 import { componentHref } from '../component-ecosystem/component-ecosystem-params';
 import type { PortfolioParams, SessionsScope } from './portfolio-params';
 import { buildPortfolioHash, evidenceLinkHref } from './portfolio-params';
@@ -50,19 +46,19 @@ export function isTokenMetric(metricId: string): boolean {
  * Strips the trailing scope suffix (" (root-only)" / " (inclusive)") from a
  * metric label. The scope is already conveyed by the Sessions filter, so the
  * suffix is redundant in chart legends and axis labels.
+ *
+ * Re-exported from the shared metric-descriptions module so existing imports
+ * from this file continue to work.
  */
-export function stripScopeSuffix(label: string): string {
-  return label.replace(/\s*\((root-only|inclusive)\)\s*$/, '');
-}
+export const stripScopeSuffix = sharedStripScopeSuffix;
 
-/** tryMetricIdToLabel with the scope suffix stripped. */
+/**
+ * Resolves the display label for a metric ID, stripping the scope suffix.
+ * Re-exported from the shared metric-descriptions module so existing imports
+ * from this file (e.g. project-behavior-chart-helpers) continue to work.
+ */
 export function metricLabel(metricId: string, fallback?: string): string {
-  const raw = tryMetricIdToLabel(metricId) ?? fallback ?? metricId;
-  const stripped = stripScopeSuffix(raw);
-  // The duration metric is stored in minutes; surface the unit in the label
-  // so chart axes and tooltips read "Session duration (min)".
-  if (isDurationMetric(metricId)) return 'Session duration (min)';
-  return stripped;
+  return sharedMetricLabel(metricId, fallback);
 }
 
 /**
