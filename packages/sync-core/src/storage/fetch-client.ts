@@ -137,6 +137,15 @@ export interface S3ListObjectEntry {
    * ETag as a quick-change indicator to skip re-downloading unchanged objects.
    */
   etag?: string;
+  /**
+   * The S3 `LastModified` timestamp for the object, as an ISO-8601 string
+   * exactly as returned by ListObjectsV2, when present. Not normalized or
+   * parsed to a `Date` — comparison is string equality against a
+   * previously stored fingerprint (see the manifest-fingerprint decision
+   * in the parent feature's shared-decisions register). `undefined` when
+   * the XML omits the element — never coerced to `''` (missing-is-never-zero).
+   */
+  lastModified?: string;
 }
 
 /** A single page of object keys returned by an object listing. */
@@ -231,6 +240,21 @@ function buildListUrl(
   return url.toString();
 }
 
+function contentEntryFromMatch(match: RegExpMatchArray): S3ListObjectEntry | undefined {
+  const key = match[1];
+  if (key === undefined) return undefined;
+  const lastModified = match[2];
+  const etag = match[3];
+  const sizeText = match[4];
+  const size = sizeText === undefined ? undefined : Number.parseInt(sizeText, 10);
+  return {
+    key,
+    size: Number.isNaN(size) ? undefined : size,
+    etag: etag || undefined,
+    lastModified: lastModified || undefined,
+  };
+}
+
 function parseListObjectsV2Xml(xml: string): S3ListPage {
   const prefixes: string[] = [];
   const prefixMatches = xml.matchAll(
@@ -242,19 +266,11 @@ function parseListObjectsV2Xml(xml: string): S3ListPage {
   }
   const objects: S3ListObjectEntry[] = [];
   const contentMatches = xml.matchAll(
-    /<Contents>[\s\S]*?<Key>([^<]*)<\/Key>[\s\S]*?(?:<ETag>([^<]*)<\/ETag>[\s\S]*?)?<Size>([^<]*)<\/Size>[\s\S]*?<\/Contents>/g,
+    /<Contents>[\s\S]*?<Key>([^<]*)<\/Key>[\s\S]*?(?:<LastModified>([^<]*)<\/LastModified>[\s\S]*?)?(?:<ETag>([^<]*)<\/ETag>[\s\S]*?)?<Size>([^<]*)<\/Size>[\s\S]*?<\/Contents>/g,
   );
   for (const match of contentMatches) {
-    const key = match[1];
-    const etag = match[2];
-    const sizeText = match[3];
-    if (key === undefined) continue;
-    const size = sizeText === undefined ? undefined : Number.parseInt(sizeText, 10);
-    objects.push({
-      key,
-      size: Number.isNaN(size) ? undefined : size,
-      etag: etag || undefined,
-    });
+    const entry = contentEntryFromMatch(match);
+    if (entry) objects.push(entry);
   }
   const isTruncated = /<IsTruncated>\s*true\s*<\/IsTruncated>/i.test(xml);
   const tokenMatch = xml.match(/<NextContinuationToken>([^<]*)<\/NextContinuationToken>/);
@@ -459,6 +475,22 @@ export class S3FetchClient {
     options: S3ListObjectsOptions = {},
   ): Promise<S3ListObjectEntry[]> {
     const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/`;
+    return this.listObjectPages(prefix, options);
+  }
+
+  /**
+   * List all objects under a project prefix.
+   *
+   * Unlike {@link listSessionObjects}, this is not scoped to a single
+   * session — it returns every object key under `<projectId>/`, spanning
+   * all sessions (and their manifest/runtime artifacts) in one non-delimited,
+   * paginated listing. Keys can be decoded with {@link parseObjectKey}.
+   */
+  async listProjectObjects(
+    projectId: string,
+    options: S3ListObjectsOptions = {},
+  ): Promise<S3ListObjectEntry[]> {
+    const prefix = `${encodeKeySegment(projectId)}/`;
     return this.listObjectPages(prefix, options);
   }
 
