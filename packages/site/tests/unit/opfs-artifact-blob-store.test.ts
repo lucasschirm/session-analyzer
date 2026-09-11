@@ -457,6 +457,37 @@ describe('createOpfsArtifactBlobStore', () => {
       expect(removed).toBe(false);
       expect(opfs.dirHandle.removeEntry).toHaveBeenCalledWith('sha-never-existed');
     });
+
+    it('never throws even when OPFS directory resolution itself fails', async () => {
+      // Not just removeEntry() -- getArtifactBlobsDirectory() itself can
+      // reject (e.g. the very first OPFS call on this store instance,
+      // before any handle is cached). A caller here (removeLocked) has
+      // already deleted the metadata row by this point, so a thrown error
+      // can no longer be undone -- the best-effort contract must hold even
+      // for this failure mode, not just a failing removeEntry().
+      resetOpfsArtifactBlobsDirectoryCacheForTests();
+      await DbArtifactBlobStore.insert(executor, {
+        sha256: 'sha-dir-fail',
+        size: 1,
+        mediaType: 'text/plain',
+        retentionClass: 'retained',
+        content: null,
+      });
+      Object.defineProperty(globalThis, 'navigator', {
+        value: {
+          storage: {
+            getDirectory: vi.fn(async () => {
+              throw new Error('directory unavailable');
+            }),
+          },
+        },
+        configurable: true,
+        writable: true,
+      });
+
+      const store = createOpfsArtifactBlobStore(executor);
+      await expect(store.remove('sha-dir-fail')).resolves.toBe(true);
+    });
   });
 
   describe('list', () => {

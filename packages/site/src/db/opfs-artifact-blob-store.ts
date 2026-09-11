@@ -99,10 +99,24 @@ async function readArtifactBlobFile(sha256: string): Promise<Uint8Array | undefi
   }
 }
 
-/** Best-effort removal of `/artifact-blobs/<sha256>`; never throws. */
+/**
+ * Best-effort removal of `/artifact-blobs/<sha256>`; never throws. Wraps
+ * the directory resolution too, not just `removeEntry()` — on a store
+ * instance's first call, `getArtifactBlobsDirectory()` hasn't resolved (or
+ * cached) yet, and a failure there must not escape this "never throws"
+ * contract: callers (`retainLocked`'s rollback, `removeLocked`) rely on it
+ * to complete even when the caller has already committed a DB change (e.g.
+ * deleted the metadata row) that a thrown error here can no longer undo.
+ */
 async function removeArtifactBlobFileIfExists(sha256: string): Promise<void> {
-  const dir = await getArtifactBlobsDirectory();
-  await dir.removeEntry(sha256).catch(() => undefined);
+  try {
+    const dir = await getArtifactBlobsDirectory();
+    await dir.removeEntry(sha256).catch(() => undefined);
+  } catch {
+    // Best-effort: an orphaned file with no metadata row is unreachable
+    // dead weight, not a data-loss anomaly -- never let this throw out of
+    // a caller that has already committed a DB-side change.
+  }
 }
 
 function toResolvedArtifact(row: ArtifactBlob, content: Uint8Array): ResolvedArtifact {
