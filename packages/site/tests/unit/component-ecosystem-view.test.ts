@@ -455,6 +455,53 @@ describe('component-ecosystem-view', () => {
     expect(root.textContent).not.toContain('STALE-read_file');
   });
 
+  it('does not start a coalesced reload after the component has been disconnected', async () => {
+    // Regression coverage for reloadIfPending()'s isConnected guard: a
+    // component can be removed from the DOM while its in-flight load() is
+    // still running (e.g. the user navigates away before a slow fetch
+    // resolves). If a reload was queued (reloadPending) before that
+    // disconnect, firing it anyway would start a fresh network fetch for
+    // panels nobody will ever see rendered.
+    window.location.hash = '#/artifacts/read_file';
+    const view = Object.assign(document.createElement('component-ecosystem-view'), {
+      componentId: 'read_file',
+    }) as ComponentEcosystemView;
+    await mount(view);
+
+    componentMock.getVersions.mockClear();
+    let resolveStale: (() => void) | undefined;
+    componentMock.getVersions.mockImplementation(async (id: string) => {
+      if (id === 'read_file') {
+        await new Promise<void>((resolve) => {
+          resolveStale = resolve;
+        });
+      }
+      return versionsFixture();
+    });
+
+    // Start a load for the old component and block it in flight, exactly
+    // as in the sibling race test above.
+    window.dispatchEvent(new Event('hashchange'));
+    // Queue a reload for the new component while the stale one is still
+    // blocked -- this sets reloadPending, same as the sibling test.
+    view.componentId = 'code-review';
+    await view.updateComplete;
+
+    // Disconnect before the stale load resolves.
+    view.remove();
+    expect(view.isConnected).toBe(false);
+
+    // Release the stale load and let it run to completion.
+    resolveStale?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The queued reload for 'code-review' must not have fired a fresh
+    // fetch after disconnect.
+    const calls = componentMock.getVersions.mock.calls.map((c) => c[0]);
+    expect(calls).not.toContain('code-review');
+  });
+
   it('keeps the componentId in the URL when a filter changes on a component-detail route', async () => {
     // Regression coverage: filters used to be computed from a field
     // initializer that ran before the (now-fixed) component-id attribute

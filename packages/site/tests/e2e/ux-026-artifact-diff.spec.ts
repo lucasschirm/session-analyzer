@@ -353,10 +353,19 @@ test.describe('UX-026: Artifact Diff real data (OPFS-backed blob store)', () => 
     // cutover surfaced and fixed: `componentId` (`@property({ attribute:
     // 'component-id' })`) was missing that `attribute:` override, so every
     // `#/artifacts/:componentId` deep link silently fell back to the
-    // generic "Artifact Ecosystem" summary heading instead of the
+    // generic "Artifact Ecosystem" summary heading instead of a
     // component-specific one -- unit-tested at the jsdom level, but never
-    // through a real attribute-upgrade path until now.
-    await expect(page.locator('h1')).toHaveText('Artifact: ux-026-spot-check');
+    // through a real attribute-upgrade path until now. Deliberately does
+    // NOT assert the heading's exact text: it currently renders the raw
+    // componentId route param verbatim (`Artifact: <componentId>`, no
+    // label resolution) -- a separate, pre-existing issue predating this
+    // cutover (confirmed via `git blame`: commit 488b200, well before this
+    // Feature), out of scope to fix here. Asserting on that raw-id text
+    // would lock in id-as-label as "correct" via new test coverage, which
+    // `never-display-raw-ids.md` explicitly warns against. Asserting only
+    // that the heading differs from the generic fallback is sufficient to
+    // prove the attribute correctly bound.
+    await expect(page.locator('h1')).not.toHaveText('Artifact Ecosystem');
 
     const ecosystemDiffPanel = page.locator('.diff-panel').first();
     await expect(ecosystemDiffPanel).toBeVisible({ timeout: 15000 });

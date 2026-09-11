@@ -1008,6 +1008,21 @@ export class ArtifactDiffRepository {
    * still resolves to `undefined`. When `blobStore` is not provided,
    * behavior is unchanged: real bytes land directly in `insert.content`.
    */
+  /**
+   * Intentionally causes two sequential `artifact_blobs` writes for a new
+   * sha256 when `blobStore` is present, not one: `blobStore.retain()`
+   * (below) does its own metadata-row upsert internally, with a default
+   * `retentionClass` and no redaction fields -- correct for a store that
+   * only knows the raw bytes. `writeBlobIfNew`'s own authoritative
+   * `DbArtifactBlobStore.insert()` (with the real `retentionClass` and
+   * every redaction field) runs second and wins via `INSERT OR REPLACE`.
+   * This ordering is load-bearing, not an inefficiency to remove: getting
+   * it backwards reintroduces the data-loss bug this design was built to
+   * avoid (see this class's own doc comment above). Covered by
+   * `packages/db/tests/unit/artifact-diff.test.ts`'s ordering/dedup tests,
+   * which assert the row's final redaction/retention fields match the
+   * no-`blobStore` path exactly.
+   */
   private async retainBytesIfStorePresent(
     sha256: string,
     size: number,
