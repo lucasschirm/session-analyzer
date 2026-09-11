@@ -11,6 +11,7 @@ import type {
 } from '@lucasschirm/sal-db';
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
+import { metricDescription } from '../../lib/metric-descriptions';
 import type { ComponentEcosystemParams } from './component-ecosystem-params';
 import { buildComponentEcosystemQueryString, componentHref } from './component-ecosystem-params';
 
@@ -19,6 +20,7 @@ export interface MetricCardView {
   label: string;
   value: string;
   sub: string;
+  description: string;
   href?: string;
   icon?: string;
 }
@@ -93,12 +95,14 @@ export function summaryToMetricCards(summary: ComponentEcosystemSummary): Metric
       label: 'Total components',
       value: formatChartValue(Object.values(summary.countsByKind).reduce((a, b) => a + b, 0)),
       sub: coverageN(summary.token),
+      description: metricDescription('total-components'),
     },
     ...Object.entries(summary.countsByKind).map(([kind, count]) => ({
       metricId: `count-${kind}`,
       label: `${kind} components`,
       value: formatChartValue(count),
       sub: '',
+      description: `Number of ${kind} artifacts known to the portfolio.`,
     })),
   ];
 }
@@ -192,18 +196,21 @@ export function utilizationToMetricCards(detail: ComponentUtilizationDetail): Me
       label: detail.loadRate.label,
       value: formatMetricValue(detail.loadRate),
       sub: coverageN(detail.loadRate),
+      description: metricDescription('total-load-rate'),
     },
     {
       metricId: detail.invokeRate.metricId,
       label: detail.invokeRate.label,
       value: formatMetricValue(detail.invokeRate),
       sub: coverageN(detail.invokeRate),
+      description: metricDescription('total-invoke-rate'),
     },
     {
       metricId: detail.overhead.metricId,
       label: detail.overhead.label,
       value: formatMetricValue(detail.overhead),
       sub: coverageN(detail.overhead),
+      description: metricDescription('total-overhead'),
     },
   ];
 }

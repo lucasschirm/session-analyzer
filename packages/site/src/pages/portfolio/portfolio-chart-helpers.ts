@@ -19,6 +19,7 @@ import type {
 } from '@lucasschirm/sal-db';
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
+import { metricDescription } from '../../lib/metric-descriptions';
 import { componentHref } from '../component-ecosystem/component-ecosystem-params';
 import type { PortfolioParams, SessionsScope } from './portfolio-params';
 import { buildPortfolioHash, evidenceLinkHref } from './portfolio-params';
@@ -243,6 +244,7 @@ export interface MetricCardView {
   label: string;
   value: string;
   sub: string;
+  description: string;
   href?: string;
 }
 
@@ -252,6 +254,43 @@ function formatMetricValue(metric: MetricValueDto): string {
 
 function coverageN(metric: MetricValueDto): string {
   return `n=${metric.knownN}${metric.knownN < metric.eligibleN ? ` of ${metric.eligibleN}` : ''}`;
+}
+
+/**
+ * Whether a headline metric should be shown for the given sessions scope.
+ *
+ * Synthetic portfolio metrics (e.g. `portfolio-project-count`) have no
+ * `:root_only` / `:inclusive` suffix and always pass.  Harness metrics are
+ * filtered so that only one scope variant appears — `main` → root-only,
+ * `all`/`sub_agents` → inclusive — preventing the duplicate-label issue
+ * where `metricLabel()` strips the scope suffix and two cards with the same
+ * label but different values would render side by side.
+ */
+function isInScope(metricId: string, scope: SessionsScope): boolean {
+  if (!metricId.endsWith(':root_only') && !metricId.endsWith(':inclusive')) {
+    return true;
+  }
+  if (scope === 'main') {
+    return metricId.endsWith(':root_only');
+  }
+  return metricId.endsWith(':inclusive');
+}
+
+/**
+ * Removes duplicate entries that share the same `metricId`.  The portfolio
+ * overview loads headline metrics from two independent stores — distributions
+ * and daily rollups — and a metric can appear in both.  The first occurrence
+ * (distributions are pushed before rollups) is kept.
+ */
+function deduplicateByMetricId<T extends { metricId: string }>(metrics: readonly T[]): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const m of metrics) {
+    if (seen.has(m.metricId)) continue;
+    seen.add(m.metricId);
+    result.push(m);
+  }
+  return result;
 }
 
 export function overviewToMetricCards(
@@ -270,13 +309,18 @@ export function overviewToMetricCards(
     'portfolio-unused-components': `${skillCount} Skills • ${otherComponentCount} Others`,
   };
 
-  return overview.headlineMetrics.map((metric) => {
+  const scope = params.sessions ?? 'main';
+  const scoped = overview.headlineMetrics.filter((m) => isInScope(m.metricId, scope));
+  const deduped = deduplicateByMetricId(scoped);
+
+  return deduped.map((metric) => {
     const link = metric.evidenceLinks[0];
     return {
       metricId: metric.metricId,
       label: metricLabel(metric.metricId, metric.label),
       value: formatMetricValue(metric),
       sub: subForMetric[metric.metricId] ?? '',
+      description: metricDescription(metric.metricId),
       href: link ? evidenceLinkHref(link, params) : undefined,
     };
   });

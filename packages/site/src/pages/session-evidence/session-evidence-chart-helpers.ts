@@ -13,6 +13,7 @@ import type {
 } from '@lucasschirm/sal-db';
 import type { ChartBucket, ChartSeries, TableRow } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
+import { metricDescription } from '../../lib/metric-descriptions';
 import type { MetricCardView } from '../portfolio/portfolio-chart-helpers';
 import type { SessionEvidenceParams } from './session-evidence-params';
 import { evidenceLinkHref } from './session-evidence-params';
@@ -110,6 +111,7 @@ export function summaryToMetricCards(
       label: tryMetricIdToLabel(metric.metricId) ?? metric.label,
       value: formatChartValue(metric.value, metric.unit),
       sub: `${coverageN(metric)} • ${metric.coverage} • ${metric.confidence}`,
+      description: metricDescription(metric.metricId),
       href: link ? evidenceLinkHref(link, params) : undefined,
     };
   });
