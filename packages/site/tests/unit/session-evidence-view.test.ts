@@ -484,7 +484,7 @@ describe('session-evidence-view', () => {
     expect(drawer.shadowRoot?.querySelector('.drawer-panel')).toBeNull();
   });
 
-  it('supports opening drawer via point-click with message name matching', async () => {
+  it('supports opening drawer via chart-click with message name matching', async () => {
     const view = Object.assign(document.createElement('session-evidence-view'), {
       sessionId: 's1',
     }) as SessionEvidenceView;
@@ -494,9 +494,9 @@ describe('session-evidence-view', () => {
     const drawer = root.querySelector('session-context-drawer') as LitElement;
     const chart = root.querySelector('analytics-chart');
 
-    // Simulate point-click for message #2
+    // Simulate chart-click for message #2
     chart?.dispatchEvent(
-      new CustomEvent('point-click', {
+      new CustomEvent('chart-click', {
         bubbles: true,
         composed: true,
         detail: {

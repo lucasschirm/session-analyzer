@@ -196,14 +196,20 @@ describe('left-nav', () => {
     expect(childNames).toContain('Alpha Project');
   });
 
+  async function flushElement(el: LeftNav): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await el.updateComplete;
+  }
+
   it('loads and renders sessions under a project when expanded', async () => {
     mockDbClient.getProjects.mockResolvedValue([
       { id: 'p1', name: 'Project A', readable_id: 'p1', session_count: 2, updated_at: Date.now() },
     ]);
     const el = await mount('/projects/p1');
     await el.updateComplete;
-    await new Promise((r) => setTimeout(r, 10));
-    await el.updateComplete;
+    await flushElement(el);
 
     const root = el.shadowRoot as ShadowRoot;
     const sessionTitles = Array.from(root.querySelectorAll('.nav-session-title')).map(
@@ -211,6 +217,21 @@ describe('left-nav', () => {
     );
     expect(sessionTitles).toContain('Fix issue with login');
     expect(sessionTitles).toContain('Refactor database');
+  });
+
+  it('renders error indicator when loading sessions fails', async () => {
+    mockDbClient.getProjects.mockResolvedValue([
+      { id: 'p1', name: 'Project A', readable_id: 'p1', session_count: 2, updated_at: Date.now() },
+    ]);
+    mockGetProjectSessionList.mockRejectedValueOnce(new Error('DB failure'));
+    const el = await mount('/projects/p1');
+    await el.updateComplete;
+    await flushElement(el);
+
+    const root = el.shadowRoot as ShadowRoot;
+    const errorEl = root.querySelector('.nav-session-error');
+    expect(errorEl).not.toBeNull();
+    expect(errorEl?.textContent).toContain('Failed to load sessions');
   });
 
   it('toggles project sessions on chevron click', async () => {
@@ -226,14 +247,15 @@ describe('left-nav', () => {
     const root = el.shadowRoot as ShadowRoot;
     const chevronBtn = root.querySelector('.project-chevron-btn') as HTMLElement;
     expect(chevronBtn).not.toBeNull();
+    expect(chevronBtn.getAttribute('aria-expanded')).toBe('false');
     expect(root.querySelector('.nav-sessions-list')).toBeNull();
 
     // Click chevron to expand sessions
     chevronBtn.click();
     await el.updateComplete;
-    await new Promise((r) => setTimeout(r, 10));
-    await el.updateComplete;
+    await flushElement(el);
 
+    expect(chevronBtn.getAttribute('aria-expanded')).toBe('true');
     expect(root.querySelector('.nav-sessions-list')).not.toBeNull();
     const sessionTitles = Array.from(root.querySelectorAll('.nav-session-title')).map(
       (s) => s.textContent,
@@ -243,6 +265,7 @@ describe('left-nav', () => {
     // Click chevron to collapse sessions
     chevronBtn.click();
     await el.updateComplete;
+    expect(chevronBtn.getAttribute('aria-expanded')).toBe('false');
     expect(root.querySelector('.nav-sessions-list')).toBeNull();
   });
 
@@ -253,8 +276,7 @@ describe('left-nav', () => {
     ]);
     const el = await mount('/projects/p1');
     await el.updateComplete;
-    await new Promise((r) => setTimeout(r, 10));
-    await el.updateComplete;
+    await flushElement(el);
 
     const root = el.shadowRoot as ShadowRoot;
     const sessionItem = root.querySelector('.nav-session-item') as HTMLElement;

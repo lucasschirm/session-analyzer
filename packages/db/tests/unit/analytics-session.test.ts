@@ -660,8 +660,8 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
     expect(p1?.turnNumber).toBe(1);
     expect(p1?.messageIndex).toBe(1);
     expect(p1?.role).toBe('user');
-    expect(p1?.contextTokens).toBe(800); // 500 input + 200 read + 100 create from forward turn
-    expect(p1?.generationTokens).toBe(0);
+    expect(p1?.contextTokens).toBe(800); // 500 input + 200 read + 100 create
+    expect(p1?.generationTokens).toBeNull();
     expect(p1?.content).toBe('Please fix the database index');
 
     // Turn 2 (assistant)

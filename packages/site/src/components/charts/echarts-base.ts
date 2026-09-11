@@ -32,6 +32,7 @@ import { css, html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { createRef, ref } from 'lit/directives/ref.js';
+import { repeat } from 'lit/directives/repeat.js';
 import type {
   ChartEvidenceLink,
   ChartSeries,
@@ -360,7 +361,9 @@ export class EchartsBase extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${rows.map(
+            ${repeat(
+              rows,
+              (row, index) => `${index}-${row.series}-${row.x}`,
               (row, index) => html`
                 <tr
                   @click=${() => this.handleTableRowClick(index, row)}

@@ -137,6 +137,10 @@ created (issue #160); none are proposed-but-unimplemented.
 | UX-022 | Manual upload of a Devin bundle is detected, ingested, and reaches the session dashboard | `devin-journey.spec.ts` | `importDevinSession` (devin-manual-import.ts) | 4 | 4 | 4 | 64 | P0 | GREEN |
 | UX-023 | Devin transcript drill-down and pagination are visible; missing evidence rows are reported | `devin-journey.spec.ts` | `switchSessionEvidenceTab` (devin-manual-import.ts) | 4 | 4 | 4 | 64 | P0 | GREEN |
 | UX-024 | Devin drill-down empty states are structurally distinct from error states | `devin-journey.spec.ts` | empty/error affordance assertions | 4 | 4 | 4 | 64 | P0 | GREEN |
+| UX-025 | Left-nav expandable project sessions list and session direct navigation | `project-sessions.spec.ts` | session expansion, navigation assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-026 | Dedicated project sessions page (`#/projects/:id/sessions`) pagination and filters | `project-sessions.spec.ts` | pagination, search, date range filter assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-027 | Project sessions table navigation, title display, and subagent badge | `project-sessions.spec.ts` | table row click, session evidence routing assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-028 | Session context growth chart interaction and message detail drawer focus trap | `project-sessions.spec.ts` | drawer open on bar click, focus trap, Escape to close | 3 | 4 | 4 | 48 | P1 | GREEN |
 
 ### 6.2 Tier B — Analytics Pipeline (`PIPE-###`)
 

@@ -1,6 +1,7 @@
 import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { analyticsClient } from '../../db/analytics-client';
+import { dbClient } from '../../db/db-client';
 import { navigateTo } from '../../router';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
@@ -341,6 +342,7 @@ export class ProjectBehaviorPage extends PageLitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    clearTimeout(this.sessionSearchDebounceTimer);
     window.removeEventListener('hashchange', this.hashListener);
   }
 
@@ -374,7 +376,17 @@ export class ProjectBehaviorPage extends PageLitElement {
       }
     })();
     try {
-      const resolved = await analyticsClient.resolveProjectId(decodedProjectId);
+      let resolved = await analyticsClient.resolveProjectId(decodedProjectId);
+      if (!resolved) {
+        const project =
+          (await dbClient?.getProject?.(decodedProjectId)) ??
+          (await dbClient?.getProjectByReadableId?.(decodedProjectId));
+        if (project) {
+          resolved =
+            (await analyticsClient.resolveProjectId(project.name)) ||
+            (await analyticsClient.resolveProjectId(project.id));
+        }
+      }
       this.resolvedProjectId = resolved;
       if (!resolved) {
         this.globalState = 'empty';

@@ -254,6 +254,7 @@ export class SessionContextDrawer extends LitElement {
 
   private cachedRenderedHtml: string | null = null;
   private isKeydownAttached = false;
+  private previouslyFocusedElement: HTMLElement | null = null;
 
   willUpdate(changed: Map<string, unknown>): void {
     super.willUpdate(changed);
@@ -266,11 +267,16 @@ export class SessionContextDrawer extends LitElement {
     super.updated(changed);
     if (changed.has('message')) {
       if (this.message && !this.isKeydownAttached) {
+        this.previouslyFocusedElement = document.activeElement as HTMLElement | null;
         window.addEventListener('keydown', this.handleKeyDown);
         this.isKeydownAttached = true;
+        void this.updateComplete.then(() => {
+          this.shadowRoot?.querySelector<HTMLButtonElement>('.close-button')?.focus();
+        });
       } else if (!this.message && this.isKeydownAttached) {
         window.removeEventListener('keydown', this.handleKeyDown);
         this.isKeydownAttached = false;
+        this.restoreFocus();
       }
     }
   }
@@ -281,11 +287,44 @@ export class SessionContextDrawer extends LitElement {
       window.removeEventListener('keydown', this.handleKeyDown);
       this.isKeydownAttached = false;
     }
+    this.restoreFocus();
+  }
+
+  private restoreFocus(): void {
+    if (
+      this.previouslyFocusedElement &&
+      typeof this.previouslyFocusedElement.focus === 'function'
+    ) {
+      this.previouslyFocusedElement.focus();
+    }
+    this.previouslyFocusedElement = null;
+  }
+
+  private trapTabKey(e: KeyboardEvent): void {
+    const focusables = Array.from(
+      this.shadowRoot?.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    ).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null);
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = this.shadowRoot?.activeElement;
+    if (e.shiftKey && active === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 
   private handleKeyDown = (e: KeyboardEvent): void => {
-    if (e.key === 'Escape' && this.message) {
+    if (!this.message) return;
+    if (e.key === 'Escape') {
       this.close();
+    } else if (e.key === 'Tab') {
+      this.trapTabKey(e);
     }
   };
 

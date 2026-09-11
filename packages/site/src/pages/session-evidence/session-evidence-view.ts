@@ -44,6 +44,41 @@ interface PanelState<T> {
   error?: string;
 }
 
+function resolveTimingPoint(
+  detail: Record<string, unknown>,
+  points: readonly ContextTimingPoint[],
+): ContextTimingPoint | undefined {
+  if (detail.messageId) {
+    return points.find((p) => p.messageId === detail.messageId);
+  }
+  if (typeof detail.messageIndex === 'number') {
+    return points.find((p) => (p.messageIndex ?? p.turnNumber) === detail.messageIndex);
+  }
+  const href = (detail.href ?? (detail.evidenceLink as { href?: string } | undefined)?.href) as
+    | string
+    | undefined;
+  if (typeof href === 'string') {
+    const match = href.match(/#msg-(.+)$/);
+    if (match) {
+      return points.find(
+        (p) =>
+          String(p.messageId) === match[1] || String(p.messageIndex ?? p.turnNumber) === match[1],
+      );
+    }
+  }
+  const name = (detail.name ?? detail.label) as string | undefined;
+  if (typeof name === 'string') {
+    const match = name.match(/#(\d+)/);
+    if (match) {
+      return points.find((p) => (p.messageIndex ?? p.turnNumber) === parseInt(match[1], 10));
+    }
+  }
+  if (typeof detail.dataIndex === 'number' && points[detail.dataIndex]) {
+    return points[detail.dataIndex];
+  }
+  return undefined;
+}
+
 @customElement('session-evidence-view')
 export class SessionEvidenceView extends PageLitElement {
   static styles = [
@@ -511,47 +546,9 @@ export class SessionEvidenceView extends PageLitElement {
   }
 
   private handleBarClick = (e: CustomEvent): void => {
-    const detail = e.detail;
-    if (!detail) return;
+    if (!e.detail) return;
     const points = this.contextTiming.data?.points ?? [];
-    if (points.length === 0) return;
-
-    let point: ContextTimingPoint | undefined;
-
-    // Direct messageId or messageIndex
-    if (detail.messageId) {
-      point = points.find((p) => p.messageId === detail.messageId);
-    } else if (typeof detail.messageIndex === 'number') {
-      point = points.find((p) => (p.messageIndex ?? p.turnNumber) === detail.messageIndex);
-    }
-
-    // From evidenceLink href (#msg-<id>)
-    const href = detail.href ?? detail.evidenceLink?.href;
-    if (!point && typeof href === 'string') {
-      const match = href.match(/#msg-(.+)$/);
-      if (match) {
-        const id = match[1];
-        point = points.find(
-          (p) => String(p.messageId) === id || String(p.messageIndex ?? p.turnNumber) === id,
-        );
-      }
-    }
-
-    // From category name (e.g. "#2 assistant")
-    const name = detail.name ?? detail.label;
-    if (!point && typeof name === 'string') {
-      const match = name.match(/#(\d+)/);
-      if (match) {
-        const idx = parseInt(match[1], 10);
-        point = points.find((p) => (p.messageIndex ?? p.turnNumber) === idx);
-      }
-    }
-
-    // Fallback: dataIndex in points
-    if (!point && typeof detail.dataIndex === 'number' && points[detail.dataIndex]) {
-      point = points[detail.dataIndex];
-    }
-
+    const point = resolveTimingPoint(e.detail as Record<string, unknown>, points);
     if (point) {
       this.selectedMessage = point;
     }
@@ -570,7 +567,6 @@ export class SessionEvidenceView extends PageLitElement {
           description="Context size (in tokens) for each message in chronological order. Click any bar to view message details."
           .series=${this.cachedContextTimingSeries}
           .state=${this.chartState(this.contextTiming.state)}
-          @point-click=${this.handleBarClick}
           @chart-click=${this.handleBarClick}
         ></analytics-chart>
       </div>

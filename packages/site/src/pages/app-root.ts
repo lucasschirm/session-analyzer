@@ -767,7 +767,11 @@ export class AppRoot extends LitElement {
       this.currentPath === '/' ||
       this.currentPath.startsWith('/projects') ||
       this.currentPath.startsWith('/sessions') ||
-      this.currentPath.startsWith('/settings');
+      this.currentPath.startsWith('/settings') ||
+      this.currentPath.startsWith('/agents') ||
+      this.currentPath.startsWith('/skills') ||
+      this.currentPath.startsWith('/tools') ||
+      this.currentPath.startsWith('/mcp');
 
     return html`
       <header>
