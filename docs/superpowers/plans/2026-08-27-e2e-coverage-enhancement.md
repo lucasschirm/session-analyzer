@@ -268,7 +268,7 @@ explicit follow-up items rather than a silent deferral:
   with `isTruncated=false`, and `listObjectContents` returns every
   matching object in a single page regardless of count. This means the
   browser E2E suite cannot exercise true S3-style pagination (a listing
-  over `DEFAULT_MAX_LIST_KEYS` = `1_000`, `packages/sync-core/src/storage/fetch-client.ts:8`,
+  over `DEFAULT_MAX_LIST_KEYS` = `1_000`, `packages/sync-core/src/storage/fetch-client.ts:9`,
   keys split across multiple `list:` requests) — that case is covered only
   at the unit level, by #406's `SYNC-013` page-straddling test against
   `MockS3Client` (which does support multi-page `onPage` sequences).
