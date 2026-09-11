@@ -468,39 +468,55 @@ describe('ArtifactDiffRepository with a real createBrowserArtifactBlobStore', ()
     blobStoreMock.getBySha256.mockReset().mockResolvedValue(undefined);
   });
 
-  async function seedRealExecutor(realExecutor: WasmSqliteExecutor): Promise<void> {
-    await realExecutor.exec(
+  // Split into small, composed steps (workspace-rules.md's function-length
+  // cap) rather than one long insert sequence. Note: this duplicates
+  // fixture-seeding SQL that already exists, separately, in packages/db's
+  // own artifact-diff.test.ts/configuration.test.ts/component-lifecycle.test.ts
+  // -- packages/site cannot import packages/db's test files (only its src,
+  // per packages/db/AGENTS.md), so this mirrors an existing, accepted
+  // pattern rather than introducing a new one.
+  async function seedTenantAndPortfolio(executor: WasmSqliteExecutor): Promise<void> {
+    await executor.exec(
       'INSERT INTO tenants (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
       [TENANT_ID, 'Test', 0, 0],
     );
-    await realExecutor.exec(
+    await executor.exec(
       'INSERT INTO portfolios (id, tenant_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
       [PORTFOLIO_ID, TENANT_ID, 'Test', 0, 0],
     );
-    await realExecutor.exec(
+  }
+
+  async function seedSourceAndEnvironment(executor: WasmSqliteExecutor): Promise<void> {
+    await executor.exec(
       `INSERT INTO ingestion_sources (
         id, portfolio_id, native_source_id, display_name, type, authority,
         supports_cursor, supports_checkpoint, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [SOURCE_ID, PORTFOLIO_ID, 'default', 'Default', 'sync', 'local', 0, 0, 0, 0],
     );
-    await realExecutor.exec(
+    await executor.exec(
       'INSERT INTO environments (id, ingestion_source_id, native_environment_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
       [ENVIRONMENT_ID, SOURCE_ID, 'dev', 0, 0],
     );
-    await realExecutor.exec(
+  }
+
+  async function seedProjectAndSession(executor: WasmSqliteExecutor): Promise<void> {
+    await executor.exec(
       'INSERT INTO projects (id, portfolio_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
       [PROJECT_ID, PORTFOLIO_ID, 'Test', 0, 0],
     );
-    await realExecutor.exec(
+    await executor.exec(
       'INSERT INTO source_projects (id, project_id, ingestion_source_id, native_project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
       [SOURCE_PROJECT_ID, PROJECT_ID, SOURCE_ID, 'test', 0, 0],
     );
-    await realExecutor.exec(
+    await executor.exec(
       'INSERT INTO sessions (id, project_id, ingestion_source_id, environment_id, harness, native_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       [SESSION_ID, PROJECT_ID, SOURCE_ID, ENVIRONMENT_ID, 'claude-code', SESSION_ID, 0, 0],
     );
-    await realExecutor.exec(
+  }
+
+  async function seedSourceManifest(executor: WasmSqliteExecutor): Promise<void> {
+    await executor.exec(
       `INSERT INTO source_manifests (
         id, ingestion_source_id, environment_id, source_project_id, session_id,
         manifest_schema_version, finality, occurrence_time, capture_time, ingestion_time, sequence_number,
@@ -532,7 +548,10 @@ describe('ArtifactDiffRepository with a real createBrowserArtifactBlobStore', ()
         0,
       ],
     );
-    await realExecutor.exec(
+  }
+
+  async function seedManifestArtifact(executor: WasmSqliteExecutor): Promise<void> {
+    await executor.exec(
       `INSERT INTO manifest_artifacts (
         id, source_manifest_id, manifest_project_id, manifest_session_id, harness, harness_version,
         manifest_schema_version, scope, relative_path, sha256, size, status,
@@ -555,6 +574,14 @@ describe('ArtifactDiffRepository with a real createBrowserArtifactBlobStore', ()
         0,
       ],
     );
+  }
+
+  async function seedRealExecutor(realExecutor: WasmSqliteExecutor): Promise<void> {
+    await seedTenantAndPortfolio(realExecutor);
+    await seedSourceAndEnvironment(realExecutor);
+    await seedProjectAndSession(realExecutor);
+    await seedSourceManifest(realExecutor);
+    await seedManifestArtifact(realExecutor);
   }
 
   it('writes real content bytes into insert.content via a real store, and never calls the real store.retain() from record()', async () => {

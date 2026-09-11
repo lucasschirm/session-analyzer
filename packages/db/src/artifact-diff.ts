@@ -939,7 +939,7 @@ export class ArtifactDiffRepository {
 
   constructor(
     hasher: ContentHasher,
-    private readonly blobStore?: ArtifactBlobStore,
+    readonly blobStore?: ArtifactBlobStore,
   ) {
     this.canonicalizer = new ArtifactCanonicalizer(hasher);
     this.diffEngine = new ArtifactDiffEngine(hasher);

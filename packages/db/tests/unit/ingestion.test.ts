@@ -694,7 +694,10 @@ describe('DefaultIngestionOrchestrator', () => {
     // reaches the `ArtifactDiffRepository` instance created inside
     // `recordArtifactReferences` (ingestion.ts:1183). This does not
     // re-test ArtifactDiffRepository's own record()/getCanonicalizedArtifact()
-    // behavior -- that is covered in artifact-diff.test.ts.
+    // behavior -- that is covered in artifact-diff.test.ts. `blobStore` is a
+    // public readonly constructor property (artifact-diff.ts), so the spy
+    // below only needs to get a handle on the internally-constructed
+    // instance -- reading it back requires no private-field cast.
     const content = readFixture('t2-happy-path.jsonl');
     const hasher = createSha256ContentHasher();
     const sha256 = await hasher.hash(content);
@@ -711,7 +714,7 @@ describe('DefaultIngestionOrchestrator', () => {
         this: ArtifactDiffRepository,
         ...args: Parameters<typeof originalRecord>
       ) {
-        capturedBlobStore = (this as unknown as { blobStore?: unknown }).blobStore;
+        capturedBlobStore = this.blobStore;
         return originalRecord.apply(this, args);
       });
 
