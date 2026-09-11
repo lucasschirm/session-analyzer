@@ -9,7 +9,7 @@ Playwright end-to-end tests and fixtures for the site package.
 - **portfolio-refresh.spec.ts** — UX-003: live refresh of portfolio metrics and chart geometry after a second session upload without page reload.
 - **sessions-filter.spec.ts** — Sessions scope filter interactions on the Portfolio and Project Behavior pages.
 - **sync.spec.ts** — CAS sync pipeline, offline handling, retry, passkey, and large transcript flows.
-- **sync-fixtures.ts** — Mock S3 CAS payload and `FixtureBucket` builders for sync tests.
+- **sync-fixtures.ts** — Mock S3 CAS payload and `FixtureBucket` builders for sync tests. The listing response emits `<LastModified>` alongside a content-derived (sha256-of-body, not key-derived) `<ETag>` per entry, matching the manifest-fingerprint discovery mechanism. `reuploadSessionManifest` (manifest-only bump, no file-content change), `updateSessionFile` (re-uploads a file's content and rebuilds the session manifest so both the body and the manifest's listing fingerprint change), and listing-level `setHttpError('list:<prefix>', …)` injection let tests simulate a manifest-only re-upload, a manifest+content re-upload, and a project listing failure respectively.
 - **ux-007-import-failure.spec.ts** — UX-007: corrupt-fixture manual import failures surface a specific failure class (Unsupported/Unavailable/Integrity Error), not a generic "Import failed" string.
 - **ux-009-query-hang.spec.ts** — UX-009: a blocked analytics query reaches a bounded timeout error affordance instead of an indefinite loading spinner.
 - **fixtures/** — Session transcript and sidecar fixtures used by manual import and sync specs.
