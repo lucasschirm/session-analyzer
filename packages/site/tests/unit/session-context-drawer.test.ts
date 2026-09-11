@@ -130,4 +130,53 @@ describe('session-context-drawer', () => {
 
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('stops propagation and prevents default on Escape key press', async () => {
+    const drawer = Object.assign(document.createElement('session-context-drawer'), {
+      message: sampleMessage,
+    }) as SessionContextDrawer;
+    await mount(drawer);
+
+    const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    const stopSpy = vi.spyOn(event, 'stopPropagation');
+    const prevSpy = vi.spyOn(event, 'preventDefault');
+    window.dispatchEvent(event);
+
+    expect(stopSpy).toHaveBeenCalled();
+    expect(prevSpy).toHaveBeenCalled();
+  });
+
+  it('traps focus to close-button when Tab is pressed on the boundary', async () => {
+    const drawer = Object.assign(document.createElement('session-context-drawer'), {
+      message: sampleMessage,
+    }) as SessionContextDrawer;
+    await mount(drawer);
+    const root = shadow(drawer);
+    const closeBtn = root.querySelector('.close-button') as HTMLButtonElement;
+
+    closeBtn.focus();
+    expect(root.activeElement).toBe(closeBtn);
+
+    const event = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true });
+    const prevSpy = vi.spyOn(event, 'preventDefault');
+    window.dispatchEvent(event);
+
+    expect(prevSpy).toHaveBeenCalled();
+  });
+
+  it('traps focus to close-button when Shift+Tab is pressed on the boundary', async () => {
+    const drawer = Object.assign(document.createElement('session-context-drawer'), {
+      message: sampleMessage,
+    }) as SessionContextDrawer;
+    await mount(drawer);
+    const root = shadow(drawer);
+    const closeBtn = root.querySelector('.close-button') as HTMLButtonElement;
+
+    closeBtn.focus();
+    const event = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, cancelable: true });
+    const prevSpy = vi.spyOn(event, 'preventDefault');
+    window.dispatchEvent(event);
+
+    expect(prevSpy).toHaveBeenCalled();
+  });
 });

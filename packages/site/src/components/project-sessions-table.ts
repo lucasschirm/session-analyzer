@@ -2,7 +2,7 @@ import type { ProjectSessionListItem } from '@lucasschirm/sal-db';
 import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
-import { formatDateTime } from '../lib/format';
+import { formatDateTime, formatSessionTitle } from '../lib/format';
 import { navigateTo } from '../router';
 
 /**
@@ -145,28 +145,40 @@ export class ProjectSessionsTable extends LitElement {
   @property({ type: String }) searchQuery = '';
 
   private handleSessionClick(e: Event, sessionId: string): void {
+    if (e instanceof MouseEvent) {
+      if (
+        e.defaultPrevented ||
+        e.button !== 0 ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.shiftKey ||
+        e.altKey
+      ) {
+        return;
+      }
+    }
     e.preventDefault();
     navigateTo(`/sessions/${encodeURIComponent(sessionId)}`);
   }
 
   render() {
     if (this.error) {
-      return html`<div class="error-banner" role="alert">${this.error}</div>`;
+      return html`<div class="project-sessions-table error-banner" role="alert">${this.error}</div>`;
     }
 
     if (this.loading && this.sessions.length === 0) {
-      return html`<div class="table-container"><p class="loading-notice">Loading sessions…</p></div>`;
+      return html`<div class="project-sessions-table table-container"><p class="loading-notice">Loading sessions…</p></div>`;
     }
 
     if (this.sessions.length === 0) {
       const message = this.searchQuery
         ? `No sessions matching "${this.searchQuery}".`
         : 'No sessions found in this project.';
-      return html`<div class="table-container"><p class="empty-state">${message}</p></div>`;
+      return html`<div class="project-sessions-table table-container"><p class="empty-state">${message}</p></div>`;
     }
 
     return html`
-      <div class="table-container">
+      <div class="project-sessions-table table-container">
         <table>
           <thead>
             <tr>
@@ -180,7 +192,7 @@ export class ProjectSessionsTable extends LitElement {
               this.sessions,
               (session) => session.sessionId,
               (session) => {
-                const title = session.title || session.sessionId;
+                const title = formatSessionTitle(session.title, session.startedAt);
                 const subagentCount = session.subagentCount ?? 0;
                 return html`
                   <tr @click=${(e: Event) => this.handleSessionClick(e, session.sessionId)}>
@@ -188,7 +200,7 @@ export class ProjectSessionsTable extends LitElement {
                       <a
                         class="session-title-link"
                         href="#/sessions/${encodeURIComponent(session.sessionId)}"
-                        title=${session.sessionId}
+                        title=${title}
                         @click=${(e: Event) => this.handleSessionClick(e, session.sessionId)}
                       >
                         ${title}

@@ -141,6 +141,10 @@ PR that implements it flips it to `GREEN`.
 | UX-025 | Re-sync of an unchanged bucket issues one project object listing and zero session-manifest GETs | `sync.spec.ts` | request-log assertion | 3 | 3 | 4 | 36 | P1 | GREEN |
 | UX-026 | Re-sync after a manifest+content re-upload (new ETag) re-fetches only that session's manifest and transcript and re-ingests it; a project listing 5xx surfaces the error affordance, never the empty state | `sync.spec.ts` | request-log + error-affordance assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
 | UX-027 | Harness typeahead filter updates the URL query string and filters portfolio metrics to the selected harness | `harness-filter.spec.ts` | URL/hash + metric-card assertion | 4 | 4 | 4 | 64 | P0 | GREEN |
+| UX-028 | Left-nav expandable project sessions list and session direct navigation | `project-sessions.spec.ts` | session expansion, navigation assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-029 | Dedicated project sessions page (`#/projects/:id/sessions`) pagination and filters | `project-sessions.spec.ts` | pagination, search, date range filter assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-030 | Project sessions table navigation, title display, and subagent badge | `project-sessions.spec.ts` | table row click, session evidence routing assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-031 | Session context growth chart interaction and message detail drawer focus trap | `project-sessions.spec.ts` | drawer open on bar click, focus trap, Escape to close | 3 | 4 | 4 | 48 | P1 | GREEN |
 
 ### 6.2 Tier B — Analytics Pipeline (`PIPE-###`)
 

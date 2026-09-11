@@ -5,6 +5,8 @@ import type { ProjectSessionsPage } from '../../src/pages/project-sessions-page'
 
 const mockGetProjectSessionList = vi.fn();
 const mockResolveProjectId = vi.fn();
+const mockGetProject = vi.fn();
+const mockGetProjectByReadableId = vi.fn();
 
 vi.mock('../../src/db/analytics-client', () => ({
   analyticsClient: {
@@ -15,9 +17,18 @@ vi.mock('../../src/db/analytics-client', () => ({
   },
 }));
 
+vi.mock('../../src/db/db-client', () => ({
+  dbClient: {
+    getProject: (...args: unknown[]) => mockGetProject(...args),
+    getProjectByReadableId: (...args: unknown[]) => mockGetProjectByReadableId(...args),
+  },
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockResolveProjectId.mockResolvedValue('project-1');
+  mockGetProject.mockResolvedValue({ id: 'project-1', name: 'Alpha Project' });
+  mockGetProjectByReadableId.mockResolvedValue({ id: 'project-1', name: 'Alpha Project' });
   mockGetProjectSessionList.mockResolvedValue({
     items: [
       {

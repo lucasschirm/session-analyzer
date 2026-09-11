@@ -2,10 +2,64 @@ import type { AnalyticsQuery, Filter, ProjectSessionListItem } from '@lucasschir
 import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { analyticsClient } from '../db/analytics-client';
+import { dbClient } from '../db/db-client';
 import { PageLitElement, pageHostStyles } from './page-lit-element';
 import '../components/project-sessions-table';
 
 const PAGE_SIZE = 20;
+
+function parseDateStart(val: string): string {
+  if (!val.trim()) return '';
+  try {
+    const d = new Date(val.trim());
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+  } catch {
+    return '';
+  }
+}
+
+function parseDateEnd(val: string): string {
+  if (!val.trim()) return '';
+  try {
+    const trimmed = val.trim();
+    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
+    const d = new Date(isDateOnly ? `${trimmed}T23:59:59.999Z` : trimmed);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+  } catch {
+    return '';
+  }
+}
+
+function buildSessionFilters(
+  searchQuery: string,
+  harness: string,
+  mode: string,
+  sessionsScope: string,
+): Filter[] {
+  const filters: Filter[] = [];
+  if (searchQuery.trim()) {
+    filters.push({ field: 'search', operator: 'contains', value: searchQuery.trim() });
+  }
+  if (harness.trim()) {
+    filters.push({ field: 'harness', operator: 'eq', value: harness.trim() });
+  }
+  if (mode.trim()) {
+    filters.push({ field: 'mode', operator: 'eq', value: mode.trim() });
+  }
+  if (sessionsScope && sessionsScope !== 'all') {
+    filters.push({ field: 'sessions', operator: 'eq', value: sessionsScope });
+  }
+  return filters;
+}
+
+function buildSessionTimeRange(
+  timeStart: string,
+  timeEnd: string,
+): { start: string; end: string } | undefined {
+  const start = parseDateStart(timeStart);
+  const end = parseDateEnd(timeEnd);
+  return start || end ? { start, end } : undefined;
+}
 
 @customElement('project-sessions-page')
 export class ProjectSessionsPage extends PageLitElement {
@@ -152,6 +206,8 @@ export class ProjectSessionsPage extends PageLitElement {
 
   @property({ type: String, attribute: 'project-id' }) projectId = '';
 
+  @state() private projectName = '';
+
   @state() private sessions: ProjectSessionListItem[] = [];
 
   @state() private loading = false;
@@ -177,12 +233,18 @@ export class ProjectSessionsPage extends PageLitElement {
   @state() private resolvedProjectId: string | null = null;
 
   private searchDebounceTimer: number | undefined;
+  private loadSeq = 0;
 
   connectedCallback(): void {
     super.connectedCallback();
-    if (this.projectId) {
+    if (this.hasUpdated && this.projectId) {
       void this.load();
     }
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    clearTimeout(this.searchDebounceTimer);
   }
 
   willUpdate(changed: PropertyValues<this>): void {
@@ -193,51 +255,62 @@ export class ProjectSessionsPage extends PageLitElement {
     }
   }
 
+  private async resolveProjectNameAndId(): Promise<void> {
+    const decoded = decodeURIComponent(this.projectId);
+    let resolved: string | null = null;
+    try {
+      resolved = await analyticsClient?.resolveProjectId?.(decoded);
+    } catch {
+      // Non-fatal
+    }
+    try {
+      const project =
+        (await dbClient?.getProject?.(decoded)) ??
+        (await dbClient?.getProjectByReadableId?.(decoded));
+      if (project) {
+        this.projectName = project.name;
+        if (!resolved) {
+          resolved =
+            (await analyticsClient?.resolveProjectId?.(project.name)) ||
+            (await analyticsClient?.resolveProjectId?.(project.id));
+        }
+      } else if (!decoded.startsWith('proj-') && !/^[0-9a-f]{8}-[0-9a-f]{4}/i.test(decoded)) {
+        this.projectName = decoded;
+      }
+    } catch {
+      // Fall back to default heading
+    }
+    this.resolvedProjectId = resolved ?? this.projectId;
+  }
+
   private async load(): Promise<void> {
     if (!this.projectId) return;
+    const seq = ++this.loadSeq;
     this.loading = true;
     this.error = null;
 
     try {
-      const decoded = decodeURIComponent(this.projectId);
-      const resolved = await analyticsClient.resolveProjectId(decoded);
-      this.resolvedProjectId = resolved ?? this.projectId;
-      const targetProjectId = this.resolvedProjectId;
-
-      const filters: Filter[] = [];
-      if (this.searchQuery.trim()) {
-        filters.push({ field: 'search', operator: 'contains', value: this.searchQuery.trim() });
-      }
-      if (this.harness.trim()) {
-        filters.push({ field: 'harness', operator: 'eq', value: this.harness.trim() });
-      }
-      if (this.mode.trim()) {
-        filters.push({ field: 'mode', operator: 'eq', value: this.mode.trim() });
-      }
-      if (this.sessionsScope && this.sessionsScope !== 'all') {
-        filters.push({ field: 'sessions', operator: 'eq', value: this.sessionsScope });
-      }
-
+      await this.resolveProjectNameAndId();
+      if (seq !== this.loadSeq) return;
+      const targetProjectId = this.resolvedProjectId ?? this.projectId;
       const query: AnalyticsQuery = {
         limit: PAGE_SIZE,
         cursor: String(this.pageOffset),
-        filters: filters.length > 0 ? filters : undefined,
-        timeRange:
-          this.timeStart || this.timeEnd
-            ? {
-                start: this.timeStart ? new Date(this.timeStart).toISOString() : '',
-                end: this.timeEnd ? new Date(this.timeEnd).toISOString() : '',
-              }
-            : undefined,
+        filters: buildSessionFilters(this.searchQuery, this.harness, this.mode, this.sessionsScope),
+        timeRange: buildSessionTimeRange(this.timeStart, this.timeEnd),
       };
 
       const page = await analyticsClient.search.getProjectSessionList(targetProjectId, query);
+      if (seq !== this.loadSeq) return;
       this.sessions = [...page.items];
       this.totalCount = page.totalCount ?? page.items.length;
     } catch (err) {
+      if (seq !== this.loadSeq) return;
       this.error = err instanceof Error ? err.message : String(err);
     } finally {
-      this.loading = false;
+      if (seq === this.loadSeq) {
+        this.loading = false;
+      }
     }
   }
 
@@ -299,7 +372,7 @@ export class ProjectSessionsPage extends PageLitElement {
               ← Project Behavior
             </a>
           </div>
-          <h1>Sessions — ${this.projectId}</h1>
+          <h1>Sessions — ${this.projectName || 'Project'}</h1>
         </div>
 
         <div class="filter-bar">

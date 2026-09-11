@@ -3,6 +3,7 @@ import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { formatChartValue } from '../../components/charts/chart-types';
+import { formatDateTime } from '../../lib/format';
 import { renderMarkdown } from '../../lib/markdown';
 
 /**
@@ -164,6 +165,10 @@ export class SessionContextDrawer extends LitElement {
       color: var(--md-sys-color-primary, #4f8cff);
     }
 
+    .stat-value.timestamp {
+      font-size: 13px;
+    }
+
     .stat-card.full-width {
       grid-column: 1 / -1;
     }
@@ -254,6 +259,7 @@ export class SessionContextDrawer extends LitElement {
 
   private cachedRenderedHtml: string | null = null;
   private isKeydownAttached = false;
+  private previouslyFocusedElement: HTMLElement | null = null;
 
   willUpdate(changed: Map<string, unknown>): void {
     super.willUpdate(changed);
@@ -266,11 +272,16 @@ export class SessionContextDrawer extends LitElement {
     super.updated(changed);
     if (changed.has('message')) {
       if (this.message && !this.isKeydownAttached) {
+        this.previouslyFocusedElement = document.activeElement as HTMLElement | null;
         window.addEventListener('keydown', this.handleKeyDown);
         this.isKeydownAttached = true;
+        void this.updateComplete.then(() => {
+          this.shadowRoot?.querySelector<HTMLButtonElement>('.close-button')?.focus();
+        });
       } else if (!this.message && this.isKeydownAttached) {
         window.removeEventListener('keydown', this.handleKeyDown);
         this.isKeydownAttached = false;
+        this.restoreFocus();
       }
     }
   }
@@ -281,11 +292,56 @@ export class SessionContextDrawer extends LitElement {
       window.removeEventListener('keydown', this.handleKeyDown);
       this.isKeydownAttached = false;
     }
+    this.restoreFocus();
+  }
+
+  private restoreFocus(): void {
+    if (
+      this.previouslyFocusedElement &&
+      typeof this.previouslyFocusedElement.focus === 'function'
+    ) {
+      this.previouslyFocusedElement.focus();
+    }
+    this.previouslyFocusedElement = null;
+  }
+
+  private trapTabKey(e: KeyboardEvent): void {
+    const focusables = Array.from(
+      this.shadowRoot?.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    ).filter(
+      (el) =>
+        !el.hasAttribute('disabled') &&
+        !el.hasAttribute('hidden') &&
+        el.getAttribute('aria-hidden') !== 'true',
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const active = this.shadowRoot?.activeElement;
+    if (!active || !focusables.includes(active as HTMLElement)) {
+      e.preventDefault();
+      first.focus();
+      return;
+    }
+    if (e.shiftKey && active === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 
   private handleKeyDown = (e: KeyboardEvent): void => {
-    if (e.key === 'Escape' && this.message) {
+    if (!this.message) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
       this.close();
+    } else if (e.key === 'Tab') {
+      this.trapTabKey(e);
     }
   };
 
@@ -298,149 +354,78 @@ export class SessionContextDrawer extends LitElement {
     );
   };
 
+  private renderStatCard(label: string, value: string, highlight = false) {
+    return html`
+      <div class="stat-card">
+        <span class="stat-label">${label}</span>
+        <span class="stat-value ${highlight ? 'highlight' : ''}">${value}</span>
+      </div>
+    `;
+  }
+
+  private renderTokenStats(m: ContextTimingPoint) {
+    const fmt = (v: number | null | undefined) => (v != null ? formatChartValue(v) : '—');
+    return html`
+      ${this.renderStatCard('Context Tokens', fmt(m.contextTokens), true)}
+      ${this.renderStatCard('Generation Tokens', fmt(m.generationTokens))}
+      ${this.renderStatCard('Total Tokens', fmt(m.totalTokens))}
+      ${this.renderStatCard('Input Tokens', fmt(m.inputTokens))}
+      ${this.renderStatCard('Cache Read', fmt(m.cacheReadTokens))}
+      ${this.renderStatCard('Cache Creation', fmt(m.cacheCreationTokens))}
+    `;
+  }
+
+  private renderMetadataStats(m: ContextTimingPoint) {
+    const formattedDate = m.timestamp ? formatDateTime(m.timestamp) : '';
+    return html`
+      ${m.thinkingTokens != null ? this.renderStatCard('Thinking Tokens', formatChartValue(m.thinkingTokens)) : ''}
+      ${m.effort ? this.renderStatCard('Reasoning Effort', m.effort) : ''}
+      ${m.model ? html`<div class="stat-card full-width"><span class="stat-label">Model</span><span class="stat-value">${m.model}</span></div>` : ''}
+      ${formattedDate ? html`<div class="stat-card full-width"><span class="stat-label">Timestamp</span><span class="stat-value timestamp">${formattedDate}</span></div>` : ''}
+    `;
+  }
+
+  private renderContent() {
+    return html`
+      <div class="content-section">
+        <h3 class="section-heading">Message Content</h3>
+        <div class="content-box">
+          ${this.cachedRenderedHtml ? unsafeHTML(this.cachedRenderedHtml) : html`<p class="empty-text">No content recorded for this message.</p>`}
+        </div>
+      </div>
+    `;
+  }
+
+  private renderHeader(index: number, role: string) {
+    return html`
+      <div class="drawer-header">
+        <div class="header-info">
+          <h2 class="drawer-title">Message #${index}</h2>
+          <span class="role-badge ${role}">${role}</span>
+        </div>
+        <button class="close-button" type="button" aria-label="Close message details" @click=${this.close}>
+          ✕
+        </button>
+      </div>
+    `;
+  }
+
   render() {
     if (!this.message) return null;
-
     const m = this.message;
     const index = m.messageIndex ?? m.turnNumber;
     const role = m.role ?? 'unknown';
 
     return html`
       <div class="drawer-backdrop" @click=${this.close} aria-hidden="true"></div>
-      <aside
-        class="drawer-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Message ${index} details"
-      >
-        <div class="drawer-header">
-          <div class="header-info">
-            <h2 class="drawer-title">Message #${index}</h2>
-            <span class="role-badge ${role}">${role}</span>
-          </div>
-          <button
-            class="close-button"
-            type="button"
-            aria-label="Close message details"
-            @click=${this.close}
-          >
-            ✕
-          </button>
-        </div>
-
+      <aside class="drawer-panel" role="dialog" aria-modal="true" aria-label="Message ${index} details">
+        ${this.renderHeader(index, role)}
         <div class="drawer-body">
           <div class="stats-grid">
-            <div class="stat-card">
-              <span class="stat-label">Context Tokens</span>
-              <span class="stat-value highlight">
-                ${m.contextTokens !== null ? formatChartValue(m.contextTokens) : '—'}
-              </span>
-            </div>
-
-            <div class="stat-card">
-              <span class="stat-label">Generation Tokens</span>
-              <span class="stat-value">
-                ${m.generationTokens !== null ? formatChartValue(m.generationTokens) : '—'}
-              </span>
-            </div>
-
-            <div class="stat-card">
-              <span class="stat-label">Total Tokens</span>
-              <span class="stat-value">
-                ${m.totalTokens !== null ? formatChartValue(m.totalTokens) : '—'}
-              </span>
-            </div>
-
-            <div class="stat-card">
-              <span class="stat-label">Input Tokens</span>
-              <span class="stat-value">
-                ${
-                  m.inputTokens !== null && m.inputTokens !== undefined
-                    ? formatChartValue(m.inputTokens)
-                    : '—'
-                }
-              </span>
-            </div>
-
-            <div class="stat-card">
-              <span class="stat-label">Cache Read</span>
-              <span class="stat-value">
-                ${
-                  m.cacheReadTokens !== null && m.cacheReadTokens !== undefined
-                    ? formatChartValue(m.cacheReadTokens)
-                    : '—'
-                }
-              </span>
-            </div>
-
-            <div class="stat-card">
-              <span class="stat-label">Cache Creation</span>
-              <span class="stat-value">
-                ${
-                  m.cacheCreationTokens !== null && m.cacheCreationTokens !== undefined
-                    ? formatChartValue(m.cacheCreationTokens)
-                    : '—'
-                }
-              </span>
-            </div>
-
-            ${
-              m.thinkingTokens !== null && m.thinkingTokens !== undefined
-                ? html`
-                <div class="stat-card">
-                  <span class="stat-label">Thinking Tokens</span>
-                  <span class="stat-value">${formatChartValue(m.thinkingTokens)}</span>
-                </div>
-              `
-                : ''
-            }
-
-            ${
-              m.effort
-                ? html`
-                <div class="stat-card">
-                  <span class="stat-label">Reasoning Effort</span>
-                  <span class="stat-value">${m.effort}</span>
-                </div>
-              `
-                : ''
-            }
-
-            ${
-              m.model
-                ? html`
-                <div class="stat-card full-width">
-                  <span class="stat-label">Model</span>
-                  <span class="stat-value">${m.model}</span>
-                </div>
-              `
-                : ''
-            }
-
-            ${
-              m.timestamp
-                ? html`
-                <div class="stat-card full-width">
-                  <span class="stat-label">Timestamp</span>
-                  <span class="stat-value" style="font-size: 13px;">
-                    ${new Date(m.timestamp).toLocaleString()}
-                  </span>
-                </div>
-              `
-                : ''
-            }
+            ${this.renderTokenStats(m)}
+            ${this.renderMetadataStats(m)}
           </div>
-
-          <div class="content-section">
-            <h3 class="section-heading">Message Content</h3>
-            <div class="content-box">
-              ${
-                this.cachedRenderedHtml
-                  ? unsafeHTML(this.cachedRenderedHtml)
-                  : html`<p class="empty-text">No content recorded for this message.</p>`
-              }
-            </div>
-          </div>
+          ${this.renderContent()}
         </div>
       </aside>
     `;

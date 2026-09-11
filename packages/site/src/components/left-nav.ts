@@ -4,6 +4,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { analyticsClient } from '../db/analytics-client';
 import { dbClient } from '../db/db-client';
+import { formatDate, formatSessionTitle } from '../lib/format';
 import { navigateTo } from '../router';
 import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 import type { Project } from '../types';
@@ -15,7 +16,7 @@ function formatRelativeDate(timestamp: number): string {
   if (diff < day) return 'Updated today';
   if (diff < 2 * day) return 'Updated yesterday';
   if (diff < 7 * day) return `Updated ${Math.floor(diff / day)} days ago`;
-  return new Date(timestamp).toLocaleDateString();
+  return formatDate(timestamp);
 }
 
 /**
@@ -241,6 +242,13 @@ export class LeftNav extends LitElement {
       padding: 4px 8px;
       font-style: italic;
     }
+
+    .nav-session-error {
+      font-size: 11px;
+      color: var(--md-sys-color-error, #f28b82);
+      padding: 4px 8px;
+      font-style: italic;
+    }
   `;
 
   /** Current hash path (e.g. `/`, `/projects`, `/settings/storage`). */
@@ -251,6 +259,8 @@ export class LeftNav extends LitElement {
   @state() private projectsExpanded = false;
 
   @state() private projectSessions: Record<string, ProjectSessionListItem[]> = {};
+
+  @state() private projectSessionsError: Record<string, string> = {};
 
   @state() private expandedProjectSlugs: Set<string> = new Set();
 
@@ -293,14 +303,13 @@ export class LeftNav extends LitElement {
         if (match) {
           const slug = decodeURIComponent(match[1]);
           const project = this.projects.find(
-            (p) => (p.readable_id || p.id) === slug || p.id === slug,
+            (p) => (p.readable_id || p.id) === slug || p.id === slug || p.name === slug,
           );
           const pId = project ? project.id : slug;
           const next = new Set(this.expandedProjectSlugs);
           next.add(pId);
-          next.add(slug);
           this.expandedProjectSlugs = next;
-          void this.loadSessionsForProject(pId, slug);
+          void this.loadSessionsForProject(pId, slug, project?.name);
         }
       } else if (/^\/sessions\/[^/]+/.test(this.path)) {
         this.projectsExpanded = true;
@@ -322,6 +331,16 @@ export class LeftNav extends LitElement {
     const hasNewSessions = sessionCount > prevSessionCount;
     if (runEnded || hasNewProjects || hasNewSessions) {
       void this.loadProjects();
+      const uniqueProjectIds = new Set<string>();
+      for (const key of this.expandedProjectSlugs) {
+        const match = this.projects.find(
+          (p) => p.id === key || (p.readable_id || p.id) === key || p.name === key,
+        );
+        uniqueProjectIds.add(match ? match.id : key);
+      }
+      for (const pId of uniqueProjectIds) {
+        void this.loadSessionsForProject(pId, undefined, undefined, true);
+      }
     }
   };
 
@@ -341,14 +360,13 @@ export class LeftNav extends LitElement {
         if (match) {
           const slug = decodeURIComponent(match[1]);
           const project = this.projects.find(
-            (p) => (p.readable_id || p.id) === slug || p.id === slug,
+            (p) => (p.readable_id || p.id) === slug || p.id === slug || p.name === slug,
           );
           const pId = project ? project.id : slug;
           const next = new Set(this.expandedProjectSlugs);
           next.add(pId);
-          next.add(slug);
           this.expandedProjectSlugs = next;
-          void this.loadSessionsForProject(pId, slug);
+          void this.loadSessionsForProject(pId, slug, project?.name);
         }
       }
     } catch {
@@ -358,15 +376,19 @@ export class LeftNav extends LitElement {
     }
   }
 
-  private handleProjectClick(slug: string, projectId: string): void {
+  private handleProjectClick(slug: string, projectId: string, projectName?: string): void {
     const next = new Set(this.expandedProjectSlugs);
     next.add(projectId);
-    next.add(slug);
     this.expandedProjectSlugs = next;
-    void this.loadSessionsForProject(projectId, slug);
+    void this.loadSessionsForProject(projectId, slug, projectName);
   }
 
-  private toggleProjectSessions(e: Event, projectId: string, slug: string): void {
+  private toggleProjectSessions(
+    e: Event,
+    projectId: string,
+    slug: string,
+    projectName?: string,
+  ): void {
     e.preventDefault();
     e.stopPropagation();
     const next = new Set(this.expandedProjectSlugs);
@@ -375,53 +397,101 @@ export class LeftNav extends LitElement {
       next.delete(slug);
     } else {
       next.add(projectId);
-      next.add(slug);
-      void this.loadSessionsForProject(projectId, slug);
+      void this.loadSessionsForProject(projectId, slug, projectName);
     }
     this.expandedProjectSlugs = next;
   }
 
   private handleSessionClick(e: MouseEvent, sessionId: string): void {
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+      return;
+    }
     e.preventDefault();
     navigateTo(`/sessions/${encodeURIComponent(sessionId)}`);
   }
 
-  private async loadSessionsForProject(projectId: string, slug?: string): Promise<void> {
-    if (
+  private shouldSkipSessionLoad(projectId: string, slug?: string, force?: boolean): boolean {
+    if (force) return false;
+    return Boolean(
       this.sessionsLoading[projectId] ||
-      (slug && this.sessionsLoading[slug]) ||
-      this.projectSessions[projectId] ||
-      (slug && this.projectSessions[slug])
-    ) {
-      return;
+        (slug && this.sessionsLoading[slug]) ||
+        this.projectSessions[projectId] ||
+        (slug && this.projectSessions[slug]),
+    );
+  }
+
+  private setSessionLoading(projectId: string, slug: string | undefined, loading: boolean): void {
+    this.sessionsLoading = {
+      ...this.sessionsLoading,
+      [projectId]: loading,
+      ...(slug ? { [slug]: loading } : {}),
+    };
+  }
+
+  private async resolveTargetProjectId(
+    projectId: string,
+    slug?: string,
+    projectName?: string,
+  ): Promise<string> {
+    const fromId = await analyticsClient?.resolveProjectId?.(projectId);
+    if (fromId) return fromId;
+    if (projectName) {
+      const fromName = await analyticsClient?.resolveProjectId?.(projectName);
+      if (fromName) return fromName;
     }
-    this.sessionsLoading = { ...this.sessionsLoading, [projectId]: true };
     if (slug) {
-      this.sessionsLoading = { ...this.sessionsLoading, [slug]: true };
+      const fromSlug = await analyticsClient?.resolveProjectId?.(slug);
+      if (fromSlug) return fromSlug;
     }
+    return projectId;
+  }
+
+  private storeLoadedSessions(keys: (string | undefined)[], items: ProjectSessionListItem[]): void {
+    const next = { ...this.projectSessions };
+    for (const key of keys) {
+      if (key) next[key] = items;
+    }
+    this.projectSessions = next;
+  }
+
+  private storeSessionError(keys: (string | undefined)[], error: unknown): void {
+    const msg = error instanceof Error ? error.message : String(error);
+    const next = { ...this.projectSessionsError };
+    for (const key of keys) {
+      if (key) next[key] = msg;
+    }
+    this.projectSessionsError = next;
+  }
+
+  private clearSessionErrors(keys: (string | undefined)[]): void {
+    const next = { ...this.projectSessionsError };
+    for (const key of keys) {
+      if (key) delete next[key];
+    }
+    this.projectSessionsError = next;
+  }
+
+  private async loadSessionsForProject(
+    projectId: string,
+    slug?: string,
+    projectName?: string,
+    force = false,
+  ): Promise<void> {
+    if (this.shouldSkipSessionLoad(projectId, slug, force)) return;
+    this.setSessionLoading(projectId, slug, true);
+    const keys = [projectId, slug, projectName];
+    this.clearSessionErrors(keys);
+
     try {
-      let targetId = projectId;
-      if (typeof analyticsClient?.resolveProjectId === 'function') {
-        const resolved = await analyticsClient.resolveProjectId(projectId);
-        if (resolved) targetId = resolved;
+      const targetId = await this.resolveTargetProjectId(projectId, slug, projectName);
+      const page = await analyticsClient?.search?.getProjectSessionList?.(targetId, { limit: 20 });
+      if (page) {
+        this.storeLoadedSessions([...keys, targetId], [...page.items]);
       }
-      if (typeof analyticsClient?.search?.getProjectSessionList === 'function') {
-        const page = await analyticsClient.search.getProjectSessionList(targetId, { limit: 20 });
-        this.projectSessions = {
-          ...this.projectSessions,
-          [projectId]: [...page.items],
-          [targetId]: [...page.items],
-          ...(slug ? { [slug]: [...page.items] } : {}),
-        };
-      }
-    } catch {
-      // Non-fatal: if analytics not ready or in test environment without mock
+    } catch (err) {
+      this.storeSessionError(keys, err);
     } finally {
-      this.sessionsLoading = {
-        ...this.sessionsLoading,
-        [projectId]: false,
-        ...(slug ? { [slug]: false } : {}),
-      };
+      this.setSessionLoading(projectId, slug, false);
     }
   }
 
@@ -480,7 +550,7 @@ export class LeftNav extends LitElement {
                           <a
                             href=${href}
                             class="nav-child ${this.path === `/projects/${slug}` ? 'active' : ''}"
-                            @click=${() => this.handleProjectClick(slug, project.id)}
+                            @click=${() => this.handleProjectClick(slug, project.id, project.name)}
                           >
                             <span class="nav-child-name">${project.name}</span>
                             <span class="nav-child-stats">${sessionLabel} · ${formatRelativeDate(project.updated_at)}</span>
@@ -489,7 +559,8 @@ export class LeftNav extends LitElement {
                             type="button"
                             class="project-chevron-btn ${isExpanded ? 'expanded' : ''}"
                             aria-label="Toggle sessions for ${project.name}"
-                            @click=${(e: Event) => this.toggleProjectSessions(e, project.id, slug)}
+                            aria-expanded=${isExpanded ? 'true' : 'false'}
+                            @click=${(e: Event) => this.toggleProjectSessions(e, project.id, slug, project.name)}
                           >
                             <span class="chevron">▶</span>
                           </button>
@@ -501,25 +572,37 @@ export class LeftNav extends LitElement {
                               ${
                                 isLoading
                                   ? html`<div class="nav-session-loading">Loading sessions...</div>`
-                                  : sessions.length === 0
-                                    ? html`<div class="nav-session-empty">No sessions</div>`
-                                    : sessions.map((session) => {
-                                        const isSessionActive =
-                                          this.path === `/sessions/${session.sessionId}` ||
-                                          this.path ===
-                                            `/sessions/${encodeURIComponent(session.sessionId)}`;
-                                        const displayTitle = session.title || session.sessionId;
-                                        return html`
-                                        <a
-                                          href="#/sessions/${encodeURIComponent(session.sessionId)}"
-                                          class="nav-session-item ${isSessionActive ? 'active' : ''}"
-                                          title=${displayTitle}
-                                          @click=${(e: MouseEvent) => this.handleSessionClick(e, session.sessionId)}
-                                        >
-                                          <span class="nav-session-title">${displayTitle}</span>
-                                        </a>
-                                      `;
-                                      })
+                                  : (
+                                        this.projectSessionsError[project.id] ??
+                                          (slug ? this.projectSessionsError[slug] : undefined)
+                                      )
+                                    ? html`<div class="nav-session-error">Failed to load sessions</div>`
+                                    : sessions.length === 0
+                                      ? html`<div class="nav-session-empty">No sessions</div>`
+                                      : repeat(
+                                          sessions,
+                                          (session) => session.sessionId,
+                                          (session) => {
+                                            const isSessionActive =
+                                              this.path === `/sessions/${session.sessionId}` ||
+                                              this.path ===
+                                                `/sessions/${encodeURIComponent(session.sessionId)}`;
+                                            const displayTitle = formatSessionTitle(
+                                              session.title,
+                                              session.startedAt,
+                                            );
+                                            return html`
+                                              <a
+                                                href="#/sessions/${encodeURIComponent(session.sessionId)}"
+                                                class="nav-session-item ${isSessionActive ? 'active' : ''}"
+                                                title=${displayTitle}
+                                                @click=${(e: MouseEvent) => this.handleSessionClick(e, session.sessionId)}
+                                              >
+                                                <span class="nav-session-title">${displayTitle}</span>
+                                              </a>
+                                            `;
+                                          },
+                                        )
                               }
                             </div>
                           `

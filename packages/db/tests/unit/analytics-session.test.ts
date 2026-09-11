@@ -660,8 +660,8 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
     expect(p1?.turnNumber).toBe(1);
     expect(p1?.messageIndex).toBe(1);
     expect(p1?.role).toBe('user');
-    expect(p1?.contextTokens).toBe(800); // 500 input + 200 read + 100 create from forward turn
-    expect(p1?.generationTokens).toBe(0);
+    expect(p1?.contextTokens).toBe(800); // 500 input + 200 read + 100 create
+    expect(p1?.generationTokens).toBeNull();
     expect(p1?.content).toBe('Please fix the database index');
 
     // Turn 2 (assistant)
@@ -794,6 +794,32 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
     const childTree = await ds.search.getChildSessionTree(sessionId);
     expect(childTree.rootSessionId).toBe(sessionId);
     expect(childTree.nodes[0]?.children.length).toBe(1);
+  });
+
+  it('filters project session list by timeRange with independent bounds', async () => {
+    const baseDate = new Date(BASE_TIME).toISOString();
+    const futureDate = new Date(BASE_TIME + 86400000).toISOString();
+    const pastDate = new Date(BASE_TIME - 86400000).toISOString();
+
+    const inRange = await ds.search.getProjectSessionList(PROJECT_ID, {
+      timeRange: { start: pastDate, end: futureDate },
+    });
+    expect(inRange.items.length).toBe(2);
+
+    const futureOnly = await ds.search.getProjectSessionList(PROJECT_ID, {
+      timeRange: { start: futureDate, end: '' },
+    });
+    expect(futureOnly.items.length).toBe(0);
+
+    const pastOnly = await ds.search.getProjectSessionList(PROJECT_ID, {
+      timeRange: { start: '', end: pastDate },
+    });
+    expect(pastOnly.items.length).toBe(0);
+
+    const matchingStartOnly = await ds.search.getProjectSessionList(PROJECT_ID, {
+      timeRange: { start: baseDate, end: '' },
+    });
+    expect(matchingStartOnly.items.length).toBe(2);
   });
 
   it('returns artifact metadata and diff', async () => {
