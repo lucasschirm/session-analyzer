@@ -30,11 +30,11 @@ const RETENTION_CLASS_MAP: Record<string, ArtifactRetentionClass> = {
   archive: 'retained',
 };
 
-function normalizeRetentionClass(sourceClass: string | undefined): ArtifactRetentionClass {
+export function normalizeRetentionClass(sourceClass: string | undefined): ArtifactRetentionClass {
   return RETENTION_CLASS_MAP[sourceClass ?? ''] ?? 'retained';
 }
 
-function asBytes(content: ArtifactContent): Uint8Array {
+export function asBytes(content: ArtifactContent): Uint8Array {
   if (typeof content === 'string') {
     return new TextEncoder().encode(content);
   }

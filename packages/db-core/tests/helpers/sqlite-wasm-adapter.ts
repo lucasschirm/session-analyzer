@@ -12,6 +12,7 @@ import {
   type SqliteRow,
   type SqliteStatement,
   type SqliteTransaction,
+  type SqliteValue,
   SUPPORTED_SQL_FEATURES,
 } from '../../src/index.js';
 

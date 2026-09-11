@@ -1258,6 +1258,26 @@ export class ArtifactBlobStore {
     return rows.length > 0;
   }
 
+  static async delete(queryable: Queryable, sha256: string): Promise<boolean> {
+    const { changes } = await queryable.exec('DELETE FROM artifact_blobs WHERE sha256 = ?', [
+      sha256,
+    ]);
+    return changes > 0;
+  }
+
+  static async listBySha256Prefix(
+    queryable: Queryable,
+    prefix?: string,
+  ): Promise<readonly ArtifactBlob[]> {
+    const { rows } = await queryable.exec(
+      `SELECT sha256, media_type, retention_class, content, size, redaction_scheme, key_domain_id,
+              sensitive_digest, redaction_change_marker, is_redacted, verified_at, created_at, updated_at
+       FROM artifact_blobs WHERE sha256 LIKE ? ORDER BY sha256`,
+      [`${prefix ?? ''}%`],
+    );
+    return rows.map(ArtifactBlobStore.rowToArtifactBlob);
+  }
+
   private static rowToArtifactBlob(row: SqliteRow): ArtifactBlob {
     return {
       sha256: asString(row.sha256),

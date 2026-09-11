@@ -1,0 +1,428 @@
+/**
+ * Unit tests for the OPFS-backed `ArtifactBlobStore`
+ * (`opfs-artifact-blob-store.ts`).
+ *
+ * OPFS is unavailable in both Node and happy-dom (see
+ * `wasm-sqlite-executor.test.ts`'s header for the same constraint on Phase
+ * 1's `readOpfsFileBytes`/`removeOpfsFileIfExists`). This store's own OPFS
+ * primitives are inlined directly in `opfs-artifact-blob-store.ts` (not a
+ * separately importable I/O module), so rather than `vi.mock`-ing an
+ * imported module, `navigator.storage.getDirectory` is stubbed directly
+ * with a fake `FileSystemDirectoryHandle` double that keeps an in-memory
+ * map of file contents.
+ *
+ * The store's SQL-metadata interactions are exercised for real against a
+ * real in-memory `WasmSqliteExecutor` (same pattern as
+ * `packages/db/tests/unit/artifact-diff.test.ts` and
+ * `packages/db-core/tests/unit/manifest.test.ts`) — only the browser-only
+ * OPFS file I/O is doubled.
+ */
+import {
+  ArtifactBlobStore as DbArtifactBlobStore,
+  FRESH_SCHEMA_SQL,
+} from '@lucasschirm/sal-db-core';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  getSqlite3,
+  WasmSqliteExecutor,
+} from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
+import {
+  createOpfsArtifactBlobStore,
+  resetOpfsArtifactBlobsDirectoryCacheForTests,
+  writeArtifactBlobFile,
+} from '../../src/db/opfs-artifact-blob-store';
+
+function notFound(): DOMException {
+  return new DOMException('Entry not found', 'NotFoundError');
+}
+
+/** A fake `FileSystemFileHandle` backed by an in-memory byte map. */
+function createFakeFileHandle(name: string, files: Map<string, Uint8Array>): FileSystemFileHandle {
+  return {
+    createWritable: vi.fn(async () => ({
+      write: vi.fn(async (data: Uint8Array) => {
+        files.set(name, data);
+      }),
+      close: vi.fn(async () => undefined),
+    })),
+    getFile: vi.fn(async () => {
+      const bytes = files.get(name);
+      if (!bytes) throw notFound();
+      return { arrayBuffer: async () => bytes.buffer };
+    }),
+  } as unknown as FileSystemFileHandle;
+}
+
+/** A fake `FileSystemDirectoryHandle` backed by an in-memory byte map. */
+function createFakeDirectoryHandle(files: Map<string, Uint8Array>): FileSystemDirectoryHandle {
+  return {
+    getFileHandle: vi.fn(async (name: string, options?: { create?: boolean }) => {
+      if (!files.has(name) && !options?.create) throw notFound();
+      if (!files.has(name)) files.set(name, new Uint8Array());
+      return createFakeFileHandle(name, files);
+    }),
+    removeEntry: vi.fn(async (name: string) => {
+      if (!files.has(name)) throw notFound();
+      files.delete(name);
+    }),
+  } as unknown as FileSystemDirectoryHandle;
+}
+
+interface OpfsFixture {
+  files: Map<string, Uint8Array>;
+  dirHandle: FileSystemDirectoryHandle;
+  getDirectory: ReturnType<typeof vi.fn>;
+  getDirectoryHandle: ReturnType<typeof vi.fn>;
+}
+
+function stubOpfs(): OpfsFixture {
+  // The store memoizes its `/artifact-blobs/` directory handle across calls
+  // for performance; clear that cache before installing a fresh fake root
+  // so this test doesn't inherit a handle cached by an earlier test.
+  resetOpfsArtifactBlobsDirectoryCacheForTests();
+  const files = new Map<string, Uint8Array>();
+  const dirHandle = createFakeDirectoryHandle(files);
+  const getDirectoryHandle = vi.fn(
+    async (_name: string, _opts?: { create?: boolean }) => dirHandle,
+  );
+  const rootHandle = { getDirectoryHandle } as unknown as FileSystemDirectoryHandle;
+  const getDirectory = vi.fn(async () => rootHandle);
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { storage: { getDirectory } },
+    configurable: true,
+    writable: true,
+  });
+  return { files, dirHandle, getDirectory, getDirectoryHandle };
+}
+
+function encodeText(text: string): Uint8Array {
+  return new TextEncoder().encode(text);
+}
+
+const MANIFEST_DDL = FRESH_SCHEMA_SQL;
+
+async function createExecutor(): Promise<WasmSqliteExecutor> {
+  const executor = await WasmSqliteExecutor.create();
+  await executor.exec(MANIFEST_DDL);
+  return executor;
+}
+
+beforeAll(async () => {
+  await getSqlite3();
+});
+
+describe('createOpfsArtifactBlobStore', () => {
+  let opfs: OpfsFixture;
+  let executor: WasmSqliteExecutor;
+
+  beforeEach(async () => {
+    opfs = stubOpfs();
+    executor = await createExecutor();
+  });
+
+  describe('retain', () => {
+    it('writes the OPFS file and a metadata row with content: null', async () => {
+      const store = createOpfsArtifactBlobStore(executor);
+      const bytes = encodeText('hello world');
+      const reference = await store.retain({
+        sha256: 'sha-1',
+        size: bytes.length,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: bytes,
+      });
+
+      expect(reference).toEqual({
+        sha256: 'sha-1',
+        size: bytes.length,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+      });
+      expect(opfs.files.get('sha-1')).toEqual(bytes);
+
+      const row = await DbArtifactBlobStore.getBySha256(executor, 'sha-1');
+      expect(row?.content).toBeNull();
+      expect(row?.size).toBe(bytes.length);
+      expect(row?.mediaType).toBe('text/plain');
+      expect(row?.retentionClass).toBe('retained');
+    });
+
+    it('normalizes the retention class from the source location', async () => {
+      const store = createOpfsArtifactBlobStore(executor);
+      await store.retain({
+        sha256: 'sha-2',
+        size: 1,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: encodeText('x'),
+        sourceLocation: {
+          reacquisitionKey: 'k',
+          sourceNamespace: 'ns',
+          relativePath: 'p',
+          retentionClass: 'transient',
+        },
+      });
+      const row = await DbArtifactBlobStore.getBySha256(executor, 'sha-2');
+      expect(row?.retentionClass).toBe('transient');
+    });
+
+    it('is idempotent: retaining the same sha256 twice overwrites the OPFS file', async () => {
+      const store = createOpfsArtifactBlobStore(executor);
+      await store.retain({
+        sha256: 'sha-3',
+        size: 5,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: encodeText('first'),
+      });
+      await store.retain({
+        sha256: 'sha-3',
+        size: 6,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: encodeText('second'),
+      });
+      expect(opfs.files.get('sha-3')).toEqual(encodeText('second'));
+    });
+
+    it('rolls back the OPFS write if the metadata insert fails', async () => {
+      const store = createOpfsArtifactBlobStore(executor);
+      await executor.close();
+
+      await expect(
+        store.retain({
+          sha256: 'sha-rollback',
+          size: 1,
+          relativePath: 'p',
+          mediaType: 'text/plain',
+          content: encodeText('x'),
+        }),
+      ).rejects.toThrow();
+
+      expect(opfs.files.has('sha-rollback')).toBe(false);
+      expect(opfs.dirHandle.removeEntry).toHaveBeenCalledWith('sha-rollback');
+    });
+  });
+
+  describe('read', () => {
+    it('reads bytes from OPFS when the SQL content column is null', async () => {
+      const store = createOpfsArtifactBlobStore(executor);
+      const bytes = encodeText('from opfs');
+      await store.retain({
+        sha256: 'sha-4',
+        size: bytes.length,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: bytes,
+      });
+
+      const result = await store.read('sha-4');
+      expect(result).toEqual({
+        sha256: 'sha-4',
+        size: bytes.length,
+        relativePath: '',
+        mediaType: 'text/plain',
+        content: bytes,
+      });
+    });
+
+    it('prefers non-null legacy SQL content and never touches OPFS', async () => {
+      const bytes = encodeText('legacy sql content');
+      await DbArtifactBlobStore.insert(executor, {
+        sha256: 'sha-legacy',
+        mediaType: 'text/plain',
+        retentionClass: 'retained',
+        content: bytes,
+        size: bytes.length,
+      });
+
+      const store = createOpfsArtifactBlobStore(executor);
+      const result = await store.read('sha-legacy');
+
+      expect(result).toEqual({
+        sha256: 'sha-legacy',
+        size: bytes.length,
+        relativePath: '',
+        mediaType: 'text/plain',
+        content: bytes,
+      });
+      expect(opfs.getDirectory).not.toHaveBeenCalled();
+    });
+
+    it('returns undefined for a nonexistent sha256', async () => {
+      const store = createOpfsArtifactBlobStore(executor);
+      const result = await store.read('missing-sha');
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined (not a fabricated empty artifact) when content is null and the OPFS file is missing', async () => {
+      await DbArtifactBlobStore.insert(executor, {
+        sha256: 'sha-orphan',
+        mediaType: 'text/plain',
+        retentionClass: 'retained',
+        content: null,
+        size: 10,
+      });
+
+      const store = createOpfsArtifactBlobStore(executor);
+      const result = await store.read('sha-orphan');
+      expect(result).toBeUndefined();
+    });
+
+    it('defaults mediaType to application/octet-stream when the OPFS-resolved row has none', async () => {
+      const bytes = encodeText('no media type');
+      await DbArtifactBlobStore.insert(executor, {
+        sha256: 'sha-no-media',
+        mediaType: null,
+        retentionClass: 'retained',
+        content: null,
+        size: bytes.length,
+      });
+      await writeArtifactBlobFile('sha-no-media', bytes);
+
+      const store = createOpfsArtifactBlobStore(executor);
+      const result = await store.read('sha-no-media');
+      expect(result?.mediaType).toBe('application/octet-stream');
+    });
+
+    it('rethrows a non-NotFound OPFS error rather than treating it as missing', async () => {
+      await DbArtifactBlobStore.insert(executor, {
+        sha256: 'sha-corrupt',
+        mediaType: 'text/plain',
+        retentionClass: 'retained',
+        content: null,
+        size: 10,
+      });
+      vi.mocked(opfs.dirHandle.getFileHandle).mockRejectedValueOnce(
+        new DOMException('permission denied', 'NotReadableError'),
+      );
+
+      const store = createOpfsArtifactBlobStore(executor);
+      await expect(store.read('sha-corrupt')).rejects.toThrow('permission denied');
+    });
+  });
+
+  describe('remove', () => {
+    it('deletes the metadata row and the OPFS file for an existing sha256', async () => {
+      const store = createOpfsArtifactBlobStore(executor);
+      await store.retain({
+        sha256: 'sha-rm',
+        size: 1,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: encodeText('x'),
+      });
+
+      const removed = await store.remove('sha-rm');
+      expect(removed).toBe(true);
+      expect(await DbArtifactBlobStore.getBySha256(executor, 'sha-rm')).toBeUndefined();
+      expect(opfs.files.has('sha-rm')).toBe(false);
+      expect(opfs.dirHandle.removeEntry).toHaveBeenCalledWith('sha-rm');
+    });
+
+    it('returns false for a nonexistent sha256 without throwing on the best-effort OPFS removal', async () => {
+      const store = createOpfsArtifactBlobStore(executor);
+      const removed = await store.remove('sha-never-existed');
+      expect(removed).toBe(false);
+      expect(opfs.dirHandle.removeEntry).toHaveBeenCalledWith('sha-never-existed');
+    });
+  });
+
+  describe('list', () => {
+    it('lists all blobs with no prefix', async () => {
+      const store = createOpfsArtifactBlobStore(executor);
+      await store.retain({
+        sha256: 'aaa',
+        size: 1,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: encodeText('a'),
+      });
+      await store.retain({
+        sha256: 'bbb',
+        size: 1,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: encodeText('b'),
+      });
+
+      const references = await store.list();
+      expect(references).toEqual([
+        { sha256: 'aaa', size: 1, relativePath: 'aaa', mediaType: 'text/plain' },
+        { sha256: 'bbb', size: 1, relativePath: 'bbb', mediaType: 'text/plain' },
+      ]);
+    });
+
+    it('lists only blobs matching the given prefix', async () => {
+      const store = createOpfsArtifactBlobStore(executor);
+      await store.retain({
+        sha256: 'pre-one',
+        size: 1,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: encodeText('a'),
+      });
+      await store.retain({
+        sha256: 'other',
+        size: 1,
+        relativePath: 'p',
+        mediaType: 'text/plain',
+        content: encodeText('b'),
+      });
+
+      const references = await store.list('pre');
+      expect(references).toEqual([
+        { sha256: 'pre-one', size: 1, relativePath: 'pre-one', mediaType: 'text/plain' },
+      ]);
+    });
+
+    it('defaults mediaType to application/octet-stream for rows with none', async () => {
+      await DbArtifactBlobStore.insert(executor, {
+        sha256: 'sha-list-no-media',
+        mediaType: null,
+        retentionClass: 'retained',
+        content: encodeText('x'),
+        size: 1,
+      });
+
+      const store = createOpfsArtifactBlobStore(executor);
+      const references = await store.list('sha-list-no-media');
+      expect(references).toEqual([
+        {
+          sha256: 'sha-list-no-media',
+          size: 1,
+          relativePath: 'sha-list-no-media',
+          mediaType: 'application/octet-stream',
+        },
+      ]);
+    });
+  });
+});
+
+describe('getArtifactBlobsDirectory caching', () => {
+  it('resets the cache on a resolution failure so a later call retries instead of staying poisoned', async () => {
+    const opfs = stubOpfs();
+    opfs.getDirectory.mockRejectedValueOnce(new Error('storage unavailable'));
+
+    await expect(writeArtifactBlobFile('sha-retry', encodeText('x'))).rejects.toThrow(
+      'storage unavailable',
+    );
+    expect(opfs.getDirectory).toHaveBeenCalledTimes(1);
+
+    await writeArtifactBlobFile('sha-retry', encodeText('x'));
+    expect(opfs.getDirectory).toHaveBeenCalledTimes(2);
+    expect(opfs.files.get('sha-retry')).toEqual(encodeText('x'));
+  });
+});
+
+describe('writeArtifactBlobFile', () => {
+  it('writes the OPFS file directly without any SQL calls', async () => {
+    const opfs = stubOpfs();
+    const bytes = encodeText('backfill payload');
+
+    await writeArtifactBlobFile('sha-backfill', bytes);
+
+    expect(opfs.files.get('sha-backfill')).toEqual(bytes);
+    expect(opfs.getDirectoryHandle).toHaveBeenCalledWith('artifact-blobs', { create: true });
+  });
+});

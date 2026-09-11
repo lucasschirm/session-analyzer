@@ -299,6 +299,63 @@ describe('manifest schema and stores', () => {
         false,
       );
     });
+
+    it('delete removes an existing row and returns true', async () => {
+      const executor = await createManifestExecutor();
+      const content = encodeText('to be deleted');
+      await ArtifactBlobStore.insert(executor, {
+        sha256: 'sha256-blob-delete',
+        retentionClass: 'configuration',
+        content,
+        size: content.length,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+
+      expect(await ArtifactBlobStore.delete(executor, 'sha256-blob-delete')).toBe(true);
+      expect(await ArtifactBlobStore.getBySha256(executor, 'sha256-blob-delete')).toBeUndefined();
+    });
+
+    it('delete returns false for a nonexistent sha256', async () => {
+      const executor = await createManifestExecutor();
+      expect(await ArtifactBlobStore.delete(executor, 'sha256-never-existed')).toBe(false);
+    });
+
+    it('listBySha256Prefix returns all rows ordered by sha256 when no prefix is given', async () => {
+      const executor = await createManifestExecutor();
+      for (const sha256 of ['sha256-bbb', 'sha256-aaa', 'sha256-ccc']) {
+        const content = encodeText(sha256);
+        await ArtifactBlobStore.insert(executor, {
+          sha256,
+          retentionClass: 'configuration',
+          content,
+          size: content.length,
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      }
+
+      const blobs = await ArtifactBlobStore.listBySha256Prefix(executor);
+      expect(blobs.map((blob) => blob.sha256)).toEqual(['sha256-aaa', 'sha256-bbb', 'sha256-ccc']);
+    });
+
+    it('listBySha256Prefix filters to only rows matching the prefix', async () => {
+      const executor = await createManifestExecutor();
+      for (const sha256 of ['pre-1', 'pre-2', 'other']) {
+        const content = encodeText(sha256);
+        await ArtifactBlobStore.insert(executor, {
+          sha256,
+          retentionClass: 'configuration',
+          content,
+          size: content.length,
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      }
+
+      const blobs = await ArtifactBlobStore.listBySha256Prefix(executor, 'pre');
+      expect(blobs.map((blob) => blob.sha256)).toEqual(['pre-1', 'pre-2']);
+    });
   });
 
   describe('ArtifactReferenceStore', () => {
