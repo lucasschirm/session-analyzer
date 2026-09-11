@@ -182,7 +182,7 @@ PR that implements it flips it to `GREEN`.
 | SYNC-010 | Devin models-list capture failure (`devin` binary unavailable) never fails the sync; real session artifacts still upload and the failure surfaces as a distinguishable warning, never as `[fail]` output | `packages/plugins/devin-session-sync/tests/pipeline/sync-to-manifest.test.ts` | manifest-upload success + `Warnings:` visibility + absence of `[fail]` output assertion | 4 | 4 | 4 | 64 | P0 | GREEN |
 | SYNC-011 | Devin watcher daemon (`bin/watcher`, the sole sync path for Cloud sessions) poll loop: heartbeat lines advance (monotonic, timestamped, distinct per poll, in a bounded window), a mid-run `sessions.db` change triggers a re-sync (including a `cogs_json`-only mutation that advances no row and not `last_activity_at` — #340), an unreadable `sessions.db` after startup surfaces per-poll stderr failure lines, and a per-session sync failure (`outcome.errors` non-empty, e.g. a manifest upload failure) is never advanced past as a false-success signature — the next poll retries until it clears (#339) — never a silent stall or a false-success heartbeat | `packages/plugins/devin-session-sync/tests/pipeline/watcher-heartbeat.test.ts` | `parseWatcherHeartbeats`/`assertMonotonicHeartbeats` heartbeat assertion + `poll #N failed` stderr visibility assertion + fail→retry→stable manifest-retry-count assertion (#339) + `cogs_json`-only mutation re-sync assertion (#340) | 4 | 5 | 4 | 80 | P0 | GREEN |
 | SYNC-012 | `FileLock`'s stale-lock takeover (`packages/sync/src/state/lock.ts`) is atomic across any number of concurrent contenders — never silently defeats mutual exclusion, which would re-enable the concurrent-duplicate-append transcript corruption `materializeSessionTranscript`'s append-only guard (#303) exists to prevent (a Devin hook write racing the watcher's poll on the same session) (#327) | `packages/sync/tests/unit/lock-stale-takeover.test.ts` + `packages/sync/tests/unit/lock-reclaim-mismatch.test.ts` + `packages/sync/tests/integration/lock-cross-process.test.ts` | black-box N-contender stress assertion (max-concurrent-holders == 1) + deterministic forced-interleaving mismatch/restore-failure assertions + real-cross-process no-duplicate-append assertion | 3 | 5 | 5 | 75 | P0 | GREEN |
-| SYNC-013 | Worker derives sessions and fingerprints from a non-delimited project listing, incl. page-boundary straddle and manifest-less folders | `packages/site/tests/unit/session-sync.worker.test.ts` | session-buffer/emit + fingerprint-capture assertions | 3 | 5 | 4 | 60 | P0 | PROPOSED |
+| SYNC-013 | Worker derives sessions and fingerprints from a non-delimited project listing, incl. page-boundary straddle and manifest-less folders | `packages/site/tests/unit/session-sync.worker.test.ts` | session-buffer/emit + fingerprint-capture assertions | 3 | 5 | 4 | 60 | P0 | GREEN |
 | SYNC-014 | Manager unchanged-skip gate (D2/D3) incl. backfill and failed-status paths | `packages/site/tests/unit/sync-manager.test.ts` | skip-decision assertions | 3 | 5 | 4 | 60 | P0 | PROPOSED |
 
 ## 7. Infrastructure prerequisites
@@ -239,16 +239,17 @@ blocked by `.agents/rules/e2e-coverage-required.md`.
 
 As of this backfill (issue #160), every ID in §6 corresponded to a
 pre-existing, currently-passing test; none were newly written by this
-change. `UX-025`, `UX-026`, `SYNC-013`, and `SYNC-014` are the entries
-currently `PROPOSED` (registered here by issue #404, part of the Sync
-manifest fingerprints feature, #403 — see below). New candidate surfaces
-(e.g. from the devin-sync feature, #138) register here first as
-`PROPOSED` with a score, then move through §8.
+change. `UX-025`, `UX-026`, and `SYNC-014` remain `PROPOSED` (registered
+here by issue #404, part of the Sync manifest fingerprints feature,
+#403 — see below); `SYNC-013` has since been implemented and flipped to
+`GREEN` by #406. New candidate surfaces (e.g. from the devin-sync
+feature, #138) register here first as `PROPOSED` with a score, then move
+through §8.
 
 `UX-025`, `UX-026`, `SYNC-013`, and `SYNC-014` enter the catalog via the
 Sync manifest fingerprints feature (issue #403): registered here as
 `PROPOSED` by #404 (this issue), then implemented and flipped to `GREEN`
-by #406 (`SYNC-013`, in the worker's own PR) and #407 (`UX-025`,
+by #406 (`SYNC-013`, in the worker's own PR — done) and #407 (`UX-025`,
 `UX-026`, and `SYNC-014`, in the manager/UI PR), per the same
 "registered here, implemented by the PR that introduces the surface"
 precedent as SYNC-011/PIPE-019/SYNC-012 below.

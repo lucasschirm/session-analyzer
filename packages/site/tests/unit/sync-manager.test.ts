@@ -444,6 +444,32 @@ describe('SyncManager session failure isolation', () => {
     ]);
   });
 
+  it('handleSessionFound stopgap answers sync:true for every non-syncOnlyNew run (#406/L10)', async () => {
+    const mockDb = createMockDb();
+    // @ts-expect-error — mock return: would be read if the early return were removed
+    mockDb.getSessionBySyncId.mockResolvedValue({ id: 's1-id', sync_status: 'in_sync' });
+    const postedToWorker: Array<{ sessionId: string; sync: boolean }> = [];
+    const mockWorker = {
+      postMessage: (msg: { sessionId: string; sync: boolean }) => postedToWorker.push(msg),
+      terminate: vi.fn(),
+    } as unknown as Worker;
+    const manager = createManager({ dbClient: mockDb });
+    const project = createTestProject(mockWorker);
+    const run = { syncOnlyNew: false, connectionId: 'c1' };
+
+    // @ts-expect-error — testing private method
+    await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's1' });
+
+    expect(postedToWorker).toEqual([
+      expect.objectContaining({
+        type: 'SESSION_SYNC_CONTINUE',
+        sessionId: 's1',
+        sync: true,
+      }),
+    ]);
+    expect(mockDb.getSessionBySyncId).not.toHaveBeenCalled();
+  });
+
   it('isolateWorkerMessageError isolates unexpected session-level message errors', async () => {
     const mockDb = createMockDb();
     const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;

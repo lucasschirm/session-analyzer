@@ -944,7 +944,16 @@ export class SyncManager extends EventTarget {
     worker: Worker,
     message: { sessionId: string },
   ): Promise<void> {
-    if (!run.syncOnlyNew) return;
+    if (!run.syncOnlyNew) {
+      this.sendSessionContinue(
+        worker,
+        run.connectionId,
+        project.projectId,
+        message.sessionId,
+        true,
+      );
+      return;
+    }
     const shouldSync = await this.resolveSessionShouldSync(
       project.localProjectId,
       message.sessionId,
