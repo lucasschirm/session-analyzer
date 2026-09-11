@@ -28,17 +28,21 @@ import { describeS3Error } from '../lib/s3-errors';
 import type {
   Connection,
   DashboardSession,
+  ManifestFingerprint,
   Project,
   SessionFileRecord,
   SessionStub,
 } from '../types';
 import { decryptField, isUnlocked } from './credential-crypto';
+import { fingerprintsEqual } from './manifest-fingerprint';
 import { requestPasskey } from './passkey-prompt';
 import type {
   FileSummary,
   FileToDownload,
   LocalFileHash,
   SessionFileDownloadedMessage,
+  SessionFoundMessage,
+  SessionManifestReadyMessage,
   SessionSyncCompleteMessage,
   SessionSyncContinueMessage,
   SessionSyncFailedMessage,
@@ -942,22 +946,11 @@ export class SyncManager extends EventTarget {
     run: SyncRun,
     project: ProjectSyncState,
     worker: Worker,
-    message: { sessionId: string },
+    message: SessionFoundMessage,
   ): Promise<void> {
-    if (!run.syncOnlyNew) {
-      this.sendSessionContinue(
-        worker,
-        run.connectionId,
-        project.projectId,
-        message.sessionId,
-        true,
-      );
-      return;
-    }
-    const shouldSync = await this.resolveSessionShouldSync(
-      project.localProjectId,
-      message.sessionId,
-    );
+    const shouldSync = run.syncOnlyNew
+      ? await this.resolveSessionShouldSync(project.localProjectId, message.sessionId)
+      : await this.resolveUnchangedSkip(project.localProjectId, message);
     this.sendSessionContinue(
       worker,
       run.connectionId,
@@ -967,6 +960,7 @@ export class SyncManager extends EventTarget {
     );
   }
 
+  /** D3: "sync only new sessions" — locally known + healthy sessions are skipped. */
   private async resolveSessionShouldSync(
     localProjectId: string,
     sessionId: string,
@@ -981,6 +975,25 @@ export class SyncManager extends EventTarget {
       );
     } catch (error) {
       console.error(`Error checking local session ${sessionId}:`, error);
+      return true;
+    }
+  }
+
+  /** D2: unchanged-skip gate — skip only an in-sync row whose fingerprint matches. */
+  private async resolveUnchangedSkip(
+    localProjectId: string,
+    message: SessionFoundMessage,
+  ): Promise<boolean> {
+    try {
+      const local = await this.db.getSessionBySyncId(localProjectId, message.sessionId);
+      if (local === null || local.sync_status !== 'in_sync') return true;
+      const localFingerprint: ManifestFingerprint = {
+        etag: local.sync_manifest_etag,
+        lastModified: local.sync_manifest_last_modified,
+      };
+      return !fingerprintsEqual(localFingerprint, message.fingerprint);
+    } catch (error) {
+      console.error(`Error checking local session ${message.sessionId}:`, error);
       return true;
     }
   }
@@ -1006,10 +1019,16 @@ export class SyncManager extends EventTarget {
     _run: SyncRun,
     project: ProjectSyncState,
     worker: Worker,
-    message: { sessionId: string; manifest: SyncManifest },
+    message: SessionManifestReadyMessage,
   ): Promise<void> {
     try {
-      await this.processSessionManifest(project, worker, message.sessionId, message.manifest);
+      await this.processSessionManifest(
+        project,
+        worker,
+        message.sessionId,
+        message.manifest,
+        message.fingerprint,
+      );
     } catch (error) {
       await this.handleManifestReadyFailed(project, worker, message.sessionId, error);
     }
@@ -1019,6 +1038,7 @@ export class SyncManager extends EventTarget {
     project: ProjectSyncState,
     remoteSessionId: string,
     manifest: SyncManifest,
+    fingerprint: ManifestFingerprint | undefined,
   ): Promise<{
     localSession: DashboardSession;
     existing: DashboardSession | null;
@@ -1036,8 +1056,17 @@ export class SyncManager extends EventTarget {
       manifest,
       existing === null,
     );
-    await this.db.updateSessionManifest(localSession.id, manifest);
+    await this.persistManifestFingerprint(localSession.id, manifest, fingerprint);
     return { localSession, existing, sessionState };
+  }
+
+  /** D5: persists the fingerprint carried by SESSION_MANIFEST_READY, never from SESSION_FOUND alone. */
+  private async persistManifestFingerprint(
+    localSessionId: string,
+    manifest: SyncManifest,
+    fingerprint: ManifestFingerprint | undefined,
+  ): Promise<void> {
+    await this.db.updateSessionManifest(localSessionId, manifest, fingerprint);
   }
 
   private async processSessionManifest(
@@ -1045,11 +1074,13 @@ export class SyncManager extends EventTarget {
     worker: Worker,
     remoteSessionId: string,
     manifest: SyncManifest,
+    fingerprint: ManifestFingerprint | undefined,
   ): Promise<void> {
     const { localSession, existing, sessionState } = await this.setupSessionManifestState(
       project,
       remoteSessionId,
       manifest,
+      fingerprint,
     );
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
     await this.dispatchOrHandleMainArtifact(sessionState, project, localSession, worker, {
