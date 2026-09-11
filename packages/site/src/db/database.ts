@@ -1207,6 +1207,12 @@ export class DatabaseManager {
    * unchanged `exportControlDatabase()` path. A memory-backed database is
    * bounded by tab lifetime and, in practice, far smaller, so the original
    * SQLITE_NOMEM risk is accepted as out of scope for that mode.
+   *
+   * Like `vacuum()` above, this runs through `db-worker.ts`'s single request
+   * queue, so a Download click on the control DB stalls every other pending
+   * control-DB operation (sync writes, session stubs, etc.) for the full
+   * VACUUM INTO duration. Accepted as consistent with that existing
+   * architecture, not a new regression introduced by the Download flow.
    */
   async exportControlDatabaseOptimized(): Promise<Uint8Array> {
     if (this.storage === 'memory') {

@@ -91,10 +91,10 @@ export interface DbSuccessResponse {
   result?: unknown;
   /**
    * Raw SQLite file bytes for exportControlDatabase and
-   * exportControlDatabaseOptimized (transferred, not copied). Any request
-   * whose response carries `bytes` is treated as a bytes-returning call by
-   * `db-client.ts`'s `handleResponse` - see its generalized
-   * `response.bytes !== undefined` check.
+   * exportControlDatabaseOptimized (transferred, not copied). `db-client.ts`'s
+   * `handleResponse` resolves these two request types to `Uint8Array`
+   * unconditionally (see its `BYTES_REQUEST_TYPES` set), defaulting to an
+   * empty array if a response ever omitted `bytes` on success.
    */
   bytes?: Uint8Array;
   /** Storage backend reported by init. */
