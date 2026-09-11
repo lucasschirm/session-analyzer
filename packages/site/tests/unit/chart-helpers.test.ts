@@ -234,6 +234,27 @@ describe('toEChartsOption', () => {
     expect(option.animation).toBe(false);
   });
 
+  it.each(['time_series', 'stacked_bar', 'stacked_area', 'percentile_bands'] as const)(
+    'keeps the dataZoom slider but disables mouse-wheel zoom for %s',
+    (chartType) => {
+      const series = makeSeries({
+        chartType,
+        buckets: [makeBucket({ x: 'a', y: 10, label: 'A', series: 'S1' })],
+      });
+      const option = toEChartsOption(series) as Record<string, unknown>;
+      const dataZoom = option.dataZoom as
+        | Array<{ type?: string; zoomOnMouseWheel?: boolean }>
+        | undefined;
+      expect(dataZoom).toBeDefined();
+      expect(dataZoom).toHaveLength(2);
+      const inside = dataZoom?.find((d) => d.type === 'inside');
+      const slider = dataZoom?.find((d) => d.type === 'slider');
+      expect(inside).toBeDefined();
+      expect(slider).toBeDefined();
+      expect(inside?.zoomOnMouseWheel).toBe(false);
+    },
+  );
+
   it('builds scatter option with value axis for numeric x values', () => {
     const series = makeSeries({
       chartType: 'scatter',

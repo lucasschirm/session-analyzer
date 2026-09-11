@@ -65,7 +65,7 @@ const baseYAxis = {
   nameTextStyle: { color: AXIS_TEXT_COLOR },
 };
 const baseDataZoom = [
-  { type: 'inside', start: 0, end: 100 },
+  { type: 'inside', start: 0, end: 100, zoomOnMouseWheel: false },
   {
     type: 'slider',
     start: 0,
