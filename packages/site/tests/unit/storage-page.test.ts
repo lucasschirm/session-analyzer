@@ -16,6 +16,7 @@ const mockAnalyticsClient = vi.hoisted(() => ({
   getBackend: vi.fn(),
   exportAnalyticsDatabase: vi.fn(),
   close: vi.fn(),
+  reset: vi.fn(),
 }));
 
 vi.mock('../../src/db/analytics-client', () => ({
@@ -79,15 +80,90 @@ describe('storage-page', () => {
   it('renders a danger zone with a delete button', async () => {
     const el = await mount();
     const root = el.shadowRoot as ShadowRoot;
-    const dangerButton = root.querySelector('button.danger');
+    const dangerButton = root.querySelector('.section:last-of-type button.danger');
     expect(dangerButton).not.toBeNull();
     expect(dangerButton?.textContent).toContain('Delete All Data');
+  });
+
+  it('renders a per-row Delete button next to each Download button', async () => {
+    const el = await mount();
+    const root = el.shadowRoot as ShadowRoot;
+    const rows = root.querySelectorAll('.db-table tbody tr');
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      const buttons = row.querySelectorAll('td.actions button');
+      expect(buttons.length).toBe(2);
+      expect(buttons[0]?.textContent?.trim()).toBe('Download');
+      expect(buttons[1]?.textContent?.trim()).toBe('Delete');
+    }
+  });
+
+  it('opens the single-DB confirmation modal when a row Delete is clicked', async () => {
+    const el = await mount();
+    const root = el.shadowRoot as ShadowRoot;
+    const modals = root.querySelectorAll('delete-confirmation-modal');
+    expect(modals.length).toBe(2);
+
+    const firstRowDelete = root.querySelector(
+      '.db-table tbody tr td.actions button.danger',
+    ) as HTMLButtonElement;
+    firstRowDelete.click();
+    await el.updateComplete;
+
+    const singleModal = modals[1];
+    expect(singleModal.open).toBe(true);
+    expect(singleModal.titleText).toContain('Delete');
+  });
+
+  it('calls dbClient.reset when confirming a Control DB delete', async () => {
+    const reloadSpy = vi.spyOn(window.location, 'reload').mockImplementation(() => undefined);
+    const el = await mount();
+    const root = el.shadowRoot as ShadowRoot;
+
+    const firstRowDelete = root.querySelector(
+      '.db-table tbody tr td.actions button.danger',
+    ) as HTMLButtonElement;
+    firstRowDelete.click();
+    await el.updateComplete;
+
+    const modals = root.querySelectorAll('delete-confirmation-modal');
+    const singleModal = modals[1];
+    singleModal.dispatchEvent(new CustomEvent('delete-confirmed'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(mockDbClient.reset).toHaveBeenCalledTimes(1);
+    expect(mockAnalyticsClient.reset).not.toHaveBeenCalled();
+    reloadSpy.mockRestore();
+  });
+
+  it('calls analyticsClient.reset when confirming an Analytics DB delete', async () => {
+    const reloadSpy = vi.spyOn(window.location, 'reload').mockImplementation(() => undefined);
+    const el = await mount();
+    const root = el.shadowRoot as ShadowRoot;
+
+    const rows = root.querySelectorAll('.db-table tbody tr');
+    const analyticsRowDelete = rows[1].querySelector(
+      'td.actions button.danger',
+    ) as HTMLButtonElement;
+    analyticsRowDelete.click();
+    await el.updateComplete;
+
+    const modals = root.querySelectorAll('delete-confirmation-modal');
+    const singleModal = modals[1];
+    singleModal.dispatchEvent(new CustomEvent('delete-confirmed'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(mockAnalyticsClient.reset).toHaveBeenCalledTimes(1);
+    expect(mockDbClient.reset).not.toHaveBeenCalled();
+    reloadSpy.mockRestore();
   });
 
   it('opens the delete confirmation modal when delete is clicked', async () => {
     const el = await mount();
     const root = el.shadowRoot as ShadowRoot;
-    const dangerButton = root.querySelector('button.danger') as HTMLButtonElement;
+    const dangerButton = root.querySelector(
+      '.section:last-of-type button.danger',
+    ) as HTMLButtonElement;
     dangerButton.click();
     await el.updateComplete;
     const modal = root.querySelector('delete-confirmation-modal');

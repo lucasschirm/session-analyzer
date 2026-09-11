@@ -412,6 +412,22 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
     this.initPromise = null;
     this.worker = null;
   }
+
+  /**
+   * Forcibly tears down the analytics worker and resets all client state so
+   * the next call re-creates a fresh worker and database. Used by the
+   * Storage settings page when deleting just the analytics database — the
+   * worker is terminated (releasing OPFS file handles) without a graceful
+   * close round-trip, then the OPFS file is removed from the main thread.
+   */
+  reset(): void {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    this.initPromise = null;
+    this.rejectAll('Analytics client reset');
+  }
 }
 
 /**
