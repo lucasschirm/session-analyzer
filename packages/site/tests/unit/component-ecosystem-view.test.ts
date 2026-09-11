@@ -295,6 +295,56 @@ describe('component-ecosystem-view', () => {
     expect(componentMock.getSummary).toHaveBeenCalled();
   });
 
+  it('includes the componentId filter in the very first detail-page query, not just this.componentId itself', async () => {
+    // Regression coverage: `filters` used to be computed from a field
+    // initializer, which runs during element construction -- before the
+    // (now-fixed) component-id attribute has populated `componentId` (the
+    // Custom Elements upgrade algorithm only calls attributeChangedCallback
+    // after the constructor returns). `componentId` itself was still passed
+    // correctly to component.getVersions() etc. as the first positional
+    // argument, but `componentEcosystemParamsToQuery(this.filters)`'s
+    // `componentId` query filter (component-ecosystem-params.ts:103-104)
+    // silently stayed unset on the first load.
+    window.location.hash = '#/artifacts/read_file';
+    const view = Object.assign(document.createElement('component-ecosystem-view'), {
+      componentId: 'read_file',
+    }) as ComponentEcosystemView;
+    await mount(view);
+
+    expect(componentMock.getVersions).toHaveBeenCalledWith(
+      'read_file',
+      expect.objectContaining({
+        filters: expect.arrayContaining([
+          { field: 'componentId', operator: 'eq', value: 'read_file' },
+        ]),
+      }),
+    );
+  });
+
+  it('keeps the componentId in the URL when a filter changes on a component-detail route', async () => {
+    // Regression coverage: filters used to be computed from a field
+    // initializer that ran before the (now-fixed) component-id attribute
+    // populated `componentId`, and updateFilter()/selectVersion()/
+    // compareVersions()/goToPage() didn't consistently re-attach `component`
+    // to the navigated hash. Either bug bounces the user from a component
+    // detail page back to the generic Artifact Ecosystem summary on the
+    // very next filter/pagination interaction.
+    window.location.hash = '#/artifacts/read_file';
+    const view = Object.assign(document.createElement('component-ecosystem-view'), {
+      componentId: 'read_file',
+    }) as ComponentEcosystemView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const kindInput = root.querySelector('input') as HTMLInputElement;
+    kindInput.value = 'tool';
+    kindInput.dispatchEvent(new Event('change'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.location.hash).toContain('#/artifacts/read_file');
+    expect(window.location.hash).toMatch(/kind=tool/);
+  });
+
   it('navigates to a component detail from the top-components chart', async () => {
     const view = document.createElement('component-ecosystem-view') as ComponentEcosystemView;
     await mount(view);

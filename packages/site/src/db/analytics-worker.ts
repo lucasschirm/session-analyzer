@@ -42,12 +42,12 @@ import type {
   ManualIngestionBundleRequest,
 } from './analytics-protocol';
 import {
-  createBrowserArtifactBlobStore,
   createBrowserArtifactResolver,
   createBrowserContentHasher,
   createSyncArtifactCache,
   type SyncArtifactCache,
 } from './artifact-adapters';
+import { createOpfsArtifactBlobStore } from './opfs-artifact-blob-store';
 import { WasmSqliteExecutor } from './wasm-sqlite-executor';
 
 const ANALYTICS_DB_FILENAME = '/sal-analytics.sqlite3';
@@ -170,7 +170,7 @@ export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState
   }
 
   const hasher = createBrowserContentHasher();
-  const blobStore = createBrowserArtifactBlobStore(executor);
+  const blobStore = createOpfsArtifactBlobStore(executor);
   const syncCache = createSyncArtifactCache();
   const resolver = createBrowserArtifactResolver({ blobStore, syncCache });
   const registry = createDefaultRegistry();
@@ -184,7 +184,7 @@ export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState
     analysisReleaseId: DEFAULT_ANALYSIS_RELEASE,
   };
 
-  const dataSource = createAnalyticsDataSource(executor, hasher);
+  const dataSource = createAnalyticsDataSource(executor, hasher, blobStore);
   const ingestion = new DefaultIngestionOrchestrator(context);
   const manualIngestion = new ManualIngestionOrchestrator(context);
   const reprocessing = new DefaultReprocessingEngine(context);

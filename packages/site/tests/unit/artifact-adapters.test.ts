@@ -588,7 +588,7 @@ describe('ArtifactDiffRepository with a real createBrowserArtifactBlobStore', ()
     await seedManifestArtifact(realExecutor);
   }
 
-  it('writes real content bytes into insert.content via a real store, and never calls the real store.retain() from record()', async () => {
+  it('with a real store injected, record() retains via the store and writes content: null -- documented hazard: createBrowserArtifactBlobStore has no out-of-band storage, so this combination is not durable', async () => {
     const actual = await vi.importActual<typeof import('@lucasschirm/sal-db-core')>(
       '@lucasschirm/sal-db-core',
     );
@@ -651,10 +651,28 @@ describe('ArtifactDiffRepository with a real createBrowserArtifactBlobStore', ()
         [sha256],
       );
 
+      // Since issue #399, record()'s write path is gated on `this.blobStore`
+      // being present at all -- it has no way to know whether the injected
+      // store durably retains bytes out-of-band (like the OPFS-backed store
+      // production actually uses, see opfs-artifact-blob-store.test.ts's own
+      // round-trip coverage) or not. `createBrowserArtifactBlobStore` has no
+      // out-of-band storage: its `retain()` writes real bytes into this same
+      // `content` column, but the authoritative insert that runs immediately
+      // afterward always wins (INSERT OR REPLACE) and nulls it. This
+      // combination is real, but not safe -- production never constructs
+      // this pairing (analytics-worker.ts only ever injects the OPFS-backed
+      // store), and this test exists to document the hazard explicitly
+      // rather than leave it an unstated footgun for a future caller.
+      expect(retainSpy).toHaveBeenCalledTimes(1);
       expect(rows).toHaveLength(1);
-      expect(rows[0]?.content).not.toBeNull();
-      expect(new TextDecoder().decode(rows[0]?.content as Uint8Array)).toBe(content);
-      expect(retainSpy).not.toHaveBeenCalled();
+      expect(rows[0]?.content).toBeNull();
+
+      // The bytes are not recoverable through this store either:
+      // createBrowserArtifactBlobStore.read() also sources from the same
+      // now-null `content` column, so this is a genuine, irrecoverable loss
+      // for this specific (store, write-path) combination.
+      const resolved = await realBlobStore.read(sha256);
+      expect(resolved).toBeUndefined();
     } finally {
       await realExecutor.close();
     }

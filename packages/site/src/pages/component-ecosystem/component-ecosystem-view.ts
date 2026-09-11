@@ -282,12 +282,15 @@ export class ComponentEcosystemView extends PageLitElement {
   `,
   ];
 
-  @property({ type: String }) componentId = '';
+  @property({ type: String, attribute: 'component-id' }) componentId = '';
 
-  @state() private filters: ComponentEcosystemParams = parseComponentEcosystemHash(
-    window.location.hash,
-    this.componentId,
-  );
+  // Computed in connectedCallback(), not here: a field initializer runs
+  // during element construction, before the Custom Elements upgrade
+  // algorithm has run attributeChangedCallback for `component-id` (which
+  // only fires after the constructor returns). Computing this here would
+  // silently read `this.componentId` as still '', dropping `filters.component`
+  // on every deep-linked `#/artifacts/:componentId` load.
+  @state() private filters: ComponentEcosystemParams = {};
 
   @state() private loading = false;
 
@@ -328,6 +331,7 @@ export class ComponentEcosystemView extends PageLitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.filters = parseComponentEcosystemHash(window.location.hash, this.componentId);
     window.addEventListener('hashchange', this.hashListener);
     this.load();
   }
@@ -429,31 +433,37 @@ export class ComponentEcosystemView extends PageLitElement {
     }
   }
 
+  /**
+   * Builds the final navigation hash for a filter patch and always
+   * re-attaches `component` when `componentId` is set -- centralized so a
+   * caller can never forget it (see `filters`' own comment: `filters` is
+   * only as fresh as the last hash parse, so a spread of `this.filters`
+   * alone is not enough to keep `component` on a component-detail route).
+   */
+  private finalizeAndNavigate(next: ComponentEcosystemParams): void {
+    if (this.componentId) next.component = this.componentId;
+    navigateTo(buildComponentEcosystemHash(next).replace(/^#/, ''));
+  }
+
   private updateFilter(key: keyof ComponentEcosystemParams, value: string): void {
     const next = { ...this.filters, [key]: value };
     if (value === '') {
       delete next[key];
     }
-    if (this.componentId) {
-      next.component = this.componentId;
-    }
-    navigateTo(buildComponentEcosystemHash(next).replace(/^#/, ''));
+    this.finalizeAndNavigate(next);
   }
 
   private resetFilters(): void {
-    const base: ComponentEcosystemParams = this.componentId
-      ? {
-          component: this.componentId,
-          origin: this.filters.origin,
-          returnContext: this.filters.returnContext,
-        }
-      : { origin: this.filters.origin, returnContext: this.filters.returnContext };
-    navigateTo(buildComponentEcosystemHash(base).replace(/^#/, ''));
+    const base: ComponentEcosystemParams = {
+      origin: this.filters.origin,
+      returnContext: this.filters.returnContext,
+    };
+    this.finalizeAndNavigate(base);
   }
 
   private selectVersion(version: string): void {
     const next = { ...this.filters, version };
-    navigateTo(buildComponentEcosystemHash(next).replace(/^#/, ''));
+    this.finalizeAndNavigate(next);
   }
 
   private compareVersions(rightVersion: string): void {
@@ -463,7 +473,7 @@ export class ComponentEcosystemView extends PageLitElement {
       return;
     }
     const next = { ...this.filters, leftVersion, rightVersion, version: undefined };
-    navigateTo(buildComponentEcosystemHash(next).replace(/^#/, ''));
+    this.finalizeAndNavigate(next);
   }
 
   private handlePointClick(event: CustomEvent<ChartEvidenceLink>): void {
@@ -480,7 +490,7 @@ export class ComponentEcosystemView extends PageLitElement {
   private goToPage(cursor: string | undefined): void {
     if (!cursor) return;
     const next = { ...this.filters, cursor };
-    navigateTo(buildComponentEcosystemHash(next).replace(/^#/, ''));
+    this.finalizeAndNavigate(next);
   }
 
   private componentKind(): string | undefined {

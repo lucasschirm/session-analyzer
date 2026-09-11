@@ -933,6 +933,22 @@ export interface CanPurgeScope {
   readonly projectId?: string;
 }
 
+/**
+ * `record()`'s write path (see `writeBlobIfNew` below) is gated purely on
+ * whether a `blobStore` is injected -- it has no way to know whether that
+ * store durably retains bytes out-of-band. When it does (e.g. the
+ * OPFS-backed `createOpfsArtifactBlobStore`, the only store production ever
+ * injects here), this is safe: `retain()` persists the bytes durably before
+ * the authoritative SQL row is written with `content: null`. When it does
+ * not -- e.g. `packages/site/src/db/artifact-adapters.ts`'s
+ * `createBrowserArtifactBlobStore`, whose bytes live only in this same SQL
+ * `content` column -- injecting it here causes real, irrecoverable content
+ * loss: `retain()` writes real bytes into `content`, and the authoritative
+ * insert that runs immediately after unconditionally nulls it again
+ * (`INSERT OR REPLACE` always wins on every column). Do not inject a
+ * `blobStore` here unless it durably retains bytes somewhere other than
+ * this table's own `content` column.
+ */
 export class ArtifactDiffRepository {
   private readonly canonicalizer: ArtifactCanonicalizer;
   private readonly diffEngine: ArtifactDiffEngine;
@@ -955,6 +971,55 @@ export class ArtifactDiffRepository {
     return this.blobStore;
   }
 
+  /**
+   * Content-address dedup guard: writes blob bytes/metadata only when no row
+   * for this sha256 exists yet. When `this.blobStore` is provided, retains
+   * the bytes there **first**, then writes the authoritative metadata row
+   * **second** with `content: null` -- ordering matters, since
+   * `DbArtifactBlobStore.insert` is `INSERT OR REPLACE` and whichever write
+   * lands last wins on every column (see issue #399). If `blobStore.retain()`
+   * throws, this method throws before ever writing the authoritative row, so
+   * no metadata row is left claiming
+   * bytes live in a blob store that never actually received them -- the
+   * next `record()` call for this sha256 retries cleanly since `existing`
+   * still resolves to `undefined`. When `blobStore` is not provided,
+   * behavior is unchanged: real bytes land directly in `insert.content`.
+   */
+  private async writeBlobIfNew(
+    queryable: SqliteExecutor | SqliteTransaction,
+    blobSha256: string,
+    retentionClass: ArtifactRetentionClass,
+    canonicalized: CanonicalizedArtifact,
+  ): Promise<void> {
+    if (canonicalized.content === null) return;
+    const existing = await DbArtifactBlobStore.getBySha256(queryable, blobSha256);
+    if (existing) return;
+
+    const bytes = asBytes(canonicalized.content);
+    if (this.blobStore) {
+      await this.blobStore.retain({
+        sha256: blobSha256,
+        size: bytes.length,
+        relativePath: '',
+        mediaType: 'application/octet-stream',
+        content: canonicalized.content,
+      });
+    }
+    const insert: InsertArtifactBlobInput = {
+      sha256: blobSha256,
+      mediaType: null,
+      retentionClass,
+      content: this.blobStore ? null : bytes,
+      size: bytes.length,
+      redactionScheme: canonicalized.sensitiveDigestScheme,
+      keyDomainId: canonicalized.keyDomainId,
+      sensitiveDigest: canonicalized.sensitiveDigest,
+      redactionChangeMarker: canonicalized.redactionChangeMarker,
+      isRedacted: canonicalized.sensitiveDigest !== null,
+    };
+    await DbArtifactBlobStore.insert(queryable, insert);
+  }
+
   async record(
     queryable: SqliteExecutor | SqliteTransaction,
     portfolioId: string,
@@ -966,22 +1031,7 @@ export class ArtifactDiffRepository {
     const blobSha256 = (context.blobSha256 ?? canonicalized.rawSha256) || null;
 
     if (canonicalized.content !== null && blobSha256) {
-      const existing = await DbArtifactBlobStore.getBySha256(queryable, blobSha256);
-      if (!existing) {
-        const insert: InsertArtifactBlobInput = {
-          sha256: blobSha256,
-          mediaType: null,
-          retentionClass,
-          content: asBytes(canonicalized.content),
-          size: asBytes(canonicalized.content).length,
-          redactionScheme: canonicalized.sensitiveDigestScheme,
-          keyDomainId: canonicalized.keyDomainId,
-          sensitiveDigest: canonicalized.sensitiveDigest,
-          redactionChangeMarker: canonicalized.redactionChangeMarker,
-          isRedacted: canonicalized.sensitiveDigest !== null,
-        };
-        await DbArtifactBlobStore.insert(queryable, insert);
-      }
+      await this.writeBlobIfNew(queryable, blobSha256, retentionClass, canonicalized);
     }
 
     const referenceId = await ArtifactReferenceStore.insert(queryable, portfolioId, {
