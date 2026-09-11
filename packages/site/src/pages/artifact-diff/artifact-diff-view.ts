@@ -490,6 +490,7 @@ export class ArtifactDiffView extends PageLitElement {
                 label=${card.label}
                 value=${card.value}
                 sub=${card.sub}
+                description=${card.description}
               ></metrics-card>
             `,
           )}

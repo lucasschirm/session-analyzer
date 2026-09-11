@@ -111,14 +111,20 @@ describe('stripScopeSuffix', () => {
 });
 
 describe('metricLabel', () => {
-  it('returns the transformer label when available', () => {
-    // claude:tokens:total is a known metric in the transformer registry
-    const label = metricLabel('claude:tokens:total::root_only', 'Fallback');
-    expect(label).not.toContain('(root-only)');
+  it('returns the shared label for known domain metrics', () => {
+    expect(metricLabel('claude:tokens:total:root_only', 'Fallback')).toBe('Total tokens');
+    expect(metricLabel('devin:tokens:total:inclusive', 'Fallback')).toBe('Total tokens');
   });
 
-  it('falls back to the provided fallback', () => {
-    const label = metricLabel('unknown:metric', 'My Fallback');
+  it('returns the shared label for synthetic portfolio metrics', () => {
+    expect(metricLabel('portfolio-project-count')).toBe('Project count');
+    expect(metricLabel('portfolio-session-count')).toBe('Session count');
+    expect(metricLabel('portfolio-component-count')).toBe('Component count');
+    expect(metricLabel('portfolio-unused-components')).toBe('Unused offered components');
+  });
+
+  it('falls back to the provided fallback (with scope suffix stripped)', () => {
+    const label = metricLabel('unknown:metric', 'My Fallback (root-only)');
     expect(label).toBe('My Fallback');
   });
 

@@ -11,6 +11,7 @@ import type {
 import type { ChartBucket, ChartSeries } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import { formatFullNumber } from '../../lib/format';
+import { metricDescription } from '../../lib/metric-descriptions';
 import {
   filterByScope,
   isDurationMetric,
@@ -38,6 +39,7 @@ export interface MetricCardView {
   label: string;
   value: string;
   sub: string;
+  description: string;
   href?: string;
   valueTitle?: string;
 }
@@ -54,6 +56,7 @@ export function summaryToMetricCards(
       label: metricLabel(metric.metricId, metric.label),
       value: formatMetricValue(metric),
       sub: `${coverageN(metric)} • ${metric.coverage} • ${metric.confidence}`,
+      description: metricDescription(metric.metricId),
       href: link ? evidenceLinkHref(link, params) : undefined,
       valueTitle: metric.value !== null ? formatFullNumber(metric.value) : '',
     };

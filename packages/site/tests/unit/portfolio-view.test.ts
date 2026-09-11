@@ -399,4 +399,124 @@ describe('portfolio-view', () => {
 
     view.remove();
   });
+
+  it('deduplicates headline metrics with the same metricId', async () => {
+    const rootOnlyMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:root_only',
+      label: 'Total tokens (root-only)',
+      value: 100,
+    });
+    const inclusiveMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:inclusive',
+      label: 'Total tokens (inclusive)',
+      value: 200,
+    });
+    const dupRootOnlyMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:root_only',
+      label: 'Total tokens (root-only)',
+      value: 150,
+    });
+    portfolioMock.getOverview.mockResolvedValue(
+      overviewFixture({
+        headlineMetrics: [rootOnlyMetric, inclusiveMetric, dupRootOnlyMetric],
+      }),
+    );
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const cards = allShadowTexts(root, 'metrics-card');
+    const totalTokensCards = cards.filter((t) => t.includes('Total tokens'));
+    expect(totalTokensCards).toHaveLength(1);
+    expect(totalTokensCards[0]).toContain('100');
+
+    view.remove();
+  });
+
+  it('renders only root-only metrics when sessions scope is main', async () => {
+    const rootOnlyMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:root_only',
+      label: 'Total tokens (root-only)',
+      value: 100,
+    });
+    const inclusiveMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:inclusive',
+      label: 'Total tokens (inclusive)',
+      value: 300,
+    });
+    portfolioMock.getOverview.mockResolvedValue(
+      overviewFixture({
+        headlineMetrics: [rootOnlyMetric, inclusiveMetric],
+      }),
+    );
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const cards = allShadowTexts(root, 'metrics-card');
+    const totalTokensCards = cards.filter((t) => t.includes('Total tokens'));
+    expect(totalTokensCards).toHaveLength(1);
+    expect(totalTokensCards[0]).toContain('100');
+
+    view.remove();
+  });
+
+  it('renders only inclusive metrics when sessions scope is all', async () => {
+    window.location.hash = '#/?sessions=all';
+
+    const rootOnlyMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:root_only',
+      label: 'Total tokens (root-only)',
+      value: 100,
+    });
+    const inclusiveMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:inclusive',
+      label: 'Total tokens (inclusive)',
+      value: 300,
+    });
+    portfolioMock.getOverview.mockResolvedValue(
+      overviewFixture({
+        headlineMetrics: [rootOnlyMetric, inclusiveMetric],
+      }),
+    );
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const cards = allShadowTexts(root, 'metrics-card');
+    const totalTokensCards = cards.filter((t) => t.includes('Total tokens'));
+    expect(totalTokensCards).toHaveLength(1);
+    expect(totalTokensCards[0]).toContain('300');
+
+    view.remove();
+    window.location.hash = '#/';
+  });
+
+  it('adds a description tooltip to metric cards', async () => {
+    const metric = metricValueFixture({
+      metricId: 'claude:tokens:total:root_only',
+      label: 'Total tokens (root-only)',
+      value: 100,
+    });
+    portfolioMock.getOverview.mockResolvedValue(overviewFixture({ headlineMetrics: [metric] }));
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const card = root.querySelector('metrics-card') as LitElement;
+    expect(card).not.toBeNull();
+    await flush(card);
+    const cardRoot = card.shadowRoot as ShadowRoot;
+    const cardEl = cardRoot.querySelector('.metrics-card') as HTMLElement;
+    expect(cardEl).not.toBeNull();
+    const tooltip = cardEl.getAttribute('data-tooltip');
+    expect(tooltip).toBeTruthy();
+    expect(tooltip).toContain('token');
+
+    view.remove();
+  });
 });
