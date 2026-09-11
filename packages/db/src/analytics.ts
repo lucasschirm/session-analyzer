@@ -179,10 +179,22 @@ export interface SessionEvidenceSummary {
 
 export interface ContextTimingPoint {
   readonly turnNumber: number;
+  readonly messageIndex?: number;
+  readonly messageId?: string;
+  readonly role?: string;
+  readonly model?: string;
   readonly timestamp?: string;
   readonly totalTokens: number | null;
   readonly contextTokens: number | null;
   readonly generationTokens: number | null;
+  readonly inputTokens?: number | null;
+  readonly outputTokens?: number | null;
+  readonly cacheCreationTokens?: number | null;
+  readonly cacheReadTokens?: number | null;
+  readonly thinkingTokens?: number | null;
+  readonly effort?: string | null;
+  readonly normalizedEffort?: string | null;
+  readonly content?: string;
 }
 
 export interface ContextTimingSeries {
