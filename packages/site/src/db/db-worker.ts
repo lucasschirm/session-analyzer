@@ -114,7 +114,7 @@ const handlers: Record<DbRequest['type'], Handler> = {
   },
   updateSessionManifest: (request) => {
     const req = request as DbRequestOf<'updateSessionManifest'>;
-    manager.updateSessionManifest(req.sessionId, req.manifest);
+    manager.updateSessionManifest(req.sessionId, req.manifest, req.fingerprint);
     return { id: request.id, ok: true };
   },
   getSessionSyncManifest: (request) => ({
