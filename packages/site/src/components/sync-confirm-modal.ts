@@ -178,7 +178,7 @@ export class SyncConfirmModal extends LitElement {
       >
         <div class="panel" role="dialog" aria-modal="true" aria-label="Confirm sync">
           <h2>Sync ${this.connectionName}</h2>
-          <p>Choose how to sync sessions from this data source.</p>
+          <p>Unchanged sessions are skipped automatically. Choose how to sync sessions from this data source.</p>
           <label class="checkbox-label">
             <input
               type="checkbox"

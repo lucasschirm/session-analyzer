@@ -12,6 +12,7 @@ import {
   syncManager,
 } from '../../src/sync/sync-manager';
 import type { SessionSyncCompleteMessage } from '../../src/sync/sync-protocol';
+import type { ManifestFingerprint } from '../../src/types';
 
 function createManager(options: Partial<SyncManagerOptions>): SyncManager {
   const noopWorker = {
@@ -444,10 +445,123 @@ describe('SyncManager session failure isolation', () => {
     ]);
   });
 
-  it('handleSessionFound stopgap answers sync:true for every non-syncOnlyNew run (#406/L10)', async () => {
+  /**
+   * SYNC-014: D2 unchanged-skip gate truth table. `run.syncOnlyNew = false`
+   * for every case here — the D3 branch (syncOnlyNew = true) is covered
+   * separately by 'handleSessionFound retries failed sessions even with
+   * syncOnlyNew' above, unmodified.
+   */
+  describe.each([
+    {
+      name: 'equal fingerprint (etag), in_sync → skip',
+      localRow: { id: 's-id', sync_status: 'in_sync', sync_manifest_etag: 'abc' },
+      messageFingerprint: { etag: 'abc' } as ManifestFingerprint | undefined,
+      expectSync: false,
+    },
+    {
+      name: 'different fingerprint (etag), in_sync → sync',
+      localRow: { id: 's-id', sync_status: 'in_sync', sync_manifest_etag: 'abc' },
+      messageFingerprint: { etag: 'def' } as ManifestFingerprint | undefined,
+      expectSync: true,
+    },
+    {
+      name: 'failed status, equal fingerprint → sync regardless',
+      localRow: { id: 's-id', sync_status: 'failed', sync_manifest_etag: 'abc' },
+      messageFingerprint: { etag: 'abc' } as ManifestFingerprint | undefined,
+      expectSync: true,
+    },
+    {
+      name: 'pending status, equal fingerprint → sync regardless',
+      localRow: { id: 's-id', sync_status: 'pending', sync_manifest_etag: 'abc' },
+      messageFingerprint: { etag: 'abc' } as ManifestFingerprint | undefined,
+      expectSync: true,
+    },
+    {
+      name: 'transcript_unavailable status, equal fingerprint → sync regardless',
+      localRow: {
+        id: 's-id',
+        sync_status: 'transcript_unavailable',
+        sync_manifest_etag: 'abc',
+      },
+      messageFingerprint: { etag: 'abc' } as ManifestFingerprint | undefined,
+      expectSync: true,
+    },
+    {
+      name: 'processing status, equal fingerprint → sync regardless',
+      localRow: { id: 's-id', sync_status: 'processing', sync_manifest_etag: 'abc' },
+      messageFingerprint: { etag: 'abc' } as ManifestFingerprint | undefined,
+      expectSync: true,
+    },
+    {
+      name: 'no local row → sync',
+      localRow: null,
+      messageFingerprint: { etag: 'abc' } as ManifestFingerprint | undefined,
+      expectSync: true,
+    },
+    {
+      name: 'in_sync but no stored fingerprint (pre-upgrade backfill) → sync',
+      localRow: { id: 's-id', sync_status: 'in_sync' },
+      messageFingerprint: { etag: 'abc' } as ManifestFingerprint | undefined,
+      expectSync: true,
+    },
+    {
+      name: 'in_sync, stored fingerprint, but message has no fingerprint → sync',
+      localRow: { id: 's-id', sync_status: 'in_sync', sync_manifest_etag: 'abc' },
+      messageFingerprint: undefined,
+      expectSync: true,
+    },
+    {
+      name: 'etag absent both sides, lastModified present and equal → skip',
+      localRow: {
+        id: 's-id',
+        sync_status: 'in_sync',
+        sync_manifest_last_modified: '2026-01-01T00:00:00Z',
+      },
+      messageFingerprint: { lastModified: '2026-01-01T00:00:00Z' } as
+        | ManifestFingerprint
+        | undefined,
+      expectSync: false,
+    },
+    {
+      name: 'both etag and lastModified absent on both sides → sync',
+      localRow: { id: 's-id', sync_status: 'in_sync' },
+      messageFingerprint: {} as ManifestFingerprint | undefined,
+      expectSync: true,
+    },
+  ])('D2 gate: $name', ({ localRow, messageFingerprint, expectSync }) => {
+    it(`resolves sync:${expectSync}`, async () => {
+      const mockDb = createMockDb();
+      // @ts-expect-error — mock return
+      mockDb.getSessionBySyncId.mockResolvedValue(localRow);
+      const postedToWorker: Array<{ sessionId: string; sync: boolean }> = [];
+      const mockWorker = {
+        postMessage: (msg: { sessionId: string; sync: boolean }) => postedToWorker.push(msg),
+        terminate: vi.fn(),
+      } as unknown as Worker;
+      const manager = createManager({ dbClient: mockDb });
+      const project = createTestProject(mockWorker);
+      const run = { syncOnlyNew: false, connectionId: 'c1' };
+
+      // @ts-expect-error — testing private method
+      await manager.handleSessionFound(run as never, project, mockWorker, {
+        sessionId: 's1',
+        fingerprint: messageFingerprint,
+      });
+
+      expect(postedToWorker).toEqual([
+        expect.objectContaining({
+          type: 'SESSION_SYNC_CONTINUE',
+          sessionId: 's1',
+          sync: expectSync,
+        }),
+      ]);
+    });
+  });
+
+  it('SYNC-014: D2 gate fails open (sync: true) when getSessionBySyncId throws', async () => {
     const mockDb = createMockDb();
-    // @ts-expect-error — mock return: would be read if the early return were removed
-    mockDb.getSessionBySyncId.mockResolvedValue({ id: 's1-id', sync_status: 'in_sync' });
+    // @ts-expect-error — mock rejection
+    mockDb.getSessionBySyncId.mockRejectedValue(new Error('DB unavailable'));
     const postedToWorker: Array<{ sessionId: string; sync: boolean }> = [];
     const mockWorker = {
       postMessage: (msg: { sessionId: string; sync: boolean }) => postedToWorker.push(msg),
@@ -458,16 +572,80 @@ describe('SyncManager session failure isolation', () => {
     const run = { syncOnlyNew: false, connectionId: 'c1' };
 
     // @ts-expect-error — testing private method
-    await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's1' });
+    await manager.handleSessionFound(run as never, project, mockWorker, {
+      sessionId: 's1',
+      fingerprint: { etag: 'abc' },
+    });
 
     expect(postedToWorker).toEqual([
-      expect.objectContaining({
-        type: 'SESSION_SYNC_CONTINUE',
-        sessionId: 's1',
-        sync: true,
-      }),
+      expect.objectContaining({ type: 'SESSION_SYNC_CONTINUE', sessionId: 's1', sync: true }),
     ]);
-    expect(mockDb.getSessionBySyncId).not.toHaveBeenCalled();
+  });
+
+  it('D5: handleSessionManifestReady persists the message fingerprint via updateSessionManifest', async () => {
+    const mockDb = createMockDb();
+    const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;
+    const manager = createManager({ dbClient: mockDb });
+    const project = createTestProject(mockWorker);
+    const manifest: SyncManifest = {
+      schemaVersion: 2,
+      projectId: 'proj-1',
+      sessionId: 'sess-fp',
+      harness: 'claude',
+      harnessVersion: '1',
+      syncVersion: '0.1.0',
+      pluginVersion: '1',
+      transcriptsCaptured: true,
+      artifacts: [],
+      syncRuns: [],
+      syncRunsCount: 0,
+    };
+    const fingerprint: ManifestFingerprint = { etag: 'abc', lastModified: '2026-01-01T00:00:00Z' };
+
+    // @ts-expect-error — testing private method
+    await manager.handleSessionManifestReady({} as never, project, mockWorker, {
+      sessionId: 'sess-fp',
+      manifest,
+      fingerprint,
+    });
+
+    expect(mockDb.updateSessionManifest).toHaveBeenCalledWith(
+      expect.any(String),
+      manifest,
+      fingerprint,
+    );
+  });
+
+  it('D5: handleSessionManifestReady persists undefined when the message carries no fingerprint', async () => {
+    const mockDb = createMockDb();
+    const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;
+    const manager = createManager({ dbClient: mockDb });
+    const project = createTestProject(mockWorker);
+    const manifest: SyncManifest = {
+      schemaVersion: 2,
+      projectId: 'proj-1',
+      sessionId: 'sess-nofp',
+      harness: 'claude',
+      harnessVersion: '1',
+      syncVersion: '0.1.0',
+      pluginVersion: '1',
+      transcriptsCaptured: true,
+      artifacts: [],
+      syncRuns: [],
+      syncRunsCount: 0,
+    };
+
+    // @ts-expect-error — testing private method
+    await manager.handleSessionManifestReady({} as never, project, mockWorker, {
+      sessionId: 'sess-nofp',
+      manifest,
+    });
+
+    expect(mockDb.updateSessionManifest).toHaveBeenCalledWith(
+      expect.any(String),
+      manifest,
+      undefined,
+    );
   });
 
   it('isolateWorkerMessageError isolates unexpected session-level message errors', async () => {
