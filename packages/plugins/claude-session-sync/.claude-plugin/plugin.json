@@ -1,6 +1,6 @@
 {
   "name": "claude-session-sync",
-  "version": "0.2.50",
+  "version": "0.2.51",
   "description": "Sync Claude Code session data to S3-compatible storage.",
   "author": {
     "name": "lucasschirm"
