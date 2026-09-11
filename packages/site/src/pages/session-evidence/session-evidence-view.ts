@@ -1,5 +1,6 @@
 import type {
   ComponentFactPage,
+  ContextTimingPoint,
   ContextTimingSeries,
   EvidencePage,
   RootChildBreakdown,
@@ -11,6 +12,7 @@ import type {
 } from '@lucasschirm/sal-db';
 import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import type { ChartSeries } from '../../components/charts/chart-types';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
@@ -20,6 +22,7 @@ import { navigateTo } from '../../router';
 import {
   componentFactsToChartSeries,
   componentFactsToRows,
+  contextGrowthToChartSeries,
   contextTimingToChartSeries,
   summaryToMetricCards,
 } from './session-evidence-chart-helpers';
@@ -28,6 +31,7 @@ import {
   parseSessionEvidenceHash,
   sessionEvidenceParamsToQuery,
 } from './session-evidence-params';
+import './session-context-drawer';
 import './session-evidence-evidence';
 import './session-evidence-transcript';
 import './session-evidence-tree';
@@ -300,11 +304,18 @@ export class SessionEvidenceView extends PageLitElement {
     state: 'idle',
   };
 
+  @state() private selectedMessage: ContextTimingPoint | null = null;
+
+  private cachedContextTimingSeries: ChartSeries | null = null;
+
   private hashListener = () => this.handleHashChange();
 
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('hashchange', this.hashListener);
+    if (this.sessionId) {
+      void this.load();
+    }
   }
 
   disconnectedCallback(): void {
@@ -316,6 +327,11 @@ export class SessionEvidenceView extends PageLitElement {
     super.willUpdate(changed);
     if (changed.has('sessionId') && this.sessionId) {
       void this.load();
+    }
+    if (changed.has('contextTiming') || changed.has('sessionId')) {
+      this.cachedContextTimingSeries = this.contextTiming.data
+        ? contextGrowthToChartSeries(this.contextTiming.data, this.sessionId)
+        : null;
     }
   }
 
@@ -495,17 +511,68 @@ export class SessionEvidenceView extends PageLitElement {
     `;
   }
 
+  private handleBarClick = (e: CustomEvent): void => {
+    const detail = e.detail;
+    if (!detail) return;
+    const points = this.contextTiming.data?.points ?? [];
+    if (points.length === 0) return;
+
+    let point: ContextTimingPoint | undefined;
+
+    // Direct messageId or messageIndex
+    if (detail.messageId) {
+      point = points.find((p) => p.messageId === detail.messageId);
+    } else if (typeof detail.messageIndex === 'number') {
+      point = points.find((p) => (p.messageIndex ?? p.turnNumber) === detail.messageIndex);
+    }
+
+    // From evidenceLink href (#msg-<id>)
+    const href = detail.href ?? detail.evidenceLink?.href;
+    if (!point && typeof href === 'string') {
+      const match = href.match(/#msg-(.+)$/);
+      if (match) {
+        const id = match[1];
+        point = points.find(
+          (p) => String(p.messageId) === id || String(p.messageIndex ?? p.turnNumber) === id,
+        );
+      }
+    }
+
+    // From category name (e.g. "#2 assistant")
+    const name = detail.name ?? detail.label;
+    if (!point && typeof name === 'string') {
+      const match = name.match(/#(\d+)/);
+      if (match) {
+        const idx = parseInt(match[1], 10);
+        point = points.find((p) => (p.messageIndex ?? p.turnNumber) === idx);
+      }
+    }
+
+    // Fallback: dataIndex in points
+    if (!point && typeof detail.dataIndex === 'number' && points[detail.dataIndex]) {
+      point = points[detail.dataIndex];
+    }
+
+    if (point) {
+      this.selectedMessage = point;
+    }
+  };
+
+  private handleDrawerClose = (): void => {
+    this.selectedMessage = null;
+  };
+
   private renderContextTiming() {
-    const series = this.contextTiming.data
-      ? contextTimingToChartSeries(this.contextTiming.data)
-      : null;
     return html`
-      <div class="section">
+      <div class="section" id="context-growth">
         <h2>Context and request timing</h2>
         <analytics-chart
-          title="Token composition by turn"
-          .series=${series}
+          title="Context growth across session"
+          description="Context size (in tokens) for each message in chronological order. Click any bar to view message details."
+          .series=${this.cachedContextTimingSeries}
           .state=${this.chartState(this.contextTiming.state)}
+          @point-click=${this.handleBarClick}
+          @chart-click=${this.handleBarClick}
         ></analytics-chart>
       </div>
     `;
@@ -712,6 +779,10 @@ export class SessionEvidenceView extends PageLitElement {
         ${this.renderComponentFacts()}
         ${this.renderValidation()}
         ${this.renderEvidenceSection()}
+        <session-context-drawer
+          .message=${this.selectedMessage}
+          @drawer-close=${this.handleDrawerClose}
+        ></session-context-drawer>
       </div>
     `;
   }

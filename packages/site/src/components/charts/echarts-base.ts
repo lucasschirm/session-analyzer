@@ -32,7 +32,13 @@ import { css, html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { createRef, ref } from 'lit/directives/ref.js';
-import type { ChartEvidenceLink, ChartSeries, ChartState, EChartsCoreOption } from './chart-types';
+import type {
+  ChartEvidenceLink,
+  ChartSeries,
+  ChartState,
+  EChartsCoreOption,
+  TableRow,
+} from './chart-types';
 import { stateIcon, stateLabel, toTableRows } from './chart-types';
 
 echarts.use([
@@ -260,17 +266,64 @@ export class EchartsBase extends LitElement {
   private bindChartEvents(): void {
     if (!this.chartInstance) return;
     this.chartInstance.on('click', (params: unknown) => {
-      const p = params as { data?: { evidenceLink?: ChartEvidenceLink } };
-      if (p.data?.evidenceLink) {
+      const p = params as {
+        data?: { evidenceLink?: ChartEvidenceLink; [key: string]: unknown } | number;
+        dataIndex?: number;
+        name?: string;
+        seriesName?: string;
+        value?: unknown;
+      };
+      const evidenceLink =
+        typeof p.data === 'object' && p.data !== null ? p.data.evidenceLink : undefined;
+      if (evidenceLink) {
         this.dispatchEvent(
           new CustomEvent('point-click', {
-            detail: p.data.evidenceLink,
+            detail: evidenceLink,
             bubbles: true,
             composed: true,
           }),
         );
       }
+      this.dispatchEvent(
+        new CustomEvent('chart-click', {
+          detail: {
+            dataIndex: p.dataIndex,
+            name: p.name,
+            seriesName: p.seriesName,
+            value: p.value,
+            evidenceLink,
+          },
+          bubbles: true,
+          composed: true,
+        }),
+      );
     });
+  }
+
+  private handleTableRowClick(dataIndex: number, row: TableRow): void {
+    const bucket = this.series?.buckets[dataIndex];
+    if (bucket?.evidenceLink) {
+      this.dispatchEvent(
+        new CustomEvent('point-click', {
+          detail: bucket.evidenceLink,
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    }
+    this.dispatchEvent(
+      new CustomEvent('chart-click', {
+        detail: {
+          dataIndex,
+          name: row.x,
+          seriesName: row.series,
+          value: row.y,
+          evidenceLink: bucket?.evidenceLink,
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private handleKeyDown(event: KeyboardEvent): void {
@@ -308,8 +361,11 @@ export class EchartsBase extends LitElement {
           </thead>
           <tbody>
             ${rows.map(
-              (row) => html`
-                <tr>
+              (row, index) => html`
+                <tr
+                  @click=${() => this.handleTableRowClick(index, row)}
+                  style=${row.evidenceHref ? 'cursor: pointer;' : ''}
+                >
                   <td>${row.x}</td>
                   <td>${row.y}</td>
                   <td>${row.label}</td>

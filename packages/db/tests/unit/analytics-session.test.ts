@@ -16,6 +16,7 @@ import {
   MessageStore,
   MetricDefinitionStore,
   MetricValueStore,
+  NormalizedEventStore,
   PortfolioStore,
   ProjectStore,
   SessionChartSeriesStore,
@@ -547,6 +548,138 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
     expect(series.points[0]?.generationTokens).toBe(40);
   });
 
+  it('returns context timing series from normalized events with message and model requests in chronological order', async () => {
+    // Create a new session with normalized_events
+    const neSessionId = 'session-norm-events';
+    const genId = 'gen-ne-1';
+    await createSession(executor, neSessionId);
+    await createGeneration(executor, neSessionId, genId);
+
+    // Message 1: user
+    await NormalizedEventStore.insert(executor, {
+      id: 'evt-turn-1',
+      sessionId: neSessionId,
+      generationId: genId,
+      eventType: 'turn',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'evt-turn-1',
+        recordType: 'turn',
+        sessionId: neSessionId,
+        payload: { ordinal: 1, role: 'human', timestamp: '2026-08-11T10:00:00.000Z' },
+      }),
+      retainRaw: true,
+    });
+    await NormalizedEventStore.insert(executor, {
+      id: 'evt-msg-1',
+      sessionId: neSessionId,
+      generationId: genId,
+      eventType: 'message',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'evt-msg-1',
+        recordType: 'message',
+        sessionId: neSessionId,
+        parentId: 'evt-turn-1',
+        payload: {
+          role: 'human',
+          content: 'Please fix the database index',
+          timestamp: '2026-08-11T10:00:00.000Z',
+        },
+      }),
+      retainRaw: true,
+    });
+
+    // Message 2: assistant with model request
+    await NormalizedEventStore.insert(executor, {
+      id: 'evt-turn-2',
+      sessionId: neSessionId,
+      generationId: genId,
+      eventType: 'turn',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'evt-turn-2',
+        recordType: 'turn',
+        sessionId: neSessionId,
+        payload: { ordinal: 2, role: 'assistant', timestamp: '2026-08-11T10:00:05.000Z' },
+      }),
+      retainRaw: true,
+    });
+    await NormalizedEventStore.insert(executor, {
+      id: 'evt-msg-2',
+      sessionId: neSessionId,
+      generationId: genId,
+      eventType: 'message',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'evt-msg-2',
+        recordType: 'message',
+        sessionId: neSessionId,
+        parentId: 'evt-turn-2',
+        payload: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'I fixed the index' }],
+          model: 'claude-3-7-sonnet',
+          timestamp: '2026-08-11T10:00:05.000Z',
+        },
+      }),
+      retainRaw: true,
+    });
+    await NormalizedEventStore.insert(executor, {
+      id: 'evt-req-2',
+      sessionId: neSessionId,
+      generationId: genId,
+      eventType: 'model_request',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'evt-req-2',
+        recordType: 'model_request',
+        sessionId: neSessionId,
+        parentId: 'evt-turn-2',
+        payload: {
+          requestOrder: 2,
+          model: 'claude-3-7-sonnet',
+          inputTokens: 500,
+          outputTokens: 50,
+          cacheReadTokens: 200,
+          cacheCreationTokens: 100,
+          thinkingTokens: 20,
+          effort: 'high',
+          normalizedEffort: 'high',
+          timestamp: '2026-08-11T10:00:05.000Z',
+        },
+      }),
+      retainRaw: true,
+    });
+
+    const series = await ds.session.getContextTimingSeries(neSessionId);
+    expect(series.points.length).toBe(2);
+
+    // Turn 1 (user)
+    const p1 = series.points[0];
+    expect(p1?.turnNumber).toBe(1);
+    expect(p1?.messageIndex).toBe(1);
+    expect(p1?.role).toBe('user');
+    expect(p1?.contextTokens).toBe(800); // 500 input + 200 read + 100 create from forward turn
+    expect(p1?.generationTokens).toBe(0);
+    expect(p1?.content).toBe('Please fix the database index');
+
+    // Turn 2 (assistant)
+    const p2 = series.points[1];
+    expect(p2?.turnNumber).toBe(2);
+    expect(p2?.messageIndex).toBe(2);
+    expect(p2?.role).toBe('assistant');
+    expect(p2?.model).toBe('claude-3-7-sonnet');
+    expect(p2?.contextTokens).toBe(800);
+    expect(p2?.generationTokens).toBe(50);
+    expect(p2?.totalTokens).toBe(850);
+    expect(p2?.cacheReadTokens).toBe(200);
+    expect(p2?.cacheCreationTokens).toBe(100);
+    expect(p2?.thinkingTokens).toBe(20);
+    expect(p2?.effort).toBe('high');
+    expect(p2?.content).toBe('I fixed the index');
+  });
+
   it('returns root child breakdown with session tree', async () => {
     const breakdown = await ds.session.getRootChildBreakdown(sessionId);
     expect(breakdown.root.sessionId).toBe(sessionId);
@@ -640,6 +773,19 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
       comparabilityGroupId: COMPARABILITY_GROUP_ID,
     });
     expect(list.items.length).toBe(2);
+    expect(list.totalCount).toBe(2);
+    const rootItem = list.items.find((i) => i.sessionId === sessionId);
+    expect(rootItem?.subagentCount).toBe(1);
+    expect(rootItem?.title).toBeDefined();
+
+    const searchList = await ds.search.getProjectSessionList(PROJECT_ID, {
+      portfolioId: PORTFOLIO_ID,
+      analysisReleaseId: ANALYSIS_RELEASE_ID,
+      comparabilityGroupId: COMPARABILITY_GROUP_ID,
+      filters: [{ field: 'search', operator: 'contains', value: childId }],
+    });
+    expect(searchList.items.length).toBe(1);
+    expect(searchList.items[0]?.sessionId).toBe(childId);
 
     const rootTree = await ds.search.getRootSessionTree(childId);
     expect(rootTree.rootSessionId).toBe(sessionId);

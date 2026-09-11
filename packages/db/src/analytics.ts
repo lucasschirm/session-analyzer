@@ -179,10 +179,22 @@ export interface SessionEvidenceSummary {
 
 export interface ContextTimingPoint {
   readonly turnNumber: number;
+  readonly messageIndex?: number;
+  readonly messageId?: string;
+  readonly role?: string;
+  readonly model?: string;
   readonly timestamp?: string;
   readonly totalTokens: number | null;
   readonly contextTokens: number | null;
   readonly generationTokens: number | null;
+  readonly inputTokens?: number | null;
+  readonly outputTokens?: number | null;
+  readonly cacheCreationTokens?: number | null;
+  readonly cacheReadTokens?: number | null;
+  readonly thinkingTokens?: number | null;
+  readonly effort?: string | null;
+  readonly normalizedEffort?: string | null;
+  readonly content?: string;
 }
 
 export interface ContextTimingSeries {
@@ -336,12 +348,16 @@ export interface ProjectSessionListItem {
   readonly parentSessionId?: string;
   readonly harness: string;
   readonly finality: 'final' | 'partial' | 'censored';
+  readonly title?: string;
+  readonly subagentCount?: number;
   readonly startedAt?: string;
   readonly endedAt?: string;
   readonly coverage: Coverage;
 }
 
-export interface ProjectSessionListPage extends CursorPage<ProjectSessionListItem> {}
+export interface ProjectSessionListPage extends CursorPage<ProjectSessionListItem> {
+  readonly totalCount?: number;
+}
 
 export interface SessionTreeNode {
   readonly sessionId: string;

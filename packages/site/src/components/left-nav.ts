@@ -1,7 +1,10 @@
+import type { ProjectSessionListItem } from '@lucasschirm/sal-db';
 import { css, html, LitElement, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
+import { analyticsClient } from '../db/analytics-client';
 import { dbClient } from '../db/db-client';
+import { navigateTo } from '../router';
 import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 import type { Project } from '../types';
 
@@ -134,6 +137,110 @@ export class LeftNav extends LitElement {
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
       padding: 12px 12px 4px;
     }
+
+    .nav-project-group {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .nav-project-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-radius: 6px;
+      transition: background-color 0.15s ease;
+    }
+
+    .nav-project-row:hover {
+      background: var(--md-sys-color-surface-container, #1f242e);
+    }
+
+    .nav-project-row .nav-child {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .nav-project-row:hover .nav-child {
+      background: transparent;
+    }
+
+    .project-chevron-btn {
+      background: transparent;
+      border: none;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      padding: 8px 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      font-size: 9px;
+      flex-shrink: 0;
+      transition: color 0.15s ease;
+    }
+
+    .project-chevron-btn:hover {
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      background: var(--md-sys-color-surface-container-hover, #262d3a);
+    }
+
+    .project-chevron-btn .chevron {
+      display: inline-block;
+      transition: transform 0.15s ease;
+    }
+
+    .project-chevron-btn.expanded .chevron {
+      transform: rotate(90deg);
+    }
+
+    .nav-sessions-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      padding: 2px 0 4px 10px;
+      border-left: 1px solid var(--md-sys-color-outline, #2a303c);
+      margin-left: 16px;
+      margin-top: 2px;
+      margin-bottom: 4px;
+    }
+
+    .nav-session-item {
+      display: flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 6px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      text-decoration: none;
+      font-size: 12px;
+      transition: background-color 0.15s ease, color 0.15s ease;
+      cursor: pointer;
+    }
+
+    .nav-session-item:hover {
+      background: var(--md-sys-color-surface-container, #1f242e);
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+    }
+
+    .nav-session-item.active {
+      background: var(--md-sys-color-primary-container, #1c2b4a);
+      color: var(--md-sys-color-primary, #4f8cff);
+      font-weight: 600;
+    }
+
+    .nav-session-title {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 170px;
+    }
+
+    .nav-session-loading,
+    .nav-session-empty {
+      font-size: 11px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      padding: 4px 8px;
+      font-style: italic;
+    }
   `;
 
   /** Current hash path (e.g. `/`, `/projects`, `/settings/storage`). */
@@ -142,6 +249,12 @@ export class LeftNav extends LitElement {
   @state() private projects: Project[] = [];
 
   @state() private projectsExpanded = false;
+
+  @state() private projectSessions: Record<string, ProjectSessionListItem[]> = {};
+
+  @state() private expandedProjectSlugs: Set<string> = new Set();
+
+  @state() private sessionsLoading: Record<string, boolean> = {};
 
   @state() private syncSnapshot: SyncManagerSnapshot | null = null;
 
@@ -152,8 +265,16 @@ export class LeftNav extends LitElement {
     this.syncSnapshot = syncManager.getSnapshot();
     syncManager.addEventListener('change', this.handleSyncChange);
     void this.loadProjects();
-    // Only auto-expand when viewing a specific project, not the projects list page.
-    this.projectsExpanded = /^\/projects\/[^/]+/.test(this.path);
+    // Auto-expand when viewing a specific project or session route.
+    this.projectsExpanded = /^\/(projects|sessions)\/[^/]+/.test(this.path);
+    if (/^\/projects\/[^/]+/.test(this.path)) {
+      const match = this.path.match(/^\/projects\/([^/]+)/);
+      if (match) {
+        const slug = decodeURIComponent(match[1]);
+        this.expandedProjectSlugs.add(slug);
+        void this.loadSessionsForProject(slug);
+      }
+    }
   }
 
   disconnectedCallback(): void {
@@ -163,9 +284,29 @@ export class LeftNav extends LitElement {
 
   protected willUpdate(changed: PropertyValues<this>): void {
     // Keep expansion in sync when navigating between dashboard/projects routes.
-    // Only auto-expand when viewing a specific project, not the projects list.
+    // Auto-expand when viewing a specific project. Do not auto-collapse when navigating
+    // to the projects route if already expanded.
     if (changed.has('path')) {
-      this.projectsExpanded = /^\/projects\/[^/]+/.test(this.path);
+      if (/^\/projects\/[^/]+/.test(this.path)) {
+        this.projectsExpanded = true;
+        const match = this.path.match(/^\/projects\/([^/]+)/);
+        if (match) {
+          const slug = decodeURIComponent(match[1]);
+          const project = this.projects.find(
+            (p) => (p.readable_id || p.id) === slug || p.id === slug,
+          );
+          const pId = project ? project.id : slug;
+          const next = new Set(this.expandedProjectSlugs);
+          next.add(pId);
+          next.add(slug);
+          this.expandedProjectSlugs = next;
+          void this.loadSessionsForProject(pId, slug);
+        }
+      } else if (/^\/sessions\/[^/]+/.test(this.path)) {
+        this.projectsExpanded = true;
+      } else if (!this.path.startsWith('/projects') && !this.path.startsWith('/sessions')) {
+        this.projectsExpanded = false;
+      }
     }
   }
 
@@ -195,6 +336,21 @@ export class LeftNav extends LitElement {
     try {
       await dbClient.ensureReady();
       this.projects = await dbClient.getProjects();
+      if (/^\/projects\/[^/]+/.test(this.path)) {
+        const match = this.path.match(/^\/projects\/([^/]+)/);
+        if (match) {
+          const slug = decodeURIComponent(match[1]);
+          const project = this.projects.find(
+            (p) => (p.readable_id || p.id) === slug || p.id === slug,
+          );
+          const pId = project ? project.id : slug;
+          const next = new Set(this.expandedProjectSlugs);
+          next.add(pId);
+          next.add(slug);
+          this.expandedProjectSlugs = next;
+          void this.loadSessionsForProject(pId, slug);
+        }
+      }
     } catch {
       // Non-fatal: the projects list stays empty until the DB is ready.
     } finally {
@@ -202,9 +358,79 @@ export class LeftNav extends LitElement {
     }
   }
 
+  private handleProjectClick(slug: string, projectId: string): void {
+    const next = new Set(this.expandedProjectSlugs);
+    next.add(projectId);
+    next.add(slug);
+    this.expandedProjectSlugs = next;
+    void this.loadSessionsForProject(projectId, slug);
+  }
+
+  private toggleProjectSessions(e: Event, projectId: string, slug: string): void {
+    e.preventDefault();
+    e.stopPropagation();
+    const next = new Set(this.expandedProjectSlugs);
+    if (next.has(projectId) || next.has(slug)) {
+      next.delete(projectId);
+      next.delete(slug);
+    } else {
+      next.add(projectId);
+      next.add(slug);
+      void this.loadSessionsForProject(projectId, slug);
+    }
+    this.expandedProjectSlugs = next;
+  }
+
+  private handleSessionClick(e: MouseEvent, sessionId: string): void {
+    e.preventDefault();
+    navigateTo(`/sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  private async loadSessionsForProject(projectId: string, slug?: string): Promise<void> {
+    if (
+      this.sessionsLoading[projectId] ||
+      (slug && this.sessionsLoading[slug]) ||
+      this.projectSessions[projectId] ||
+      (slug && this.projectSessions[slug])
+    ) {
+      return;
+    }
+    this.sessionsLoading = { ...this.sessionsLoading, [projectId]: true };
+    if (slug) {
+      this.sessionsLoading = { ...this.sessionsLoading, [slug]: true };
+    }
+    try {
+      let targetId = projectId;
+      if (typeof analyticsClient?.resolveProjectId === 'function') {
+        const resolved = await analyticsClient.resolveProjectId(projectId);
+        if (resolved) targetId = resolved;
+      }
+      if (typeof analyticsClient?.search?.getProjectSessionList === 'function') {
+        const page = await analyticsClient.search.getProjectSessionList(targetId, { limit: 20 });
+        this.projectSessions = {
+          ...this.projectSessions,
+          [projectId]: [...page.items],
+          [targetId]: [...page.items],
+          ...(slug ? { [slug]: [...page.items] } : {}),
+        };
+      }
+    } catch {
+      // Non-fatal: if analytics not ready or in test environment without mock
+    } finally {
+      this.sessionsLoading = {
+        ...this.sessionsLoading,
+        [projectId]: false,
+        ...(slug ? { [slug]: false } : {}),
+      };
+    }
+  }
+
   private toggleProjects(event: Event): void {
     event.preventDefault();
     this.projectsExpanded = !this.projectsExpanded;
+    if (this.projects.length === 0) {
+      void this.loadProjects();
+    }
     // Navigating to /projects is also part of the click per the spec.
     window.location.hash = '#/projects';
   }
@@ -240,13 +466,67 @@ export class LeftNav extends LitElement {
                     const slug = project.readable_id || project.id;
                     const href = `#/projects/${slug}`;
                     const sessionLabel = `${project.session_count} session${project.session_count === 1 ? '' : 's'}`;
-                    return html`<a
-                      href=${href}
-                      class="nav-child ${this.path === `/projects/${slug}` ? 'active' : ''}"
-                    >
-                      <span class="nav-child-name">${project.name}</span>
-                      <span class="nav-child-stats">${sessionLabel} · ${formatRelativeDate(project.updated_at)}</span>
-                    </a>`;
+                    const isExpanded =
+                      this.expandedProjectSlugs.has(project.id) ||
+                      this.expandedProjectSlugs.has(slug);
+                    const sessions =
+                      this.projectSessions[project.id] ?? this.projectSessions[slug] ?? [];
+                    const isLoading =
+                      this.sessionsLoading[project.id] || this.sessionsLoading[slug];
+
+                    return html`
+                      <div class="nav-project-group">
+                        <div class="nav-project-row">
+                          <a
+                            href=${href}
+                            class="nav-child ${this.path === `/projects/${slug}` ? 'active' : ''}"
+                            @click=${() => this.handleProjectClick(slug, project.id)}
+                          >
+                            <span class="nav-child-name">${project.name}</span>
+                            <span class="nav-child-stats">${sessionLabel} · ${formatRelativeDate(project.updated_at)}</span>
+                          </a>
+                          <button
+                            type="button"
+                            class="project-chevron-btn ${isExpanded ? 'expanded' : ''}"
+                            aria-label="Toggle sessions for ${project.name}"
+                            @click=${(e: Event) => this.toggleProjectSessions(e, project.id, slug)}
+                          >
+                            <span class="chevron">▶</span>
+                          </button>
+                        </div>
+                        ${
+                          isExpanded
+                            ? html`
+                            <div class="nav-sessions-list">
+                              ${
+                                isLoading
+                                  ? html`<div class="nav-session-loading">Loading sessions...</div>`
+                                  : sessions.length === 0
+                                    ? html`<div class="nav-session-empty">No sessions</div>`
+                                    : sessions.map((session) => {
+                                        const isSessionActive =
+                                          this.path === `/sessions/${session.sessionId}` ||
+                                          this.path ===
+                                            `/sessions/${encodeURIComponent(session.sessionId)}`;
+                                        const displayTitle = session.title || session.sessionId;
+                                        return html`
+                                        <a
+                                          href="#/sessions/${encodeURIComponent(session.sessionId)}"
+                                          class="nav-session-item ${isSessionActive ? 'active' : ''}"
+                                          title=${displayTitle}
+                                          @click=${(e: MouseEvent) => this.handleSessionClick(e, session.sessionId)}
+                                        >
+                                          <span class="nav-session-title">${displayTitle}</span>
+                                        </a>
+                                      `;
+                                      })
+                              }
+                            </div>
+                          `
+                            : ''
+                        }
+                      </div>
+                    `;
                   },
                 )}
                 ${
@@ -307,7 +587,15 @@ export class LeftNav extends LitElement {
   }
 
   render() {
-    if (this.path === '/' || this.path.startsWith('/projects')) {
+    if (
+      this.path === '/' ||
+      this.path.startsWith('/projects') ||
+      this.path.startsWith('/sessions') ||
+      this.path === '/agents' ||
+      this.path === '/skills' ||
+      this.path === '/tools' ||
+      this.path === '/mcp'
+    ) {
       return this.renderDashboardNav();
     }
     if (this.path.startsWith('/settings')) {

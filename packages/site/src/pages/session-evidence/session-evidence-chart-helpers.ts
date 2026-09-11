@@ -7,12 +7,58 @@ import type {
   SessionTree,
   SessionTreeNode,
 } from '@lucasschirm/sal-db';
-import type { ChartBucket, ChartSeries, TableRow } from '../../components/charts/chart-types';
+import type {
+  ChartBucket,
+  ChartEvidenceLink,
+  ChartSeries,
+  TableRow,
+} from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
 import { metricDescription, metricLabel } from '../../lib/metric-descriptions';
 import type { MetricCardView } from '../portfolio/portfolio-chart-helpers';
 import type { SessionEvidenceParams } from './session-evidence-params';
 import { evidenceLinkHref } from './session-evidence-params';
+
+export function contextGrowthToChartSeries(
+  series: ContextTimingSeries,
+  sessionId = '',
+): ChartSeries {
+  const buckets: ChartBucket[] = [];
+  for (const point of series.points) {
+    const idx = point.messageIndex ?? point.turnNumber;
+    const role = point.role ?? 'message';
+    const x = `#${idx} ${role}`;
+    const evidenceLink: ChartEvidenceLink = {
+      label: `Message #${idx} (${role})`,
+      href: sessionId ? `#/sessions/${sessionId}#msg-${point.messageId ?? idx}` : '',
+    };
+    buckets.push({
+      x,
+      y: point.contextTokens,
+      label: `Message #${idx} (${role}): context ${formatChartValue(point.contextTokens)} tokens`,
+      series: 'Context',
+      evidenceLink,
+    });
+    if (point.generationTokens !== null && point.generationTokens > 0) {
+      buckets.push({
+        x,
+        y: point.generationTokens,
+        label: `Message #${idx} (${role}): generation ${formatChartValue(point.generationTokens)} tokens`,
+        series: 'Generation',
+        evidenceLink,
+      });
+    }
+  }
+
+  return {
+    seriesId: 'context-growth',
+    label: 'Context growth across session',
+    chartType: 'stacked_bar',
+    xLabel: 'Message',
+    yLabel: 'Tokens',
+    buckets,
+  };
+}
 
 export function contextTimingToChartSeries(series: ContextTimingSeries): ChartSeries {
   const buckets: ChartBucket[] = [];

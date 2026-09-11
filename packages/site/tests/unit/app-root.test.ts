@@ -191,8 +191,18 @@ describe('app-root', () => {
     expect(leftNav).not.toBeNull();
   });
 
-  it('does not render the left nav on session routes', async () => {
+  it('renders the left nav on session routes', async () => {
     window.location.hash = '#/sessions/s1';
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    const leftNav = root.querySelector('left-nav');
+    expect(leftNav).not.toBeNull();
+  });
+
+  it('does not render the left nav on artifact routes', async () => {
+    window.location.hash = '#/artifacts';
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
@@ -347,5 +357,15 @@ describe('app-root', () => {
 
     expect(root.querySelector('.app-loading')).toBeNull();
     expect(settingsButton?.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('renders project-sessions-page when navigating to #/projects/:projectId/sessions', async () => {
+    window.location.hash = '#/projects/alpha/sessions';
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const page = app.shadowRoot?.querySelector('project-sessions-page');
+    expect(page).not.toBeNull();
+    expect(page?.getAttribute('project-id')).toBe('alpha');
   });
 });
