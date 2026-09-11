@@ -412,16 +412,25 @@ export class ComponentEcosystemView extends PageLitElement {
     }
   }
 
-  private async load(): Promise<void> {
-    if (this.loading) {
-      this.reloadPending = true;
-      return;
-    }
+  private startLoad(): void {
     this.loading = true;
     this.globalState = 'loading';
     this.globalError = null;
     this.diff = null;
     this.diffError = null;
+  }
+
+  private finishLoad(): void {
+    this.loading = false;
+    this.reloadIfPending();
+  }
+
+  private async load(): Promise<void> {
+    if (this.loading) {
+      this.reloadPending = true;
+      return;
+    }
+    this.startLoad();
 
     const query = componentEcosystemParamsToQuery(this.filters);
     if (this.componentId) {
@@ -430,8 +439,7 @@ export class ComponentEcosystemView extends PageLitElement {
       await this.loadSummaryOnly(query);
     }
 
-    this.loading = false;
-    this.reloadIfPending();
+    this.finishLoad();
   }
 
   /**

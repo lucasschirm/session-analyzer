@@ -18,6 +18,7 @@ import type {
 } from '@lucasschirm/sal-db-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  asBytes,
   createBrowserArtifactBlobStore,
   createBrowserArtifactResolver,
   createBrowserContentHasher,
@@ -801,5 +802,25 @@ describe('createBrowserArtifactResolver', () => {
     await expect(
       resolver.resolve({ sha256: 'missing', size: 1, relativePath: 'p', mediaType: 'text/plain' }),
     ).rejects.toThrow(/Artifact not resolvable: sha256=missing key=none/);
+  });
+});
+
+describe('asBytes', () => {
+  it('converts a string to UTF-8 bytes', () => {
+    const text = '{"model":"claude"}';
+    expect(asBytes(text)).toEqual(new TextEncoder().encode(text));
+  });
+
+  it('returns a Uint8Array unchanged', () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    expect(asBytes(bytes)).toBe(bytes);
+  });
+
+  it('produces the same digest for string and Uint8Array forms of the same text', async () => {
+    const text = '{"emoji":"🚀"}';
+    const hasher = createBrowserContentHasher();
+    const fromString = await hasher.hash(text);
+    const fromBytes = await hasher.hash(new TextEncoder().encode(text));
+    expect(fromString).toBe(fromBytes);
   });
 });

@@ -35,9 +35,7 @@ export function normalizeRetentionClass(sourceClass: string | undefined): Artifa
 }
 
 export function asBytes(content: ArtifactContent): Uint8Array {
-  if (typeof content === 'string') {
-    return new TextEncoder().encode(content);
-  }
+  if (typeof content === 'string') return new TextEncoder().encode(content);
   return content;
 }
 
@@ -55,8 +53,8 @@ function blobToResolvedArtifact(blob: ArtifactBlob): ResolvedArtifact | undefine
 export function createBrowserContentHasher(): ContentHasher {
   return {
     hash: async (content) => {
-      const bytes = asBytes(content) as Uint8Array<ArrayBuffer>;
-      return sha256Hex(bytes);
+      const bytes = asBytes(content);
+      return sha256Hex(bytes as Uint8Array<ArrayBuffer>);
     },
   };
 }
