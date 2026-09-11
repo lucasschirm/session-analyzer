@@ -9,7 +9,7 @@ import {
 } from './analytics-session.js';
 import type { AnalyticsToken, Coverage, EvidenceLink, MetricValueDto } from './dto.js';
 import { createSha256ContentHasher } from './ingestion.js';
-import type { ContentHasher } from './ports.js';
+import type { ArtifactBlobStore, ContentHasher } from './ports.js';
 import { createProjectBehaviorView } from './project-behavior.js';
 
 export type FilterOperator = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'contains';
@@ -454,13 +454,18 @@ export interface AnalyticsDataSource {
 export function createAnalyticsDataSource(
   queryable: SqliteExecutor | SqliteTransaction,
   hasher?: ContentHasher,
+  blobStore?: ArtifactBlobStore,
 ): AnalyticsDataSource {
   return {
     portfolio: createPortfolioView(queryable),
     project: createProjectBehaviorView(queryable),
     session: createSessionEvidenceView(queryable),
     component: createComponentEcosystemView(queryable),
-    artifact: createArtifactVersionView(queryable, hasher ?? createSha256ContentHasher()),
+    artifact: createArtifactVersionView(
+      queryable,
+      hasher ?? createSha256ContentHasher(),
+      blobStore,
+    ),
     search: createProjectSessionSearchView(queryable),
     metadata: createMetadataView(queryable),
   };

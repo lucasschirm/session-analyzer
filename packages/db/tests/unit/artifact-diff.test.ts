@@ -9,6 +9,7 @@ import {
   type CanonicalizedArtifact,
 } from '../../src/artifact-diff.js';
 import { createSha256ContentHasher } from '../../src/ingestion.js';
+import type { ArtifactBlobStore, ResolvedArtifact } from '../../src/ports.js';
 
 const PORTFOLIO_ID = 'pf-artifact';
 const INGESTION_SOURCE_ID = 'src-artifact';
@@ -19,6 +20,42 @@ const TENANT_ID = 'ten-artifact';
 
 function makeHasher() {
   return createSha256ContentHasher();
+}
+
+/**
+ * In-file fake implementing the ArtifactBlobStore port
+ * (packages/db/src/ports.ts:48-53). packages/db must not import a real
+ * concrete store from packages/site (see packages/db/AGENTS.md) -- the
+ * real-store, real-round-trip coverage lives in
+ * packages/site/tests/unit/artifact-adapters.test.ts instead.
+ */
+function createFakeBlobStore(): ArtifactBlobStore & {
+  readonly retainCalls: number[];
+  readonly readCalls: string[];
+  seed(artifact: ResolvedArtifact): void;
+} {
+  const stored = new Map<string, ResolvedArtifact>();
+  const readCalls: string[] = [];
+  const retainCalls: number[] = [];
+  return {
+    retainCalls,
+    readCalls,
+    seed: (artifact) => {
+      stored.set(artifact.sha256, artifact);
+    },
+    retain: async (blob) => {
+      retainCalls.push(1);
+      stored.set(blob.sha256, blob);
+      const { content: _content, ...reference } = blob;
+      return reference;
+    },
+    read: async (sha256) => {
+      readCalls.push(sha256);
+      return stored.get(sha256);
+    },
+    remove: async (sha256) => stored.delete(sha256),
+    list: async () => [],
+  };
 }
 
 function baseInput(
@@ -583,5 +620,175 @@ describe('ArtifactDiffRepository', () => {
     expect(agentDiff).toBeDefined();
     expect(agentDiff?.unifiedDiff).toBeUndefined();
     expect(agentDiff?.sideBySideDiff).toBeUndefined();
+  });
+
+  it('writes real, non-null content bytes into insert.content regardless of whether blobStore is provided, and never calls blobStore.retain() from record()', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    const fake = createFakeBlobStore();
+
+    const contentWithStore = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'with-store' });
+    const contentWithoutStore = JSON.stringify({
+      model: 'claude-3-5-sonnet',
+      variant: 'without-store',
+    });
+
+    const sourceManifestIdWithStore = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactIdWithStore = await insertManifestArtifact(
+      executor,
+      sourceManifestIdWithStore,
+      'sess-left',
+      '.claude/config.json',
+    );
+    const repositoryWithStore = new ArtifactDiffRepository(hasher, fake);
+    await repositoryWithStore.record(
+      executor,
+      PORTFOLIO_ID,
+      {
+        sourceManifestId: sourceManifestIdWithStore,
+        manifestArtifactId: manifestArtifactIdWithStore,
+        observingSessionId: 'sess-left',
+      },
+      baseInput(contentWithStore),
+    );
+
+    const sourceManifestIdWithoutStore = await insertSourceManifest(executor, 'sess-right', 1);
+    const manifestArtifactIdWithoutStore = await insertManifestArtifact(
+      executor,
+      sourceManifestIdWithoutStore,
+      'sess-right',
+      '.claude/settings.json',
+    );
+    const repositoryWithoutStore = new ArtifactDiffRepository(hasher);
+    await repositoryWithoutStore.record(
+      executor,
+      PORTFOLIO_ID,
+      {
+        sourceManifestId: sourceManifestIdWithoutStore,
+        manifestArtifactId: manifestArtifactIdWithoutStore,
+        observingSessionId: 'sess-right',
+      },
+      baseInput(contentWithoutStore),
+    );
+
+    const shaWithStore = await hasher.hash(contentWithStore);
+    const shaWithoutStore = await hasher.hash(contentWithoutStore);
+
+    const { rows: rowsWithStore } = await executor.exec(
+      'SELECT content FROM artifact_blobs WHERE sha256 = ?',
+      [shaWithStore],
+    );
+    const { rows: rowsWithoutStore } = await executor.exec(
+      'SELECT content FROM artifact_blobs WHERE sha256 = ?',
+      [shaWithoutStore],
+    );
+
+    expect(rowsWithStore).toHaveLength(1);
+    expect(rowsWithStore[0]?.content).not.toBeNull();
+    expect(new TextDecoder().decode(rowsWithStore[0]?.content as Uint8Array)).toBe(
+      contentWithStore,
+    );
+
+    expect(rowsWithoutStore).toHaveLength(1);
+    expect(rowsWithoutStore[0]?.content).not.toBeNull();
+    expect(new TextDecoder().decode(rowsWithoutStore[0]?.content as Uint8Array)).toBe(
+      contentWithoutStore,
+    );
+
+    // record() never touches blobStore -- the write path is unconditional
+    // and unchanged by this issue.
+    expect(fake.retainCalls).toHaveLength(0);
+  });
+
+  it('consults blobStore.read() only when the metadata row content is already null (read-side fallback, inert until the sub-issue-4 backfill exists)', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    const fake = createFakeBlobStore();
+    const repository = new ArtifactDiffRepository(hasher, fake);
+
+    // Case A: the metadata row has real content -- the only state record()
+    // can produce today. blobStore.read() must not be consulted.
+    const nonNullContent = JSON.stringify({ model: 'claude-3-5-sonnet', case: 'non-null' });
+    const sourceManifestIdA = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactIdA = await insertManifestArtifact(
+      executor,
+      sourceManifestIdA,
+      'sess-left',
+      '.claude/config.json',
+    );
+    const [referenceIdA] = await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      {
+        sourceManifestId: sourceManifestIdA,
+        manifestArtifactId: manifestArtifactIdA,
+        observingSessionId: 'sess-left',
+      },
+      baseInput(nonNullContent),
+    );
+
+    const canonicalizedA = await repository.getCanonicalizedArtifact(
+      executor,
+      PORTFOLIO_ID,
+      referenceIdA,
+    );
+    expect(canonicalizedA).toBeDefined();
+    expect(canonicalizedA?.rawSha256).not.toBe('');
+    expect(fake.readCalls).toHaveLength(0);
+
+    // Case B: the metadata row's content is already null -- the state only
+    // the sub-issue-4 backfill can produce in production. Construct it
+    // directly via raw SQL (this file's existing convention for direct
+    // fixture rows), never via the db-core ArtifactBlobStore class -- that
+    // would reintroduce, inside this test file, the exact
+    // ArtifactBlobStore/port name collision this issue's Scope section
+    // aliases away in the source file.
+    const purgedSha256 = 'b'.repeat(64);
+    const now = Date.now();
+    await executor.exec(
+      `INSERT INTO artifact_blobs (
+        sha256, media_type, retention_class, content, size,
+        redaction_scheme, key_domain_id, sensitive_digest, redaction_change_marker, is_redacted,
+        verified_at, created_at, updated_at
+      ) VALUES (?, NULL, 'retained', NULL, ?, NULL, NULL, NULL, 0, 0, NULL, ?, ?)`,
+      [purgedSha256, 0, now, now],
+    );
+
+    const fallbackContent = 'fallback content from blobStore';
+    fake.seed({
+      sha256: purgedSha256,
+      size: fallbackContent.length,
+      relativePath: '',
+      mediaType: 'application/octet-stream',
+      content: fallbackContent,
+    });
+
+    const sourceManifestIdB = await insertSourceManifest(executor, 'sess-right', 1);
+    const manifestArtifactIdB = await insertManifestArtifact(
+      executor,
+      sourceManifestIdB,
+      'sess-right',
+      '.claude/settings.json',
+    );
+    const [referenceIdB] = await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      {
+        sourceManifestId: sourceManifestIdB,
+        manifestArtifactId: manifestArtifactIdB,
+        observingSessionId: 'sess-right',
+        blobSha256: purgedSha256,
+      },
+      baseInput(null),
+    );
+
+    const canonicalizedB = await repository.getCanonicalizedArtifact(
+      executor,
+      PORTFOLIO_ID,
+      referenceIdB,
+    );
+
+    expect(fake.readCalls).toEqual([purgedSha256]);
+    expect(canonicalizedB?.rawSha256).not.toBe('');
   });
 });

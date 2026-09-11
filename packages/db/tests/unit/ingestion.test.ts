@@ -4,10 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { FRESH_SCHEMA_SQL } from '@lucasschirm/sal-db-core';
 import { MANIFEST_SCHEMA_VERSION } from '@lucasschirm/sal-sync-core';
 import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import { createArtifactVersionView } from '../../src/analytics-session.js';
+import { ArtifactDiffRepository } from '../../src/artifact-diff.js';
 import { createSha256ContentHasher, DefaultIngestionOrchestrator } from '../../src/ingestion.js';
+import type { ArtifactBlobStore } from '../../src/ports.js';
 import { buildDevinManifestBundle } from '../fixtures/devin-manifest.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -73,15 +75,36 @@ function createManifestFixture(content: string, sha256: string, relativePath: st
   };
 }
 
-async function setupIngestion(executor: WasmSqliteExecutor, registry = createDefaultRegistry()) {
+async function setupIngestion(
+  executor: WasmSqliteExecutor,
+  registry = createDefaultRegistry(),
+  blobStore?: ArtifactBlobStore,
+) {
   const hasher = createSha256ContentHasher();
   return new DefaultIngestionOrchestrator({
     executor,
     hasher,
     registry,
+    blobStore,
     resolver: { resolve: async (ref) => ({ ...ref, content: new Uint8Array(0) }) },
     analysisReleaseId: 'ar-default',
   });
+}
+
+// In-file fake implementing the ArtifactBlobStore port (packages/db/src/ports.ts).
+// packages/db must not import a real store from packages/site (see
+// packages/db/AGENTS.md); this thin plumbing test only needs a fake to prove
+// context.blobStore reaches the constructed ArtifactDiffRepository.
+function createFakeBlobStore(): ArtifactBlobStore {
+  return {
+    retain: async (blob) => {
+      const { content: _content, ...reference } = blob;
+      return reference;
+    },
+    read: async () => undefined,
+    remove: async () => false,
+    list: async () => [],
+  };
 }
 
 describe('DefaultIngestionOrchestrator', () => {
@@ -664,5 +687,45 @@ describe('DefaultIngestionOrchestrator', () => {
     expect(manifestArtifactRows.map((r) => r.relative_path)).toEqual(
       bundle.manifest.artifacts.map((a) => a.relativePath).sort(),
     );
+  });
+
+  it('forwards context.blobStore into the ArtifactDiffRepository constructed to record artifact references', async () => {
+    // Thin plumbing check for issue #398: prove `this.context.blobStore`
+    // reaches the `ArtifactDiffRepository` instance created inside
+    // `recordArtifactReferences` (ingestion.ts:1183). This does not
+    // re-test ArtifactDiffRepository's own record()/getCanonicalizedArtifact()
+    // behavior -- that is covered in artifact-diff.test.ts. `injectedBlobStore`
+    // is a narrow, read-only public accessor (artifact-diff.ts) kept
+    // deliberately smaller than the full port, so the spy below only needs
+    // to get a handle on the internally-constructed instance -- reading it
+    // back requires no private-field cast.
+    const content = readFixture('t2-happy-path.jsonl');
+    const hasher = createSha256ContentHasher();
+    const sha256 = await hasher.hash(content);
+    const executor = await createExecutor();
+    const blobStore = createFakeBlobStore();
+    const orchestrator = await setupIngestion(executor, createDefaultRegistry(), blobStore);
+    const { bundle } = createManifestFixture(content, sha256, 'session/transcript.jsonl');
+
+    const originalRecord = ArtifactDiffRepository.prototype.record;
+    let capturedBlobStore: unknown;
+    const recordSpy = vi
+      .spyOn(ArtifactDiffRepository.prototype, 'record')
+      .mockImplementation(function (
+        this: ArtifactDiffRepository,
+        ...args: Parameters<typeof originalRecord>
+      ) {
+        capturedBlobStore = this.injectedBlobStore;
+        return originalRecord.apply(this, args);
+      });
+
+    try {
+      const receipt = await orchestrator.ingestManifest(bundle);
+      expect(receipt.status).toBe('committed');
+    } finally {
+      recordSpy.mockRestore();
+    }
+
+    expect(capturedBlobStore).toBe(blobStore);
   });
 });
