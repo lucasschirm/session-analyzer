@@ -3,13 +3,11 @@ import {
   buildObjectKey,
   encodeKeySegment,
   type ManifestArtifact,
-  parseObjectKey,
   S3Error,
   type S3GetObjectOptions,
   type S3ListObjectEntry,
   type S3ListObjectsOptions,
-  type S3ListOptions,
-  type S3ListPage,
+  type S3ListObjectsPage,
   type SyncManifest,
   sha256Hex,
 } from '@lucasschirm/sal-sync-core';
@@ -23,6 +21,7 @@ import type {
   SyncMessageFromWorker,
   SyncMessageToWorker,
 } from '../../src/sync/sync-protocol';
+import type { ManifestFingerprint } from '../../src/types';
 import { type S3Client, SessionSyncWorker } from '../../src/workers/session-sync.worker';
 
 const encoder = new TextEncoder();
@@ -36,19 +35,16 @@ class MockS3Client implements S3Client {
     reject: (error: unknown) => void;
   }> = [];
   private _autoResolve = true;
+  private explicitPages: S3ListObjectsPage[] | undefined;
+  private listingError: unknown;
+  private pageGateEnabled = false;
+  private releaseGate: (() => void) | undefined;
 
   inFlight = 0;
   maxInFlight = 0;
   getCalls: string[] = [];
   getObjectProgress: Array<{ key: string; bytes: number }> = [];
-  listSessionFoldersCalls: Array<{ projectId: string; options?: S3ListOptions }> = [];
-  listSessionFoldersPages: S3ListPage[] = [];
-  listSessionObjectsCalls: Array<{
-    projectId: string;
-    sessionId: string;
-    options?: S3ListObjectsOptions;
-  }> = [];
-  listSessionObjectsResult: S3ListObjectEntry[] | undefined;
+  listProjectObjectsCalls: Array<{ projectId: string; options?: S3ListObjectsOptions }> = [];
 
   setAutoResolve(value: boolean): void {
     this._autoResolve = value;
@@ -66,52 +62,58 @@ class MockS3Client implements S3Client {
     return buffer;
   }
 
-  setListPages(pages: S3ListPage[]): void {
-    this.listSessionFoldersPages = pages;
+  /** Explicit pages for tests exercising pagination, ordering, or filtering. */
+  setObjectPages(pages: S3ListObjectsPage[]): void {
+    this.explicitPages = pages;
   }
 
-  setListSessionObjectsResult(result: S3ListObjectEntry[]): void {
-    this.listSessionObjectsResult = result;
+  /** After serving all configured/default pages, the listing call rejects. */
+  setListingError(error: unknown): void {
+    this.listingError = error;
   }
 
-  async listSessionFolders(projectId: string, options?: S3ListOptions): Promise<string[]> {
-    this.listSessionFoldersCalls.push({ projectId, options });
-    const all: string[] = [];
-    for (let index = 0; index < this.listSessionFoldersPages.length; index++) {
-      const page = this.listSessionFoldersPages[index] as S3ListPage;
-      const isFinal = index === this.listSessionFoldersPages.length - 1;
-      const pageWithToken = isFinal
-        ? { ...page, continuationToken: undefined }
-        : { ...page, continuationToken: `token-${index}` };
-      if (options?.onPage) await options.onPage(pageWithToken);
-      all.push(...page.prefixes);
+  /** Pauses before each page after the first, released via `releaseNextPage`. */
+  enablePageGate(): void {
+    this.pageGateEnabled = true;
+  }
+
+  releaseNextPage(): void {
+    this.releaseGate?.();
+    this.releaseGate = undefined;
+  }
+
+  async listProjectObjects(
+    projectId: string,
+    options?: S3ListObjectsOptions,
+  ): Promise<S3ListObjectEntry[]> {
+    this.listProjectObjectsCalls.push({ projectId, options });
+    const pages = this.explicitPages ?? this.defaultPagesFor(projectId);
+    const all: S3ListObjectEntry[] = [];
+    for (let index = 0; index < pages.length; index++) {
+      if (this.pageGateEnabled && index > 0) {
+        await new Promise<void>((resolve) => {
+          this.releaseGate = resolve;
+        });
+      }
+      if (options?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+      const page = pages[index] as S3ListObjectsPage;
+      if (options?.onPage) await options.onPage(page);
+      all.push(...page.objects);
     }
+    if (this.listingError) throw this.listingError;
     return all;
   }
 
-  async listSessionObjects(
-    projectId: string,
-    sessionId: string,
-    options?: S3ListObjectsOptions,
-  ): Promise<S3ListObjectEntry[]> {
-    this.listSessionObjectsCalls.push({ projectId, sessionId, options });
-    if (options?.signal?.aborted) {
-      throw new DOMException('aborted', 'AbortError');
-    }
-    if (this.listSessionObjectsResult) {
-      return this.listSessionObjectsResult;
-    }
-    const prefix = `${encodeKeySegment(projectId)}/${encodeKeySegment(sessionId)}/`;
-    const result: S3ListObjectEntry[] = [];
+  private defaultPagesFor(projectId: string): S3ListObjectsPage[] {
+    const prefix = `${encodeKeySegment(projectId)}/`;
+    const objects: S3ListObjectEntry[] = [];
     for (const [key, buffer] of this.store) {
-      if (key.startsWith(prefix) && !key.endsWith('/')) {
-        const parsed = parseObjectKey(key);
-        if (parsed?.scope === 'session' && parsed.relativePath) {
-          result.push({ key, size: buffer.byteLength, etag: `"${key}-etag"` });
-        }
+      if (key.startsWith(prefix)) {
+        objects.push({ key, size: buffer.byteLength, etag: `"${key}-etag"` });
       }
     }
-    return result;
+    objects.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    return [{ objects, continuationToken: undefined }];
   }
 
   async getObject(key: string, options?: S3GetObjectOptions): Promise<ArrayBuffer> {
@@ -277,6 +279,17 @@ function manifestKey(projectId: string, sessionId: string): string {
   });
 }
 
+function sessionFileKey(projectId: string, sessionId: string, relativePath: string): string {
+  return buildObjectKey({ projectId, sessionId, scope: 'session', relativePath });
+}
+
+function objectEntry(
+  key: string,
+  opts?: { size?: number; etag?: string; lastModified?: string },
+): S3ListObjectEntry {
+  return { key, size: opts?.size ?? 0, etag: opts?.etag, lastModified: opts?.lastModified };
+}
+
 async function uploadProjectFiles(
   client: MockS3Client,
   projectId: string,
@@ -351,6 +364,25 @@ function findOne(posted: Array<{ message: SyncMessageFromWorker }>, type: string
   return found[0].message;
 }
 
+/**
+ * D3: every session now waits for `SESSION_SYNC_CONTINUE` before its manifest
+ * is downloaded. Test harness helper mirroring the manager's #406 stopgap
+ * (`sync-manager.ts` `handleSessionFound`), which always answers `sync: true`
+ * for non-`syncOnlyNew` runs.
+ */
+async function continueSession(
+  worker: SessionSyncWorker,
+  posted: Array<{ message: SyncMessageFromWorker }>,
+  sessionId: string,
+): Promise<void> {
+  await vi.waitUntil(() =>
+    findMessages(posted, 'SESSION_FOUND').some(
+      (p) => (p.message as { sessionId: string }).sessionId === sessionId,
+    ),
+  );
+  worker.handleMessage(syncContinueMessage(sessionId, true));
+}
+
 interface ProgressSample {
   filesFound: number;
   filesDownloaded: number;
@@ -402,7 +434,6 @@ describe('SessionSyncWorker', () => {
   beforeEach(() => {
     client = new MockS3Client();
     client.setAutoResolve(true);
-    client.setListPages([{ prefixes: ['sess-1'], continuationToken: undefined }]);
   });
 
   it('lists sessions, downloads manifest and files, then emits WORKER_DONE', async () => {
@@ -414,7 +445,16 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    const expectedFingerprint = { etag: `"${manifestKey('proj', 'sess-1')}-etag"` };
+    const found = findOne(posted, 'SESSION_FOUND') as { fingerprint?: ManifestFingerprint };
+    expect(found.fingerprint).toEqual(expectedFingerprint);
+    const ready = findOne(posted, 'SESSION_MANIFEST_READY') as {
+      fingerprint?: ManifestFingerprint;
+    };
+    expect(ready.fingerprint).toEqual(expectedFingerprint);
 
     worker.handleMessage(syncMessage('sess-1', undefined));
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
@@ -433,9 +473,9 @@ describe('SessionSyncWorker', () => {
   });
 
   it('emits per-page SESSION_BATCH_FOUND and a final PROJECT_FOLDER_FOUND', async () => {
-    client.setListPages([
-      { prefixes: ['sess-a'], continuationToken: 'token-1' },
-      { prefixes: ['sess-b'], continuationToken: undefined },
+    client.setObjectPages([
+      { objects: [objectEntry(manifestKey('proj', 'sess-a'))], continuationToken: 'token-1' },
+      { objects: [objectEntry(manifestKey('proj', 'sess-b'))], continuationToken: undefined },
     ]);
     client.putBuffer(manifestKey('proj', 'sess-a'), encoder.encode(JSON.stringify({})).buffer);
     client.putBuffer(manifestKey('proj', 'sess-b'), encoder.encode(JSON.stringify({})).buffer);
@@ -449,15 +489,25 @@ describe('SessionSyncWorker', () => {
       message: SessionBatchFoundMessage;
     }>;
     expect(batches.length).toBe(2);
+    // sess-a is the only key on page 1, so its buffer is still open at the
+    // end of the page (D4: a session finalizes only when a different session
+    // id arrives, or the listing completes) — it carries into page 2, where
+    // sess-b's key finalizes it; sess-b itself finalizes via the final flush.
+    expect(batches[0].message.sessionIds).toEqual([]);
     expect(batches[0].message.final).toBe(false);
+    expect(batches[1].message.sessionIds).toEqual(['sess-a', 'sess-b']);
     expect(batches[1].message.final).toBe(true);
 
     const folder = findOne(posted, 'PROJECT_FOLDER_FOUND') as { totalSessions: number };
     expect(folder.totalSessions).toBe(2);
+
+    worker.handleMessage(cancelMessage());
   });
 
   it('parks at SESSION_FOUND in sync-only-new mode and skips rejected sessions', async () => {
-    client.setListPages([{ prefixes: ['sess-1'], continuationToken: undefined }]);
+    client.setObjectPages([
+      { objects: [objectEntry(manifestKey('proj', 'sess-1'))], continuationToken: undefined },
+    ]);
     const { worker, posted } = createWorker(client);
 
     worker.handleMessage(startMessage('proj', { syncOnlyNew: true }));
@@ -482,6 +532,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     // Pass local hashes for non-main files so the worker skips them.
@@ -510,6 +561,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     // Pass a stale hash for the subagent file so it gets re-downloaded.
@@ -536,6 +588,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     // Pass matching hash but 'failed' status for the subagent file.
@@ -563,6 +616,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     worker.handleMessage(syncMessage('sess-1'));
@@ -592,6 +646,7 @@ describe('SessionSyncWorker', () => {
     );
 
     worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => client.pendingKeys().includes(manifestKey('proj', 'sess-1')));
     client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
 
@@ -635,6 +690,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     worker.handleMessage(syncMessage('sess-1', undefined));
@@ -666,6 +722,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     worker.handleMessage(syncMessage('sess-1', undefined));
@@ -688,7 +745,6 @@ describe('SessionSyncWorker', () => {
 
   it('never holds more than FILE_POOL_SIZE concurrent downloads', async () => {
     client.setAutoResolve(false);
-    client.setListPages([{ prefixes: ['sess-1'], continuationToken: undefined }]);
     const { worker, posted } = createWorker(client);
     const files: TestFile[] = [];
     for (let index = 0; index < 4; index++) {
@@ -707,6 +763,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => client.pendingKeys().includes(manifestKey('proj', 'sess-1')));
     client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
 
@@ -751,6 +808,7 @@ describe('SessionSyncWorker', () => {
     );
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     worker.handleMessage(syncMessage('sess-1', undefined));
@@ -797,6 +855,7 @@ describe('SessionSyncWorker', () => {
     );
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     worker.handleMessage(syncMessage('sess-1', undefined));
@@ -836,6 +895,7 @@ describe('SessionSyncWorker', () => {
     );
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     worker.handleMessage(syncMessage('sess-1', undefined));
@@ -849,10 +909,20 @@ describe('SessionSyncWorker', () => {
     expect(done.failed).toBe(0);
   });
 
-  it('emits MANIFEST_NOT_FOUND for a missing manifest', async () => {
+  it('emits MANIFEST_NOT_FOUND and fingerprint:undefined for a manifest-less session folder', async () => {
+    client.setObjectPages([
+      {
+        objects: [objectEntry(sessionFileKey('proj', 'sess-1', 'transcript.jsonl'))],
+        continuationToken: undefined,
+      },
+    ]);
     const { worker, posted } = createWorker(client);
-    await worker.handleMessage(startMessage('proj'));
+    worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    const found = findOne(posted, 'SESSION_FOUND') as { fingerprint?: ManifestFingerprint };
+    expect(found.fingerprint).toBeUndefined();
 
     const failed = findOne(posted, 'SESSION_SYNC_FAILED') as { error: { code: string } };
     expect(failed.error.code).toBe('MANIFEST_NOT_FOUND');
@@ -862,6 +932,7 @@ describe('SessionSyncWorker', () => {
     client.putBuffer(manifestKey('proj', 'sess-1'), encoder.encode('not json').buffer);
     const { worker, posted } = createWorker(client);
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
 
     const failed = findOne(posted, 'SESSION_SYNC_FAILED') as { error: { code: string } };
@@ -875,6 +946,7 @@ describe('SessionSyncWorker', () => {
     );
     const { worker, posted } = createWorker(client);
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
 
     const failed = findOne(posted, 'SESSION_SYNC_FAILED') as { error: { code: string } };
@@ -893,6 +965,7 @@ describe('SessionSyncWorker', () => {
     );
 
     worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => client.pendingKeys().includes(manifestKey('proj', 'sess-1')));
     client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
 
@@ -922,6 +995,7 @@ describe('SessionSyncWorker', () => {
     );
 
     worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => client.pendingKeys().includes(manifestKey('proj', 'sess-1')));
     client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
 
@@ -957,6 +1031,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => client.pendingKeys().includes(manifestKey('proj', 'sess-1')));
     client.resolve(manifestKey('proj', 'sess-1'), client.getBuffer(manifestKey('proj', 'sess-1')));
 
@@ -974,14 +1049,22 @@ describe('SessionSyncWorker', () => {
   });
 
   it('honors targetSessionIds and ignores non-target sessions', async () => {
-    client.setListPages([
-      { prefixes: ['sess-a', 'sess-b', 'sess-c'], continuationToken: undefined },
+    client.setObjectPages([
+      {
+        objects: [
+          objectEntry(manifestKey('proj', 'sess-a')),
+          objectEntry(manifestKey('proj', 'sess-b')),
+          objectEntry(sessionFileKey('proj', 'sess-c', 'transcript.jsonl')),
+        ],
+        continuationToken: undefined,
+      },
     ]);
     client.putBuffer(manifestKey('proj', 'sess-a'), encoder.encode(JSON.stringify({})).buffer);
     client.putBuffer(manifestKey('proj', 'sess-b'), encoder.encode(JSON.stringify({})).buffer);
 
     const { worker, posted } = createWorker(client);
     worker.handleMessage(startMessage('proj', { targetSessionIds: ['sess-b'] }));
+    await continueSession(worker, posted, 'sess-b');
 
     await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
 
@@ -995,10 +1078,12 @@ describe('SessionSyncWorker', () => {
       message: { sessionId: string };
     }>;
     expect(found.map((m) => m.message.sessionId)).toEqual(['sess-b']);
+
+    const folder = findOne(posted, 'PROJECT_FOLDER_FOUND') as { totalSessions: number };
+    expect(folder.totalSessions).toBe(1);
   });
 
   it('skips a session when SESSION_SYNC has sync:false and exists:false', async () => {
-    client.setListPages([{ prefixes: ['sess-1'], continuationToken: undefined }]);
     const { worker, posted } = createWorker(client);
     const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
       { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
@@ -1006,6 +1091,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     worker.handleMessage(syncMessage('sess-1', undefined, { sync: false, exists: false }));
@@ -1018,11 +1104,11 @@ describe('SessionSyncWorker', () => {
     expect(done.synced).toBe(1);
     expect(done.skipped).toBe(0);
     expect(client.getCalls).toEqual([manifestKey('proj', 'sess-1')]);
-    expect(client.listSessionObjectsCalls).toHaveLength(0);
+    // D6: exactly one project-listing call, no per-session listing calls.
+    expect(client.listProjectObjectsCalls).toHaveLength(1);
   });
 
   it('emits an unchanged summary when SESSION_SYNC has sync:false and exists:true', async () => {
-    client.setListPages([{ prefixes: ['sess-1'], continuationToken: undefined }]);
     const { worker, posted } = createWorker(client);
     const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
       { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
@@ -1031,6 +1117,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     worker.handleMessage(syncMessage('sess-1', undefined, { sync: false, exists: true }));
@@ -1047,7 +1134,6 @@ describe('SessionSyncWorker', () => {
   });
 
   it('includes session files discovered by S3 listing but missing from the manifest', async () => {
-    client.setListPages([{ prefixes: ['sess-1'], continuationToken: undefined }]);
     const { worker, posted } = createWorker(client);
     const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
       { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
@@ -1064,6 +1150,7 @@ describe('SessionSyncWorker', () => {
     client.putBuffer(orphanKey, encoder.encode(orphanContent).buffer);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     worker.handleMessage(syncMessage('sess-1'));
@@ -1080,6 +1167,263 @@ describe('SessionSyncWorker', () => {
     const orphan = complete.files.find((f) => f.file === 'subagents/agent-orphan.jsonl');
     expect(orphan).not.toBeUndefined();
     expect(orphan?.status).toBe('downloaded');
+  });
+
+  it('SYNC-013: a session straddling two pages emits one SESSION_FOUND with a fingerprint from whichever page carried manifest.json', async () => {
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    client.setObjectPages([
+      {
+        objects: [objectEntry(manifestKey('proj', 'sess-1'), { etag: '"page1-etag"' })],
+        continuationToken: 'token-1',
+      },
+      {
+        objects: [objectEntry(sessionFileKey('proj', 'sess-1', 'transcript.jsonl'))],
+        continuationToken: undefined,
+      },
+    ]);
+
+    const { worker, posted } = createWorker(client);
+    worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+    worker.handleMessage(syncMessage('sess-1', undefined));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    expect(findMessages(posted, 'SESSION_FOUND').length).toBe(1);
+    const found = findOne(posted, 'SESSION_FOUND') as { fingerprint?: ManifestFingerprint };
+    expect(found.fingerprint).toEqual({ etag: '"page1-etag"' });
+
+    const batches = findMessages(posted, 'SESSION_BATCH_FOUND') as Array<{
+      message: SessionBatchFoundMessage;
+    }>;
+    expect(batches.length).toBe(2);
+    expect(batches[0].message.sessionIds).toEqual([]);
+    expect(batches[1].message.sessionIds).toEqual(['sess-1']);
+    expect(batches[1].message.final).toBe(true);
+  });
+
+  it('D4: a manifest.json key that arrives after its session already finalized backfills the fingerprint (best-effort)', async () => {
+    const { manifest, downloads } = await makeManifest('proj', 'sess-a', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'a main\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-a', manifest, downloads);
+    client.putBuffer(manifestKey('proj', 'sess-b'), encoder.encode(JSON.stringify({})).buffer);
+
+    client.setObjectPages([
+      {
+        // sess-a finalizes here (no manifest.json entry yet -> fingerprint
+        // undefined) when sess-b's differing key arrives.
+        objects: [
+          objectEntry(sessionFileKey('proj', 'sess-a', 'transcript.jsonl')),
+          objectEntry(manifestKey('proj', 'sess-b')),
+        ],
+        continuationToken: 'token-1',
+      },
+      {
+        // Non-contiguous: sess-a's manifest.json arrives after sess-a
+        // already finalized. appendToFinalizedSession backfills the
+        // fingerprint since it was still undefined.
+        objects: [objectEntry(manifestKey('proj', 'sess-a'), { etag: '"late-etag"' })],
+        continuationToken: undefined,
+      },
+    ]);
+
+    const { worker, posted } = createWorker(client);
+    worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-a');
+    await continueSession(worker, posted, 'sess-b');
+    await vi.waitUntil(() =>
+      findMessages(posted, 'SESSION_MANIFEST_READY').some(
+        (p) => (p.message as { sessionId: string }).sessionId === 'sess-a',
+      ),
+    );
+
+    const ready = findMessages(posted, 'SESSION_MANIFEST_READY').find(
+      (p) => (p.message as { sessionId: string }).sessionId === 'sess-a',
+    )?.message as { fingerprint?: ManifestFingerprint };
+    expect(ready.fingerprint).toEqual({ etag: '"late-etag"' });
+
+    worker.handleMessage(cancelMessage());
+  });
+
+  it('counts a session with 3+ listing entries exactly once in SESSION_BATCH_FOUND and PROJECT_FOLDER_FOUND', async () => {
+    client.setObjectPages([
+      {
+        objects: [
+          objectEntry(manifestKey('proj', 'sess-1')),
+          objectEntry(sessionFileKey('proj', 'sess-1', 'subagents/agent-1.jsonl')),
+          objectEntry(sessionFileKey('proj', 'sess-1', 'transcript.jsonl')),
+        ],
+        continuationToken: undefined,
+      },
+    ]);
+    const { worker, posted } = createWorker(client);
+    worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'PROJECT_FOLDER_FOUND').length > 0);
+
+    const batches = findMessages(posted, 'SESSION_BATCH_FOUND') as Array<{
+      message: SessionBatchFoundMessage;
+    }>;
+    expect(batches.length).toBe(1);
+    expect(batches[0].message.sessionIds).toEqual(['sess-1']);
+
+    const folder = findOne(posted, 'PROJECT_FOLDER_FOUND') as { totalSessions: number };
+    expect(folder.totalSessions).toBe(1);
+
+    worker.handleMessage(cancelMessage());
+  });
+
+  it('D4: a non-contiguous listing order still yields exactly one SESSION_FOUND per session id, and the late key still feeds D6', async () => {
+    const { manifest: manifestA, downloads: downloadsA } = await makeManifest('proj', 'sess-a', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'a main\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-a', manifestA, downloadsA);
+    client.putBuffer(manifestKey('proj', 'sess-b'), encoder.encode(JSON.stringify({})).buffer);
+
+    const lateOrphanKey = sessionFileKey('proj', 'sess-a', 'subagents/late.jsonl');
+    client.putBuffer(lateOrphanKey, encoder.encode('late orphan\n').buffer);
+
+    client.setObjectPages([
+      {
+        objects: [
+          objectEntry(manifestKey('proj', 'sess-a')),
+          objectEntry(manifestKey('proj', 'sess-b')),
+          // Non-contiguous: a late sess-a key arrives after sess-b's key.
+          objectEntry(lateOrphanKey),
+        ],
+        continuationToken: undefined,
+      },
+    ]);
+
+    const { worker, posted } = createWorker(client);
+    worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-a');
+    await continueSession(worker, posted, 'sess-b');
+
+    expect(
+      findMessages(posted, 'SESSION_FOUND').filter(
+        (p) => (p.message as { sessionId: string }).sessionId === 'sess-a',
+      ).length,
+    ).toBe(1);
+    const batches = findMessages(posted, 'SESSION_BATCH_FOUND') as Array<{
+      message: SessionBatchFoundMessage;
+    }>;
+    const allBatchedIds = batches.flatMap((b) => b.message.sessionIds);
+    expect(allBatchedIds.filter((id) => id === 'sess-a').length).toBe(1);
+    expect(allBatchedIds.filter((id) => id === 'sess-b').length).toBe(1);
+
+    worker.handleMessage(syncMessage('sess-a', undefined));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_SYNC_COMPLETE').length > 0);
+
+    const fileMessages = findMessages(posted, 'SESSION_FILE_DOWNLOADED') as Array<{
+      message: SessionFileDownloadedMessage;
+    }>;
+    expect(fileMessages.map((m) => m.message.file)).toContain('subagents/late.jsonl');
+
+    worker.handleMessage(cancelMessage());
+  });
+
+  it('ignores keys that fail parseObjectKey — they neither start nor extend a session buffer nor appear in any count', async () => {
+    client.setObjectPages([
+      {
+        objects: [objectEntry('not-a-valid-key'), objectEntry(manifestKey('proj', 'sess-1'))],
+        continuationToken: undefined,
+      },
+    ]);
+    const { worker, posted } = createWorker(client);
+    worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'PROJECT_FOLDER_FOUND').length > 0);
+
+    const folder = findOne(posted, 'PROJECT_FOLDER_FOUND') as { totalSessions: number };
+    expect(folder.totalSessions).toBe(1);
+    const found = findMessages(posted, 'SESSION_FOUND') as Array<{
+      message: { sessionId: string };
+    }>;
+    expect(found.map((m) => m.message.sessionId)).toEqual(['sess-1']);
+
+    worker.handleMessage(cancelMessage());
+  });
+
+  it('aborts mid-listing on CANCEL: stops further SESSION_FOUND emission without throwing', async () => {
+    client.enablePageGate();
+    // Page 1 carries two distinct sessions so sess-a finalizes (and its
+    // SESSION_FOUND fires) within page 1 itself — sess-a2's buffer is left
+    // open, straddling into the gated page 2.
+    client.setObjectPages([
+      {
+        objects: [
+          objectEntry(manifestKey('proj', 'sess-a')),
+          objectEntry(manifestKey('proj', 'sess-a2')),
+        ],
+        continuationToken: 'token-1',
+      },
+      { objects: [objectEntry(manifestKey('proj', 'sess-b'))], continuationToken: undefined },
+    ]);
+    client.putBuffer(manifestKey('proj', 'sess-a'), encoder.encode(JSON.stringify({})).buffer);
+    client.putBuffer(manifestKey('proj', 'sess-a2'), encoder.encode(JSON.stringify({})).buffer);
+    client.putBuffer(manifestKey('proj', 'sess-b'), encoder.encode(JSON.stringify({})).buffer);
+
+    const { worker, posted } = createWorker(client);
+    const startPromise = worker.handleMessage(startMessage('proj'));
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_FOUND').length > 0);
+
+    worker.handleMessage(cancelMessage());
+    client.releaseNextPage();
+    await startPromise;
+    await flush();
+
+    expect(findMessages(posted, 'SESSION_FOUND').length).toBe(1);
+    expect(findMessages(posted, 'WORKER_ERROR').length).toBe(0);
+    expect(findMessages(posted, 'WORKER_DONE').length).toBe(0);
+  });
+
+  it('D13: a listing 5xx surfaces as exactly one WORKER_ERROR, no WORKER_DONE; sessions from earlier pages may still emit', async () => {
+    // Two distinct sessions on the (only, truncated) page so sess-a finalizes
+    // — and its SESSION_FOUND fires — before the next page's fetch fails.
+    client.setObjectPages([
+      {
+        objects: [
+          objectEntry(manifestKey('proj', 'sess-a')),
+          objectEntry(manifestKey('proj', 'sess-a2')),
+        ],
+        continuationToken: 'token-1',
+      },
+    ]);
+    client.setListingError(
+      new S3Error({ status: 500, code: 'InternalError', message: 'boom', kind: 's3' }),
+    );
+
+    const { worker, posted } = createWorker(client);
+    await worker.handleMessage(startMessage('proj'));
+
+    expect(findMessages(posted, 'SESSION_FOUND').length).toBe(1);
+    expect(findMessages(posted, 'WORKER_ERROR').length).toBe(1);
+    expect(findMessages(posted, 'WORKER_DONE').length).toBe(0);
+
+    worker.handleMessage(cancelMessage());
+  });
+
+  it('SYNC-013: calls listProjectObjects exactly once per project run and never a per-session listing method', async () => {
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+      { scope: 'session', relativePath: 'subagents/agent-1.jsonl', content: 'sub line\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    const { worker, posted } = createWorker(client);
+    worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+    worker.handleMessage(syncMessage('sess-1', undefined));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    expect(client.listProjectObjectsCalls).toHaveLength(1);
+    expect('listSessionObjects' in client).toBe(false);
+    expect('listSessionFolders' in client).toBe(false);
   });
 
   /**
@@ -1106,6 +1450,7 @@ describe('SessionSyncWorker', () => {
     await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
 
     await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     worker.handleMessage(syncMessage('sess-1', undefined));
@@ -1132,7 +1477,6 @@ describe('SessionSyncWorker watchdog timers', () => {
   });
 
   it('waitForSync watchdog times out when main thread never replies, emitting SESSION_SYNC_FAILED', async () => {
-    client.setListPages([{ prefixes: ['sess-timeout'], continuationToken: undefined }]);
     const { worker } = createWorker(client);
     const { manifest, downloads } = await makeManifest('proj', 'sess-timeout', [
       { scope: 'session', relativePath: 'transcript.jsonl', content: 'data\n' },
@@ -1169,7 +1513,6 @@ describe('SessionSyncWorker watchdog timers', () => {
   });
 
   it('clears pending watchdog timers on CANCEL', async () => {
-    client.setListPages([{ prefixes: ['sess-cancel'], continuationToken: undefined }]);
     const { worker, posted } = createWorker(client);
     const { manifest, downloads } = await makeManifest('proj', 'sess-cancel', [
       { scope: 'session', relativePath: 'transcript.jsonl', content: 'data\n' },
@@ -1177,6 +1520,7 @@ describe('SessionSyncWorker watchdog timers', () => {
     await uploadProjectFiles(client, 'proj', 'sess-cancel', manifest, downloads);
 
     const promise = worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-cancel');
     await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
 
     // @ts-expect-error — checking private map

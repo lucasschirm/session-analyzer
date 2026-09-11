@@ -5,6 +5,7 @@
  */
 
 import type { ArtifactScope, SyncManifest } from '@lucasschirm/sal-sync-core';
+import type { ManifestFingerprint } from '../types';
 
 /** In-memory S3 credential material sent with `START`. */
 export interface S3Credentials {
@@ -143,6 +144,8 @@ export interface SessionFoundMessage {
   connectionId?: string;
   projectId: string;
   sessionId: string;
+  /** D1 manifest fingerprint from the discovery listing; undefined when the session has no manifest.json entry. */
+  fingerprint?: ManifestFingerprint;
 }
 
 /** Worker→Main: manifest downloaded and validated. */
@@ -152,6 +155,8 @@ export interface SessionManifestReadyMessage {
   projectId: string;
   sessionId: string;
   manifest: SyncManifest;
+  /** D1 manifest fingerprint carried through from discovery (D5: persisted by the manager at this point). */
+  fingerprint?: ManifestFingerprint;
 }
 
 /** Worker→Main: per-file download progress for a session. */
