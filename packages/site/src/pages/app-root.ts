@@ -12,6 +12,7 @@ import { setPasskeyPrompt } from '../sync/passkey-prompt';
 import { syncManager } from '../sync/sync-manager';
 import type { Project } from '../types';
 import './projects-page';
+import './project-sessions-page';
 import './portfolio/portfolio-view';
 import './project-behavior/project-behavior-view';
 import './session-evidence/session-evidence-view';
@@ -31,6 +32,7 @@ import './tbd-page';
  * - `#/`                                   -> Dashboard (Portfolio analytics view)
  * - `#/projects`                           -> Projects list (CRUD)
  * - `#/projects/:projectId`                -> Project Behavior (precomputed analytics view)
+ * - `#/projects/:projectId/sessions`       -> Project Sessions (paginated session list)
  * - `#/sessions/:sessionId`                -> Session Evidence (precomputed analytics view)
  * - `#/manual-import`                      -> Manual Import (transcript/partial upload)
  * - `#/artifacts`                          -> Artifact Ecosystem (was "Components")
@@ -452,6 +454,13 @@ export class AppRoot extends LitElement {
         render: () => html`<projects-page></projects-page>`,
       },
       {
+        path: '/projects/:projectId/sessions',
+        render: (params) =>
+          html`<project-sessions-page
+            project-id=${decodeRouteParam(params.projectId)}
+          ></project-sessions-page>`,
+      },
+      {
         path: '/projects/:projectId*',
         render: (params) =>
           html`<project-behavior-view
@@ -459,7 +468,7 @@ export class AppRoot extends LitElement {
           ></project-behavior-view>`,
       },
       {
-        path: '/sessions/:sessionId',
+        path: '/sessions/:sessionId*',
         render: (params) =>
           html`<session-evidence-view
             session-id=${decodeRouteParam(params.sessionId)}
@@ -757,6 +766,7 @@ export class AppRoot extends LitElement {
     const showLeftNav =
       this.currentPath === '/' ||
       this.currentPath.startsWith('/projects') ||
+      this.currentPath.startsWith('/sessions') ||
       this.currentPath.startsWith('/settings');
 
     return html`

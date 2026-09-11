@@ -305,6 +305,9 @@ export class SessionEvidenceView extends PageLitElement {
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('hashchange', this.hashListener);
+    if (this.sessionId) {
+      void this.load();
+    }
   }
 
   disconnectedCallback(): void {

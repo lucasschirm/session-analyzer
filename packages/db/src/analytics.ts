@@ -336,12 +336,16 @@ export interface ProjectSessionListItem {
   readonly parentSessionId?: string;
   readonly harness: string;
   readonly finality: 'final' | 'partial' | 'censored';
+  readonly title?: string;
+  readonly subagentCount?: number;
   readonly startedAt?: string;
   readonly endedAt?: string;
   readonly coverage: Coverage;
 }
 
-export interface ProjectSessionListPage extends CursorPage<ProjectSessionListItem> {}
+export interface ProjectSessionListPage extends CursorPage<ProjectSessionListItem> {
+  readonly totalCount?: number;
+}
 
 export interface SessionTreeNode {
   readonly sessionId: string;

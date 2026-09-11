@@ -640,6 +640,19 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
       comparabilityGroupId: COMPARABILITY_GROUP_ID,
     });
     expect(list.items.length).toBe(2);
+    expect(list.totalCount).toBe(2);
+    const rootItem = list.items.find((i) => i.sessionId === sessionId);
+    expect(rootItem?.subagentCount).toBe(1);
+    expect(rootItem?.title).toBeDefined();
+
+    const searchList = await ds.search.getProjectSessionList(PROJECT_ID, {
+      portfolioId: PORTFOLIO_ID,
+      analysisReleaseId: ANALYSIS_RELEASE_ID,
+      comparabilityGroupId: COMPARABILITY_GROUP_ID,
+      filters: [{ field: 'search', operator: 'contains', value: childId }],
+    });
+    expect(searchList.items.length).toBe(1);
+    expect(searchList.items[0]?.sessionId).toBe(childId);
 
     const rootTree = await ds.search.getRootSessionTree(childId);
     expect(rootTree.rootSessionId).toBe(sessionId);

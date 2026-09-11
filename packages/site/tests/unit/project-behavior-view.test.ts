@@ -22,11 +22,19 @@ const projectMock = vi.hoisted(() => ({
   getUtilizationReport: vi.fn(),
 }));
 
+const searchMock = vi.hoisted(() => ({
+  getProjectSessionList: vi.fn(),
+}));
+
 const resolveProjectIdMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
-  analyticsClient: { project: projectMock, resolveProjectId: resolveProjectIdMock },
+  analyticsClient: {
+    project: projectMock,
+    search: searchMock,
+    resolveProjectId: resolveProjectIdMock,
+  },
 }));
 
 async function flush(element: LitElement): Promise<void> {
@@ -275,6 +283,17 @@ function stubProjectBehaviorLoad(): void {
   projectMock.getOutliers.mockResolvedValue(outlierFixture());
   projectMock.getComparisons.mockResolvedValue(comparisonFixture());
   projectMock.getUtilizationReport.mockResolvedValue(utilizationFixture());
+  searchMock.getProjectSessionList.mockResolvedValue({
+    items: [
+      {
+        sessionId: 's-1',
+        title: 'Fix auth bug',
+        startedAt: '2026-03-01T10:00:00Z',
+        subagentCount: 2,
+      },
+    ],
+    totalCount: 1,
+  });
 }
 
 beforeEach(() => {
@@ -475,5 +494,81 @@ describe('project-behavior-view', () => {
     expect(container.getAttribute('role')).toBe('img');
     expect(container.getAttribute('aria-label')).toBeTruthy();
     expect(echartsRoot.querySelector('details.table-fallback')).not.toBeNull();
+  });
+
+  it('renders breadcrumb with "< Dashboard" pointing to home', async () => {
+    const view = Object.assign(document.createElement('project-behavior-view'), {
+      projectId: 'p1',
+    }) as ProjectBehaviorPage;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const back = root.querySelector('.back-link') as HTMLAnchorElement;
+    expect(back).not.toBeNull();
+    expect(back.textContent).toContain('< Dashboard');
+    expect(back.getAttribute('href')).toBe('#/');
+  });
+
+  it('renders project sessions table with sessions', async () => {
+    const view = Object.assign(document.createElement('project-behavior-view'), {
+      projectId: 'p1',
+    }) as ProjectBehaviorPage;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    expect(root.textContent).toContain('Sessions');
+    const tableEl = root.querySelector('project-sessions-table');
+    expect(tableEl).not.toBeNull();
+    const tableText = (tableEl as LitElement).shadowRoot?.textContent ?? '';
+    expect(tableText).toContain('Fix auth bug');
+  });
+
+  it('shows "See all" link when project has more than 20 sessions', async () => {
+    searchMock.getProjectSessionList.mockResolvedValue({
+      items: Array.from({ length: 20 }, (_, i) => ({
+        sessionId: `s-${i + 1}`,
+        title: `Session ${i + 1}`,
+        startedAt: '2026-03-01T10:00:00Z',
+        subagentCount: 0,
+      })),
+      totalCount: 42,
+    });
+
+    const view = Object.assign(document.createElement('project-behavior-view'), {
+      projectId: 'p1',
+    }) as ProjectBehaviorPage;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const seeAllLink = root.querySelector('.see-all-link') as HTMLAnchorElement;
+    expect(seeAllLink).not.toBeNull();
+    expect(seeAllLink.textContent).toContain('See all (42)');
+    expect(seeAllLink.getAttribute('href')).toBe('#/projects/p1/sessions');
+  });
+
+  it('filters sessions using the search input', async () => {
+    const view = Object.assign(document.createElement('project-behavior-view'), {
+      projectId: 'p1',
+    }) as ProjectBehaviorPage;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const searchInput = root.querySelector('.session-search-box input') as HTMLInputElement;
+    expect(searchInput).not.toBeNull();
+
+    searchInput.value = 'refactor';
+    searchInput.dispatchEvent(new Event('input'));
+
+    await new Promise((r) => setTimeout(r, 300));
+    await flush(view);
+
+    expect(searchMock.getProjectSessionList).toHaveBeenCalledWith(
+      'p1',
+      expect.objectContaining({
+        filters: expect.arrayContaining([
+          { field: 'search', operator: 'contains', value: 'refactor' },
+        ]),
+      }),
+    );
   });
 });

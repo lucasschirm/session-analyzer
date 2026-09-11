@@ -58,3 +58,17 @@ export function estimateTokenCount(text: string): number {
 export function formatEstimatedTokens(count: number): string {
   return `~${formatCompactNumber(count)} tokens (est.)`;
 }
+
+/** Formats a timestamp (ISO string or epoch milliseconds) into a localized date-time string. */
+export function formatDateTime(value: string | number | undefined | null): string {
+  if (!value) return '—';
+  const ts = typeof value === 'number' ? value : Date.parse(value);
+  if (Number.isNaN(ts)) return String(value);
+  return new Date(ts).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}

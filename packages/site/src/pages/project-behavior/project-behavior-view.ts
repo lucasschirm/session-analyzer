@@ -6,11 +6,15 @@ import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
 import '../../components/component-utilization-panel';
+import '../../components/project-sessions-table';
 import type {
+  AnalyticsQuery,
   ComparisonPage,
   ConfigurationTimeline,
+  Filter,
   OutlierPage,
   ProjectBehaviorSummary,
+  ProjectSessionListItem,
   ScopeUtilizationReportDto,
   SessionTrendSeries,
 } from '@lucasschirm/sal-db';
@@ -218,6 +222,68 @@ export class ProjectBehaviorPage extends PageLitElement {
       font-weight: 600;
       color: var(--md-sys-color-error, #ff6b6b);
     }
+
+    .sessions-section {
+      margin-top: 8px;
+    }
+
+    .sessions-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .sessions-header-left {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .sessions-header-left h2 {
+      margin: 0;
+    }
+
+    .sessions-count {
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      font-size: 14px;
+    }
+
+    .sessions-header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .session-search-box input {
+      background: var(--md-sys-color-surface, #171a21);
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-radius: 6px;
+      padding: 6px 12px;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      font: inherit;
+      font-size: 13px;
+      min-width: 220px;
+    }
+
+    .session-search-box input:focus {
+      outline: 2px solid var(--md-sys-color-primary, #4f8cff);
+      outline-offset: 1px;
+    }
+
+    .see-all-link {
+      color: var(--md-sys-color-primary, #4f8cff);
+      font-size: 13px;
+      font-weight: 500;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .see-all-link:hover {
+      text-decoration: underline;
+    }
   `,
   ];
 
@@ -248,6 +314,20 @@ export class ProjectBehaviorPage extends PageLitElement {
     data: null,
     state: 'idle',
   };
+
+  @state() private sessions: ProjectSessionListItem[] = [];
+
+  @state() private sessionsLoading = false;
+
+  @state() private sessionsError: string | null = null;
+
+  @state() private sessionTotalCount = 0;
+
+  @state() private totalProjectSessions = 0;
+
+  @state() private sessionSearchQuery = '';
+
+  private sessionSearchDebounceTimer: number | undefined;
 
   private hashListener = () => this.handleHashChange();
 
@@ -322,6 +402,7 @@ export class ProjectBehaviorPage extends PageLitElement {
         analyticsClient.project.getOutliers(analyticsProjectId, query),
         analyticsClient.project.getComparisons(analyticsProjectId, query),
         analyticsClient.project.getUtilizationReport(analyticsProjectId, query),
+        this.loadSessions(analyticsProjectId),
       ]);
 
     this.summary = panelStateFromResult(summary, (d) => d.headlineMetrics.length === 0);
@@ -393,11 +474,51 @@ export class ProjectBehaviorPage extends PageLitElement {
     }
   }
 
+  private async loadSessions(analyticsProjectId: string): Promise<void> {
+    this.sessionsLoading = true;
+    this.sessionsError = null;
+    try {
+      const filters: Filter[] = [];
+      if (this.sessionSearchQuery.trim()) {
+        filters.push({
+          field: 'search',
+          operator: 'contains',
+          value: this.sessionSearchQuery.trim(),
+        });
+      }
+      const query: AnalyticsQuery = {
+        limit: 20,
+        cursor: '0',
+        filters: filters.length > 0 ? filters : undefined,
+      };
+      const page = await analyticsClient.search.getProjectSessionList(analyticsProjectId, query);
+      this.sessions = [...page.items];
+      this.sessionTotalCount = page.totalCount ?? page.items.length;
+      if (!this.sessionSearchQuery.trim()) {
+        this.totalProjectSessions = page.totalCount ?? page.items.length;
+      }
+    } catch (err) {
+      this.sessionsError = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.sessionsLoading = false;
+    }
+  }
+
+  private handleSessionSearch(e: Event): void {
+    const input = e.target as HTMLInputElement;
+    this.sessionSearchQuery = input.value;
+    clearTimeout(this.sessionSearchDebounceTimer);
+    this.sessionSearchDebounceTimer = window.setTimeout(() => {
+      const analyticsProjectId = this.resolvedProjectId ?? this.projectId;
+      void this.loadSessions(analyticsProjectId);
+    }, 250);
+  }
+
   private renderBreadcrumb() {
     const back = this.filters.returnContext
       ? `#/?${new URLSearchParams(this.filters.returnContext).toString()}`
       : '#/';
-    return html`<a class="back-link" href=${back}>← Back to Dashboard</a>`;
+    return html`<a class="back-link" href=${back}>&lt; Dashboard</a>`;
   }
 
   private renderFilters() {
@@ -737,6 +858,57 @@ export class ProjectBehaviorPage extends PageLitElement {
     this.goToSession(row.sessionId);
   }
 
+  private renderSessions() {
+    const encodedProjectId = encodeURIComponent(this.projectId);
+    const seeAllHref = `#/projects/${encodedProjectId}/sessions`;
+    const hasMoreThan20 = this.totalProjectSessions > 20 || this.sessionTotalCount > 20;
+    const countDisplay = this.sessionSearchQuery.trim()
+      ? `${this.sessionTotalCount} of ${this.totalProjectSessions}`
+      : `${this.totalProjectSessions || this.sessionTotalCount}`;
+
+    return html`
+      <div class="section sessions-section">
+        <div class="sessions-header">
+          <div class="sessions-header-left">
+            <h2>Sessions</h2>
+            ${
+              this.totalProjectSessions > 0 || this.sessionTotalCount > 0
+                ? html`<span class="sessions-count">(${countDisplay})</span>`
+                : ''
+            }
+          </div>
+          <div class="sessions-header-right">
+            <div class="session-search-box">
+              <input
+                type="text"
+                placeholder="Search sessions..."
+                .value=${this.sessionSearchQuery}
+                @input=${this.handleSessionSearch}
+                aria-label="Search sessions"
+              />
+            </div>
+            ${
+              hasMoreThan20
+                ? html`
+                  <a class="see-all-link" href=${seeAllHref}>
+                    See all (${this.totalProjectSessions || this.sessionTotalCount}) →
+                  </a>
+                `
+                : ''
+            }
+          </div>
+        </div>
+
+        <project-sessions-table
+          .sessions=${this.sessions}
+          .loading=${this.sessionsLoading}
+          .error=${this.sessionsError}
+          .searchQuery=${this.sessionSearchQuery}
+        ></project-sessions-table>
+      </div>
+    `;
+  }
+
   render() {
     return html`
       <div class="project-behavior-view">
@@ -750,6 +922,7 @@ export class ProjectBehaviorPage extends PageLitElement {
         ${this.renderFilters()}
         ${this.loading ? html`<p class="notice">Loading project behavior…</p>` : ''}
         ${this.renderOverview()}
+        ${this.renderSessions()}
         <component-utilization-panel
           .report=${this.utilization.data}
           heading="Project Component Utilization (Tools, Skills, Agents)"

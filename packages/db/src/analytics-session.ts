@@ -1698,60 +1698,94 @@ async function getProjectSessionList(
   const mode = filterValue(query, 'mode');
   const taskCohort = filterValue(query, 'taskCohort');
   const finality = filterValue(query, 'finality');
+  const search = filterValue(query, 'search');
+  const sessionsScope = filterValue(query, 'sessions') ?? '';
   const { start, end } = filterTimeRange(query);
 
   const limit = pageLimit(query);
   const offset = pageOffset(query);
   const page = limit + 1;
+  const searchPattern = search ? `%${search}%` : '';
 
-  const { rows } = await queryable.exec(
-    `SELECT s.id, s.harness, s.finality, s.mode, s.task_cohort,
-            s.start_time, s.end_time, s.occurrence_time, s.created_at,
-            sr.root_session_id, sr.parent_session_id
-     FROM sessions s
-     LEFT JOIN session_relations sr ON sr.session_id = s.id
-     WHERE s.project_id = ?
-       AND (COALESCE(?, '') = '' OR s.harness = ?)
-       AND (COALESCE(?, '') = '' OR s.mode = ?)
-       AND (COALESCE(?, '') = '' OR s.task_cohort = ?)
-       AND (COALESCE(?, '') = '' OR s.finality = ?)
-       AND (? IS NULL OR ? IS NULL OR (s.occurrence_time >= ? AND s.occurrence_time <= ?))
-     ORDER BY s.occurrence_time DESC, s.created_at DESC, s.id
-     LIMIT ? OFFSET ?`,
-    [
-      projectId,
-      harness ?? '',
-      harness ?? '',
-      mode ?? '',
-      mode ?? '',
-      taskCohort ?? '',
-      taskCohort ?? '',
-      finality ?? '',
-      finality ?? '',
-      start,
-      end,
-      start ?? 0,
-      end ?? 0,
-      page,
-      offset,
-    ],
-  );
+  const whereClause = `
+    WHERE s.project_id = ?
+      AND (COALESCE(?, '') = '' OR s.harness = ?)
+      AND (COALESCE(?, '') = '' OR s.mode = ?)
+      AND (COALESCE(?, '') = '' OR s.task_cohort = ?)
+      AND (COALESCE(?, '') = '' OR s.finality = ?)
+      AND (? IS NULL OR ? IS NULL OR (s.occurrence_time >= ? AND s.occurrence_time <= ?))
+      AND (? = '' OR s.id LIKE ? OR s.ai_title LIKE ? OR s.slug LIKE ?)
+      AND (? = '' OR (? = 'main' AND sr.parent_session_id IS NULL) OR (? = 'sub_agents' AND sr.parent_session_id IS NOT NULL))
+  `;
 
+  const bindParams = [
+    projectId,
+    harness ?? '',
+    harness ?? '',
+    mode ?? '',
+    mode ?? '',
+    taskCohort ?? '',
+    taskCohort ?? '',
+    finality ?? '',
+    finality ?? '',
+    start,
+    end,
+    start ?? 0,
+    end ?? 0,
+    searchPattern,
+    searchPattern,
+    searchPattern,
+    searchPattern,
+    sessionsScope === 'all' ? '' : sessionsScope,
+    sessionsScope === 'all' ? '' : sessionsScope,
+    sessionsScope === 'all' ? '' : sessionsScope,
+  ];
+
+  const [{ rows }, { rows: countRows }] = await Promise.all([
+    queryable.exec(
+      `SELECT s.id, s.harness, s.finality, s.mode, s.task_cohort,
+              s.start_time, s.end_time, s.occurrence_time, s.created_at,
+              s.ai_title, s.slug,
+              sr.root_session_id, sr.parent_session_id,
+              (SELECT COUNT(*) FROM session_relations cr WHERE cr.parent_session_id = s.id) AS subagent_count
+       FROM sessions s
+       LEFT JOIN session_relations sr ON sr.session_id = s.id
+       ${whereClause}
+       ORDER BY s.occurrence_time DESC, s.created_at DESC, s.id
+       LIMIT ? OFFSET ?`,
+      [...bindParams, page, offset],
+    ),
+    queryable.exec(
+      `SELECT COUNT(*) AS total
+       FROM sessions s
+       LEFT JOIN session_relations sr ON sr.session_id = s.id
+       ${whereClause}`,
+      bindParams,
+    ),
+  ]);
+
+  const totalCount = asNumber(countRows[0]?.total);
   const hasMore = rows.length > limit;
   const pageRows = rows.slice(0, limit);
-  const items: ProjectSessionListItem[] = pageRows.map((row: SqliteRow) => ({
-    sessionId: asString(row.id),
-    rootSessionId: asOptionalString(row.root_session_id) ?? asString(row.id),
-    parentSessionId: asOptionalString(row.parent_session_id) ?? undefined,
-    harness: asString(row.harness),
-    finality: finalityForList(asString(row.finality)),
-    startedAt: formatTimestamp(row.start_time ?? row.occurrence_time),
-    endedAt: formatTimestamp(row.end_time),
-    coverage: sessionFinalityToCoverage(asString(row.finality)),
-  }));
+  const items: ProjectSessionListItem[] = pageRows.map((row: SqliteRow) => {
+    const rawTitle = asOptionalString(row.ai_title) || asOptionalString(row.slug);
+    return {
+      sessionId: asString(row.id),
+      rootSessionId: asOptionalString(row.root_session_id) ?? asString(row.id),
+      parentSessionId: asOptionalString(row.parent_session_id) ?? undefined,
+      harness: asString(row.harness),
+      finality: finalityForList(asString(row.finality)),
+      title: rawTitle || asString(row.id),
+      subagentCount: asNumber(row.subagent_count),
+      startedAt: formatTimestamp(row.start_time ?? row.occurrence_time),
+      endedAt: formatTimestamp(row.end_time),
+      coverage: sessionFinalityToCoverage(asString(row.finality)),
+    };
+  });
 
   return {
     items,
+    totalCount,
     nextCursor: hasMore ? String(offset + limit) : undefined,
     previousCursor: offset > 0 ? String(Math.max(0, offset - limit)) : undefined,
     generationToken: tokens.generationId,
