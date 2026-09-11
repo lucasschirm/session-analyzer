@@ -140,6 +140,7 @@ PR that implements it flips it to `GREEN`.
 | UX-024 | Devin drill-down empty states are structurally distinct from error states | `devin-journey.spec.ts` | empty/error affordance assertions | 4 | 4 | 4 | 64 | P0 | GREEN |
 | UX-025 | Re-sync of an unchanged bucket issues one project object listing and zero session-manifest GETs | `sync.spec.ts` | request-log assertion | 3 | 3 | 4 | 36 | P1 | GREEN |
 | UX-026 | Re-sync after a manifest+content re-upload (new ETag) re-fetches only that session's manifest and transcript and re-ingests it; a project listing 5xx surfaces the error affordance, never the empty state | `sync.spec.ts` | request-log + error-affordance assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-027 | Harness typeahead filter updates the URL query string and filters portfolio metrics to the selected harness | `harness-filter.spec.ts` | URL/hash + metric-card assertion | 4 | 4 | 4 | 64 | P0 | GREEN |
 
 ### 6.2 Tier B — Analytics Pipeline (`PIPE-###`)
 
