@@ -280,6 +280,59 @@ describe('createOpfsArtifactBlobStore', () => {
 
       insertSpy.mockRestore();
     });
+
+    it('serializes retain() and remove() for the same sha256, so their critical sections never overlap', async () => {
+      // A remove() racing an in-flight retain() for the same new sha256 has
+      // the same shape as the retain/retain race above: the file could
+      // vanish (deleted by remove) after retain's metadata insert commits,
+      // leaving a content: null row pointing at nothing. Natural promise
+      // scheduling in this fake-OPFS harness doesn't reliably manifest that
+      // interleaving on its own (remove's path has too few await points to
+      // consistently land mid-retain), so this test forces the race: each
+      // db-core call the two methods depend on is wrapped with a shared
+      // "in critical section" flag and an artificial delay, widening the
+      // window so any actual overlap is deterministically caught rather
+      // than depending on incidental timing.
+      const store = createOpfsArtifactBlobStore(executor);
+      const originalInsert = DbArtifactBlobStore.insert.bind(DbArtifactBlobStore);
+      const originalDelete = DbArtifactBlobStore.delete.bind(DbArtifactBlobStore);
+      let inCriticalSection = false;
+      let overlapDetected = false;
+
+      async function guarded<T>(fn: () => Promise<T>): Promise<T> {
+        if (inCriticalSection) overlapDetected = true;
+        inCriticalSection = true;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        try {
+          return await fn();
+        } finally {
+          inCriticalSection = false;
+        }
+      }
+
+      const insertSpy = vi
+        .spyOn(DbArtifactBlobStore, 'insert')
+        .mockImplementation((exec, input) => guarded(() => originalInsert(exec, input)));
+      const deleteSpy = vi
+        .spyOn(DbArtifactBlobStore, 'delete')
+        .mockImplementation((exec, sha) => guarded(() => originalDelete(exec, sha)));
+
+      await Promise.all([
+        store.retain({
+          sha256: 'sha-retain-remove-race',
+          size: 5,
+          relativePath: 'p',
+          mediaType: 'text/plain',
+          content: encodeText('data!'),
+        }),
+        store.remove('sha-retain-remove-race'),
+      ]);
+
+      expect(overlapDetected).toBe(false);
+
+      insertSpy.mockRestore();
+      deleteSpy.mockRestore();
+    });
   });
 
   describe('read', () => {

@@ -134,29 +134,32 @@ function insertBlobMetadata(executor: SqliteExecutor, blob: ResolvedArtifact): P
   });
 }
 
-const retainLocks = new Map<string, Promise<void>>();
+const blobLocks = new Map<string, Promise<void>>();
 
 /**
- * Serializes `retain()` calls for the same sha256. Without this, two
- * overlapping retains for the same *new* sha256 could each observe "no
+ * Serializes `retain()`/`remove()` calls for the same sha256. Without this,
+ * two overlapping retains for the same *new* sha256 could each observe "no
  * existing row" before either has inserted one, so a transient failure in
  * one could still delete the OPFS file the other's successful insert now
- * depends on — the same data-loss shape `retain()`'s rollback guards
- * against, reintroduced by a check-then-act race instead of a rollback
- * bug. Different sha256s never contend, so this never serializes unrelated
- * writes. The map entry is removed once its chain settles and nothing newer
- * has queued behind it, so it never grows unboundedly across a session.
+ * depends on — the same data-loss shape `retainLocked()`'s rollback guards
+ * against, reintroduced by a check-then-act race instead of a rollback bug.
+ * A `remove()` racing an in-flight `retain()` for that same new sha256 has
+ * the same shape (the file could vanish after the metadata insert commits),
+ * so `remove()` shares this lock too. Different sha256s never contend, so
+ * this never serializes unrelated writes. The map entry is removed once its
+ * chain settles and nothing newer has queued behind it, so it never grows
+ * unboundedly across a session.
  */
-async function withRetainLock<T>(sha256: string, fn: () => Promise<T>): Promise<T> {
-  const prior = retainLocks.get(sha256) ?? Promise.resolve();
+async function withBlobLock<T>(sha256: string, fn: () => Promise<T>): Promise<T> {
+  const prior = blobLocks.get(sha256) ?? Promise.resolve();
   const run = prior.then(fn, fn);
   const settled = run.then(
     () => undefined,
     () => undefined,
   );
-  retainLocks.set(sha256, settled);
+  blobLocks.set(sha256, settled);
   settled.then(() => {
-    if (retainLocks.get(sha256) === settled) retainLocks.delete(sha256);
+    if (blobLocks.get(sha256) === settled) blobLocks.delete(sha256);
   });
   return run;
 }
@@ -168,9 +171,9 @@ async function retainLocked(
   // Checked before writing so a failed insert's rollback can tell a
   // genuinely new blob apart from a re-retain of an already-known sha256
   // (routine under content-addressed dedup — the same skill/rule/config
-  // file gets retained again across many sessions). `withRetainLock`
-  // ensures this check and the insert below execute atomically with
-  // respect to other retains of this same sha256.
+  // file gets retained again across many sessions). `withBlobLock` ensures
+  // this check and the insert below execute atomically with respect to
+  // other retains/removes of this same sha256.
   const existedBefore =
     (await DbArtifactBlobStore.getBySha256(executor, blob.sha256)) !== undefined;
   await writeArtifactBlobFile(blob.sha256, asBytes(blob.content));
@@ -191,9 +194,15 @@ async function retainLocked(
   return reference;
 }
 
+async function removeLocked(executor: SqliteExecutor, sha256: string): Promise<boolean> {
+  const existed = await DbArtifactBlobStore.delete(executor, sha256);
+  await removeArtifactBlobFileIfExists(sha256);
+  return existed;
+}
+
 export function createOpfsArtifactBlobStore(executor: SqliteExecutor): ArtifactBlobStore {
   return {
-    retain: async (blob) => withRetainLock(blob.sha256, () => retainLocked(executor, blob)),
+    retain: async (blob) => withBlobLock(blob.sha256, () => retainLocked(executor, blob)),
 
     read: async (sha256) => {
       const row = await DbArtifactBlobStore.getBySha256(executor, sha256);
@@ -204,11 +213,7 @@ export function createOpfsArtifactBlobStore(executor: SqliteExecutor): ArtifactB
       return bytes ? toResolvedArtifact(row, bytes) : undefined;
     },
 
-    remove: async (sha256) => {
-      const existed = await DbArtifactBlobStore.delete(executor, sha256);
-      await removeArtifactBlobFileIfExists(sha256);
-      return existed;
-    },
+    remove: async (sha256) => withBlobLock(sha256, () => removeLocked(executor, sha256)),
 
     list: async (prefix) => {
       const blobs = await DbArtifactBlobStore.listBySha256Prefix(executor, prefix);
