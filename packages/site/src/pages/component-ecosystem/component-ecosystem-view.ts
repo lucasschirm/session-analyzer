@@ -1,4 +1,5 @@
 import type {
+  AnalyticsQuery,
   ArtifactDiff,
   ComponentDistributionPage,
   ComponentEcosystemSummary,
@@ -375,7 +376,16 @@ export class ComponentEcosystemView extends PageLitElement {
    * way.
    */
   willUpdate(changed: PropertyValues): void {
-    if (changed.has('componentId') && this.componentId) {
+    // `hasUpdated` is false for the entire first update cycle (Lit only
+    // sets it true after that cycle's render completes), so this
+    // deliberately skips the very first render: `componentId` is reported
+    // as "changed" there too (any set reactive property is, on first
+    // update), which would otherwise race `connectedCallback()`'s own
+    // initial `load()` call and double-fetch every one of the seven
+    // detail-panel endpoints on a normal navigation into a component
+    // -detail route -- not just the stale-componentId transition this hook
+    // exists to handle.
+    if (this.hasUpdated && changed.has('componentId') && this.componentId) {
       this.filters = parseComponentEcosystemHash(window.location.hash, this.componentId);
       void this.load();
     }
@@ -400,65 +410,89 @@ export class ComponentEcosystemView extends PageLitElement {
     this.diffError = null;
 
     const query = componentEcosystemParamsToQuery(this.filters);
-
     if (this.componentId) {
-      const [summary, versions, scopes, utilization, distributions, projectSessions, lifecycle] =
-        await Promise.allSettled([
-          analyticsClient.component.getSummary(query),
-          analyticsClient.component.getVersions(this.componentId, query),
-          analyticsClient.component.getScopes(this.componentId, query),
-          analyticsClient.component.getUtilization(this.componentId, query),
-          analyticsClient.component.getDistributions(this.componentId, query),
-          analyticsClient.component.getProjectsSessions(this.componentId, query),
-          analyticsClient.component.getLifecycleComparisons(this.componentId, query),
-        ]);
-
-      this.summary = panelStateFromResult(summary);
-      this.versions = panelStateFromResult(versions);
-      this.scopes = panelStateFromResult(scopes);
-      this.utilization = panelStateFromResult(utilization);
-      this.distributions = panelStateFromResult(distributions);
-      this.projectSessions = panelStateFromResult(projectSessions);
-      this.lifecycle = panelStateFromResult(lifecycle);
-
-      const states = [
-        this.versions.state,
-        this.scopes.state,
-        this.utilization.state,
-        this.distributions.state,
-        this.projectSessions.state,
-        this.lifecycle.state,
-      ];
-      if (states.every((s) => s === 'ok' || s === 'empty')) {
-        this.globalState = states.some((s) => s === 'ok') ? 'ok' : 'empty';
-      } else if (states.some((s) => s === 'ok')) {
-        this.globalState = 'partial';
-      } else {
-        this.globalState = 'error';
-        this.globalError = 'Component detail views failed to load.';
-      }
-
-      if (this.filters.leftVersion && this.filters.rightVersion) {
-        void this.loadDiff();
-      }
+      await this.loadComponentDetail(query);
     } else {
-      const [summary] = await Promise.allSettled([analyticsClient.component.getSummary(query)]);
-      this.summary = panelStateFromResult(summary);
-
-      if (this.summary.state === 'error') {
-        this.globalState = 'error';
-        this.globalError = this.summary.error ?? 'Component ecosystem summary failed to load.';
-      } else if (this.summary.state === 'empty') {
-        this.globalState = 'empty';
-      } else {
-        this.globalState = 'ok';
-      }
+      await this.loadSummaryOnly(query);
     }
 
     this.loading = false;
-    if (this.reloadPending) {
-      this.reloadPending = false;
-      void this.load();
+    this.reloadIfPending();
+  }
+
+  /**
+   * Re-runs `load()` if a call arrived while one was already in flight (see
+   * `reloadPending`'s own doc comment), but only while still connected --
+   * this component may have been removed from the DOM while the in-flight
+   * load was running, and a disconnected instance has no reason to start a
+   * fresh network fetch nobody will ever see rendered.
+   */
+  private reloadIfPending(): void {
+    if (!this.reloadPending) return;
+    this.reloadPending = false;
+    if (this.isConnected) void this.load();
+  }
+
+  private async loadComponentDetail(query: AnalyticsQuery): Promise<void> {
+    await this.fetchDetailPanels(query);
+    this.updateGlobalStateFromPanels();
+    if (this.filters.leftVersion && this.filters.rightVersion) {
+      void this.loadDiff();
+    }
+  }
+
+  private async fetchDetailPanels(query: AnalyticsQuery): Promise<void> {
+    const componentId = this.componentId;
+    const [summary, versions, scopes, utilization, distributions, projectSessions, lifecycle] =
+      await Promise.allSettled([
+        analyticsClient.component.getSummary(query),
+        analyticsClient.component.getVersions(componentId, query),
+        analyticsClient.component.getScopes(componentId, query),
+        analyticsClient.component.getUtilization(componentId, query),
+        analyticsClient.component.getDistributions(componentId, query),
+        analyticsClient.component.getProjectsSessions(componentId, query),
+        analyticsClient.component.getLifecycleComparisons(componentId, query),
+      ]);
+
+    this.summary = panelStateFromResult(summary);
+    this.versions = panelStateFromResult(versions);
+    this.scopes = panelStateFromResult(scopes);
+    this.utilization = panelStateFromResult(utilization);
+    this.distributions = panelStateFromResult(distributions);
+    this.projectSessions = panelStateFromResult(projectSessions);
+    this.lifecycle = panelStateFromResult(lifecycle);
+  }
+
+  private updateGlobalStateFromPanels(): void {
+    const states = [
+      this.versions.state,
+      this.scopes.state,
+      this.utilization.state,
+      this.distributions.state,
+      this.projectSessions.state,
+      this.lifecycle.state,
+    ];
+    if (states.every((s) => s === 'ok' || s === 'empty')) {
+      this.globalState = states.some((s) => s === 'ok') ? 'ok' : 'empty';
+    } else if (states.some((s) => s === 'ok')) {
+      this.globalState = 'partial';
+    } else {
+      this.globalState = 'error';
+      this.globalError = 'Component detail views failed to load.';
+    }
+  }
+
+  private async loadSummaryOnly(query: AnalyticsQuery): Promise<void> {
+    const [summary] = await Promise.allSettled([analyticsClient.component.getSummary(query)]);
+    this.summary = panelStateFromResult(summary);
+
+    if (this.summary.state === 'error') {
+      this.globalState = 'error';
+      this.globalError = this.summary.error ?? 'Component ecosystem summary failed to load.';
+    } else if (this.summary.state === 'empty') {
+      this.globalState = 'empty';
+    } else {
+      this.globalState = 'ok';
     }
   }
 

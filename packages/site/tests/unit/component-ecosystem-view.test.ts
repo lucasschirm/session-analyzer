@@ -321,6 +321,35 @@ describe('component-ecosystem-view', () => {
     );
   });
 
+  it('does not double-fetch on a normal initial mount via the real attribute-binding path', async () => {
+    // Regression coverage: `willUpdate()`'s componentId-changed hook (added
+    // for the stale-componentId race) must not also fire on the component's
+    // very first update -- `componentId` is reported as "changed" there too
+    // (any set reactive property is, on first update per Lit's own
+    // semantics), which would otherwise race connectedCallback()'s own
+    // initial load() and double-fetch every one of the seven detail-panel
+    // endpoints on every ordinary navigation into a component-detail route.
+    // Uses `setAttribute` (matching app-root.ts's real
+    // `component-id=${...}` template binding), not direct property
+    // assignment, since that's the actual production wiring this guards.
+    //
+    // Settle first: `beforeEach`'s own `window.location.hash = '#/artifacts'`
+    // (resetting state left over from a prior test) triggers this test
+    // environment's own async hashchange-like reaction, which can otherwise
+    // land inside this test's own mount window and fire a second, entirely
+    // unrelated load() via the existing hashchange listener -- a test-only
+    // artifact, not a reproduction of production behavior (a page's real
+    // first load never fires `hashchange` for its own initial hash).
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const view = document.createElement('component-ecosystem-view') as ComponentEcosystemView;
+    view.setAttribute('component-id', 'read_file');
+    await mount(view);
+
+    expect(componentMock.getVersions).toHaveBeenCalledTimes(1);
+    expect(componentMock.getSummary).toHaveBeenCalledTimes(1);
+  });
+
   it('reloads with the new component when componentId changes on an already-mounted instance', async () => {
     // Regression coverage: navigating directly between two different
     // populated :componentId routes (e.g. browser back/forward) on an
