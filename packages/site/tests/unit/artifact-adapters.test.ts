@@ -14,6 +14,7 @@ import type {
   SqliteExecResult,
   SqliteExecutor,
   SqliteRow,
+  SqliteValue,
 } from '@lucasschirm/sal-db-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -515,39 +516,42 @@ describe('ArtifactDiffRepository with a real createBrowserArtifactBlobStore', ()
     );
   }
 
+  const SOURCE_MANIFEST_SQL = `INSERT INTO source_manifests (
+    id, ingestion_source_id, environment_id, source_project_id, session_id,
+    manifest_schema_version, finality, occurrence_time, capture_time, ingestion_time, sequence_number,
+    native_project_id, native_session_id,
+    harness, harness_version, transcripts_captured, main_transcript_relative_path, manifest_hash,
+    reprocessing_status, created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+  function sourceManifestParams(): SqliteValue[] {
+    return [
+      SOURCE_MANIFEST_ID,
+      SOURCE_ID,
+      ENVIRONMENT_ID,
+      SOURCE_PROJECT_ID,
+      SESSION_ID,
+      3,
+      'final',
+      0,
+      0,
+      0,
+      0,
+      'test',
+      SESSION_ID,
+      'claude-code',
+      '0.1.0',
+      0,
+      null,
+      'mh-artifact-adapters',
+      'local',
+      0,
+      0,
+    ];
+  }
+
   async function seedSourceManifest(executor: WasmSqliteExecutor): Promise<void> {
-    await executor.exec(
-      `INSERT INTO source_manifests (
-        id, ingestion_source_id, environment_id, source_project_id, session_id,
-        manifest_schema_version, finality, occurrence_time, capture_time, ingestion_time, sequence_number,
-        native_project_id, native_session_id,
-        harness, harness_version, transcripts_captured, main_transcript_relative_path, manifest_hash,
-        reprocessing_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        SOURCE_MANIFEST_ID,
-        SOURCE_ID,
-        ENVIRONMENT_ID,
-        SOURCE_PROJECT_ID,
-        SESSION_ID,
-        3,
-        'final',
-        0,
-        0,
-        0,
-        0,
-        'test',
-        SESSION_ID,
-        'claude-code',
-        '0.1.0',
-        0,
-        null,
-        'mh-artifact-adapters',
-        'local',
-        0,
-        0,
-      ],
-    );
+    await executor.exec(SOURCE_MANIFEST_SQL, sourceManifestParams());
   }
 
   async function seedManifestArtifact(executor: WasmSqliteExecutor): Promise<void> {

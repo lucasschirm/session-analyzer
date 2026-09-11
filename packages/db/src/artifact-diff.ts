@@ -936,13 +936,23 @@ export interface CanPurgeScope {
 export class ArtifactDiffRepository {
   private readonly canonicalizer: ArtifactCanonicalizer;
   private readonly diffEngine: ArtifactDiffEngine;
+  private readonly blobStore?: ArtifactBlobStore;
 
-  constructor(
-    hasher: ContentHasher,
-    readonly blobStore?: ArtifactBlobStore,
-  ) {
+  constructor(hasher: ContentHasher, blobStore?: ArtifactBlobStore) {
     this.canonicalizer = new ArtifactCanonicalizer(hasher);
     this.diffEngine = new ArtifactDiffEngine(hasher);
+    this.blobStore = blobStore;
+  }
+
+  /**
+   * Read-only view of the injected blob store, for tests/introspection.
+   * Deliberately narrower than the full `ArtifactBlobStore` port: exposing
+   * `remove`/`retain`/`list` here would let an external caller bypass
+   * `canPurge()`'s retention-policy gate by reaching `blobStore.remove()`
+   * directly instead of going through a repository method.
+   */
+  get injectedBlobStore(): Pick<ArtifactBlobStore, 'read'> | undefined {
+    return this.blobStore;
   }
 
   async record(
