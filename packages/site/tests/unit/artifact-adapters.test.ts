@@ -1,17 +1,28 @@
+// @vitest-environment node
+//
+// The real SQLite round-trip test below (`ArtifactDiffRepository with a real
+// createBrowserArtifactBlobStore`) constructs the site's own WASM SQLite
+// executor, which requires the node environment (see
+// packages/site/tests/unit/wasm-sqlite-executor.test.ts and
+// wasm-adapter.conformance.test.ts for the same pattern). The rest of this
+// file has no DOM dependency, so running the whole file under node is safe.
+
 import type { ArtifactReference, ResolvedArtifact } from '@lucasschirm/sal-db';
+import { ArtifactDiffRepository, createSha256ContentHasher } from '@lucasschirm/sal-db';
 import type {
   ArtifactBlob,
   SqliteExecResult,
   SqliteExecutor,
   SqliteRow,
 } from '@lucasschirm/sal-db-core';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createBrowserArtifactBlobStore,
   createBrowserArtifactResolver,
   createBrowserContentHasher,
   createSyncArtifactCache,
 } from '../../src/db/artifact-adapters';
+import { WasmSqliteExecutor } from '../../src/db/wasm-sqlite-executor';
 
 /**
  * Hoisted mock for the db-core `ArtifactBlobStore` static methods. The adapter
@@ -419,6 +430,203 @@ describe('createBrowserArtifactBlobStore', () => {
       await store.list();
       expect(executor.calls[0].params).toEqual(['%']);
     });
+  });
+});
+
+/**
+ * Extends `createBrowserArtifactBlobStore` coverage above with a real,
+ * unmocked round-trip: a real `WasmSqliteExecutor`, the real
+ * `createBrowserArtifactBlobStore`, and a real `ArtifactDiffRepository`
+ * (issue #398). This proves the actual concrete store integrates correctly
+ * with `ArtifactDiffRepository.record()` -- the db-only in-file-fake
+ * coverage lives in packages/db/tests/unit/artifact-diff.test.ts, since
+ * packages/db must not import packages/site (see packages/db/AGENTS.md).
+ *
+ * The `ArtifactBlobStore.insert`/`getBySha256` statics are mocked at module
+ * scope above for the rest of this file; here they are pointed back at the
+ * real db-core implementation so this test exercises genuine SQLite writes.
+ */
+describe('ArtifactDiffRepository with a real createBrowserArtifactBlobStore', () => {
+  const PORTFOLIO_ID = 'pf-artifact-adapters';
+  const TENANT_ID = 'ten-artifact-adapters';
+  const SOURCE_ID = 'src-artifact-adapters';
+  const ENVIRONMENT_ID = 'env-artifact-adapters';
+  const PROJECT_ID = 'prj-artifact-adapters';
+  const SOURCE_PROJECT_ID = 'sp-artifact-adapters';
+  const SESSION_ID = 'sess-artifact-adapters';
+  const SOURCE_MANIFEST_ID = 'sm-artifact-adapters';
+  const MANIFEST_ARTIFACT_ID = 'ma-artifact-adapters';
+
+  afterEach(() => {
+    // This block repoints the module-scoped blobStoreMock statics at the
+    // real db-core implementation (see the test below). Restore them to the
+    // no-op defaults so this describe block stays self-contained regardless
+    // of what runs elsewhere in the file, rather than relying on
+    // `createBrowserArtifactBlobStore`'s own `beforeEach` (above) always
+    // executing first.
+    blobStoreMock.insert.mockReset().mockResolvedValue(undefined);
+    blobStoreMock.getBySha256.mockReset().mockResolvedValue(undefined);
+  });
+
+  async function seedRealExecutor(realExecutor: WasmSqliteExecutor): Promise<void> {
+    await realExecutor.exec(
+      'INSERT INTO tenants (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)',
+      [TENANT_ID, 'Test', 0, 0],
+    );
+    await realExecutor.exec(
+      'INSERT INTO portfolios (id, tenant_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+      [PORTFOLIO_ID, TENANT_ID, 'Test', 0, 0],
+    );
+    await realExecutor.exec(
+      `INSERT INTO ingestion_sources (
+        id, portfolio_id, native_source_id, display_name, type, authority,
+        supports_cursor, supports_checkpoint, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [SOURCE_ID, PORTFOLIO_ID, 'default', 'Default', 'sync', 'local', 0, 0, 0, 0],
+    );
+    await realExecutor.exec(
+      'INSERT INTO environments (id, ingestion_source_id, native_environment_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+      [ENVIRONMENT_ID, SOURCE_ID, 'dev', 0, 0],
+    );
+    await realExecutor.exec(
+      'INSERT INTO projects (id, portfolio_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+      [PROJECT_ID, PORTFOLIO_ID, 'Test', 0, 0],
+    );
+    await realExecutor.exec(
+      'INSERT INTO source_projects (id, project_id, ingestion_source_id, native_project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [SOURCE_PROJECT_ID, PROJECT_ID, SOURCE_ID, 'test', 0, 0],
+    );
+    await realExecutor.exec(
+      'INSERT INTO sessions (id, project_id, ingestion_source_id, environment_id, harness, native_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [SESSION_ID, PROJECT_ID, SOURCE_ID, ENVIRONMENT_ID, 'claude-code', SESSION_ID, 0, 0],
+    );
+    await realExecutor.exec(
+      `INSERT INTO source_manifests (
+        id, ingestion_source_id, environment_id, source_project_id, session_id,
+        manifest_schema_version, finality, occurrence_time, capture_time, ingestion_time, sequence_number,
+        native_project_id, native_session_id,
+        harness, harness_version, transcripts_captured, main_transcript_relative_path, manifest_hash,
+        reprocessing_status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        SOURCE_MANIFEST_ID,
+        SOURCE_ID,
+        ENVIRONMENT_ID,
+        SOURCE_PROJECT_ID,
+        SESSION_ID,
+        3,
+        'final',
+        0,
+        0,
+        0,
+        0,
+        'test',
+        SESSION_ID,
+        'claude-code',
+        '0.1.0',
+        0,
+        null,
+        'mh-artifact-adapters',
+        'local',
+        0,
+        0,
+      ],
+    );
+    await realExecutor.exec(
+      `INSERT INTO manifest_artifacts (
+        id, source_manifest_id, manifest_project_id, manifest_session_id, harness, harness_version,
+        manifest_schema_version, scope, relative_path, sha256, size, status,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        MANIFEST_ARTIFACT_ID,
+        SOURCE_MANIFEST_ID,
+        PROJECT_ID,
+        SESSION_ID,
+        'claude-code',
+        '0.1.0',
+        3,
+        'workspace',
+        '.claude/config.json',
+        'sha256-placeholder',
+        1,
+        'uploaded',
+        0,
+        0,
+      ],
+    );
+  }
+
+  it('writes real content bytes into insert.content via a real store, and never calls the real store.retain() from record()', async () => {
+    const actual = await vi.importActual<typeof import('@lucasschirm/sal-db-core')>(
+      '@lucasschirm/sal-db-core',
+    );
+    const realExecutor = await WasmSqliteExecutor.create({ preferOpfs: false });
+    try {
+      // Point the module-scoped ArtifactBlobStore statics back at the real
+      // db-core implementation (only for the executor this test uses) so
+      // both createBrowserArtifactBlobStore and ArtifactDiffRepository --
+      // which both call these same statics -- perform genuine SQLite
+      // writes/reads here, instead of the no-op defaults the rest of this
+      // file configures.
+      blobStoreMock.insert.mockImplementation((exec, input) =>
+        actual.ArtifactBlobStore.insert(exec as SqliteExecutor, input as never),
+      );
+      // blobStoreMock.getBySha256 is hoisted with a (sha: string) => ...
+      // signature above (only its resolved value matters to the other
+      // tests in this file), but it is always called with (queryable,
+      // sha256) -- two args -- at every real call site. Cast to that real
+      // signature so this delegate reads the sha256 from the second
+      // argument instead of silently binding it to the first.
+      (
+        blobStoreMock.getBySha256 as unknown as {
+          mockImplementation(
+            fn: (exec: SqliteExecutor, sha: string) => Promise<ArtifactBlob | undefined>,
+          ): void;
+        }
+      ).mockImplementation((exec, sha) => actual.ArtifactBlobStore.getBySha256(exec, sha));
+
+      await realExecutor.exec(actual.FRESH_SCHEMA_SQL);
+      await seedRealExecutor(realExecutor);
+
+      const realBlobStore = createBrowserArtifactBlobStore(realExecutor);
+      const retainSpy = vi.spyOn(realBlobStore, 'retain');
+
+      const hasher = createSha256ContentHasher();
+      const repository = new ArtifactDiffRepository(hasher, realBlobStore);
+      const content = JSON.stringify({ model: 'claude-3-5-sonnet', case: 'real-round-trip' });
+
+      await repository.record(
+        realExecutor,
+        PORTFOLIO_ID,
+        {
+          sourceManifestId: SOURCE_MANIFEST_ID,
+          manifestArtifactId: MANIFEST_ARTIFACT_ID,
+          observingSessionId: SESSION_ID,
+        },
+        {
+          harness: 'claude-code',
+          kind: 'settings',
+          content,
+          relativePath: '.claude/config.json',
+          classifierVersion: '1.0.0',
+          canonicalizerVersion: '1.0.0',
+        },
+      );
+
+      const sha256 = await hasher.hash(content);
+      const { rows } = await realExecutor.exec(
+        'SELECT content FROM artifact_blobs WHERE sha256 = ?',
+        [sha256],
+      );
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.content).not.toBeNull();
+      expect(new TextDecoder().decode(rows[0]?.content as Uint8Array)).toBe(content);
+      expect(retainSpy).not.toHaveBeenCalled();
+    } finally {
+      await realExecutor.close();
+    }
   });
 });
 

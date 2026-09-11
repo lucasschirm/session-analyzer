@@ -56,7 +56,7 @@ import type {
 } from './dto.js';
 import { makeMetricValueDto } from './dto.js';
 import { createSha256ContentHasher } from './ingestion.js';
-import type { ContentHasher } from './ports.js';
+import type { ArtifactBlobStore, ContentHasher } from './ports.js';
 
 type Queryable = SqliteExecutor | SqliteTransaction;
 
@@ -1502,8 +1502,9 @@ function lifecycleChangeType(eventType: string): LifecycleComparisonRow['changeT
 export function createArtifactVersionView(
   queryable: Queryable,
   hasher?: ContentHasher,
+  blobStore?: ArtifactBlobStore,
 ): ArtifactVersionView {
-  const diffEngine = new ArtifactDiffRepository(hasher ?? createSha256ContentHasher());
+  const diffEngine = new ArtifactDiffRepository(hasher ?? createSha256ContentHasher(), blobStore);
 
   return {
     getMetadata: (artifactId, query) => getArtifactMetadata(queryable, artifactId, query),

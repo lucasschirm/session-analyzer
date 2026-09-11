@@ -7,13 +7,13 @@ import type {
   SqliteTransaction,
 } from '@lucasschirm/sal-db-core';
 import {
-  ArtifactBlobStore,
   ArtifactReferenceStore,
+  ArtifactBlobStore as DbArtifactBlobStore,
   ManifestArtifactStore,
   RetentionPolicyStore,
 } from '@lucasschirm/sal-db-core';
 import type { ArtifactDiff, DiffLine, MetadataChange, SideBySideDiff } from './analytics.js';
-import type { ArtifactContent, ContentHasher } from './ports.js';
+import type { ArtifactBlobStore, ArtifactContent, ContentHasher } from './ports.js';
 
 // TextEncoder/TextDecoder are stable globals in Node and browsers but are not
 // part of the ES2021 lib used by this package. These local declarations keep
@@ -937,7 +937,10 @@ export class ArtifactDiffRepository {
   private readonly canonicalizer: ArtifactCanonicalizer;
   private readonly diffEngine: ArtifactDiffEngine;
 
-  constructor(hasher: ContentHasher) {
+  constructor(
+    hasher: ContentHasher,
+    private readonly blobStore?: ArtifactBlobStore,
+  ) {
     this.canonicalizer = new ArtifactCanonicalizer(hasher);
     this.diffEngine = new ArtifactDiffEngine(hasher);
   }
@@ -953,7 +956,7 @@ export class ArtifactDiffRepository {
     const blobSha256 = (context.blobSha256 ?? canonicalized.rawSha256) || null;
 
     if (canonicalized.content !== null && blobSha256) {
-      const existing = await ArtifactBlobStore.getBySha256(queryable, blobSha256);
+      const existing = await DbArtifactBlobStore.getBySha256(queryable, blobSha256);
       if (!existing) {
         const insert: InsertArtifactBlobInput = {
           sha256: blobSha256,
@@ -967,7 +970,7 @@ export class ArtifactDiffRepository {
           redactionChangeMarker: canonicalized.redactionChangeMarker,
           isRedacted: canonicalized.sensitiveDigest !== null,
         };
-        await ArtifactBlobStore.insert(queryable, insert);
+        await DbArtifactBlobStore.insert(queryable, insert);
       }
     }
 
@@ -1030,9 +1033,13 @@ export class ArtifactDiffRepository {
     );
     if (!artifact) return undefined;
     const blob = reference.blobSha256
-      ? await ArtifactBlobStore.getBySha256(queryable, reference.blobSha256)
+      ? await DbArtifactBlobStore.getBySha256(queryable, reference.blobSha256)
       : undefined;
-    const content = blob?.content ?? null;
+    const content =
+      blob?.content ??
+      (this.blobStore && reference.blobSha256
+        ? ((await this.blobStore.read(reference.blobSha256))?.content ?? null)
+        : null);
     const rules =
       (safeJsonParse(reference.rulesApplied ?? '') as CanonicalizationRuleSet) ?? undefined;
 
