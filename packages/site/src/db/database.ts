@@ -1215,8 +1215,8 @@ export class DatabaseManager {
 
     const db = this.requireDb();
     const tempPath = `${this.filename}.vacuum-tmp`;
-    db.exec(`VACUUM INTO 'file:${tempPath}?vfs=opfs';`);
     try {
+      db.exec(`VACUUM INTO 'file:${tempPath}?vfs=opfs';`);
       return await readOpfsFileBytes(tempPath);
     } finally {
       await removeOpfsFileIfExists(tempPath);

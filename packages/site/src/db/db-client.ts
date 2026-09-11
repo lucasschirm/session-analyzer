@@ -25,6 +25,12 @@ interface PendingCall {
   reject: (error: Error) => void;
 }
 
+/** Request types whose successful response always resolves to `Uint8Array` bytes. */
+const BYTES_REQUEST_TYPES = new Set<DbRequest['type']>([
+  'exportControlDatabase',
+  'exportControlDatabaseOptimized',
+]);
+
 export class DbClient {
   private worker: Worker | null = null;
   private seq = 0;
@@ -367,12 +373,12 @@ export class DbClient {
     if (pendingCall.requestType === 'init') {
       this.fallbackReason = response.fallbackReason;
       pendingCall.resolve(response.storage ?? 'memory');
-    } else if (response.bytes !== undefined) {
-      // Generalized bytes-unwrap: any response carrying `bytes` (currently
-      // exportControlDatabase and exportControlDatabaseOptimized) resolves
-      // with the transferred bytes, so this isn't a growing per-request-type
-      // special case.
-      pendingCall.resolve(response.bytes);
+    } else if (BYTES_REQUEST_TYPES.has(pendingCall.requestType)) {
+      // Bytes-returning request types resolve to `Uint8Array` unconditionally,
+      // matching their declared `Promise<Uint8Array>` return type — falling
+      // back to an empty array preserves that contract even if a response
+      // were ever missing `bytes` on success.
+      pendingCall.resolve(response.bytes ?? new Uint8Array());
     } else {
       pendingCall.resolve(response.result);
     }

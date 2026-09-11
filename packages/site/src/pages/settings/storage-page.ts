@@ -568,9 +568,17 @@ export class StoragePage extends PageLitElement {
     return html`${this.formatSize(db.size)}`;
   }
 
+  /** A row's actions are disabled while its own size is (re)loading, or while
+   * ANY overlay operation is in flight — not just one matching this row's id.
+   * The overlay is a single full-page modal shared across all rows with no
+   * focus trap, so gating only on `overlay?.dbId === db.id` would leave a
+   * different row's buttons keyboard-reachable behind the backdrop; starting
+   * a second operation there would overwrite the single shared `overlay`
+   * field mid-flight and silently defeat the first operation's stall/error
+   * state. Only one row's operation may be in flight at a time. */
   private isRowBusy(db: DatabaseRow): boolean {
     if (db.sizeState === 'loading') return true;
-    return this.overlay?.dbId === db.id;
+    return this.overlay !== null;
   }
 
   private overlayHeading(overlay: OverlayState): string {

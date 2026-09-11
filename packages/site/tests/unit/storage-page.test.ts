@@ -214,6 +214,45 @@ describe('storage-page', () => {
     });
   });
 
+  describe('Cross-row busy gating', () => {
+    it('disables every row while one row has an operation in flight, not just its own row', async () => {
+      let resolveVacuum: () => void = () => {};
+      mockDbClient.vacuum.mockReturnValue(
+        new Promise<void>((resolve) => {
+          resolveVacuum = resolve;
+        }),
+      );
+
+      const el = await mount();
+      const root = el.shadowRoot as ShadowRoot;
+      const controlRow = dbRow(root, 'Control DB');
+      const analyticsRow = dbRow(root, 'Analytics DB');
+      const controlOptimize = Array.from(controlRow.querySelectorAll('button')).find(
+        (b) => b.textContent?.trim() === 'Optimize',
+      ) as HTMLButtonElement;
+
+      controlOptimize.click();
+      await el.updateComplete;
+
+      // The overlay belongs to the control-DB row, but with no focus trap on
+      // this full-page overlay, a different row's buttons must not become
+      // keyboard-reachable/clickable while it's up — otherwise a second
+      // operation there would overwrite the single shared overlay state out
+      // from under the first (see wild-popping-sundae Phase 1 PR review).
+      for (const button of Array.from(analyticsRow.querySelectorAll('button'))) {
+        expect((button as HTMLButtonElement).disabled).toBe(true);
+      }
+      expect(controlOptimize.disabled).toBe(true);
+
+      resolveVacuum();
+      await new Promise((r) => setTimeout(r, 0));
+      // Success phase is still shown (auto-dismiss timer pending) — still busy.
+      for (const button of Array.from(analyticsRow.querySelectorAll('button'))) {
+        expect((button as HTMLButtonElement).disabled).toBe(true);
+      }
+    });
+  });
+
   describe('Download flow', () => {
     it('shows a running overlay, then triggers a download and auto-closes on success', async () => {
       const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});

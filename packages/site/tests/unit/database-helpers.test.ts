@@ -11,9 +11,10 @@
  * to the in-memory backend.
  */
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DatabaseManager } from '../../src/db/database';
+import * as opfsFileIo from '../../src/db/opfs-file-io';
 import type {
   Connection,
   PasskeyState,
@@ -23,6 +24,11 @@ import type {
   StoredS3Credentials,
   SyncManifest,
 } from '../../src/types';
+
+vi.mock('../../src/db/opfs-file-io', () => ({
+  readOpfsFileBytes: vi.fn(),
+  removeOpfsFileIfExists: vi.fn(),
+}));
 
 /** Creates and initializes a fresh in-memory DatabaseManager. */
 async function createManager(): Promise<DatabaseManager> {
@@ -1322,6 +1328,88 @@ describe('DatabaseManager', () => {
       const optimized = await m.exportControlDatabaseOptimized();
       const direct = m.exportControlDatabase();
       expect(optimized).toEqual(direct);
+      m.close();
+    });
+  });
+
+  // ================================================================
+  // exportControlDatabaseOptimized — OPFS-flagged backend
+  //
+  // Mirrors `wasm-sqlite-executor.test.ts`'s "OPFS-flagged backend" suite:
+  // `storageBackend` is forced to `'opfs'` via a private-field cast (there is
+  // no public constructor seam for it, unlike `WasmSqliteExecutor`), against
+  // a real in-memory sqlite3 handle. The `VACUUM INTO '...?vfs=opfs'` SQL is
+  // still executed for real — Node has no "opfs" VFS registered, so it
+  // genuinely fails with `SQLITE_ERROR: no such vfs: opfs`. Only the two OPFS
+  // file I/O helpers are mocked. This closes the gap a PR review flagged: the
+  // `exec(...)` call previously sat outside the try/finally, so a failed
+  // VACUUM INTO skipped cleanup entirely — since VACUUM INTO refuses to write
+  // to an already-existing non-empty target, that left the fixed temp
+  // filename permanently poisoned, breaking every subsequent optimized export
+  // attempt instead of "self-healing on the next run" as designed.
+  // ================================================================
+  describe('exportControlDatabaseOptimized — OPFS-flagged backend', () => {
+    function flagAsOpfs(m: DatabaseManager): void {
+      (m as unknown as { storageBackend: string }).storageBackend = 'opfs';
+    }
+
+    function rawDb(m: DatabaseManager): { exec(sql: string): unknown } {
+      return (m as unknown as { db: { exec(sql: string): unknown } }).db;
+    }
+
+    beforeEach(() => {
+      vi.mocked(opfsFileIo.readOpfsFileBytes).mockReset();
+      vi.mocked(opfsFileIo.removeOpfsFileIfExists).mockReset().mockResolvedValue(undefined);
+    });
+
+    it('cleans up the temp file even when VACUUM INTO itself throws', async () => {
+      const m = await createManager();
+      flagAsOpfs(m);
+      const execSpy = vi.spyOn(rawDb(m), 'exec');
+
+      await expect(m.exportControlDatabaseOptimized()).rejects.toThrow(/no such vfs: opfs/i);
+
+      expect(execSpy).toHaveBeenCalledWith(
+        "VACUUM INTO 'file:/session-analyzer.sqlite3.vacuum-tmp?vfs=opfs';",
+      );
+      // The regression this test guards: cleanup must run even though
+      // VACUUM INTO failed before any temp file could have been created.
+      expect(opfsFileIo.removeOpfsFileIfExists).toHaveBeenCalledWith(
+        '/session-analyzer.sqlite3.vacuum-tmp',
+      );
+      expect(opfsFileIo.readOpfsFileBytes).not.toHaveBeenCalled();
+      m.close();
+    });
+
+    it('reads back and cleans up the temp file on a successful VACUUM INTO', async () => {
+      const m = await createManager();
+      flagAsOpfs(m);
+      const expectedBytes = new Uint8Array([1, 2, 3]);
+      vi.mocked(opfsFileIo.readOpfsFileBytes).mockResolvedValue(expectedBytes);
+      vi.spyOn(rawDb(m), 'exec').mockReturnValue(undefined);
+
+      const bytes = await m.exportControlDatabaseOptimized();
+
+      expect(opfsFileIo.readOpfsFileBytes).toHaveBeenCalledWith(
+        '/session-analyzer.sqlite3.vacuum-tmp',
+      );
+      expect(opfsFileIo.removeOpfsFileIfExists).toHaveBeenCalledWith(
+        '/session-analyzer.sqlite3.vacuum-tmp',
+      );
+      expect(bytes).toBe(expectedBytes);
+      m.close();
+    });
+
+    it('removes the temp file even when reading it back fails', async () => {
+      const m = await createManager();
+      flagAsOpfs(m);
+      vi.mocked(opfsFileIo.readOpfsFileBytes).mockRejectedValue(new Error('temp file missing'));
+      vi.spyOn(rawDb(m), 'exec').mockReturnValue(undefined);
+
+      await expect(m.exportControlDatabaseOptimized()).rejects.toThrow('temp file missing');
+      expect(opfsFileIo.removeOpfsFileIfExists).toHaveBeenCalledWith(
+        '/session-analyzer.sqlite3.vacuum-tmp',
+      );
       m.close();
     });
   });
