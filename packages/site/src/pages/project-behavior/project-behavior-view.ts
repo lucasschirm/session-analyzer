@@ -699,6 +699,7 @@ export class ProjectBehaviorPage extends PageLitElement {
                 label=${card.label}
                 value=${card.value}
                 sub=${card.sub}
+                description=${card.description}
                 valueTitle=${card.valueTitle ?? ''}
                 .clickable=${Boolean(card.href)}
                 @card-click=${() => this.goToMetric(card)}

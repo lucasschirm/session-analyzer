@@ -5,6 +5,7 @@
  */
 
 import type { ArtifactScope, SyncManifest } from '@lucasschirm/sal-sync-core';
+import type { ManifestFingerprint } from '../types';
 
 /** In-memory S3 credential material sent with `START`. */
 export interface S3Credentials {
@@ -29,6 +30,11 @@ export interface FileToDownload {
    * (or compound hash for multipart uploads), NOT the SHA-256 content hash.
    * Available for future ETag-based skip optimization; the site would store
    * the last-seen ETag locally and skip downloads when it hasn't changed.
+   * Still unconsumed by any skip decision as of the sync-fingerprints feature
+   * (#403), which instead adds a session-level manifest fingerprint (see
+   * `ManifestFingerprint` in `types/index.ts`) that skips the manifest GET
+   * before per-file diffing is ever reached — a distinct mechanism from this
+   * per-file ETag.
    */
   etag?: string;
   size: number;
@@ -143,6 +149,8 @@ export interface SessionFoundMessage {
   connectionId?: string;
   projectId: string;
   sessionId: string;
+  /** D1 manifest fingerprint from the discovery listing; undefined when the session has no manifest.json entry. */
+  fingerprint?: ManifestFingerprint;
 }
 
 /** Worker→Main: manifest downloaded and validated. */
@@ -152,6 +160,8 @@ export interface SessionManifestReadyMessage {
   projectId: string;
   sessionId: string;
   manifest: SyncManifest;
+  /** D1 manifest fingerprint carried through from discovery (D5: persisted by the manager at this point). */
+  fingerprint?: ManifestFingerprint;
 }
 
 /** Worker→Main: per-file download progress for a session. */

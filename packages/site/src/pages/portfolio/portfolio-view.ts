@@ -454,6 +454,7 @@ export class PortfolioView extends PageLitElement {
                 label=${card.label}
                 value=${card.value}
                 sub=${card.sub}
+                description=${card.description}
                 .clickable=${Boolean(card.href)}
                 @card-click=${() => this.goToMetric(card)}
               ></metrics-card>

@@ -56,7 +56,7 @@ async function importSessionIntoProject(
   return sessionInput.inputValue();
 }
 
-test.describe('Project Sessions Expansion and Navigation (UX-025)', () => {
+test.describe('Project Sessions Expansion and Navigation (UX-027)', () => {
   test('left-nav expands project sessions and navigates to session detail', async ({ page }) => {
     const projectName = 'NavSessionExpTest';
     await importSessionIntoProject(page, projectName, ['claude-rich-session.jsonl']);
@@ -92,7 +92,7 @@ test.describe('Project Sessions Expansion and Navigation (UX-025)', () => {
   });
 });
 
-test.describe('Dedicated Project Sessions Page (UX-026)', () => {
+test.describe('Dedicated Project Sessions Page (UX-028)', () => {
   test('renders dedicated sessions list page with filters and pagination', async ({ page }) => {
     const projectName = 'ProjectSessionsPageTest';
     await importSessionIntoProject(page, projectName, ['claude-rich-session.jsonl']);
@@ -133,7 +133,7 @@ test.describe('Dedicated Project Sessions Page (UX-026)', () => {
   });
 });
 
-test.describe('Project Sessions Table (UX-027)', () => {
+test.describe('Project Sessions Table (UX-029)', () => {
   test('displays sessions table columns, non-raw-id titles, and navigates on row click', async ({
     page,
   }) => {
@@ -170,7 +170,7 @@ test.describe('Project Sessions Table (UX-027)', () => {
   });
 });
 
-test.describe('Session Context Growth Chart and Detail Drawer (UX-028)', () => {
+test.describe('Session Context Growth Chart and Detail Drawer (UX-030)', () => {
   test('interacts with context growth chart, opens drawer, traps focus, and closes on Escape', async ({
     page,
   }) => {

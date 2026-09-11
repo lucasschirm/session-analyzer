@@ -93,6 +93,31 @@ export class MetricsCard extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+
+    .metrics-card[data-tooltip] {
+      position: relative;
+    }
+
+    .metrics-card[data-tooltip]:hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translate(-50%, 100%);
+      background: var(--md-sys-color-surface, #171a21);
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.4;
+      max-width: 280px;
+      width: max-content;
+      z-index: 100;
+      pointer-events: none;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
   `;
 
   @property({ type: String }) label = '';
@@ -105,6 +130,9 @@ export class MetricsCard extends LitElement {
   @property({ type: String }) icon = '';
 
   @property({ type: String }) sub = '';
+
+  /** Hover tooltip explaining how the metric is calculated. */
+  @property({ type: String }) description = '';
 
   @property({ type: Boolean }) clickable = false;
 
@@ -123,7 +151,7 @@ export class MetricsCard extends LitElement {
       <div class="icon" aria-hidden="true">${this.icon}</div>
       <div class="content">
         <div class="value" title=${ifDefined(this.valueTitle || undefined)}>${this.value}</div>
-        <div class="label">${this.label}</div>
+        <div class="label" title=${ifDefined(this.description || undefined)}>${this.label}</div>
         ${this.sub ? html`<div class="sub">${this.sub}</div>` : ''}
       </div>
     `;
@@ -135,6 +163,7 @@ export class MetricsCard extends LitElement {
         <button
           class="metrics-card"
           type="button"
+          data-tooltip=${ifDefined(this.description || undefined)}
           @click=${this.handleClick}
         >
           ${this.renderContent()}
@@ -142,7 +171,7 @@ export class MetricsCard extends LitElement {
       `;
     }
 
-    return html`<div class="metrics-card">${this.renderContent()}</div>`;
+    return html`<div class="metrics-card" data-tooltip=${ifDefined(this.description || undefined)}>${this.renderContent()}</div>`;
   }
 }
 

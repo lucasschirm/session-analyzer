@@ -1,7 +1,3 @@
-// TODO(#142 / DS-B4): see the same note in portfolio-chart-helpers.ts — this
-// import is repointed to @lucasschirm/sal-claude-transformer as an interim
-// step for the DS-F5 (#154) package split; #142 should remove it.
-import { tryMetricIdToLabel } from '@lucasschirm/sal-claude-transformer';
 import type {
   ComponentFactPage,
   ContextTimingSeries,
@@ -18,6 +14,7 @@ import type {
   TableRow,
 } from '../../components/charts/chart-types';
 import { formatChartValue } from '../../components/charts/chart-types';
+import { metricDescription, metricLabel } from '../../lib/metric-descriptions';
 import type { MetricCardView } from '../portfolio/portfolio-chart-helpers';
 import type { SessionEvidenceParams } from './session-evidence-params';
 import { evidenceLinkHref } from './session-evidence-params';
@@ -153,9 +150,10 @@ export function summaryToMetricCards(
     const link = metric.evidenceLinks[0];
     return {
       metricId: metric.metricId,
-      label: tryMetricIdToLabel(metric.metricId) ?? metric.label,
+      label: metricLabel(metric.metricId, metric.label),
       value: formatChartValue(metric.value, metric.unit),
       sub: `${coverageN(metric)} • ${metric.coverage} • ${metric.confidence}`,
+      description: metricDescription(metric.metricId),
       href: link ? evidenceLinkHref(link, params) : undefined,
     };
   });

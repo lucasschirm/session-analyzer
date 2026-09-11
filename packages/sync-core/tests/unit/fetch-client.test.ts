@@ -29,14 +29,15 @@ function listXml(prefixes: string[], isTruncated: boolean, nextToken?: string): 
 }
 
 function objectsXml(
-  objects: Array<{ key: string; size: number; etag?: string }>,
+  objects: Array<{ key: string; size: number; etag?: string; lastModified?: string }>,
   isTruncated: boolean,
   nextToken?: string,
 ): string {
   const contents = objects
     .map((o) => {
+      const lastModified = o.lastModified ? `<LastModified>${o.lastModified}</LastModified>` : '';
       const etag = o.etag ? `<ETag>${o.etag}</ETag>` : '';
-      return `<Contents><Key>${o.key}</Key>${etag}<Size>${o.size}</Size></Contents>`;
+      return `<Contents><Key>${o.key}</Key>${lastModified}${etag}<Size>${o.size}</Size></Contents>`;
     })
     .join('');
   const next = nextToken ? `<NextContinuationToken>${nextToken}</NextContinuationToken>` : '';
@@ -331,6 +332,174 @@ describe('S3FetchClient', () => {
     const client = setupClient(BASE_CONFIG, mock);
     const result = await client.listSessionObjects(projectId, sessionId);
     expect(result).toEqual([{ key: key1, size: 10, etag: undefined }]);
+  });
+
+  it('listProjectObjects encodes the project prefix and issues a non-delimited request', async () => {
+    const projectId = 'my project';
+    const prefix = `${encodeKeySegment(projectId)}/`;
+    const key1 = `${prefix}session%201/transcript.jsonl`;
+    const key2 = `${prefix}session%201/subagents/agent-1.jsonl`;
+    const mock = vi.fn(
+      createMockFetch([
+        () =>
+          new Response(
+            objectsXml(
+              [
+                { key: key1, size: 42, etag: '"abc123"' },
+                { key: key2, size: 7, etag: '"def456"' },
+              ],
+              false,
+            ),
+            { status: 200 },
+          ),
+      ]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.listProjectObjects(projectId);
+    expect(result).toEqual([
+      { key: key1, size: 42, etag: '"abc123"' },
+      { key: key2, size: 7, etag: '"def456"' },
+    ]);
+    const url = urlOf(lastRequest(mock));
+    expect(url.search).toContain(`prefix=${prefix}`);
+    expect(url.search).not.toContain('delimiter');
+  });
+
+  it('listProjectObjects paginates via continuation-token and streams onPage per page', async () => {
+    const projectId = 'proj';
+    const prefix = `${encodeKeySegment(projectId)}/`;
+    const key1 = `${prefix}sess-1/transcript.jsonl`;
+    const key2 = `${prefix}sess-2/transcript.jsonl`;
+    const calls = [
+      () => new Response(objectsXml([{ key: key1, size: 1 }], true, 'token1'), { status: 200 }),
+      () => new Response(objectsXml([{ key: key2, size: 2 }], false), { status: 200 }),
+    ];
+    const mock = vi.fn(createMockFetch(calls));
+    const client = setupClient(BASE_CONFIG, mock);
+    const pages: Array<{ key: string; size?: number; etag?: string }[]> = [];
+    const result = await client.listProjectObjects(projectId, {
+      onPage: (page) => {
+        pages.push(page.objects);
+      },
+    });
+    expect(result).toEqual([
+      { key: key1, size: 1, etag: undefined },
+      { key: key2, size: 2, etag: undefined },
+    ]);
+    expect(pages).toEqual([
+      [{ key: key1, size: 1, etag: undefined }],
+      [{ key: key2, size: 2, etag: undefined }],
+    ]);
+    const secondUrl = urlOf(mock.mock.calls[1]?.[0] as Request);
+    expect(secondUrl.searchParams.get('continuation-token')).toBe('token1');
+    expect(mock).toHaveBeenCalledTimes(2);
+  });
+
+  it('listProjectObjects rejects and delivers no page when called with an already-aborted signal', async () => {
+    const mock = vi.fn(
+      createMockFetch([() => new Response(objectsXml([], false), { status: 200 })]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const controller = new AbortController();
+    controller.abort();
+    const onPage = vi.fn();
+    await expect(
+      client.listProjectObjects('proj', { signal: controller.signal, onPage }),
+    ).rejects.toSatisfy((error: S3Error) => error instanceof S3Error && error.kind === 'network');
+    expect(onPage).not.toHaveBeenCalled();
+  });
+
+  it('listProjectObjects parses LastModified when present in the XML', async () => {
+    const projectId = 'proj';
+    const prefix = `${encodeKeySegment(projectId)}/`;
+    const key1 = `${prefix}sess-1/transcript.jsonl`;
+    const mock = vi.fn(
+      createMockFetch([
+        () =>
+          new Response(
+            objectsXml([{ key: key1, size: 10, lastModified: '2026-01-01T00:00:00.000Z' }], false),
+            { status: 200 },
+          ),
+      ]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.listProjectObjects(projectId);
+    expect(result).toEqual([
+      { key: key1, size: 10, etag: undefined, lastModified: '2026-01-01T00:00:00.000Z' },
+    ]);
+  });
+
+  it('listProjectObjects returns lastModified: undefined when the XML omits it', async () => {
+    const projectId = 'proj';
+    const prefix = `${encodeKeySegment(projectId)}/`;
+    const key1 = `${prefix}sess-1/transcript.jsonl`;
+    const mock = vi.fn(
+      createMockFetch([
+        () => new Response(objectsXml([{ key: key1, size: 10 }], false), { status: 200 }),
+      ]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.listProjectObjects(projectId);
+    expect(result).toEqual([{ key: key1, size: 10, etag: undefined, lastModified: undefined }]);
+  });
+
+  it('listProjectObjects returns entries without etag when the XML omits it', async () => {
+    const projectId = 'proj';
+    const prefix = `${encodeKeySegment(projectId)}/`;
+    const key1 = `${prefix}sess-1/transcript.jsonl`;
+    const mock = vi.fn(
+      createMockFetch([
+        () => new Response(objectsXml([{ key: key1, size: 10 }], false), { status: 200 }),
+      ]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.listProjectObjects(projectId);
+    expect(result).toEqual([{ key: key1, size: 10, etag: undefined }]);
+  });
+
+  it('listProjectObjects preserves an entity-escaped ETag as raw text, never decoded', async () => {
+    const projectId = 'proj';
+    const prefix = `${encodeKeySegment(projectId)}/`;
+    const key1 = `${prefix}sess-1/transcript.jsonl`;
+    const mock = vi.fn(
+      createMockFetch([
+        () =>
+          new Response(objectsXml([{ key: key1, size: 10, etag: '&quot;abc&quot;' }], false), {
+            status: 200,
+          }),
+      ]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.listProjectObjects(projectId);
+    expect(result[0]?.etag).toBe('&quot;abc&quot;');
+  });
+
+  it('listProjectObjects returns keys with special characters raw/undecoded', async () => {
+    const projectId = 'my project?café&test=1';
+    const prefix = `${encodeKeySegment(projectId)}/`;
+    const key1 = `${prefix}sess%201/foo%20bar.jsonl`;
+    const key2 = `${prefix}sess%201/baz%3Aqux.jsonl`;
+    const mock = vi.fn(
+      createMockFetch([
+        () =>
+          new Response(
+            objectsXml(
+              [
+                { key: key1, size: 1 },
+                { key: key2, size: 2 },
+              ],
+              false,
+            ),
+            { status: 200 },
+          ),
+      ]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.listProjectObjects(projectId);
+    expect(result).toEqual([
+      { key: key1, size: 1, etag: undefined },
+      { key: key2, size: 2, etag: undefined },
+    ]);
   });
 
   it('streams large downloads and reports incremental progress', async () => {
