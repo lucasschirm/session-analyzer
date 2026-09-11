@@ -254,7 +254,27 @@ Sync manifest fingerprints feature (issue #403): registered here as
 `SYNC-014`, in the manager/UI PR), per the same "registered here,
 implemented by the PR that introduces the surface" precedent as
 SYNC-011/PIPE-019/SYNC-012 below. Final score confirmation across all
-four rows is owned by #408.
+four rows is owned by #408, which confirmed all four scores as delivered
+(no scope drift from #404's proposal) and closes the feature with two
+explicit follow-up items rather than a silent deferral:
+
+- `FixtureBucket` (`packages/site/tests/e2e/sync-fixtures.ts`) never
+  truncates a listing response — `handleList` always builds its XML body
+  with `isTruncated=false`, and `listObjectContents` returns every
+  matching object in a single page regardless of count. This means the
+  browser E2E suite cannot exercise true S3-style pagination (a listing
+  over `DEFAULT_MAX_LIST_KEYS` = `1_000`, `packages/sync-core/src/storage/fetch-client.ts:8`,
+  keys split across multiple `list:` requests) — that case is covered only
+  at the unit level, by #406's `SYNC-013` page-straddling test against
+  `MockS3Client` (which does support multi-page `onPage` sequences).
+  Adding real pagination to `FixtureBucket` is out of scope for this
+  feature; no open issue currently owns it.
+- `FileToDownload.etag`'s per-file skip optimization (`sync-protocol.ts`)
+  remains dormant/unconsumed by any skip decision, pre-existing and
+  orthogonal to this feature — distinct from the session-level manifest
+  fingerprint (D1/D2) this feature ships, which skips the manifest GET one
+  level above per-file diffing. It stays deferred; no issue in this
+  feature owns finishing it.
 
 SYNC-006/007/008 (DS-F3, issue #158) were registered and implemented in
 the same PR — the Devin plugin's sync→manifest→artifact-set journey and

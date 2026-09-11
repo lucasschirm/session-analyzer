@@ -30,6 +30,11 @@ export interface FileToDownload {
    * (or compound hash for multipart uploads), NOT the SHA-256 content hash.
    * Available for future ETag-based skip optimization; the site would store
    * the last-seen ETag locally and skip downloads when it hasn't changed.
+   * Still unconsumed by any skip decision as of the sync-fingerprints feature
+   * (#403), which instead adds a session-level manifest fingerprint (see
+   * `ManifestFingerprint` in `types/index.ts`) that skips the manifest GET
+   * before per-file diffing is ever reached — a distinct mechanism from this
+   * per-file ETag.
    */
   etag?: string;
   size: number;

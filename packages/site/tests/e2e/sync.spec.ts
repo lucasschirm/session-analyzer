@@ -11,6 +11,29 @@ import {
 
 const PASSKEY = 'e2e-passkey';
 
+/**
+ * Mirrors `packages/sync-core/src/storage/fetch-client.ts:8`'s
+ * `DEFAULT_MAX_LIST_KEYS` (1_000 keys per `ListObjectsV2` page). There is no
+ * exported constant to import from `packages/site`, so it is re-declared
+ * here for UX-025's request-count formula.
+ */
+const DEFAULT_MAX_LIST_KEYS = 1_000;
+
+/**
+ * Production contract: a project listing page holds at most
+ * `DEFAULT_MAX_LIST_KEYS` keys, so a re-sync of `sessionCount` sessions
+ * (each contributing `filesPerSession` files plus its own manifest.json),
+ * plus the project-level manifest.json itself (the `+ 1`), issues this many
+ * `list:<projectId>/` requests. For UX-025's small fixture this evaluates
+ * to 1 because `FixtureBucket` does not truncate listings (see AGENTS.md /
+ * §9 backlog item) — the formula documents the production contract; true
+ * multi-page straddling is proven at the unit level by SYNC-013
+ * (`session-sync.worker.test.ts`).
+ */
+function expectedProjectListingRequests(sessionCount: number, filesPerSession: number): number {
+  return Math.ceil((sessionCount * (filesPerSession + 1) + 1) / DEFAULT_MAX_LIST_KEYS);
+}
+
 function attachLoggers(page: Page): void {
   page.on('pageerror', (err) => {
     console.error(`[pageerror] ${err.message}`);
@@ -1159,9 +1182,11 @@ test('UX-025: re-sync of an unchanged bucket issues one project listing and zero
   page,
 }) => {
   const projectId = 'ux025-proj';
+  const sessionIds = ['e2e-sess-a', 'e2e-sess-b'];
+  const filesPerSession = 1; // one session-scope file (transcript.jsonl) per session below
   const bucket = new FixtureBucket();
   bucket.addProject(projectId, 'UX-025 Project', '');
-  for (const sessionId of ['e2e-sess-a', 'e2e-sess-b']) {
+  for (const sessionId of sessionIds) {
     bucket.addSession(projectId, sessionId, {
       files: [
         {
@@ -1184,10 +1209,14 @@ test('UX-025: re-sync of an unchanged bucket issues one project listing and zero
   await clickRowSyncAndConfirm(page, { syncOnlyNew: false });
   await waitForSyncIdle(page);
 
+  const expectedListingRequests = expectedProjectListingRequests(
+    sessionIds.length,
+    filesPerSession,
+  );
   const projectListingGets = bucket
     .getRequests({ method: 'GET' })
     .filter((r) => r.key === `list:${projectId}/`);
-  expect(projectListingGets).toHaveLength(1);
+  expect(projectListingGets).toHaveLength(expectedListingRequests);
 
   const sessionManifestGets = bucket
     .getRequests({ method: 'GET' })
