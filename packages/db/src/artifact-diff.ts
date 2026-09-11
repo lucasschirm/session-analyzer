@@ -1008,6 +1008,21 @@ export class ArtifactDiffRepository {
    * still resolves to `undefined`. When `blobStore` is not provided,
    * behavior is unchanged: real bytes land directly in `insert.content`.
    */
+  private async retainBytesIfStorePresent(
+    sha256: string,
+    size: number,
+    content: ArtifactContent,
+  ): Promise<void> {
+    if (!this.blobStore) return;
+    await this.blobStore.retain({
+      sha256,
+      size,
+      relativePath: '',
+      mediaType: 'application/octet-stream',
+      content,
+    });
+  }
+
   private async writeBlobIfNew(
     queryable: SqliteExecutor | SqliteTransaction,
     blobSha256: string,
@@ -1019,25 +1034,10 @@ export class ArtifactDiffRepository {
     if (existing) return;
 
     const bytes = asBytes(canonicalized.content);
-    if (this.blobStore) {
-      await this.blobStore.retain({
-        sha256: blobSha256,
-        size: bytes.length,
-        relativePath: '',
-        mediaType: 'application/octet-stream',
-        content: canonicalized.content,
-      });
-    }
-    await DbArtifactBlobStore.insert(
-      queryable,
-      buildBlobInsertInput(
-        blobSha256,
-        retentionClass,
-        bytes,
-        canonicalized,
-        Boolean(this.blobStore),
-      ),
-    );
+    await this.retainBytesIfStorePresent(blobSha256, bytes.length, canonicalized.content);
+    const hasStore = Boolean(this.blobStore);
+    const insert = buildBlobInsertInput(blobSha256, retentionClass, bytes, canonicalized, hasStore);
+    await DbArtifactBlobStore.insert(queryable, insert);
   }
 
   async record(

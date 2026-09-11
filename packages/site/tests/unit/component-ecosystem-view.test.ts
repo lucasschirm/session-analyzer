@@ -352,6 +352,80 @@ describe('component-ecosystem-view', () => {
     expect(componentMock.getVersions).toHaveBeenCalledWith('code-review', expect.anything());
   });
 
+  it("renders the new component's data, not a stale one's, when a hashchange-triggered load for the OLD component is still in flight", async () => {
+    // Regression coverage for the full real-world race: a `hashchange`
+    // event firing while `componentId` is still the OLD value (matching
+    // the router's real async attribute-update timing) starts load() for
+    // the WRONG component first, setting `this.loading = true` before
+    // willUpdate's own load() for the correct new component ever runs.
+    // Without `load()`'s `reloadPending` coalescing, that second call
+    // would be silently dropped by load()'s own `if (this.loading)`
+    // guard -- the header would show the new component while the data
+    // panels kept showing the previous one's results.
+    window.location.hash = '#/artifacts/read_file';
+    const view = Object.assign(document.createElement('component-ecosystem-view'), {
+      componentId: 'read_file',
+    }) as ComponentEcosystemView;
+    await mount(view);
+
+    componentMock.getVersions.mockClear();
+    // The stale ('read_file') call is deliberately held open via a
+    // manually-resolved promise, so this test doesn't depend on incidental
+    // microtask-timing luck to force the actual hazardous interleaving:
+    // willUpdate's own load() call for the new component is guaranteed to
+    // run while the stale load is still genuinely in flight (`this.loading`
+    // still true), which is exactly the condition `reloadPending` exists
+    // to handle.
+    let resolveStale: (() => void) | undefined;
+    componentMock.getVersions.mockImplementation(async (id: string) => {
+      if (id === 'read_file') {
+        await new Promise<void>((resolve) => {
+          resolveStale = resolve;
+        });
+        return versionsFixture({
+          items: [{ ...versionsFixture().items[0], version: 'STALE-read_file' }],
+        });
+      }
+      return versionsFixture({
+        items: [{ ...versionsFixture().items[0], version: 'FRESH-code-review' }],
+      });
+    });
+
+    // Fire the stale hashchange first, still reading the OLD componentId --
+    // exactly as the router's own, separately-registered hashchange
+    // listener would in production. This starts load() for 'read_file' and
+    // blocks it on the deferred promise above, so `this.loading` stays
+    // `true` until this test explicitly releases it. Deliberately not
+    // touching window.location/history here (unlike a real navigation) --
+    // both trigger this test environment's own hashchange-like reaction
+    // asynchronously, which would fire a second, non-stale hashchange
+    // dispatch later and mask the very staleness this test needs to force.
+    // `handleHashChange()` only checks the hash *prefix*, so dispatching
+    // against the unchanged '#/artifacts/read_file' still satisfies it.
+    window.dispatchEvent(new Event('hashchange'));
+
+    // Now simulate the parent's deferred attribute update completing,
+    // *while the stale load is still genuinely blocked*. Without
+    // `reloadPending`, this call is silently dropped here.
+    view.componentId = 'code-review';
+    await view.updateComplete;
+
+    // Release the stale load so it can finish, then let the coalesced
+    // reload (if any) run to completion.
+    resolveStale?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await view.updateComplete;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await view.updateComplete;
+
+    // Both loads ran (the stale one, then the coalesced correct one) -- and
+    // critically, the rendered state reflects the correct, most-recent
+    // component's data, not the stale one's.
+    const root = view.shadowRoot as ShadowRoot;
+    expect(root.textContent).toContain('FRESH-code-review');
+    expect(root.textContent).not.toContain('STALE-read_file');
+  });
+
   it('keeps the componentId in the URL when a filter changes on a component-detail route', async () => {
     // Regression coverage: filters used to be computed from a field
     // initializer that ran before the (now-fixed) component-id attribute

@@ -294,6 +294,18 @@ export class ComponentEcosystemView extends PageLitElement {
 
   @state() private loading = false;
 
+  /**
+   * Set when a `load()` call arrives while one is already in flight (e.g.
+   * a stale `hashchange`-triggered load racing `willUpdate`'s componentId
+   * -triggered one). Without this, the newer call's `if (this.loading)
+   * return` guard would silently drop it entirely, leaving the header
+   * (bound directly to `componentId`) showing the new component while the
+   * data panels still show the previous one's stale results. `load()`
+   * checks this once it finishes and immediately re-runs itself against
+   * whatever `componentId`/`filters` are current at that point.
+   */
+  private reloadPending = false;
+
   @state() private globalState: LoadState = 'idle';
 
   @state() private globalError: string | null = null;
@@ -349,9 +361,18 @@ export class ComponentEcosystemView extends PageLitElement {
    * `this.componentId` at the moment it fires, which can race the router's
    * own attribute update (Lit applies property/attribute changes as a
    * microtask) and observe the *previous* id — `willUpdate` fires with the
-   * update already applied, so it can't observe a stale value. `load()`'s
-   * own `if (this.loading) return` guard makes this safe to call alongside
-   * `connectedCallback()`'s initial load with no duplicate fetch.
+   * update already applied, so it can't observe a stale value.
+   *
+   * Calling `load()` here while a *different, stale* load is still in
+   * flight (e.g. the `hashchange` listener's own reload, triggered for the
+   * previous componentId just before this update) does not get silently
+   * dropped: `load()`'s `reloadPending` coalescing (see its own doc
+   * comment) guarantees a fresh pass runs against whatever `componentId`/
+   * `filters` are current once the in-flight one finishes, rather than
+   * leaving the data panels showing the previous component's results under
+   * a header that already shows the new one. Calling it alongside
+   * `connectedCallback()`'s initial load has no duplicate-fetch cost either
+   * way.
    */
   willUpdate(changed: PropertyValues): void {
     if (changed.has('componentId') && this.componentId) {
@@ -368,7 +389,10 @@ export class ComponentEcosystemView extends PageLitElement {
   }
 
   private async load(): Promise<void> {
-    if (this.loading) return;
+    if (this.loading) {
+      this.reloadPending = true;
+      return;
+    }
     this.loading = true;
     this.globalState = 'loading';
     this.globalError = null;
@@ -432,6 +456,10 @@ export class ComponentEcosystemView extends PageLitElement {
     }
 
     this.loading = false;
+    if (this.reloadPending) {
+      this.reloadPending = false;
+      void this.load();
+    }
   }
 
   private async loadDiff(): Promise<void> {
