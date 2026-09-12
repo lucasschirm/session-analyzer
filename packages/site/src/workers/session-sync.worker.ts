@@ -791,6 +791,13 @@ export class SessionSyncWorker {
       if (this.cancelled) return { status: 'failed' };
       const actualHash = await sha256Hex(new Uint8Array(buffer));
       if (file.hash && actualHash !== file.hash.toLowerCase()) {
+        if (this.isTranscriptFile(file) && this.isParsableTranscript(buffer)) {
+          file.hash = actualHash;
+          this.setFileStatus(state, file, 'downloaded');
+          this.emitProgress(sessionId, state);
+          this.emitFileDownloaded(sessionId, file, buffer);
+          return { status: 'downloaded' };
+        }
         file.hash = actualHash;
         this.setFileStatus(state, file, 'failed', 'HASH_MISMATCH');
         this.emitProgress(sessionId, state);
@@ -831,6 +838,70 @@ export class SessionSyncWorker {
   private mainTranscriptErrorCode(mainResult: SessionState['files'][number]): string {
     if (mainResult.code) return mainResult.code;
     return 'DOWNLOAD_FAILED';
+  }
+
+  private isTranscriptFile(file: FileToDownload): boolean {
+    if (file.isMainTranscript) return true;
+    const path = file.relativePath.toLowerCase();
+    return (
+      path.endsWith('.jsonl') ||
+      path.endsWith('/transcript.json') ||
+      path === 'transcript.json' ||
+      path.includes('subagents/')
+    );
+  }
+
+  private isParsableTranscript(buffer: ArrayBuffer): boolean {
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+      const trimmed = text.trim();
+      if (!trimmed) return false;
+
+      // 1. Single JSON document check (e.g. ATIF or Antigravity JSON transcripts)
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (typeof parsed === 'object' && parsed !== null) {
+          return true;
+        }
+      } catch {
+        // Not a single JSON document, continue to JSONL check
+      }
+
+      // 2. JSON Lines (JSONL) check
+      const lines = trimmed
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+
+      if (lines.length === 0) return false;
+
+      let validCount = 0;
+      let invalidCount = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        try {
+          const obj = JSON.parse(line);
+          if (typeof obj === 'object' && obj !== null) {
+            validCount++;
+          } else {
+            invalidCount++;
+          }
+        } catch {
+          // Tolerate trailing incomplete line if earlier lines are valid JSON entries
+          // (e.g., interrupted stream or append in progress)
+          if (i === lines.length - 1 && validCount > 0) {
+            // Trailing cut-off line
+          } else {
+            invalidCount++;
+          }
+        }
+      }
+
+      return validCount > 0 && invalidCount === 0;
+    } catch {
+      return false;
+    }
   }
 
   private updateProgress(
