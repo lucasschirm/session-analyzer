@@ -26,7 +26,12 @@ import {
   rebuildAnalyticsDerivedData,
   type VerifiedManifestBundle,
 } from '@lucasschirm/sal-db';
-import { ANALYTICS_SCHEMA_NAME, MIGRATIONS, MigrationRunner } from '@lucasschirm/sal-db-core';
+import {
+  ANALYTICS_SCHEMA_NAME,
+  ArtifactBlobStore as DbArtifactBlobStore,
+  MIGRATIONS,
+  MigrationRunner,
+} from '@lucasschirm/sal-db-core';
 import { parseSyncManifest } from '@lucasschirm/sal-sync-core';
 import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
 import type { TransformerRegistry } from '@lucasschirm/sal-transformer-shared';
@@ -47,7 +52,7 @@ import {
   createSyncArtifactCache,
   type SyncArtifactCache,
 } from './artifact-adapters';
-import { createOpfsArtifactBlobStore } from './opfs-artifact-blob-store';
+import { createOpfsArtifactBlobStore, writeArtifactBlobFile } from './opfs-artifact-blob-store';
 import { WasmSqliteExecutor } from './wasm-sqlite-executor';
 
 const ANALYTICS_DB_FILENAME = '/sal-analytics.sqlite3';
@@ -138,6 +143,27 @@ function toManualFlowInput(bundle: ManualIngestionBundleRequest): ManualIngestio
   };
 }
 
+export async function backfillArtifactBlobsToOpfs(executor: WasmSqliteExecutor): Promise<void> {
+  const blobs = await DbArtifactBlobStore.listWhereContentNotNull(executor);
+  if (blobs.length === 0) return;
+
+  for (const blob of blobs) {
+    if (blob.content === null) continue;
+    try {
+      await writeArtifactBlobFile(blob.sha256, blob.content);
+      await DbArtifactBlobStore.clearContent(executor, blob.sha256, Date.now());
+    } catch (error) {
+      console.error(`Artifact blob backfill failed for ${blob.sha256}`, error);
+    }
+  }
+
+  try {
+    await executor.vacuum();
+  } catch (vacuumError) {
+    console.error('Post-backfill VACUUM failed', vacuumError);
+  }
+}
+
 export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState> {
   const executor = await WasmSqliteExecutor.create({
     filename: ANALYTICS_DB_FILENAME,
@@ -183,6 +209,14 @@ export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState
     registry,
     analysisReleaseId: DEFAULT_ANALYSIS_RELEASE,
   };
+
+  // Fire-and-forget: this pass is unpaginated and can be slow against a
+  // large pre-existing artifact_blobs table. It must not block worker
+  // init — every consumer already handles both pre- and post-backfill
+  // rows transparently (see ArtifactDiffRepository's read-side fallback),
+  // so nothing needs to wait for it to finish. All internal errors are
+  // caught and logged inside backfillArtifactBlobsToOpfs itself.
+  void backfillArtifactBlobsToOpfs(executor);
 
   const dataSource = createAnalyticsDataSource(executor, hasher, blobStore);
   const ingestion = new DefaultIngestionOrchestrator(context);
@@ -556,7 +590,7 @@ async function handleVacuumAnalyticsDatabase(
   }
   optimizeInFlight = true;
   try {
-    state.executor.vacuum();
+    await state.executor.vacuum();
     return { id: 0, ok: true };
   } catch (error) {
     return toErrorResponse(error);
