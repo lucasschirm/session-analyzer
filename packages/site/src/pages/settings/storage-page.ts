@@ -713,21 +713,24 @@ export class StoragePage extends PageLitElement {
         <button
           class="secondary"
           ?disabled=${busy}
-          data-id=${db.id} @click=${this.handleRowDownload}
+          data-id=${db.id}
+          @click=${this.handleRowDownload}
         >
           Download
         </button>
         <button
           class="secondary"
           ?disabled=${busy}
-          data-id=${db.id} @click=${this.handleRowOptimize}
+          data-id=${db.id}
+          @click=${this.handleRowOptimize}
         >
           Optimize
         </button>
         <button
           class="danger"
           ?disabled=${busy}
-          data-id=${db.id} @click=${this.handleRowDelete}
+          data-id=${db.id}
+          @click=${this.handleRowDelete}
         >
           Delete
         </button>

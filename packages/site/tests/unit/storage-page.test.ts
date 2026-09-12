@@ -114,6 +114,30 @@ describe('storage-page', () => {
     }
   });
 
+  it("renders no stray merge-artifact text between rows, and wraps each row's buttons in .actions-group", async () => {
+    const el = await mount();
+    const root = el.shadowRoot as ShadowRoot;
+    const tbody = root.querySelector('.db-table tbody') as HTMLElement;
+
+    // Regression for a merge defect where a leftover `)}` closing token
+    // from an old template literal survived as a literal text node.
+    for (const node of Array.from(tbody.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        expect(node.textContent?.trim()).toBe('');
+      }
+    }
+
+    // Regression for a merge defect where the .actions-group wrapper div
+    // (which the stylesheet's `.db-table td.actions .actions-group` rule
+    // targets) was dropped, leaving the flex/gap styling unapplied.
+    const rows = root.querySelectorAll('.db-table tbody tr');
+    for (const row of rows) {
+      const group = row.querySelector('td.actions .actions-group');
+      expect(group).not.toBeNull();
+      expect(group?.querySelectorAll('button').length).toBe(3);
+    }
+  });
+
   it('opens the single-DB confirmation modal when a row Delete is clicked', async () => {
     const el = await mount();
     const root = el.shadowRoot as ShadowRoot;
