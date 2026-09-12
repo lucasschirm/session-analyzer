@@ -194,6 +194,36 @@ describe('backfillArtifactBlobsToOpfs', () => {
     expect(badAfter?.content).not.toBeNull();
   });
 
+  it('does not abort the batch when clearContent fails after a successful OPFS write', async () => {
+    const good = makeBackfillRow('sha-good-2', 'good payload 2');
+    const cleared = makeBackfillRow('sha-clear-fail', 'clear-fail payload');
+
+    await DbArtifactBlobStore.insert(executor, good);
+    await DbArtifactBlobStore.insert(executor, cleared);
+
+    const originalClearContent = DbArtifactBlobStore.clearContent.bind(DbArtifactBlobStore);
+    const clearSpy = vi
+      .spyOn(DbArtifactBlobStore, 'clearContent')
+      .mockImplementation(async (queryable, sha256, updatedAt) => {
+        if (sha256 === 'sha-clear-fail') throw new Error('clearContent failed');
+        return originalClearContent(queryable, sha256, updatedAt);
+      });
+
+    await backfillArtifactBlobsToOpfs(executor);
+    clearSpy.mockRestore();
+
+    // The OPFS write for the row whose clearContent call failed did
+    // complete — this proves the failure is isolated to that row's SQL
+    // update, not silently masking a write that never happened.
+    expect(opfs.files.get('sha-clear-fail')).toEqual(cleared.content);
+
+    const goodAfter = await DbArtifactBlobStore.getBySha256(executor, 'sha-good-2');
+    expect(goodAfter?.content).toBeNull();
+
+    const clearFailAfter = await DbArtifactBlobStore.getBySha256(executor, 'sha-clear-fail');
+    expect(clearFailAfter?.content).not.toBeNull();
+  });
+
   it('vacuums once after a pass with multiple rows', async () => {
     const vacuumSpy = vi.spyOn(executor, 'vacuum').mockImplementation(() => undefined);
 

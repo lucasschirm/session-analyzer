@@ -210,7 +210,13 @@ export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState
     analysisReleaseId: DEFAULT_ANALYSIS_RELEASE,
   };
 
-  await backfillArtifactBlobsToOpfs(executor);
+  // Fire-and-forget: this pass is unpaginated and can be slow against a
+  // large pre-existing artifact_blobs table. It must not block worker
+  // init — every consumer already handles both pre- and post-backfill
+  // rows transparently (see ArtifactDiffRepository's read-side fallback),
+  // so nothing needs to wait for it to finish. All internal errors are
+  // caught and logged inside backfillArtifactBlobsToOpfs itself.
+  void backfillArtifactBlobsToOpfs(executor);
 
   const dataSource = createAnalyticsDataSource(executor, hasher, blobStore);
   const ingestion = new DefaultIngestionOrchestrator(context);
