@@ -10,9 +10,11 @@
  * WASM database. In Node, OPFS is unavailable so initialize() always falls back
  * to the in-memory backend.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DatabaseManager } from '../../src/db/database';
+import * as opfsFileIo from '../../src/db/opfs-file-io';
 import type {
   Connection,
   PasskeyState,
@@ -22,6 +24,11 @@ import type {
   StoredS3Credentials,
   SyncManifest,
 } from '../../src/types';
+
+vi.mock('../../src/db/opfs-file-io', () => ({
+  readOpfsFileBytes: vi.fn(),
+  removeOpfsFileIfExists: vi.fn(),
+}));
 
 /** Creates and initializes a fresh in-memory DatabaseManager. */
 async function createManager(): Promise<DatabaseManager> {
@@ -136,6 +143,30 @@ function makeSyncManifest(sessionId: string): SyncManifest {
     syncRunsCount: 1,
     updatedAt: '2024-01-01T00:00:00.000Z',
   };
+}
+
+let roundTripCounter = 0;
+
+/**
+ * Loads exported SQLite file bytes into a brand-new, independent sqlite3
+ * instance and returns a query result — proving the bytes are a real,
+ * standalone-loadable SQLite file (not just a header-byte check on the
+ * source db's own in-memory state). Each call uses a unique virtual
+ * filename so parallel/related assertions never collide.
+ */
+async function readBackExportedRow(
+  bytes: Uint8Array,
+  sql: string,
+): Promise<Record<string, unknown> | undefined> {
+  const sqlite3 = await sqlite3InitModule();
+  const filename = `/round-trip-${roundTripCounter++}.sqlite3`;
+  sqlite3.capi.sqlite3_js_posix_create_file(filename, bytes);
+  const db = new sqlite3.oo1.DB(filename, 'r');
+  try {
+    return db.selectObject(sql) as Record<string, unknown> | undefined;
+  } finally {
+    db.close();
+  }
 }
 
 describe('DatabaseManager', () => {
@@ -1442,6 +1473,197 @@ describe('DatabaseManager', () => {
       expect(bytes.length).toBeGreaterThan(0);
       // SQLite file header
       expect(String.fromCharCode(...bytes.slice(0, 15))).toBe('SQLite format 3');
+    });
+  });
+
+  // ================================================================
+  // vacuum
+  // ================================================================
+  describe('vacuum', () => {
+    it('runs without throwing and never disturbs surviving data', () => {
+      mgr.createProject(makeProject({ id: 'proj-vacuum-throwaway', name: 'Throwaway' }));
+      mgr.deleteProject('proj-vacuum-throwaway'); // free some pages for VACUUM to reclaim
+
+      expect(() => mgr.vacuum()).not.toThrow();
+
+      mgr.createProject(makeProject({ id: 'proj-vacuum-survivor', name: 'Survivor' }));
+      mgr.vacuum();
+      const survivor = mgr.getProject('proj-vacuum-survivor');
+      expect(survivor).not.toBeNull();
+      expect(survivor!.name).toBe('Survivor');
+    });
+  });
+
+  // ================================================================
+  // getSizeBytes
+  // ================================================================
+  describe('getSizeBytes', () => {
+    it('returns page_count * page_size, matching a direct PRAGMA read', () => {
+      mgr.createProject(makeProject({ id: 'proj-size-1', name: 'Size Project' }));
+
+      const db = mgr.getControlDb();
+      const pageCount = Number(db.selectValue('PRAGMA page_count'));
+      const pageSize = Number(db.selectValue('PRAGMA page_size'));
+
+      expect(mgr.getSizeBytes()).toBe(pageCount * pageSize);
+      expect(mgr.getSizeBytes()).toBeGreaterThan(0);
+    });
+
+    it('throws (rather than returning a fabricated 0) when the database is not initialized', () => {
+      const m = new DatabaseManager();
+      expect(() => m.getSizeBytes()).toThrow('Database not initialized');
+    });
+  });
+
+  // ================================================================
+  // exportControlDatabaseOptimized
+  //
+  // OPFS COVERAGE GAP (documented per plan, not silently skipped): this
+  // suite runs under `@vitest-environment node` (see the file banner above),
+  // and separately the rest of the site package's unit suite runs under
+  // happy-dom (vitest.config.ts) - neither implements OPFS. Verified
+  // directly against the real, unmocked `@sqlite.org/sqlite-wasm` module
+  // used here: `navigator.storage` is `undefined` under happy-dom, and in
+  // Node, `sqlite3InitModule()` yields `oo1.OpfsDb === undefined` with
+  // `capi.sqlite3_vfs_find('opfs')` returning 0 - there is no "opfs" VFS
+  // registered outside a real browser's dedicated-Worker context at all
+  // (sqlite-wasm's OPFS VFS depends on a synchronous-access-handle Worker
+  // proxy that only exists in a live browser). So `DatabaseManager.storage`
+  // can never become `'opfs'` in this suite, and the `VACUUM INTO
+  // 'file:...?vfs=opfs'` branch inside `exportControlDatabaseOptimized` is
+  // unreachable here by construction - not an oversight.
+  //
+  // What the tests below DO verify, against the real module (no mocking):
+  // the `'memory'` fallback branch, which is exactly the production code
+  // path this suite's `DatabaseManager` instances always take (OPFS is
+  // unavailable in every environment this suite runs in), plus a genuine
+  // round-trip of the exported bytes through an independent sqlite3
+  // instance (not just a header-byte check).
+  //
+  // Verifying the `VACUUM INTO ... vfs=opfs` mechanic itself requires a
+  // live browser - this repo's established pattern for OPFS-dependent
+  // behavior is a Playwright E2E test (see `tests/e2e/opfs-fallback.spec.ts`
+  // for the existing precedent of patching `Worker` to control the
+  // sqlite-wasm OPFS VFS from a real browser). That live-browser
+  // verification belongs to this plan's e2e-coverage-required follow-up
+  // (tracked alongside the Storage-page UI change that calls this method),
+  // not to this unit suite.
+  // ================================================================
+  describe('exportControlDatabaseOptimized', () => {
+    it('falls back to exportControlDatabase bytes when storage is memory-backed', async () => {
+      expect(mgr.storage).toBe('memory');
+      mgr.createProject(makeProject({ id: 'proj-export-opt-1', name: 'Export Opt Project' }));
+
+      const optimized = await mgr.exportControlDatabaseOptimized();
+      expect(optimized).toBeInstanceOf(Uint8Array);
+      expect(optimized.length).toBeGreaterThan(0);
+      expect(String.fromCharCode(...optimized.slice(0, 15))).toBe('SQLite format 3');
+    });
+
+    it('produced bytes independently load in a fresh sqlite3 instance and contain the inserted data', async () => {
+      const m = await createManager();
+      m.createProject(makeProject({ id: 'proj-export-opt-2', name: 'Round Trip Project' }));
+
+      const bytes = await m.exportControlDatabaseOptimized();
+      const row = await readBackExportedRow(
+        bytes,
+        "SELECT name FROM projects WHERE id = 'proj-export-opt-2'",
+      );
+
+      expect(row).toEqual({ name: 'Round Trip Project' });
+      m.close();
+    });
+
+    it('produces the same bytes as exportControlDatabase for a memory-backed database', async () => {
+      const m = await createManager();
+      m.createProject(makeProject({ id: 'proj-export-opt-3', name: 'Parity Project' }));
+
+      const optimized = await m.exportControlDatabaseOptimized();
+      const direct = m.exportControlDatabase();
+      expect(optimized).toEqual(direct);
+      m.close();
+    });
+  });
+
+  // ================================================================
+  // exportControlDatabaseOptimized — OPFS-flagged backend
+  //
+  // Mirrors `wasm-sqlite-executor.test.ts`'s "OPFS-flagged backend" suite:
+  // `storageBackend` is forced to `'opfs'` via a private-field cast (there is
+  // no public constructor seam for it, unlike `WasmSqliteExecutor`), against
+  // a real in-memory sqlite3 handle. The `VACUUM INTO '...?vfs=opfs'` SQL is
+  // still executed for real — Node has no "opfs" VFS registered, so it
+  // genuinely fails with `SQLITE_ERROR: no such vfs: opfs`. Only the two OPFS
+  // file I/O helpers are mocked. This closes the gap a PR review flagged: the
+  // `exec(...)` call previously sat outside the try/finally, so a failed
+  // VACUUM INTO skipped cleanup entirely — since VACUUM INTO refuses to write
+  // to an already-existing non-empty target, that left the fixed temp
+  // filename permanently poisoned, breaking every subsequent optimized export
+  // attempt instead of "self-healing on the next run" as designed.
+  // ================================================================
+  describe('exportControlDatabaseOptimized — OPFS-flagged backend', () => {
+    function flagAsOpfs(m: DatabaseManager): void {
+      (m as unknown as { storageBackend: string }).storageBackend = 'opfs';
+    }
+
+    function rawDb(m: DatabaseManager): { exec(sql: string): unknown } {
+      return (m as unknown as { db: { exec(sql: string): unknown } }).db;
+    }
+
+    beforeEach(() => {
+      vi.mocked(opfsFileIo.readOpfsFileBytes).mockReset();
+      vi.mocked(opfsFileIo.removeOpfsFileIfExists).mockReset().mockResolvedValue(undefined);
+    });
+
+    it('cleans up the temp file even when VACUUM INTO itself throws', async () => {
+      const m = await createManager();
+      flagAsOpfs(m);
+      const execSpy = vi.spyOn(rawDb(m), 'exec');
+
+      await expect(m.exportControlDatabaseOptimized()).rejects.toThrow(/no such vfs: opfs/i);
+
+      expect(execSpy).toHaveBeenCalledWith(
+        "VACUUM INTO 'file:/session-analyzer.sqlite3.vacuum-tmp?vfs=opfs';",
+      );
+      // The regression this test guards: cleanup must run even though
+      // VACUUM INTO failed before any temp file could have been created.
+      expect(opfsFileIo.removeOpfsFileIfExists).toHaveBeenCalledWith(
+        '/session-analyzer.sqlite3.vacuum-tmp',
+      );
+      expect(opfsFileIo.readOpfsFileBytes).not.toHaveBeenCalled();
+      m.close();
+    });
+
+    it('reads back and cleans up the temp file on a successful VACUUM INTO', async () => {
+      const m = await createManager();
+      flagAsOpfs(m);
+      const expectedBytes = new Uint8Array([1, 2, 3]);
+      vi.mocked(opfsFileIo.readOpfsFileBytes).mockResolvedValue(expectedBytes);
+      vi.spyOn(rawDb(m), 'exec').mockReturnValue(undefined);
+
+      const bytes = await m.exportControlDatabaseOptimized();
+
+      expect(opfsFileIo.readOpfsFileBytes).toHaveBeenCalledWith(
+        '/session-analyzer.sqlite3.vacuum-tmp',
+      );
+      expect(opfsFileIo.removeOpfsFileIfExists).toHaveBeenCalledWith(
+        '/session-analyzer.sqlite3.vacuum-tmp',
+      );
+      expect(bytes).toBe(expectedBytes);
+      m.close();
+    });
+
+    it('removes the temp file even when reading it back fails', async () => {
+      const m = await createManager();
+      flagAsOpfs(m);
+      vi.mocked(opfsFileIo.readOpfsFileBytes).mockRejectedValue(new Error('temp file missing'));
+      vi.spyOn(rawDb(m), 'exec').mockReturnValue(undefined);
+
+      await expect(m.exportControlDatabaseOptimized()).rejects.toThrow('temp file missing');
+      expect(opfsFileIo.removeOpfsFileIfExists).toHaveBeenCalledWith(
+        '/session-analyzer.sqlite3.vacuum-tmp',
+      );
+      m.close();
     });
   });
 

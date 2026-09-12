@@ -1,11 +1,6 @@
 import { expect, type Page, test } from '@playwright/test';
-import {
-  buildSessionManifest,
-  FixtureBucket,
-  fixtureBuffer,
-  S3_BUCKET,
-  S3_ENDPOINT,
-} from './sync-fixtures.js';
+import { waitForAppReady } from './helpers/app-ready';
+import { FixtureBucket, fixtureBuffer, S3_BUCKET, S3_ENDPOINT } from './sync-fixtures.js';
 
 const PASSKEY = 'e2e-passkey';
 
@@ -26,11 +21,6 @@ const PASSKEY = 'e2e-passkey';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-async function waitForAppReady(page: Page): Promise<void> {
-  await expect(page.locator('header')).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('.app-loading')).toBeHidden({ timeout: 15000 });
-}
 
 async function createProject(page: Page, name: string): Promise<void> {
   await page.goto('/#/projects');

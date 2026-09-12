@@ -142,6 +142,25 @@ export interface ExportAnalyticsDatabaseRequest extends BaseRequest {
   readonly type: 'exportAnalyticsDatabase';
 }
 
+/** Runs `VACUUM` on the analytics database to reclaim free pages. */
+export interface VacuumAnalyticsDatabaseRequest extends BaseRequest {
+  readonly type: 'vacuumAnalyticsDatabase';
+}
+
+/**
+ * Serialize-free export via `VACUUM INTO` (OPFS backend) or the existing
+ * `exportAnalyticsDatabase` path (memory backend) — see
+ * `WasmSqliteExecutor.exportDatabaseOptimized`.
+ */
+export interface ExportAnalyticsDatabaseOptimizedRequest extends BaseRequest {
+  readonly type: 'exportAnalyticsDatabaseOptimized';
+}
+
+/** Cheap `PRAGMA page_count`/`page_size`-based size estimate. */
+export interface GetAnalyticsDatabaseSizeRequest extends BaseRequest {
+  readonly type: 'getAnalyticsDatabaseSize';
+}
+
 export type AnalyticsRequest =
   | InitRequest
   | GetBackendRequest
@@ -154,6 +173,9 @@ export type AnalyticsRequest =
   | ResolveProjectIdRequest
   | DeleteProjectRequest
   | ExportAnalyticsDatabaseRequest
+  | VacuumAnalyticsDatabaseRequest
+  | ExportAnalyticsDatabaseOptimizedRequest
+  | GetAnalyticsDatabaseSizeRequest
   | CloseRequest;
 
 export type AnalyticsRequestPayload =
@@ -168,6 +190,9 @@ export type AnalyticsRequestPayload =
   | Omit<ResolveProjectIdRequest, 'id'>
   | Omit<DeleteProjectRequest, 'id'>
   | Omit<ExportAnalyticsDatabaseRequest, 'id'>
+  | Omit<VacuumAnalyticsDatabaseRequest, 'id'>
+  | Omit<ExportAnalyticsDatabaseOptimizedRequest, 'id'>
+  | Omit<GetAnalyticsDatabaseSizeRequest, 'id'>
   | Omit<CloseRequest, 'id'>;
 
 interface BaseResponse {
@@ -180,7 +205,10 @@ export interface AnalyticsSuccessResponse extends BaseResponse {
   readonly backend?: AnalyticsBackendReport;
   readonly storage?: 'opfs' | 'memory';
   readonly fallbackReason?: 'locked' | 'unsupported';
-  /** Serialized SQLite database bytes (exportAnalyticsDatabase only). */
+  /**
+   * Serialized SQLite database bytes (exportAnalyticsDatabase and
+   * exportAnalyticsDatabaseOptimized only).
+   */
   readonly bytes?: Uint8Array;
 }
 

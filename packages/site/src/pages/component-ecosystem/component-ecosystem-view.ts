@@ -1,8 +1,10 @@
 import LitTypeahead from '@lucasschirm/litjs-typeahead';
 import type {
+  AnalyticsQuery,
   ArtifactDiff,
   ComponentDistributionPage,
   ComponentEcosystemSummary,
+  ComponentIdentitySummary,
   ComponentProjectSessionPage,
   ComponentScopePage,
   ComponentUtilizationDetail,
@@ -10,7 +12,7 @@ import type {
   HarnessOption,
   LifecycleComparisonPage,
 } from '@lucasschirm/sal-db';
-import { css, html } from 'lit';
+import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
@@ -312,20 +314,48 @@ export class ComponentEcosystemView extends PageLitElement {
   `,
   ];
 
-  @property({ type: String }) componentId = '';
+  @property({ type: String, attribute: 'component-id' }) componentId = '';
 
-  @state() private filters: ComponentEcosystemParams = parseComponentEcosystemHash(
-    window.location.hash,
-    this.componentId,
-  );
+  // Computed in connectedCallback(), not here: a field initializer runs
+  // during element construction, before the Custom Elements upgrade
+  // algorithm has run attributeChangedCallback for `component-id` (which
+  // only fires after the constructor returns). Computing this here would
+  // silently read `this.componentId` as still '', dropping `filters.component`
+  // on every deep-linked `#/artifacts/:componentId` load.
+  @state() private filters: ComponentEcosystemParams = {};
 
   @state() private loading = false;
+
+  /**
+   * Set when a `load()` call arrives while one is already in flight (e.g.
+   * a stale `hashchange`-triggered load racing `willUpdate`'s componentId
+   * -triggered one). Without this, the newer call's `if (this.loading)
+   * return` guard would silently drop it entirely, leaving the header
+   * (bound directly to `componentId`) showing the new component while the
+   * data panels still show the previous one's stale results. `load()`
+   * checks this once it finishes and immediately re-runs itself against
+   * whatever `componentId`/`filters` are current at that point.
+   */
+  private reloadPending = false;
 
   @state() private globalState: LoadState = 'idle';
 
   @state() private globalError: string | null = null;
 
   @state() private summary: PanelState<ComponentEcosystemSummary> = { data: null, state: 'idle' };
+
+  /**
+   * The resolved human-friendly label for `componentId` (see
+   * `never-display-raw-ids.md`) -- never rendered as the raw id itself.
+   * Deliberately excluded from `updateGlobalStateFromPanels()`'s states: a
+   * hiccup resolving the display label is a cosmetic degradation (falls back
+   * to a generic "Artifact" heading), not a reason to flip the whole page to
+   * the error/partial banner the six data panels below already own.
+   */
+  @state() private identity: PanelState<ComponentIdentitySummary | undefined> = {
+    data: null,
+    state: 'idle',
+  };
 
   @state() private versions: PanelState<ComponentVersionPage> = { data: null, state: 'idle' };
 
@@ -360,6 +390,7 @@ export class ComponentEcosystemView extends PageLitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.filters = parseComponentEcosystemHash(window.location.hash, this.componentId);
     window.addEventListener('hashchange', this.hashListener);
     this.load();
   }
@@ -369,6 +400,43 @@ export class ComponentEcosystemView extends PageLitElement {
     window.removeEventListener('hashchange', this.hashListener);
   }
 
+  /**
+   * Reacts to `componentId` itself changing on an already-mounted instance
+   * (e.g. browser back/forward between two different populated
+   * `:componentId` routes), mirroring `session-evidence-view.ts`'s
+   * `sessionId` hook. The `hashchange` listener above only re-reads
+   * `this.componentId` at the moment it fires, which can race the router's
+   * own attribute update (Lit applies property/attribute changes as a
+   * microtask) and observe the *previous* id — `willUpdate` fires with the
+   * update already applied, so it can't observe a stale value.
+   *
+   * Calling `load()` here while a *different, stale* load is still in
+   * flight (e.g. the `hashchange` listener's own reload, triggered for the
+   * previous componentId just before this update) does not get silently
+   * dropped: `load()`'s `reloadPending` coalescing (see its own doc
+   * comment) guarantees a fresh pass runs against whatever `componentId`/
+   * `filters` are current once the in-flight one finishes, rather than
+   * leaving the data panels showing the previous component's results under
+   * a header that already shows the new one. Calling it alongside
+   * `connectedCallback()`'s initial load has no duplicate-fetch cost either
+   * way.
+   */
+  willUpdate(changed: PropertyValues): void {
+    // `hasUpdated` is false for the entire first update cycle (Lit only
+    // sets it true after that cycle's render completes), so this
+    // deliberately skips the very first render: `componentId` is reported
+    // as "changed" there too (any set reactive property is, on first
+    // update), which would otherwise race `connectedCallback()`'s own
+    // initial `load()` call and double-fetch every one of the seven
+    // detail-panel endpoints on a normal navigation into a component
+    // -detail route -- not just the stale-componentId transition this hook
+    // exists to handle.
+    if (this.hasUpdated && changed.has('componentId') && this.componentId) {
+      this.filters = parseComponentEcosystemHash(window.location.hash, this.componentId);
+      void this.load();
+    }
+  }
+
   private handleHashChange(): void {
     if (window.location.hash.startsWith('#/artifacts')) {
       this.filters = parseComponentEcosystemHash(window.location.hash, this.componentId);
@@ -376,13 +444,25 @@ export class ComponentEcosystemView extends PageLitElement {
     }
   }
 
-  private async load(): Promise<void> {
-    if (this.loading) return;
+  private startLoad(): void {
     this.loading = true;
     this.globalState = 'loading';
     this.globalError = null;
     this.diff = null;
     this.diffError = null;
+  }
+
+  private finishLoad(): void {
+    this.loading = false;
+    this.reloadIfPending();
+  }
+
+  private async load(): Promise<void> {
+    if (this.loading) {
+      this.reloadPending = true;
+      return;
+    }
+    this.startLoad();
 
     const query = componentEcosystemParamsToQuery(this.filters);
 
@@ -397,60 +477,98 @@ export class ComponentEcosystemView extends PageLitElement {
       });
 
     if (this.componentId) {
-      const [summary, versions, scopes, utilization, distributions, projectSessions, lifecycle] =
-        await Promise.allSettled([
-          analyticsClient.component.getSummary(query),
-          analyticsClient.component.getVersions(this.componentId, query),
-          analyticsClient.component.getScopes(this.componentId, query),
-          analyticsClient.component.getUtilization(this.componentId, query),
-          analyticsClient.component.getDistributions(this.componentId, query),
-          analyticsClient.component.getProjectsSessions(this.componentId, query),
-          analyticsClient.component.getLifecycleComparisons(this.componentId, query),
-        ]);
-
-      this.summary = panelStateFromResult(summary);
-      this.versions = panelStateFromResult(versions);
-      this.scopes = panelStateFromResult(scopes);
-      this.utilization = panelStateFromResult(utilization);
-      this.distributions = panelStateFromResult(distributions);
-      this.projectSessions = panelStateFromResult(projectSessions);
-      this.lifecycle = panelStateFromResult(lifecycle);
-
-      const states = [
-        this.versions.state,
-        this.scopes.state,
-        this.utilization.state,
-        this.distributions.state,
-        this.projectSessions.state,
-        this.lifecycle.state,
-      ];
-      if (states.every((s) => s === 'ok' || s === 'empty')) {
-        this.globalState = states.some((s) => s === 'ok') ? 'ok' : 'empty';
-      } else if (states.some((s) => s === 'ok')) {
-        this.globalState = 'partial';
-      } else {
-        this.globalState = 'error';
-        this.globalError = 'Component detail views failed to load.';
-      }
-
-      if (this.filters.leftVersion && this.filters.rightVersion) {
-        void this.loadDiff();
-      }
+      await this.loadComponentDetail(query);
     } else {
-      const [summary] = await Promise.allSettled([analyticsClient.component.getSummary(query)]);
-      this.summary = panelStateFromResult(summary);
-
-      if (this.summary.state === 'error') {
-        this.globalState = 'error';
-        this.globalError = this.summary.error ?? 'Component ecosystem summary failed to load.';
-      } else if (this.summary.state === 'empty') {
-        this.globalState = 'empty';
-      } else {
-        this.globalState = 'ok';
-      }
+      await this.loadSummaryOnly(query);
     }
 
-    this.loading = false;
+    this.finishLoad();
+  }
+
+  /**
+   * Re-runs `load()` if a call arrived while one was already in flight (see
+   * `reloadPending`'s own doc comment), but only while still connected --
+   * this component may have been removed from the DOM while the in-flight
+   * load was running, and a disconnected instance has no reason to start a
+   * fresh network fetch nobody will ever see rendered.
+   */
+  private reloadIfPending(): void {
+    if (!this.reloadPending) return;
+    this.reloadPending = false;
+    if (this.isConnected) void this.load();
+  }
+
+  private async loadComponentDetail(query: AnalyticsQuery): Promise<void> {
+    await this.fetchDetailPanels(query);
+    this.updateGlobalStateFromPanels();
+    if (this.filters.leftVersion && this.filters.rightVersion) {
+      void this.loadDiff();
+    }
+  }
+
+  private async fetchDetailPanels(query: AnalyticsQuery): Promise<void> {
+    const componentId = this.componentId;
+    const [
+      summary,
+      identity,
+      versions,
+      scopes,
+      utilization,
+      distributions,
+      projectSessions,
+      lifecycle,
+    ] = await Promise.allSettled([
+      analyticsClient.component.getSummary(query),
+      analyticsClient.component.getIdentity(componentId, query),
+      analyticsClient.component.getVersions(componentId, query),
+      analyticsClient.component.getScopes(componentId, query),
+      analyticsClient.component.getUtilization(componentId, query),
+      analyticsClient.component.getDistributions(componentId, query),
+      analyticsClient.component.getProjectsSessions(componentId, query),
+      analyticsClient.component.getLifecycleComparisons(componentId, query),
+    ]);
+
+    this.summary = panelStateFromResult(summary);
+    this.identity = panelStateFromResult(identity);
+    this.versions = panelStateFromResult(versions);
+    this.scopes = panelStateFromResult(scopes);
+    this.utilization = panelStateFromResult(utilization);
+    this.distributions = panelStateFromResult(distributions);
+    this.projectSessions = panelStateFromResult(projectSessions);
+    this.lifecycle = panelStateFromResult(lifecycle);
+  }
+
+  private updateGlobalStateFromPanels(): void {
+    const states = [
+      this.versions.state,
+      this.scopes.state,
+      this.utilization.state,
+      this.distributions.state,
+      this.projectSessions.state,
+      this.lifecycle.state,
+    ];
+    if (states.every((s) => s === 'ok' || s === 'empty')) {
+      this.globalState = states.some((s) => s === 'ok') ? 'ok' : 'empty';
+    } else if (states.some((s) => s === 'ok')) {
+      this.globalState = 'partial';
+    } else {
+      this.globalState = 'error';
+      this.globalError = 'Component detail views failed to load.';
+    }
+  }
+
+  private async loadSummaryOnly(query: AnalyticsQuery): Promise<void> {
+    const [summary] = await Promise.allSettled([analyticsClient.component.getSummary(query)]);
+    this.summary = panelStateFromResult(summary);
+
+    if (this.summary.state === 'error') {
+      this.globalState = 'error';
+      this.globalError = this.summary.error ?? 'Component ecosystem summary failed to load.';
+    } else if (this.summary.state === 'empty') {
+      this.globalState = 'empty';
+    } else {
+      this.globalState = 'ok';
+    }
   }
 
   private async loadDiff(): Promise<void> {
@@ -471,31 +589,37 @@ export class ComponentEcosystemView extends PageLitElement {
     }
   }
 
+  /**
+   * Builds the final navigation hash for a filter patch and always
+   * re-attaches `component` when `componentId` is set -- centralized so a
+   * caller can never forget it (see `filters`' own comment: `filters` is
+   * only as fresh as the last hash parse, so a spread of `this.filters`
+   * alone is not enough to keep `component` on a component-detail route).
+   */
+  private finalizeAndNavigate(next: ComponentEcosystemParams): void {
+    if (this.componentId) next.component = this.componentId;
+    navigateTo(buildComponentEcosystemHash(next).replace(/^#/, ''));
+  }
+
   private updateFilter(key: keyof ComponentEcosystemParams, value: string): void {
     const next = { ...this.filters, [key]: value };
     if (value === '') {
       delete next[key];
     }
-    if (this.componentId) {
-      next.component = this.componentId;
-    }
-    navigateTo(buildComponentEcosystemHash(next).replace(/^#/, ''));
+    this.finalizeAndNavigate(next);
   }
 
   private resetFilters(): void {
-    const base: ComponentEcosystemParams = this.componentId
-      ? {
-          component: this.componentId,
-          origin: this.filters.origin,
-          returnContext: this.filters.returnContext,
-        }
-      : { origin: this.filters.origin, returnContext: this.filters.returnContext };
-    navigateTo(buildComponentEcosystemHash(base).replace(/^#/, ''));
+    const base: ComponentEcosystemParams = {
+      origin: this.filters.origin,
+      returnContext: this.filters.returnContext,
+    };
+    this.finalizeAndNavigate(base);
   }
 
   private selectVersion(version: string): void {
     const next = { ...this.filters, version };
-    navigateTo(buildComponentEcosystemHash(next).replace(/^#/, ''));
+    this.finalizeAndNavigate(next);
   }
 
   private compareVersions(rightVersion: string): void {
@@ -505,7 +629,7 @@ export class ComponentEcosystemView extends PageLitElement {
       return;
     }
     const next = { ...this.filters, leftVersion, rightVersion, version: undefined };
-    navigateTo(buildComponentEcosystemHash(next).replace(/^#/, ''));
+    this.finalizeAndNavigate(next);
   }
 
   private handlePointClick(event: CustomEvent<ChartEvidenceLink>): void {
@@ -522,22 +646,18 @@ export class ComponentEcosystemView extends PageLitElement {
   private goToPage(cursor: string | undefined): void {
     if (!cursor) return;
     const next = { ...this.filters, cursor };
-    navigateTo(buildComponentEcosystemHash(next).replace(/^#/, ''));
+    this.finalizeAndNavigate(next);
   }
 
-  private componentKind(): string | undefined {
-    if (this.filters.kind) return this.filters.kind;
-    const top = this.summary.data?.topByUtilization;
-    if (!top) return undefined;
-    const match = top.find((m) => {
-      const parts = m.label.split(' ');
-      const id = parts.slice(1).join(' ');
-      return id === this.componentId;
-    });
-    if (match) {
-      return match.label.split(' ')[0];
-    }
-    return undefined;
+  /**
+   * The human-friendly label for `componentId` (e.g. `skill/multi-issue-
+   * agent`), resolved via `analyticsClient.component.getIdentity()` --
+   * `undefined` while that fetch is in flight or unresolved. Callers must
+   * never fall back to `this.componentId` itself; see
+   * `never-display-raw-ids.md`.
+   */
+  private componentLabel(): string | undefined {
+    return this.identity.data?.name;
   }
 
   private chartState(state: LoadState): ChartState | null {
@@ -558,7 +678,7 @@ export class ComponentEcosystemView extends PageLitElement {
   private renderBreadcrumbs() {
     const origin = this.filters.origin;
     const originLink = originHref(this.filters);
-    const kind = this.componentKind();
+    const label = this.componentLabel();
 
     return html`
       <nav class="breadcrumbs" aria-label="Breadcrumbs">
@@ -575,7 +695,7 @@ export class ComponentEcosystemView extends PageLitElement {
           this.componentId
             ? html`
               <span aria-hidden="true">/</span>
-              <span class="current">${this.componentId}${kind ? ` (${kind})` : ''}</span>
+              <span class="current">${label ?? 'Artifact'}</span>
             `
             : ''
         }
@@ -1080,7 +1200,13 @@ ${this.diff.unifiedDiff.split('\n').map((line) => {
       <div class="component-ecosystem-view">
         ${this.renderBreadcrumbs()}
         <h1>
-          ${this.componentId ? `Artifact: ${this.componentId}` : 'Artifact Ecosystem'}
+          ${
+            this.componentId
+              ? this.componentLabel()
+                ? `Artifact: ${this.componentLabel()}`
+                : 'Artifact'
+              : 'Artifact Ecosystem'
+          }
         </h1>
         ${
           this.globalState === 'error' && this.globalError

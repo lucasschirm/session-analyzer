@@ -87,14 +87,23 @@ export type DbRequest =
   | { id: number; type: 'setUiPreference'; key: string; value: string }
   | { id: number; type: 'getUiPreference'; key: string }
   | { id: number; type: 'exportControlDatabase' }
-  | { id: number; type: 'getControlDb' };
+  | { id: number; type: 'getControlDb' }
+  | { id: number; type: 'vacuumControlDatabase' }
+  | { id: number; type: 'exportControlDatabaseOptimized' }
+  | { id: number; type: 'getControlDatabaseSize' };
 
 export interface DbSuccessResponse {
   id: number;
   ok: true;
-  /** JSON-serializable result for every request except exportControlDatabase. */
+  /** JSON-serializable result for every request except the bytes-returning ones below. */
   result?: unknown;
-  /** Raw SQLite file bytes for exportControlDatabase (transferred, not copied). */
+  /**
+   * Raw SQLite file bytes for exportControlDatabase and
+   * exportControlDatabaseOptimized (transferred, not copied). `db-client.ts`'s
+   * `handleResponse` resolves these two request types to `Uint8Array`
+   * unconditionally (see its `BYTES_REQUEST_TYPES` set), defaulting to an
+   * empty array if a response ever omitted `bytes` on success.
+   */
   bytes?: Uint8Array;
   /** Storage backend reported by init. */
   storage?: 'opfs' | 'memory';

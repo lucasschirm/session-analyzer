@@ -32,6 +32,7 @@ import type {
   SqlValue as WasmSqlValue,
 } from '@sqlite.org/sqlite-wasm';
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
+import { readOpfsFileBytes, removeOpfsFileIfExists } from './opfs-file-io';
 
 export type WasmBackendName = 'wasm-opfs' | 'wasm-memory';
 export type FallbackReason = 'locked' | 'unsupported' | undefined;
@@ -426,6 +427,51 @@ export class WasmSqliteExecutor implements SqliteExecutor {
     return this.sqlite3.capi.sqlite3_js_db_export(this.db.pointer) as Uint8Array;
   }
 
+  /**
+   * Serialize-free export. On the OPFS backend, `VACUUM INTO` writes a
+   * compacted copy to a fixed temp file via ordinary page-by-page VFS I/O
+   * (not a contiguous heap allocation), so it sidesteps the 2 GiB WASM-heap
+   * ceiling that breaks `exportDatabase()`/`sqlite3_js_db_export` on large
+   * databases. The temp file is read back directly from OPFS and always
+   * removed afterward (even on failure) so a fixed, well-known filename
+   * self-heals on the next run. On the memory backend there is no OPFS
+   * directory to target, so this falls back to `exportDatabase()` unchanged
+   * — a memory-backed DB is bounded by tab lifetime and, in practice, far
+   * smaller, so the original SQLITE_NOMEM risk is out of scope there.
+   */
+  async exportDatabaseOptimized(): Promise<Uint8Array> {
+    this.guardOpen();
+    if (this.backend.backendName !== 'wasm-opfs') {
+      return this.exportDatabase();
+    }
+    const tempPath = `${this.filename}.vacuum-tmp`;
+    try {
+      this.db.exec(`VACUUM INTO 'file:${tempPath}?vfs=opfs';`);
+      return await readOpfsFileBytes(tempPath);
+    } finally {
+      await removeOpfsFileIfExists(tempPath);
+    }
+  }
+
+  /** Reclaims free pages and defragments the database file in place. */
+  vacuum(): void {
+    this.guardOpen();
+    this.db.exec('VACUUM;');
+  }
+
+  /**
+   * Cheap on-disk size estimate via `PRAGMA page_count`/`page_size` — avoids
+   * the full-export path (`exportDatabase()`) that previously backed the
+   * Storage page's Size column and could fail with SQLITE_NOMEM on large
+   * databases.
+   */
+  getSizeBytes(): number {
+    this.guardOpen();
+    const pageCount = this.readPragmaInt('page_count');
+    const pageSize = this.readPragmaInt('page_size');
+    return pageCount * pageSize;
+  }
+
   isBusy(): boolean {
     return this.busy;
   }
@@ -446,6 +492,16 @@ export class WasmSqliteExecutor implements SqliteExecutor {
       rowMode: 'object',
     }) as Array<{ journal_mode: WasmSqlValue }>;
     this.journalMode = String(rows[0]?.journal_mode ?? 'memory').toLowerCase();
+  }
+
+  private readPragmaInt(pragma: string): number {
+    const rows = this.db.exec({
+      sql: `PRAGMA ${pragma}`,
+      returnValue: 'resultRows',
+      resultRows: [],
+      rowMode: 'object',
+    }) as Array<Record<string, WasmSqlValue>>;
+    return Number(rows[0]?.[pragma] ?? 0);
   }
 
   private guardOpen(): void {

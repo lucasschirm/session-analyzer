@@ -1180,7 +1180,7 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     resolvedArtifacts: readonly ResolvedArtifact[],
   ): Promise<void> {
     const resolvedByPathAndHash = this.buildResolvedArtifactIndex(resolvedArtifacts);
-    const diffRepository = new ArtifactDiffRepository(this.context.hasher);
+    const diffRepository = new ArtifactDiffRepository(this.context.hasher, this.context.blobStore);
     for (const artifact of manifest.artifacts) {
       await this.recordSingleArtifactReference(
         tx,

@@ -21,6 +21,7 @@ import type {
   ComponentEcosystemView,
   ComponentFactPage,
   ComponentFactRow,
+  ComponentIdentitySummary,
   ComponentProjectSessionPage,
   ComponentProjectSessionRow,
   ComponentScope,
@@ -52,6 +53,7 @@ import type {
   SessionValidation,
   SessionValidationSummary,
 } from './analytics.js';
+import { componentDisplayName } from './analytics-portfolio.js';
 import { getSessionUtilizationReport } from './analytics-utilization.js';
 import { ArtifactDiffRepository } from './artifact-diff.js';
 import type {
@@ -63,7 +65,7 @@ import type {
 } from './dto.js';
 import { makeMetricValueDto } from './dto.js';
 import { createSha256ContentHasher } from './ingestion.js';
-import type { ContentHasher } from './ports.js';
+import type { ArtifactBlobStore, ContentHasher } from './ports.js';
 
 type Queryable = SqliteExecutor | SqliteTransaction;
 
@@ -1429,6 +1431,7 @@ async function getTranscriptPages(
 export function createComponentEcosystemView(queryable: Queryable): ComponentEcosystemView {
   return {
     getSummary: (query) => getComponentEcosystemSummary(queryable, query),
+    getIdentity: (componentId, query) => getComponentIdentity(queryable, componentId, query),
     getVersions: (componentId, query) => getComponentVersions(queryable, componentId, query),
     getScopes: (componentId, query) => getComponentScopes(queryable, componentId, query),
     getUtilization: (componentId, query) => getComponentUtilization(queryable, componentId, query),
@@ -1524,6 +1527,29 @@ async function getComponentEcosystemSummary(
   );
 
   return { token, countsByKind, topByUtilization };
+}
+
+async function getComponentIdentity(
+  queryable: Queryable,
+  componentId: string,
+  query: AnalyticsQuery | undefined,
+): Promise<ComponentIdentitySummary | undefined> {
+  const portfolioId = await resolvePortfolioId(queryable, query);
+  if (!portfolioId) return undefined;
+
+  const identity = await ComponentIdentityStore.getById(queryable, portfolioId, componentId);
+  if (!identity) return undefined;
+
+  return {
+    componentId,
+    kind: identity.kind,
+    name: componentDisplayName(
+      identity.kind,
+      identity.nativeId,
+      identity.displayName ?? '',
+      componentId,
+    ),
+  };
 }
 
 async function getComponentVersions(
@@ -1907,8 +1933,9 @@ function lifecycleChangeType(eventType: string): LifecycleComparisonRow['changeT
 export function createArtifactVersionView(
   queryable: Queryable,
   hasher?: ContentHasher,
+  blobStore?: ArtifactBlobStore,
 ): ArtifactVersionView {
-  const diffEngine = new ArtifactDiffRepository(hasher ?? createSha256ContentHasher());
+  const diffEngine = new ArtifactDiffRepository(hasher ?? createSha256ContentHasher(), blobStore);
 
   return {
     getMetadata: (artifactId, query) => getArtifactMetadata(queryable, artifactId, query),

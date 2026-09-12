@@ -1,16 +1,12 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
+import { waitForAppReady } from './helpers/app-ready';
 
 const FIXTURES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
 function fixture(name: string): string {
   return path.join(FIXTURES_DIR, name);
-}
-
-async function waitForAppReady(page: Page): Promise<void> {
-  await expect(page.locator('header')).toBeVisible({ timeout: 15000 });
-  await expect(page.locator('.app-loading')).toBeHidden({ timeout: 15000 });
 }
 
 async function createProject(page: Page, name: string): Promise<void> {

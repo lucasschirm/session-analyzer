@@ -82,8 +82,11 @@ function displayKind(kind: string): string {
  * Composes a human-friendly component name from the stored identity fields.
  * Prefers `kind/nativeId` (e.g. `skill/multi-issue-agent`, `agent/developer`,
  * `mcp/github`), falling back to `kind/displayName`, then `componentId`.
+ * Exported for reuse by `analytics-session.ts`'s `getComponentIdentity` --
+ * this is the one place display-label composition happens, per
+ * `workspace-rules.md`'s duplicate-code rule.
  */
-function componentDisplayName(
+export function componentDisplayName(
   kind: string,
   nativeId: string,
   displayName: string,

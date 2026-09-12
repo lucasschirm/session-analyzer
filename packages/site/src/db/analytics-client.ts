@@ -404,6 +404,40 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
     return response.bytes ?? new Uint8Array();
   }
 
+  /**
+   * Runs `VACUUM` on the analytics database to reclaim free pages. Guarded
+   * worker-side against overlapping with `exportAnalyticsDatabaseOptimized`.
+   */
+  async vacuum(): Promise<void> {
+    const response = await this.call({ type: 'vacuumAnalyticsDatabase' });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+  }
+
+  /**
+   * Serialize-free export for download/backup: `VACUUM INTO` on the OPFS
+   * backend (sidesteps the 2 GiB WASM-heap ceiling that can fail
+   * `exportAnalyticsDatabase()` on large databases), or the existing export
+   * path on the memory backend.
+   */
+  async exportAnalyticsDatabaseOptimized(): Promise<Uint8Array> {
+    const response = await this.call({ type: 'exportAnalyticsDatabaseOptimized' });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+    return response.bytes ?? new Uint8Array();
+  }
+
+  /** Cheap `PRAGMA page_count`/`page_size`-based size estimate, in bytes. */
+  async getAnalyticsDatabaseSize(): Promise<number> {
+    const response = await this.call({ type: 'getAnalyticsDatabaseSize' });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+    return response.result as number;
+  }
+
   async close(): Promise<void> {
     const response = await this.call({ type: 'close' });
     if (!response.ok) {

@@ -53,12 +53,14 @@ backfilled into §6.1 by this plan:
 | `passkey.spec.ts` | Locked-vault passkey prompt and "Forgot" vault deletion (UX-016) |
 | `portfolio-refresh.spec.ts` | Live portfolio metric/chart refresh after a second upload (UX-003) |
 | `sessions-filter.spec.ts` | Scope filter URL sync and reload persistence (UX-010) |
+| `storage-optimize.spec.ts` | Storage page per-row Optimize/Download overlay terminal states and Size-column loading/ok/error distinction (UX-032) |
 | `sync.spec.ts` | Full CAS sync journey, retry, cancel, offline, reload reconciliation, second-tab follower, plus catalog entries UX-004 (ingestion seam), UX-005 (heartbeat), UX-006 (export content), UX-008 (S3 5xx affordance) |
 | `transcript-xss.spec.ts` | Transcript XSS sanitization (UX-011) |
 | `ux-002-empty-error.spec.ts` | Empty vs. error state disambiguation (UX-002) |
 | `ux-007-import-failure.spec.ts` | Manual import failure-class specificity (UX-007) |
 | `ux-009-query-hang.spec.ts` | Bounded timeout on a blocked analytics query (UX-009) |
 | `ux-015-delete-confirmation.spec.ts` | Delete-confirmation focus trap / keyboard contract (UX-015) |
+| `ux-033-artifact-diff.spec.ts` | Artifact Diff real diff content across a version change resolved through the OPFS-backed blob store, empty/error affordance distinction, and a Component Ecosystem inline-diff-panel spot check (UX-033) |
 
 `packages/site/tests/e2e/helpers/heartbeat.spec.ts` is infrastructure —
 a regression spec for the `assertHeartbeat` helper itself (§7.3), not a
@@ -145,6 +147,8 @@ PR that implements it flips it to `GREEN`.
 | UX-029 | Dedicated project sessions page (`#/projects/:id/sessions`) pagination and filters | `project-sessions.spec.ts` | pagination, search, date range filter assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
 | UX-030 | Project sessions table navigation, title display, and subagent badge | `project-sessions.spec.ts` | table row click, session evidence routing assertion | 3 | 4 | 4 | 48 | P1 | GREEN |
 | UX-031 | Session context growth chart interaction and message detail drawer focus trap | `project-sessions.spec.ts` | drawer open on bar click, focus trap, Escape to close | 3 | 4 | 4 | 48 | P1 | GREEN |
+| UX-032 | Storage page: per-row Optimize button, optimize-then-download flow (serialize-free `VACUUM`/`VACUUM INTO` export), and Size-column error-vs-loading distinction | `storage-optimize.spec.ts` | terminal success (Control DB Download fires a real, `verifyExportContents`-checked download; Analytics DB Optimize success re-queries and changes the displayed Size) + terminal failure (Download export failure renders a distinct, dismissable overlay banner, scoped away from the Size column's own error state, never a silent "—") + Size column loading/ok/error assertion (delayed fake-worker response makes the transient "Calculating…" phase observable before the dedicated `.size-error` state lands) + stall-safety-net phase transition at the 30s timeout via `page.clock.install()`/`fastForward` (no real 30s wait, no test-only seam) — deliberately **not** `assertHeartbeat` (heartbeat.ts), since the "Optimizing…" overlay has no advancing signal to assert against (see `.agents/rules/sync-progress-observability.md` and plan `wild-popping-sundae.md` §1e) | 4 | 4 | 4 | 64 | P0 | GREEN |
+| UX-033 | Artifact Diff (`#/artifact-diff`) renders real diff content across a version change, resolved through the OPFS-backed blob store (`createOpfsArtifactBlobStore`, issue #399), with structurally distinct empty and error affordances | `ux-033-artifact-diff.spec.ts` | diff-content correctness (two real CAS-synced versions of the same workspace config artifact; real `manifest_artifacts.id` values are read back out of a real, downloaded analytics database export — `openExportDatabase`, extending `export-verify.ts` — and used for direct hash-route navigation, since no in-app UI links to `#/artifact-diff` with real params; unified-diff added/removed lines and the metadata-changes table both assert on the actual seeded content change, and the resolved artifact path is the primary label, never the raw id/sha256, per `never-display-raw-ids.md`) + empty affordance (no `leftArtifact`/`rightArtifact` params) + error affordance (forced worker query failure, same `FAKE_ANALYTICS_WORKER` technique as UX-002) + a same-suite spot check of Component Ecosystem's inline lifecycle-diff panel (`component-ecosystem-view.ts`'s `loadDiff()`) via `#/artifacts/:id?leftVersion=...&rightVersion=...` with the same two real ids, confirming the identical `getDiff`/`getCanonicalizedArtifact()` path renders correctly from a second UI entry point, and asserting the page's `<h1>` differs from the generic "Artifact Ecosystem" fallback and never contains the raw `componentId` route param (`ux-033-spot-check`, a placeholder id with no real `component_identities` row, so `getIdentity()` resolves to the generic "Artifact" fallback label here rather than a resolved name — real-browser coverage of that fallback path never leaking the raw id, per `never-display-raw-ids.md`; the resolved-label case is covered at the jsdom level by `component-ecosystem-view.test.ts`) — real-browser regression coverage for a `componentId` attribute-binding routing bug this cutover found and fixed (every `#/artifacts/:componentId` deep link, reachable from Portfolio and Project Behavior too, previously fell back silently), only unit-tested at the jsdom level before this row. Also confirms decision #6's accepted behavior change directly against the downloaded export: `artifact_blobs.content` is `NULL` for both newly-ingested versions. Per issue #399's "Out of scope": new coverage for the separate `extractComponents`/component-identity read path (Component Ecosystem *utilization*, reached via a real browser sync or manual import) is not added here — verified pre-existing, deliberately-deferred debt, not silently assumed covered by this row. | 4 | 4 | 4 | 64 | P0 | GREEN |
 
 ### 6.2 Tier B — Analytics Pipeline (`PIPE-###`)
 
@@ -242,14 +246,21 @@ blocked by `.agents/rules/e2e-coverage-required.md`.
 
 ## 9. Open gaps / backlog
 
-As of this backfill (issue #160), every ID in §6 corresponded to a
+UX-032 (Storage page Optimize/optimize-then-download/Size-column fix,
+`wild-popping-sundae.md` Phase 1) moved from `PROPOSED` to `GREEN` in a
+follow-up PR: the product change (per-row Optimize button, `VACUUM
+INTO`-based serialize-free export, and a `sizeState` field distinguishing a
+failed size query from loading/legitimate-empty) shipped first with the row
+registered but the spec deferred; `storage-optimize.spec.ts` now implements
+it end to end (Control DB real-download content check, Analytics DB
+Optimize-refreshes-Size, Download failure banner, Size loading/ok/error
+distinction, and the 30s stall transition via `page.clock`), completing
+§8's `PROPOSED` → `IMPLEMENTING` → `GREEN` lifecycle for this surface.
+
+As of the original backfill (issue #160), every ID in §6 corresponded to a
 pre-existing, currently-passing test; none were newly written by this
-change. `UX-025`, `UX-026`, `SYNC-013`, and `SYNC-014` were registered
-here as `PROPOSED` by issue #404, part of the Sync manifest fingerprints
-feature (#403 — see below); `SYNC-013` was implemented and flipped to
-`GREEN` by #406, and `UX-025`, `UX-026`, and `SYNC-014` were implemented
-and flipped to `GREEN` by #407. New candidate surfaces (e.g. from the
-devin-sync feature, #138) register here first as `PROPOSED` with a
+change. New candidate surfaces (e.g. from the devin-sync feature, #138)
+register here first as `PROPOSED` with a
 score, then move through §8.
 
 `UX-025`, `UX-026`, `SYNC-013`, and `SYNC-014` entered the catalog via the

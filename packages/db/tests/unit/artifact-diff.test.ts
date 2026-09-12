@@ -1,4 +1,7 @@
-import { FRESH_SCHEMA_SQL } from '@lucasschirm/sal-db-core';
+import {
+  ArtifactBlobStore as DbArtifactBlobStore,
+  FRESH_SCHEMA_SQL,
+} from '@lucasschirm/sal-db-core';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import {
@@ -9,6 +12,7 @@ import {
   type CanonicalizedArtifact,
 } from '../../src/artifact-diff.js';
 import { createSha256ContentHasher } from '../../src/ingestion.js';
+import type { ArtifactBlobStore, ArtifactContent, ResolvedArtifact } from '../../src/ports.js';
 
 const PORTFOLIO_ID = 'pf-artifact';
 const INGESTION_SOURCE_ID = 'src-artifact';
@@ -21,8 +25,60 @@ function makeHasher() {
   return createSha256ContentHasher();
 }
 
+/**
+ * In-file fake implementing the ArtifactBlobStore port
+ * (packages/db/src/ports.ts:48-53). packages/db must not import a real
+ * concrete store from packages/site (see packages/db/AGENTS.md) -- the
+ * real-store, real-round-trip coverage lives in
+ * packages/site/tests/unit/artifact-adapters.test.ts instead.
+ *
+ * `retain()` also performs a real `artifact_blobs` placeholder write via
+ * `DbArtifactBlobStore.insert` -- mirroring
+ * `createOpfsArtifactBlobStore.retain()`'s own `insertBlobMetadata` call
+ * (packages/site/src/db/opfs-artifact-blob-store.ts) with the same default
+ * retention class and no redaction fields. Without this, the fake never
+ * performs a second SQL write, so no test in this file could ever tell
+ * `writeBlobIfNew`'s correct write order (retain, then the authoritative
+ * insert) apart from a reversed one -- both would leave exactly one row.
+ */
+function createFakeBlobStore(executor: WasmSqliteExecutor): ArtifactBlobStore & {
+  readonly retainCalls: number[];
+  readonly readCalls: string[];
+  seed(artifact: ResolvedArtifact): void;
+} {
+  const stored = new Map<string, ResolvedArtifact>();
+  const readCalls: string[] = [];
+  const retainCalls: number[] = [];
+  return {
+    retainCalls,
+    readCalls,
+    seed: (artifact) => {
+      stored.set(artifact.sha256, artifact);
+    },
+    retain: async (blob) => {
+      retainCalls.push(1);
+      stored.set(blob.sha256, blob);
+      await DbArtifactBlobStore.insert(executor, {
+        sha256: blob.sha256,
+        size: blob.size,
+        mediaType: blob.mediaType,
+        retentionClass: 'retained',
+        content: null,
+      });
+      const { content: _content, ...reference } = blob;
+      return reference;
+    },
+    read: async (sha256) => {
+      readCalls.push(sha256);
+      return stored.get(sha256);
+    },
+    remove: async (sha256) => stored.delete(sha256),
+    list: async () => [],
+  };
+}
+
 function baseInput(
-  content: string | null,
+  content: ArtifactContent | null,
   overrides?: Partial<ArtifactCanonicalizationInput>,
 ): ArtifactCanonicalizationInput {
   return {
@@ -583,5 +639,342 @@ describe('ArtifactDiffRepository', () => {
     expect(agentDiff).toBeDefined();
     expect(agentDiff?.unifiedDiff).toBeUndefined();
     expect(agentDiff?.sideBySideDiff).toBeUndefined();
+  });
+
+  it('with blobStore provided, retains bytes first then writes the authoritative row with content: null, and the read side falls back to blobStore.read()', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    const fake = createFakeBlobStore(executor);
+
+    const content = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'with-store' });
+    const sourceManifestId = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactId = await insertManifestArtifact(
+      executor,
+      sourceManifestId,
+      'sess-left',
+      '.claude/config.json',
+    );
+    const repository = new ArtifactDiffRepository(hasher, fake);
+    const [referenceId] = await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      { sourceManifestId, manifestArtifactId, observingSessionId: 'sess-left' },
+      baseInput(content),
+    );
+
+    const sha = await hasher.hash(content);
+    expect(fake.retainCalls).toHaveLength(1);
+
+    const { rows } = await executor.exec('SELECT content FROM artifact_blobs WHERE sha256 = ?', [
+      sha,
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.content).toBeNull();
+
+    // The authoritative metadata row's content is null, so the read side
+    // must fall back to blobStore.read() -- and the bytes it retained must
+    // round-trip byte-for-byte through that fallback.
+    const canonicalized = await repository.getCanonicalizedArtifact(
+      executor,
+      PORTFOLIO_ID,
+      referenceId,
+    );
+    expect(fake.readCalls).toEqual([sha]);
+    expect(canonicalized?.rawSha256).toBe(sha);
+  });
+
+  it('with a non-default retentionClass and redaction input, the authoritative insert (not the store-side placeholder) determines the final row', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    // createFakeBlobStore's retain() mirrors production's
+    // insertBlobMetadata(): a placeholder row with retentionClass 'retained'
+    // and every redaction field null/false. Choosing a different
+    // retentionClass and real sensitiveSource input here means the final row
+    // can only match if writeBlobIfNew's authoritative insert -- which
+    // carries the real values -- runs AFTER retain(), not before. Reversing
+    // that order (retainBytesIfStorePresent after DbArtifactBlobStore.insert
+    // in packages/db/src/artifact-diff.ts) must fail this test.
+    const fake = createFakeBlobStore(executor);
+    const content = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'redacted' });
+    const sourceManifestId = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactId = await insertManifestArtifact(
+      executor,
+      sourceManifestId,
+      'sess-left',
+      '.claude/config.json',
+    );
+    const repository = new ArtifactDiffRepository(hasher, fake);
+    await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      {
+        sourceManifestId,
+        manifestArtifactId,
+        observingSessionId: 'sess-left',
+        retentionClass: 'transient',
+      },
+      baseInput(content, {
+        sensitiveSource: { scheme: 'aes-gcm', keyDomainId: 'domain-1', content: 'secret-value' },
+      }),
+    );
+
+    const sha = await hasher.hash(content);
+    const { rows } = await executor.exec(
+      `SELECT retention_class, redaction_scheme, key_domain_id, sensitive_digest,
+              redaction_change_marker, is_redacted
+       FROM artifact_blobs WHERE sha256 = ?`,
+      [sha],
+    );
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as Record<string, unknown>;
+    expect(row.retention_class).toBe('transient');
+    expect(row.redaction_scheme).toBe('aes-gcm');
+    expect(row.key_domain_id).toBe('domain-1');
+    expect(row.sensitive_digest).not.toBeNull();
+    expect(row.redaction_change_marker).toBe(1);
+    expect(row.is_redacted).toBe(1);
+  });
+
+  it('with blobStore left undefined, behavior is unchanged: real bytes land directly in insert.content and blobStore.retain() is never invoked', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    const content = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'without-store' });
+
+    const sourceManifestId = await insertSourceManifest(executor, 'sess-right', 1);
+    const manifestArtifactId = await insertManifestArtifact(
+      executor,
+      sourceManifestId,
+      'sess-right',
+      '.claude/settings.json',
+    );
+    const repository = new ArtifactDiffRepository(hasher);
+    await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      { sourceManifestId, manifestArtifactId, observingSessionId: 'sess-right' },
+      baseInput(content),
+    );
+
+    const sha = await hasher.hash(content);
+    const { rows } = await executor.exec('SELECT content FROM artifact_blobs WHERE sha256 = ?', [
+      sha,
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.content).not.toBeNull();
+    expect(new TextDecoder().decode(rows[0]?.content as Uint8Array)).toBe(content);
+  });
+
+  it('with a Uint8Array input, stores the exact bytes and byte length in the metadata row', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    const text = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'uint8' });
+    const bytes = new TextEncoder().encode(text);
+
+    const sourceManifestId = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactId = await insertManifestArtifact(
+      executor,
+      sourceManifestId,
+      'sess-left',
+      '.claude/config.json',
+    );
+    const repository = new ArtifactDiffRepository(hasher);
+    await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      { sourceManifestId, manifestArtifactId, observingSessionId: 'sess-left' },
+      baseInput(bytes),
+    );
+
+    const sha = await hasher.hash(bytes);
+    const { rows } = await executor.exec(
+      'SELECT content, size FROM artifact_blobs WHERE sha256 = ?',
+      [sha],
+    );
+    expect(rows).toHaveLength(1);
+    expect(new TextDecoder().decode(rows[0]?.content as Uint8Array)).toBe(text);
+    expect(rows[0]?.size).toBe(bytes.length);
+  });
+
+  it('with a multi-byte string input, stores the UTF-8 byte length, not the string length', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    // 🚀 is a multi-byte character; the byte length differs from the JS string length.
+    const text = '{"emoji":"🚀"}';
+    const bytes = new TextEncoder().encode(text);
+
+    const sourceManifestId = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactId = await insertManifestArtifact(
+      executor,
+      sourceManifestId,
+      'sess-left',
+      '.claude/config.json',
+    );
+    const repository = new ArtifactDiffRepository(hasher);
+    await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      { sourceManifestId, manifestArtifactId, observingSessionId: 'sess-left' },
+      baseInput(text),
+    );
+
+    const sha = await hasher.hash(text);
+    const { rows } = await executor.exec(
+      'SELECT content, size FROM artifact_blobs WHERE sha256 = ?',
+      [sha],
+    );
+    expect(rows).toHaveLength(1);
+    expect(new TextDecoder().decode(rows[0]?.content as Uint8Array)).toBe(text);
+    expect(rows[0]?.size).toBe(bytes.length);
+    expect(rows[0]?.size).not.toBe(text.length);
+  });
+
+  it('the content-address dedup guard skips blobStore.retain() when a metadata row for that sha256 already exists', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    const fake = createFakeBlobStore(executor);
+    const repository = new ArtifactDiffRepository(hasher, fake);
+    const sharedContent = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'shared' });
+
+    const sourceManifestIdA = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactIdA = await insertManifestArtifact(
+      executor,
+      sourceManifestIdA,
+      'sess-left',
+      '.claude/config.json',
+    );
+    await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      { sourceManifestId: sourceManifestIdA, manifestArtifactId: manifestArtifactIdA },
+      baseInput(sharedContent),
+    );
+    expect(fake.retainCalls).toHaveLength(1);
+
+    // A second artifact reference observes byte-identical content (same
+    // sha256, e.g. the same skill file synced from a second session). The
+    // pre-existing metadata row must short-circuit the whole write block --
+    // no second OPFS write, no redundant retain() call.
+    const sourceManifestIdB = await insertSourceManifest(executor, 'sess-right', 1);
+    const manifestArtifactIdB = await insertManifestArtifact(
+      executor,
+      sourceManifestIdB,
+      'sess-right',
+      '.claude/config.json',
+    );
+    await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      { sourceManifestId: sourceManifestIdB, manifestArtifactId: manifestArtifactIdB },
+      baseInput(sharedContent),
+    );
+
+    expect(fake.retainCalls).toHaveLength(1);
+  });
+
+  it('propagates a failed blobStore.retain() without writing a partial content:null metadata row', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    const fake = createFakeBlobStore(executor);
+    const failingBlobStore = {
+      ...fake,
+      retain: async () => {
+        throw new Error('simulated OPFS write failure');
+      },
+    };
+    const repository = new ArtifactDiffRepository(hasher, failingBlobStore);
+    const content = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'retain-fails' });
+    const sourceManifestId = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactId = await insertManifestArtifact(
+      executor,
+      sourceManifestId,
+      'sess-left',
+      '.claude/config.json',
+    );
+
+    await expect(
+      repository.record(
+        executor,
+        PORTFOLIO_ID,
+        { sourceManifestId, manifestArtifactId, observingSessionId: 'sess-left' },
+        baseInput(content),
+      ),
+    ).rejects.toThrow('simulated OPFS write failure');
+
+    // No metadata row must exist claiming content lives in a blob store that
+    // never actually received it -- the dedup guard must see this sha256 as
+    // genuinely new on the next attempt, not skip a half-written row.
+    const sha = await hasher.hash(content);
+    const { rows: blobRows } = await executor.exec(
+      'SELECT content FROM artifact_blobs WHERE sha256 = ?',
+      [sha],
+    );
+    expect(blobRows).toHaveLength(0);
+
+    // record() must abort entirely -- no artifact_references row for this
+    // attempt either.
+    const { rows: refRows } = await executor.exec(
+      'SELECT id FROM artifact_references WHERE manifest_artifact_id = ?',
+      [manifestArtifactId],
+    );
+    expect(refRows).toHaveLength(0);
+  });
+
+  it('consults blobStore.read() only when the metadata row content is already null (e.g. a row nulled by the sub-issue-4 backfill)', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    const fake = createFakeBlobStore(executor);
+    const repository = new ArtifactDiffRepository(hasher, fake);
+
+    // Simulate a row already nulled by the backfill (sub-issue 4), never via
+    // the db-core ArtifactBlobStore class -- that would reintroduce, inside
+    // this test file, the exact ArtifactBlobStore/port name collision this
+    // issue's Scope section aliases away in the source file.
+    const purgedSha256 = 'b'.repeat(64);
+    const now = Date.now();
+    await executor.exec(
+      `INSERT INTO artifact_blobs (
+        sha256, media_type, retention_class, content, size,
+        redaction_scheme, key_domain_id, sensitive_digest, redaction_change_marker, is_redacted,
+        verified_at, created_at, updated_at
+      ) VALUES (?, NULL, 'retained', NULL, ?, NULL, NULL, NULL, 0, 0, NULL, ?, ?)`,
+      [purgedSha256, 0, now, now],
+    );
+
+    const fallbackContent = 'fallback content from blobStore';
+    fake.seed({
+      sha256: purgedSha256,
+      size: fallbackContent.length,
+      relativePath: '',
+      mediaType: 'application/octet-stream',
+      content: fallbackContent,
+    });
+
+    const sourceManifestId = await insertSourceManifest(executor, 'sess-right', 1);
+    const manifestArtifactId = await insertManifestArtifact(
+      executor,
+      sourceManifestId,
+      'sess-right',
+      '.claude/settings.json',
+    );
+    const [referenceId] = await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      {
+        sourceManifestId,
+        manifestArtifactId,
+        observingSessionId: 'sess-right',
+        blobSha256: purgedSha256,
+      },
+      baseInput(null),
+    );
+
+    const canonicalized = await repository.getCanonicalizedArtifact(
+      executor,
+      PORTFOLIO_ID,
+      referenceId,
+    );
+
+    expect(fake.readCalls).toEqual([purgedSha256]);
+    expect(canonicalized?.rawSha256).not.toBe('');
   });
 });

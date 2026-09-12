@@ -30,14 +30,12 @@ const RETENTION_CLASS_MAP: Record<string, ArtifactRetentionClass> = {
   archive: 'retained',
 };
 
-function normalizeRetentionClass(sourceClass: string | undefined): ArtifactRetentionClass {
+export function normalizeRetentionClass(sourceClass: string | undefined): ArtifactRetentionClass {
   return RETENTION_CLASS_MAP[sourceClass ?? ''] ?? 'retained';
 }
 
-function asBytes(content: ArtifactContent): Uint8Array {
-  if (typeof content === 'string') {
-    return new TextEncoder().encode(content);
-  }
+export function asBytes(content: ArtifactContent): Uint8Array {
+  if (typeof content === 'string') return new TextEncoder().encode(content);
   return content;
 }
 
@@ -55,8 +53,8 @@ function blobToResolvedArtifact(blob: ArtifactBlob): ResolvedArtifact | undefine
 export function createBrowserContentHasher(): ContentHasher {
   return {
     hash: async (content) => {
-      const bytes = asBytes(content) as Uint8Array<ArrayBuffer>;
-      return sha256Hex(bytes);
+      const bytes = asBytes(content);
+      return sha256Hex(bytes as Uint8Array<ArrayBuffer>);
     },
   };
 }

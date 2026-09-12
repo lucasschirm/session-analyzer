@@ -26,6 +26,12 @@ interface PendingCall {
   reject: (error: Error) => void;
 }
 
+/** Request types whose successful response always resolves to `Uint8Array` bytes. */
+const BYTES_REQUEST_TYPES = new Set<DbRequest['type']>([
+  'exportControlDatabase',
+  'exportControlDatabaseOptimized',
+]);
+
 export class DbClient {
   private worker: Worker | null = null;
   private seq = 0;
@@ -299,6 +305,31 @@ export class DbClient {
     return this.call({ type: 'getControlDb' }) as Promise<DbDatabaseHandle>;
   }
 
+  /**
+   * Reclaims free pages and defragments the control database file. Blocks
+   * every other control-DB operation app-wide until it finishes, because the
+   * worker serializes all requests through one queue.
+   */
+  vacuum(): Promise<void> {
+    return this.call({ type: 'vacuumControlDatabase' }) as Promise<void>;
+  }
+
+  /**
+   * Exports the control database as bytes without SQLite's whole-database
+   * serialize path: `VACUUM INTO` an OPFS temp file and read it back when
+   * OPFS-backed (sidesteps the SQLITE_NOMEM ceiling `exportControlDatabase`
+   * can hit), or the unchanged `exportControlDatabase()` path when
+   * memory-backed.
+   */
+  exportControlDatabaseOptimized(): Promise<Uint8Array> {
+    return this.call({ type: 'exportControlDatabaseOptimized' }) as Promise<Uint8Array>;
+  }
+
+  /** Returns the control database's on-disk size in bytes via a cheap PRAGMA read (no export). */
+  getControlDatabaseSize(): Promise<number> {
+    return this.call({ type: 'getControlDatabaseSize' }) as Promise<number>;
+  }
+
   /** Exports the SQLite file and triggers a browser download. */
   async exportAndDownload(): Promise<void> {
     const bytes = await this.exportControlDatabase();
@@ -360,7 +391,11 @@ export class DbClient {
     if (pendingCall.requestType === 'init') {
       this.fallbackReason = response.fallbackReason;
       pendingCall.resolve(response.storage ?? 'memory');
-    } else if (pendingCall.requestType === 'exportControlDatabase') {
+    } else if (BYTES_REQUEST_TYPES.has(pendingCall.requestType)) {
+      // Bytes-returning request types resolve to `Uint8Array` unconditionally,
+      // matching their declared `Promise<Uint8Array>` return type — falling
+      // back to an empty array preserves that contract even if a response
+      // were ever missing `bytes` on success.
       pendingCall.resolve(response.bytes ?? new Uint8Array());
     } else {
       pendingCall.resolve(response.result);

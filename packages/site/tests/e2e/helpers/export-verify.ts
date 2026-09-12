@@ -74,6 +74,104 @@ async function resolveBytes(input: string | Uint8Array): Promise<Uint8Array> {
   );
 }
 
+type ExportDatabase = InstanceType<Sqlite3Static['oo1']['DB']>;
+
+/**
+ * Opens a downloaded `.sqlite` export (control or analytics database -- any
+ * database produced by this app's download/export flows) in the same SQLite
+ * WASM runtime used by the site, validating it is a genuine, queryable
+ * SQLite file. The caller owns the returned handle and must call `.close()`
+ * when done with it (a `try`/`finally` in the caller, mirroring
+ * `verifyExportContents`'s own usage below).
+ *
+ * Shared by `verifyExportContents` (control DB row counts) and any E2E test
+ * that needs to run its own ad-hoc query against a downloaded database --
+ * e.g. reading real `manifest_artifacts`/`artifact_references` ids out of an
+ * analytics DB export to drive a direct hash-route navigation with real
+ * fixture-derived ids, rather than duplicating this deserialize/validate
+ * logic per call site.
+ *
+ * @param input A Playwright download path (string) or the raw `Uint8Array`
+ *   bytes of the export.
+ * @throws If the input is not a valid SQLite database. The error is
+ *   propagated loudly so E2E tests can distinguish a corrupt export from an
+ *   empty one.
+ */
+export async function openExportDatabase(input: string | Uint8Array): Promise<ExportDatabase> {
+  const bytes = await resolveBytes(input);
+  assertHeader(bytes);
+
+  const sqlite3 = await getSqlite3();
+  const db = new sqlite3.oo1.DB(':memory:', 'c');
+  const capi = sqlite3.capi;
+  const pMem = sqlite3.wasm.allocFromTypedArray(bytes);
+  const rc = capi.sqlite3_deserialize(
+    db,
+    'main',
+    pMem,
+    bytes.length,
+    bytes.length,
+    capi.SQLITE_DESERIALIZE_FREEONCLOSE | capi.SQLITE_DESERIALIZE_RESIZEABLE,
+  );
+
+  if (rc !== capi.SQLITE_OK) {
+    db.close();
+    throw new Error(
+      `Unable to open export as a SQLite database (result code ${rc}). The file may be corrupt or truncated.`,
+    );
+  }
+
+  // Probe sqlite_master. If the bytes are not a real SQLite file this throws
+  // SQLITE_NOTADB, which we convert into a clear "corrupt file" error.
+  try {
+    db.selectValues("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1");
+  } catch (error) {
+    db.close();
+    throw new Error(`Export file is not a valid SQLite database: ${(error as Error).message}`);
+  }
+
+  return db;
+}
+
+export interface ManifestArtifactSummary {
+  readonly id: string;
+  readonly sha256: string;
+}
+
+/**
+ * Reads `manifest_artifacts` rows matching a relative path from an already-
+ * open export database, ordered by insertion. Per `sql-only-in-db-core.md`,
+ * this SQL stays confined to this helper file -- E2E specs call this typed
+ * function rather than inlining their own `SELECT` strings.
+ */
+export function selectManifestArtifactsByRelativePath(
+  db: ExportDatabase,
+  relativePath: string,
+): ManifestArtifactSummary[] {
+  const rows = db.selectObjects(
+    'SELECT id, sha256 FROM manifest_artifacts WHERE relative_path = ? ORDER BY created_at, id',
+    [relativePath],
+  );
+  return rows.map((row) => ({ id: String(row.id), sha256: String(row.sha256) }));
+}
+
+/**
+ * Reads the `artifact_blobs.content` column for a given sha256 from an
+ * already-open export database -- `undefined` if no row exists for that
+ * hash, `null` if the row exists but content has moved out of SQLite (the
+ * OPFS-backed store's expected shape post-cutover). Per
+ * `sql-only-in-db-core.md`, this SQL stays confined to this helper file.
+ */
+export function selectArtifactBlobContent(
+  db: ExportDatabase,
+  sha256: string,
+): Uint8Array | null | undefined {
+  const rows = db.selectObjects('SELECT content FROM artifact_blobs WHERE sha256 = ?', [sha256]);
+  if (rows.length === 0) return undefined;
+  const content = rows[0]?.content;
+  return content === null || content === undefined ? null : (content as Uint8Array);
+}
+
 /**
  * Opens a downloaded `.sqlite` export in the same SQLite WASM runtime used by
  * the site, reads the row count for every relevant control database table, and
@@ -86,37 +184,8 @@ async function resolveBytes(input: string | Uint8Array): Promise<Uint8Array> {
  *   loudly so E2E tests can distinguish a corrupt export from an empty one.
  */
 export async function verifyExportContents(input: string | Uint8Array): Promise<ExportRowCounts> {
-  const bytes = await resolveBytes(input);
-  assertHeader(bytes);
-
-  const sqlite3 = await getSqlite3();
-  const db = new sqlite3.oo1.DB(':memory:', 'c');
+  const db = await openExportDatabase(input);
   try {
-    const capi = sqlite3.capi;
-    const pMem = sqlite3.wasm.allocFromTypedArray(bytes);
-    const rc = capi.sqlite3_deserialize(
-      db,
-      'main',
-      pMem,
-      bytes.length,
-      bytes.length,
-      capi.SQLITE_DESERIALIZE_FREEONCLOSE | capi.SQLITE_DESERIALIZE_RESIZEABLE,
-    );
-
-    if (rc !== capi.SQLITE_OK) {
-      throw new Error(
-        `Unable to open export as a SQLite database (result code ${rc}). The file may be corrupt or truncated.`,
-      );
-    }
-
-    // Probe sqlite_master. If the bytes are not a real SQLite file this throws
-    // SQLITE_NOTADB, which we convert into a clear "corrupt file" error.
-    try {
-      db.selectValues("SELECT name FROM sqlite_master WHERE type='table' LIMIT 1");
-    } catch (error) {
-      throw new Error(`Export file is not a valid SQLite database: ${(error as Error).message}`);
-    }
-
     const counts = {} as Record<ExportTableName, number>;
     for (const table of EXPORT_TABLES) {
       const exists = db.selectValues(

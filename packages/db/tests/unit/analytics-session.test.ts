@@ -887,6 +887,27 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
     expect(summary.topByUtilization.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('resolves a human-friendly component identity label, never the raw id', async () => {
+    const identity = await ds.component.getIdentity(componentId, {
+      portfolioId: PORTFOLIO_ID,
+    });
+    expect(identity).toBeDefined();
+    expect(identity?.componentId).toBe(componentId);
+    expect(identity?.kind).toBe('tool');
+    // createComponent() seeds kind 'tool' with no nativeId, so
+    // componentDisplayName() falls back to displayName ('tool/<id>') --
+    // never the bare componentId (never-display-raw-ids.md).
+    expect(identity?.name).toBe(`tool/${componentId}`);
+    expect(identity?.name).not.toBe(componentId);
+  });
+
+  it('returns undefined identity for an unknown componentId', async () => {
+    const identity = await ds.component.getIdentity('does-not-exist', {
+      portfolioId: PORTFOLIO_ID,
+    });
+    expect(identity).toBeUndefined();
+  });
+
   it('returns component versions, scopes, utilization and distributions', async () => {
     const versions = await ds.component.getVersions(componentId, {});
     expect(versions.items.length).toBe(1);
