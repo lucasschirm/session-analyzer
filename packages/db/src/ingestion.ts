@@ -1346,13 +1346,27 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     result: TransformResult,
   ): Promise<void> {
     for (const record of result.evidence) {
+      let recordToStore = record;
+      if (record.recordType === 'message' && record.payload && typeof record.payload === 'object') {
+        const payload = { ...(record.payload as Record<string, unknown>) };
+        if ('content' in payload) {
+          delete payload.content;
+          if (!payload.storage) {
+            payload.storage = 'artifact-blob';
+          }
+          if (!payload.path && record.provenance?.path) {
+            payload.path = record.provenance.path;
+          }
+          recordToStore = { ...record, payload };
+        }
+      }
       await NormalizedEventStore.insert(tx, {
-        id: record.recordId,
-        sessionId: record.sessionId,
+        id: recordToStore.recordId,
+        sessionId: recordToStore.sessionId,
         generationId,
-        eventType: record.recordType,
+        eventType: recordToStore.recordType,
         eventVersion: 1,
-        rawDetails: JSON.stringify(record),
+        rawDetails: JSON.stringify(recordToStore),
         retainRaw: true,
       });
     }

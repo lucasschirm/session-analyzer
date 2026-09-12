@@ -416,6 +416,29 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
   }
 
   /**
+   * Checkpoints WAL committed pages into the main DB and runs VACUUM
+   * only if freelist free pages exceed the threshold (default: 2560 pages = 10 MiB).
+   */
+  async checkpointAndVacuum(minFreelistPages?: number): Promise<{
+    checkpointed: boolean;
+    vacuumed: boolean;
+    freelistCount: number;
+  }> {
+    const response = await this.call({
+      type: 'checkpointAnalyticsDatabase',
+      minFreelistPages,
+    });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+    return response.result as {
+      checkpointed: boolean;
+      vacuumed: boolean;
+      freelistCount: number;
+    };
+  }
+
+  /**
    * Serialize-free export for download/backup: `VACUUM INTO` on the OPFS
    * backend (sidesteps the 2 GiB WASM-heap ceiling that can fail
    * `exportAnalyticsDatabase()` on large databases), or the existing export

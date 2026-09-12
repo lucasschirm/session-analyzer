@@ -342,6 +342,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_project_native
   ON workspaces(project_id, native_workspace_id) WHERE native_workspace_id IS NOT NULL;
 `;
 
+export const DROP_REDUNDANT_INDEXES_SQL = `
+DROP INDEX IF EXISTS idx_normalized_events_session;
+DROP INDEX IF EXISTS idx_transformation_generations_session;
+DROP INDEX IF EXISTS idx_metric_values_definition;
+`.trim();
+
 /**
  * Forward migration history for the analytics schema.
  *
@@ -446,6 +452,12 @@ export const MIGRATIONS: readonly Migration[] = [
     sql: CREATE_PROJECT_CONFIGURATIONS_TABLE,
     checksum: checksumOf(CREATE_PROJECT_CONFIGURATIONS_TABLE),
   },
+  {
+    id: 83,
+    name: 'drop-redundant-indexes',
+    sql: DROP_REDUNDANT_INDEXES_SQL,
+    checksum: checksumOf(DROP_REDUNDANT_INDEXES_SQL),
+  },
 ].sort((a, b) => a.id - b.id);
 
 /**
@@ -482,6 +494,7 @@ ${COMPONENT_ECOSYSTEM_DDL}
 ${SESSION_EVIDENCE_DDL}
 ${METRICS_DDL}
 ${ROLLUPS_DDL}
+${DROP_REDUNDANT_INDEXES_SQL}
 `;
 
 /** SQL that creates just the migration-control tables. */

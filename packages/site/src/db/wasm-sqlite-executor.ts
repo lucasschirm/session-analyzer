@@ -460,6 +460,40 @@ export class WasmSqliteExecutor implements SqliteExecutor {
   }
 
   /**
+   * Checkpoints the WAL file to transfer committed pages into the main
+   * database file and optionally truncate the WAL file.
+   */
+  checkpointWal(mode: 'PASSIVE' | 'FULL' | 'RESTART' | 'TRUNCATE' = 'TRUNCATE'): void {
+    this.guardOpen();
+    try {
+      this.db.exec(`PRAGMA wal_checkpoint(${mode});`);
+    } catch (err) {
+      console.warn('wal_checkpoint failed', err);
+    }
+  }
+
+  /** Returns the current number of unused/free pages on SQLite's freelist. */
+  getFreelistCount(): number {
+    this.guardOpen();
+    return this.readPragmaInt('freelist_count');
+  }
+
+  /**
+   * Reclaims free pages via `VACUUM` only when the freelist page count
+   * exceeds the specified threshold (default: 2560 pages = 10 MiB with 4 KiB pages).
+   * Avoids running slow I/O-heavy vacuums when negligible disk space would be reclaimed.
+   */
+  vacuumIfNeeded(minFreelistPages = 2560): boolean {
+    this.guardOpen();
+    const freelist = this.getFreelistCount();
+    if (freelist >= minFreelistPages) {
+      this.vacuum();
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Cheap on-disk size estimate via `PRAGMA page_count`/`page_size` — avoids
    * the full-export path (`exportDatabase()`) that previously backed the
    * Storage page's Size column and could fail with SQLITE_NOMEM on large

@@ -624,6 +624,38 @@ async function handleVacuumAnalyticsDatabase(
   }
 }
 
+async function handleCheckpointAnalyticsDatabase(
+  state: AnalyticsWorkerState,
+  request: Extract<AnalyticsRequest, { type: 'checkpointAnalyticsDatabase' }>,
+): Promise<AnalyticsResponse> {
+  if (optimizeInFlight) {
+    return { id: 0, ok: false, error: OPTIMIZE_IN_PROGRESS_ERROR };
+  }
+  optimizeInFlight = true;
+  try {
+    state.executor.checkpointWal('TRUNCATE');
+    const freelistCount = state.executor.getFreelistCount();
+    const minPages = request.minFreelistPages ?? 2560;
+    const vacuumed = freelistCount >= minPages;
+    if (vacuumed) {
+      await state.executor.vacuum();
+    }
+    return {
+      id: 0,
+      ok: true,
+      result: {
+        checkpointed: true,
+        vacuumed,
+        freelistCount,
+      },
+    };
+  } catch (error) {
+    return toErrorResponse(error);
+  } finally {
+    optimizeInFlight = false;
+  }
+}
+
 async function handleExportAnalyticsDatabaseOptimized(
   state: AnalyticsWorkerState,
 ): Promise<AnalyticsResponse> {
@@ -692,6 +724,8 @@ export async function handleAnalyticsRequest(
         }
       case 'vacuumAnalyticsDatabase':
         return await handleVacuumAnalyticsDatabase(state);
+      case 'checkpointAnalyticsDatabase':
+        return await handleCheckpointAnalyticsDatabase(state, request);
       case 'exportAnalyticsDatabaseOptimized':
         return await handleExportAnalyticsDatabaseOptimized(state);
       case 'getAnalyticsDatabaseSize':

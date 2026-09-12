@@ -873,12 +873,9 @@ function normalizeSessionSpine(
         uuid: entryId,
         parentUuid: 'parentUuid' in entry ? entry.parentUuid : null,
         timestamp: entryTimestamp(entry),
-        content: isAssistantEntry(entry)
-          ? entry.message.content
-          : isUserEntry(entry)
-            ? entry.message.content
-            : undefined,
         model: isAssistantEntry(entry) ? entry.message.model : undefined,
+        storage: 'artifact-blob',
+        path: artifactId,
       },
     });
 
@@ -927,11 +924,19 @@ function normalizeSessionSpine(
   }
   for (const [agentId, child] of Object.entries(subagentSessions)) {
     const launch = launchByAgentId.get(agentId);
+    const subArtifact = bundle.artifacts.find((a) => {
+      const norm = a.relativePath.replace(/\\/g, '/').toLowerCase();
+      return (
+        norm === `subagents/agent-${agentId.toLowerCase()}.jsonl` ||
+        norm === `subagents/${agentId.toLowerCase()}.jsonl`
+      );
+    });
+    const childArtifactId = subArtifact ? artifactIdFor(subArtifact) : artifactId;
     const childResult = normalizeSessionSpine(
       child,
       bundle,
       context,
-      artifactId,
+      childArtifactId,
       sessionId,
       resolvedRootSessionId,
       launch ? { toolUseId: launch.toolUseId, spawnDepth: 1 } : undefined,

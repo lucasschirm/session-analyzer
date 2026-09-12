@@ -486,5 +486,35 @@ describe('ClaudeCodeTransformer', () => {
       // There must be a root + at least one child session summary.
       expect(result.sessionSummaries.length).toBeGreaterThanOrEqual(2);
     });
+
+    it('sets provenance artifactId and message blob pointer to the subagent transcript for subagent sessions', () => {
+      const b = bundle([
+        artifact('transcript.jsonl', fixture('e2e-main-session.jsonl'), 'application/jsonl'),
+        artifact(
+          'subagents/agent-e2e-agent-0001.jsonl',
+          fixture('e2e-subagent-transcript.jsonl'),
+          'application/jsonl',
+        ),
+      ]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      expect(result.errors).toEqual([]);
+
+      const rootSession = result.sessionSummaries.find((s) => s.parentSessionId === undefined);
+      const childSession = result.sessionSummaries.find((s) => s.parentSessionId !== undefined);
+      expect(rootSession).toBeDefined();
+      expect(childSession).toBeDefined();
+
+      const childMessages = result.evidence.filter(
+        (r) => r.sessionId === childSession!.sessionId && r.recordType === 'message',
+      );
+      expect(childMessages.length).toBeGreaterThan(0);
+      for (const msg of childMessages) {
+        const payload = msg.payload as Record<string, unknown>;
+        expect(payload.storage).toBe('artifact-blob');
+        expect(payload.path).toContain('subagents/agent-e2e-agent-0001.jsonl');
+        expect(msg.provenance.artifactId).toContain('subagents/agent-e2e-agent-0001.jsonl');
+        expect(payload.content).toBeUndefined();
+      }
+    });
   });
 });

@@ -421,6 +421,28 @@ describe('AnalyticsClient', () => {
     await expect(promise).rejects.toThrow('Optimization already in progress');
   });
 
+  it('checkpointAndVacuum() posts checkpointAnalyticsDatabase and resolves with result', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.checkpointAndVacuum(500);
+    expect(worker.posted[1].type).toBe('checkpointAnalyticsDatabase');
+    expect((worker.posted[1] as unknown as { minFreelistPages?: number }).minFreelistPages).toBe(
+      500,
+    );
+    worker.respond({
+      id: worker.posted[1].id,
+      ok: true,
+      result: { checkpointed: true, vacuumed: true, freelistCount: 600 },
+    });
+
+    await expect(promise).resolves.toEqual({
+      checkpointed: true,
+      vacuumed: true,
+      freelistCount: 600,
+    });
+  });
+
   it('exportAnalyticsDatabaseOptimized() posts the request and unwraps bytes', async () => {
     void client.ensureReady();
     worker.respond({ id: 1, ok: true, backend: backendReport() });

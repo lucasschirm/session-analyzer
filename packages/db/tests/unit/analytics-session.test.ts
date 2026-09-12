@@ -877,6 +877,122 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
     expect(page.items[0]?.entityType).toBe('message');
   });
 
+  it('returns transcript from blobStore on-demand for root session when sha256 pointer is present', async () => {
+    const transcriptText = [
+      JSON.stringify({ type: 'user', message: { content: 'What is the status?' } }),
+      JSON.stringify({ type: 'assistant', message: { content: 'Everything is operational.' } }),
+    ].join('\n');
+    const hash = 'a'.repeat(64);
+    const inMemoryBlobs = new Map<string, Uint8Array>();
+    inMemoryBlobs.set(hash, new TextEncoder().encode(transcriptText));
+
+    const mockBlobStore = {
+      read: async (sha: string) => {
+        const bytes = inMemoryBlobs.get(sha);
+        return bytes ? { content: bytes } : undefined;
+      },
+      write: async () => {},
+      has: async (sha: string) => inMemoryBlobs.has(sha),
+    };
+
+    const rootWithBlobSessionId = 'se-blob-root';
+    await createSession(executor, rootWithBlobSessionId);
+    const genId = 'gen-blob-root';
+    await createGeneration(executor, rootWithBlobSessionId, genId);
+
+    // Insert normalized_events record with storage: 'artifact-blob' and path: 'sha256:<hash>'
+    await NormalizedEventStore.insert(executor, {
+      id: 'evt-blob-1',
+      sessionId: rootWithBlobSessionId,
+      generationId: genId,
+      eventType: 'message',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordType: 'message',
+        sessionId: rootWithBlobSessionId,
+        payload: {
+          role: 'user',
+          storage: 'artifact-blob',
+          path: `sha256:${hash}`,
+        },
+      }),
+      retainRaw: true,
+    });
+
+    const dsWithBlob = createAnalyticsDataSource(executor, undefined, mockBlobStore);
+    const page = await dsWithBlob.session.getTranscriptPages(rootWithBlobSessionId);
+
+    expect(page.items.length).toBe(2);
+    expect(page.items[0]?.summary).toContain('What is the status?');
+    expect(page.items[1]?.summary).toContain('Everything is operational.');
+  });
+
+  it('returns transcript from blobStore on-demand for child/subagent session via session_relations', async () => {
+    const subTranscriptText = [
+      JSON.stringify({ type: 'user', message: { content: 'Subagent task: analyze' } }),
+      JSON.stringify({ type: 'assistant', message: { content: 'Analysis completed.' } }),
+    ].join('\n');
+    const subHash = 'b'.repeat(64);
+    const inMemoryBlobs = new Map<string, Uint8Array>();
+    inMemoryBlobs.set(subHash, new TextEncoder().encode(subTranscriptText));
+
+    const mockBlobStore = {
+      read: async (sha: string) => {
+        const bytes = inMemoryBlobs.get(sha);
+        return bytes ? { content: bytes } : undefined;
+      },
+      write: async () => {},
+      has: async (sha: string) => inMemoryBlobs.has(sha),
+    };
+
+    const rootId = 'se-parent-root';
+    const subSessionId = 'se-child-subagent';
+    await createSession(executor, rootId);
+    await createSession(executor, subSessionId);
+    const genId = 'gen-subagent';
+    await createGeneration(executor, subSessionId, genId);
+
+    // Link subagent to root session in session_relations
+    await SessionRelationStore.insert(executor, {
+      id: 'rel-sub-1',
+      sessionId: subSessionId,
+      parentSessionId: rootId,
+      rootSessionId: rootId,
+      spawnInvocationId: null,
+      depth: 1,
+      inclusionSemantics: 'native',
+      generationId: genId,
+      createdAt: BASE_TIME,
+      updatedAt: BASE_TIME,
+    });
+
+    // Insert child message pointing to subagent artifact hash
+    await NormalizedEventStore.insert(executor, {
+      id: 'evt-sub-1',
+      sessionId: subSessionId,
+      generationId: genId,
+      eventType: 'message',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordType: 'message',
+        sessionId: subSessionId,
+        payload: {
+          role: 'user',
+          storage: 'artifact-blob',
+          path: `sha256:${subHash}`,
+        },
+      }),
+      retainRaw: true,
+    });
+
+    const dsWithBlob = createAnalyticsDataSource(executor, undefined, mockBlobStore);
+    const page = await dsWithBlob.session.getTranscriptPages(subSessionId);
+
+    expect(page.items.length).toBe(2);
+    expect(page.items[0]?.summary).toContain('Subagent task: analyze');
+    expect(page.items[1]?.summary).toContain('Analysis completed.');
+  });
+
   it('returns component ecosystem summary', async () => {
     const summary = await ds.component.getSummary({
       portfolioId: PORTFOLIO_ID,

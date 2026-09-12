@@ -140,4 +140,28 @@ describe('MigrationRunner', () => {
       expect(MIGRATIONS[i].id).toBeGreaterThan(MIGRATIONS[i - 1].id);
     }
   });
+
+  it('migration 83 drops redundant indexes', async () => {
+    const executor = await createExecutor();
+    // Run migrations up to 82
+    const v82Migrations = MIGRATIONS.filter((m) => m.id <= 82);
+    const runner82 = new MigrationRunner(executor, v82Migrations);
+    await runner82.migrate();
+
+    // Verify indexes exist prior to v83
+    const { rows: beforeRows } = await executor.exec(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_normalized_events_session', 'idx_transformation_generations_session', 'idx_metric_values_definition')",
+    );
+    expect(beforeRows.length).toBe(3);
+
+    // Apply v83
+    const runner83 = new MigrationRunner(executor, MIGRATIONS);
+    await runner83.migrate();
+
+    // Verify indexes are dropped
+    const { rows: afterRows } = await executor.exec(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_normalized_events_session', 'idx_transformation_generations_session', 'idx_metric_values_definition')",
+    );
+    expect(afterRows.length).toBe(0);
+  });
 });

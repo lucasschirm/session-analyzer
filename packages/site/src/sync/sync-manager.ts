@@ -1886,6 +1886,9 @@ export class SyncManager extends EventTarget {
 
     this.onRunSummary?.(this.summarizeRun(run));
     this.emitChange();
+    analyticsClient
+      .checkpointAndVacuum()
+      .catch((err) => console.warn('Post-sync maintenance failed', err));
     this.processQueue();
   }
 
