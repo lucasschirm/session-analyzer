@@ -69,6 +69,13 @@ import type { ArtifactBlobStore, ContentHasher } from './ports.js';
 
 type Queryable = SqliteExecutor | SqliteTransaction;
 
+// TextDecoder is a stable global in Node and browsers but is not part of the
+// ES2021 lib used by this package. This local declaration keeps the module runtime-agnostic.
+interface TextDecoder {
+  decode(input?: Uint8Array): string;
+}
+declare const TextDecoder: { new (): TextDecoder };
+
 const DEFAULT_LIMIT = 50;
 
 function asString(value: unknown): string {
