@@ -364,6 +364,21 @@ describe('component-ecosystem-view', () => {
     expect(componentMock.getSummary).toHaveBeenCalledTimes(1);
   });
 
+  it('does not double-fetch on a normal initial mount via the real property-set path', async () => {
+    // Same guard as the attribute-binding test above, but exercising the
+    // property-set path that code and other tests also use. willUpdate()
+    // must not fire on the first update no matter how componentId is set.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const view = Object.assign(document.createElement('component-ecosystem-view'), {
+      componentId: 'read_file',
+    }) as ComponentEcosystemView;
+    await mount(view);
+
+    expect(componentMock.getVersions).toHaveBeenCalledTimes(1);
+    expect(componentMock.getSummary).toHaveBeenCalledTimes(1);
+  });
+
   it('reloads with the new component when componentId changes on an already-mounted instance', async () => {
     // Regression coverage: navigating directly between two different
     // populated :componentId routes (e.g. browser back/forward) on an
@@ -445,7 +460,7 @@ describe('component-ecosystem-view', () => {
     // dispatch later and mask the very staleness this test needs to force.
     // `handleHashChange()` only checks the hash *prefix*, so dispatching
     // against the unchanged '#/artifacts/read_file' still satisfies it.
-    window.dispatchEvent(new Event('hashchange'));
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
 
     // Now simulate the parent's deferred attribute update completing,
     // *while the stale load is still genuinely blocked*. Without
@@ -495,7 +510,7 @@ describe('component-ecosystem-view', () => {
 
     // Start a load for the old component and block it in flight, exactly
     // as in the sibling race test above.
-    window.dispatchEvent(new Event('hashchange'));
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
     // Queue a reload for the new component while the stale one is still
     // blocked -- this sets reloadPending, same as the sibling test.
     view.componentId = 'code-review';

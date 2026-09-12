@@ -12,7 +12,7 @@ import {
   type CanonicalizedArtifact,
 } from '../../src/artifact-diff.js';
 import { createSha256ContentHasher } from '../../src/ingestion.js';
-import type { ArtifactBlobStore, ResolvedArtifact } from '../../src/ports.js';
+import type { ArtifactBlobStore, ArtifactContent, ResolvedArtifact } from '../../src/ports.js';
 
 const PORTFOLIO_ID = 'pf-artifact';
 const INGESTION_SOURCE_ID = 'src-artifact';
@@ -78,7 +78,7 @@ function createFakeBlobStore(executor: WasmSqliteExecutor): ArtifactBlobStore & 
 }
 
 function baseInput(
-  content: string | null,
+  content: ArtifactContent | null,
   overrides?: Partial<ArtifactCanonicalizationInput>,
 ): ArtifactCanonicalizationInput {
   return {
@@ -762,6 +762,70 @@ describe('ArtifactDiffRepository', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.content).not.toBeNull();
     expect(new TextDecoder().decode(rows[0]?.content as Uint8Array)).toBe(content);
+  });
+
+  it('with a Uint8Array input, stores the exact bytes and byte length in the metadata row', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    const text = JSON.stringify({ model: 'claude-3-5-sonnet', variant: 'uint8' });
+    const bytes = new TextEncoder().encode(text);
+
+    const sourceManifestId = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactId = await insertManifestArtifact(
+      executor,
+      sourceManifestId,
+      'sess-left',
+      '.claude/config.json',
+    );
+    const repository = new ArtifactDiffRepository(hasher);
+    await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      { sourceManifestId, manifestArtifactId, observingSessionId: 'sess-left' },
+      baseInput(bytes),
+    );
+
+    const sha = await hasher.hash(bytes);
+    const { rows } = await executor.exec(
+      'SELECT content, size FROM artifact_blobs WHERE sha256 = ?',
+      [sha],
+    );
+    expect(rows).toHaveLength(1);
+    expect(new TextDecoder().decode(rows[0]?.content as Uint8Array)).toBe(text);
+    expect(rows[0]?.size).toBe(bytes.length);
+  });
+
+  it('with a multi-byte string input, stores the UTF-8 byte length, not the string length', async () => {
+    const executor = await setup();
+    const hasher = makeHasher();
+    // 🚀 is a multi-byte character; the byte length differs from the JS string length.
+    const text = '{"emoji":"🚀"}';
+    const bytes = new TextEncoder().encode(text);
+
+    const sourceManifestId = await insertSourceManifest(executor, 'sess-left', 0);
+    const manifestArtifactId = await insertManifestArtifact(
+      executor,
+      sourceManifestId,
+      'sess-left',
+      '.claude/config.json',
+    );
+    const repository = new ArtifactDiffRepository(hasher);
+    await repository.record(
+      executor,
+      PORTFOLIO_ID,
+      { sourceManifestId, manifestArtifactId, observingSessionId: 'sess-left' },
+      baseInput(text),
+    );
+
+    const sha = await hasher.hash(text);
+    const { rows } = await executor.exec(
+      'SELECT content, size FROM artifact_blobs WHERE sha256 = ?',
+      [sha],
+    );
+    expect(rows).toHaveLength(1);
+    expect(new TextDecoder().decode(rows[0]?.content as Uint8Array)).toBe(text);
+    expect(rows[0]?.size).toBe(bytes.length);
+    expect(rows[0]?.size).not.toBe(text.length);
   });
 
   it('the content-address dedup guard skips blobStore.retain() when a metadata row for that sha256 already exists', async () => {
