@@ -566,6 +566,7 @@ interface RawTimingPoint {
   contextTokens: number | null;
   generationTokens: number | null;
   totalTokens: number | null;
+  compactedTokens?: number | null;
 }
 
 function parseTimingTurn(
@@ -662,7 +663,14 @@ function resolveMessageRequest(
 
 function createRawTimingPoint(msg: TimingMessage, req?: TimingRequest): RawTimingPoint {
   if (!req) {
-    return { msg, req, contextTokens: null, generationTokens: null, totalTokens: null };
+    return {
+      msg,
+      req,
+      contextTokens: null,
+      generationTokens: null,
+      totalTokens: null,
+      compactedTokens: null,
+    };
   }
   const hasContext =
     req.inputTokens != null || req.cacheReadTokens != null || req.cacheCreationTokens != null;
@@ -672,7 +680,7 @@ function createRawTimingPoint(msg: TimingMessage, req?: TimingRequest): RawTimin
   const generationTokens = asOptionalNumber(req.outputTokens) ?? null;
   const totalTokens =
     contextTokens !== null ? contextTokens + (generationTokens ?? 0) : generationTokens;
-  return { msg, req, contextTokens, generationTokens, totalTokens };
+  return { msg, req, contextTokens, generationTokens, totalTokens, compactedTokens: null };
 }
 
 function fillForwardContextTokens(rawPoints: RawTimingPoint[]): void {
@@ -694,7 +702,7 @@ function fillForwardContextTokens(rawPoints: RawTimingPoint[]): void {
 }
 
 function toContextTimingPoint(raw: RawTimingPoint, index: number): ContextTimingPoint {
-  const { msg, req, contextTokens, generationTokens, totalTokens } = raw;
+  const { msg, req, contextTokens, generationTokens, totalTokens, compactedTokens } = raw;
   return {
     turnNumber: msg.turnOrdinal ?? index + 1,
     messageIndex: index + 1,
@@ -705,6 +713,8 @@ function toContextTimingPoint(raw: RawTimingPoint, index: number): ContextTiming
     totalTokens,
     contextTokens,
     generationTokens,
+    compactedTokens: compactedTokens ?? undefined,
+    removedTokens: compactedTokens ?? undefined,
     inputTokens: req ? asOptionalNumber(req.inputTokens) : contextTokens,
     outputTokens: req ? asOptionalNumber(req.outputTokens) : generationTokens,
     cacheCreationTokens: req ? asOptionalNumber(req.cacheCreationTokens) : null,
@@ -716,11 +726,22 @@ function toContextTimingPoint(raw: RawTimingPoint, index: number): ContextTiming
   };
 }
 
+interface TimingCompaction {
+  id: string;
+  timestampMs?: number;
+  timestamp?: string;
+  sourceEventId?: string;
+  preTokens?: number;
+  postTokens?: number;
+  droppedTokens?: number;
+}
+
 interface ParsedTimingData {
   messages: TimingMessage[];
   reqByTurn: Map<string, TimingRequest>;
   reqByEvent: Map<string, TimingRequest>;
   reqByOrder: Map<number, TimingRequest>;
+  compactions: TimingCompaction[];
 }
 
 function parseNormalizedTimingEvents(rows: readonly Record<string, unknown>[]): ParsedTimingData {
@@ -729,6 +750,7 @@ function parseNormalizedTimingEvents(rows: readonly Record<string, unknown>[]): 
   const reqByTurn = new Map<string, TimingRequest>();
   const reqByEvent = new Map<string, TimingRequest>();
   const reqByOrder = new Map<number, TimingRequest>();
+  const compactions: TimingCompaction[] = [];
 
   for (const row of rows) {
     const record = parseJsonRecord(asString(row.raw_details));
@@ -748,9 +770,40 @@ function parseNormalizedTimingEvents(rows: readonly Record<string, unknown>[]): 
       if (typeof req.requestOrder === 'number') reqByOrder.set(req.requestOrder, req);
     } else if (eventType === 'message') {
       messages.push(parseTimingMessage(recordId, parentId, sourceEventId, payload, turnsMap));
+    } else if (
+      eventType === 'compaction' ||
+      (eventType === 'normalized_event' && payload.category === 'compaction')
+    ) {
+      const tsMs =
+        typeof payload.timestampMs === 'number'
+          ? payload.timestampMs
+          : typeof payload.timestamp === 'string'
+            ? Date.parse(payload.timestamp)
+            : undefined;
+      const preTokens = asOptionalNumber(payload.preTokens);
+      const postTokens = asOptionalNumber(payload.postTokens);
+      const droppedTokens =
+        asOptionalNumber(payload.cumulativeDroppedTokens) ??
+        asOptionalNumber(payload.droppedTokens) ??
+        asOptionalNumber(payload.tokens_saved) ??
+        (preTokens != null && postTokens != null ? preTokens - postTokens : undefined);
+      compactions.push({
+        id: recordId,
+        timestampMs: Number.isNaN(tsMs) ? undefined : tsMs,
+        timestamp:
+          typeof payload.timestamp === 'string'
+            ? payload.timestamp
+            : tsMs
+              ? new Date(tsMs).toISOString()
+              : undefined,
+        sourceEventId: sourceEventId ?? undefined,
+        preTokens: preTokens ?? undefined,
+        postTokens: postTokens ?? undefined,
+        droppedTokens: droppedTokens ?? undefined,
+      });
     }
   }
-  return { messages, reqByTurn, reqByEvent, reqByOrder };
+  return { messages, reqByTurn, reqByEvent, reqByOrder, compactions };
 }
 
 async function extractPointsFromNormalizedEvents(
@@ -762,13 +815,17 @@ async function extractPointsFromNormalizedEvents(
     `SELECT id, event_type, raw_details
      FROM normalized_events
      WHERE session_id = ? AND ( ? IS NULL OR ? = '' OR generation_id = ? )
-       AND event_type IN ('turn', 'message', 'model_request', 'model_usage')
+       AND (
+         event_type IN ('turn', 'message', 'model_request', 'model_usage', 'compaction')
+         OR (event_type = 'normalized_event' AND raw_details LIKE '%"category":"compaction"%')
+       )
      ORDER BY id`,
     [sessionId, generationId, generationId, generationId],
   );
   if (rows.length === 0) return [];
 
-  const { messages, reqByTurn, reqByEvent, reqByOrder } = parseNormalizedTimingEvents(rows);
+  const { messages, reqByTurn, reqByEvent, reqByOrder, compactions } =
+    parseNormalizedTimingEvents(rows);
   if (messages.length === 0) return [];
   sortTimingMessages(messages);
 
@@ -776,6 +833,41 @@ async function extractPointsFromNormalizedEvents(
     createRawTimingPoint(m, resolveMessageRequest(m, reqByTurn, reqByEvent, reqByOrder)),
   );
   fillForwardContextTokens(rawPoints);
+
+  if (compactions.length > 0) {
+    compactions.sort((a, b) => (a.timestampMs ?? 0) - (b.timestampMs ?? 0));
+    for (const c of compactions) {
+      let targetPoint: RawTimingPoint | undefined;
+      const cTs = c.timestampMs;
+      if (cTs !== undefined) {
+        targetPoint = rawPoints.find((p) => {
+          const pTs = p.msg.timestamp ? Date.parse(p.msg.timestamp) : undefined;
+          return pTs !== undefined && pTs >= cTs;
+        });
+      }
+      if (!targetPoint && c.sourceEventId) {
+        targetPoint = rawPoints.find(
+          (p) => p.msg.sourceEventId === c.sourceEventId || p.msg.id === c.sourceEventId,
+        );
+      }
+      if (targetPoint) {
+        const dropped =
+          c.droppedTokens ??
+          (c.preTokens != null && c.postTokens != null ? c.preTokens - c.postTokens : null);
+        targetPoint.compactedTokens = dropped ?? null;
+      }
+    }
+  }
+
+  // Fallback: detect context drop between consecutive points if compactedTokens is not set
+  for (let i = 1; i < rawPoints.length; i++) {
+    const prev = rawPoints[i - 1].contextTokens;
+    const curr = rawPoints[i].contextTokens;
+    if (rawPoints[i].compactedTokens == null && prev !== null && curr !== null && prev > curr) {
+      rawPoints[i].compactedTokens = prev - curr;
+    }
+  }
+
   return rawPoints.map(toContextTimingPoint);
 }
 

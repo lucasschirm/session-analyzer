@@ -1,12 +1,12 @@
 import type {
   ComponentFactPage,
   ContextTimingSeries,
-  MetricValueDto,
   RootChildBreakdown,
   SessionEvidenceSummary,
   SessionTree,
 } from '@lucasschirm/sal-db';
 import { describe, expect, it } from 'vitest';
+import { toEChartsOption } from '../../src/components/charts/chart-helpers';
 import {
   componentFactsToChartSeries,
   componentFactsToRows,
@@ -153,6 +153,137 @@ describe('contextGrowthToChartSeries', () => {
     expect(result.buckets[0].x).toBe('#5 message');
     expect(result.buckets[0].y).toBe(75);
     expect(result.buckets[0].evidenceLink?.href).toBe('');
+  });
+
+  it('includes Compacted series bucket and enforces stack order when compaction occurs', () => {
+    const series: ContextTimingSeries = {
+      token: {
+        analysisReleaseId: 'rel-1',
+        generationId: 'gen-1',
+        comparabilityGroupId: 'grp',
+        eligibleN: 2,
+        knownN: 2,
+        unknownCount: 0,
+        coverage: 'complete',
+        measurementClass: 'observed',
+        confidence: 'high',
+        metricVersion: '1.0.0',
+        evidenceLinks: [],
+      },
+      points: [
+        {
+          turnNumber: 1,
+          messageIndex: 1,
+          messageId: 'm1',
+          role: 'user',
+          timestamp: '2026-08-11T10:00:00.000Z',
+          totalTokens: 50100,
+          contextTokens: 50000,
+          generationTokens: 100,
+        },
+        {
+          turnNumber: 2,
+          messageIndex: 2,
+          messageId: 'm2',
+          role: 'assistant',
+          timestamp: '2026-08-11T10:00:10.000Z',
+          totalTokens: 12050,
+          contextTokens: 12000,
+          generationTokens: 50,
+          compactedTokens: 38000,
+        },
+      ],
+    };
+
+    const result = contextGrowthToChartSeries(series, 'sess-compact');
+
+    expect(result.seriesOrder).toEqual(['Context', 'Compacted', 'Generation']);
+    expect(result.colors).toEqual(['#4f8cff', '#ffb86c', '#3ecf8e']);
+
+    // Point 1: Context (50000) + Generation (100)
+    // Point 2: Context (12000) + Compacted (38000) + Generation (50)
+    expect(result.buckets).toHaveLength(5);
+
+    const p2Buckets = result.buckets.filter((b) => b.x === '#2 assistant');
+    expect(p2Buckets).toHaveLength(3);
+
+    const contextBucket = p2Buckets.find((b) => b.series === 'Context');
+    expect(contextBucket).toBeDefined();
+    expect(contextBucket?.y).toBe(12000);
+    expect(contextBucket?.label).toContain('context 12,000 tokens');
+
+    const compactedBucket = p2Buckets.find((b) => b.series === 'Compacted');
+    expect(compactedBucket).toBeDefined();
+    expect(compactedBucket?.y).toBe(38000);
+    expect(compactedBucket?.label).toContain('compacted 38,000 tokens');
+    expect(compactedBucket?.evidenceLink?.href).toBe('#/sessions/sess-compact#msg-m2');
+
+    const genBucket = p2Buckets.find((b) => b.series === 'Generation');
+    expect(genBucket).toBeDefined();
+    expect(genBucket?.y).toBe(50);
+    expect(genBucket?.label).toContain('generation 50 tokens');
+
+    // Verify ECharts option generated from result respects stack and series order
+    const option = toEChartsOption(result) as {
+      color?: string[];
+      series?: Array<{ name: string; stack: string; data: unknown[] }>;
+    };
+    expect(option.color).toEqual(['#4f8cff', '#ffb86c', '#3ecf8e']);
+    expect(option.series).toHaveLength(3);
+    expect(option.series?.[0].name).toBe('Context');
+    expect(option.series?.[0].stack).toBe('total');
+    expect(option.series?.[1].name).toBe('Compacted');
+    expect(option.series?.[1].stack).toBe('total');
+    expect(option.series?.[2].name).toBe('Generation');
+    expect(option.series?.[2].stack).toBe('total');
+  });
+
+  it('infers removedTokens fallback when context drops between turns and compactedTokens is absent', () => {
+    const series: ContextTimingSeries = {
+      token: {
+        analysisReleaseId: 'rel-1',
+        generationId: 'gen-1',
+        comparabilityGroupId: 'grp',
+        eligibleN: 2,
+        knownN: 2,
+        unknownCount: 0,
+        coverage: 'complete',
+        measurementClass: 'observed',
+        confidence: 'high',
+        metricVersion: '1.0.0',
+        evidenceLinks: [],
+      },
+      points: [
+        {
+          turnNumber: 1,
+          messageIndex: 1,
+          messageId: 'm1',
+          role: 'user',
+          timestamp: '2026-08-11T10:00:00.000Z',
+          totalTokens: 60000,
+          contextTokens: 60000,
+          generationTokens: 0,
+        },
+        {
+          turnNumber: 2,
+          messageIndex: 2,
+          messageId: 'm2',
+          role: 'assistant',
+          timestamp: '2026-08-11T10:00:10.000Z',
+          totalTokens: 20000,
+          contextTokens: 20000,
+          generationTokens: 0,
+        },
+      ],
+    };
+
+    const result = contextGrowthToChartSeries(series, 'sess-fallback');
+    const compactedBucket = result.buckets.find(
+      (b) => b.x === '#2 assistant' && b.series === 'Compacted',
+    );
+    expect(compactedBucket).toBeDefined();
+    expect(compactedBucket?.y).toBe(40000); // 60000 - 20000
+    expect(compactedBucket?.label).toContain('compacted 40,000 tokens');
   });
 });
 

@@ -481,4 +481,31 @@ describe('toEChartsOption', () => {
     const seriesArr = option.series as Array<{ name: string }>;
     expect(seriesArr[0].name).toBe('value');
   });
+
+  it('preserves custom seriesOrder in stacked_bar chart', () => {
+    const series = makeSeries({
+      chartType: 'stacked_bar',
+      seriesOrder: ['Context', 'Compacted', 'Generation'],
+      buckets: [
+        makeBucket({ x: 'turn-1', y: 100, series: 'Generation' }),
+        makeBucket({ x: 'turn-1', y: 200, series: 'Context' }),
+        makeBucket({ x: 'turn-1', y: 300, series: 'Compacted' }),
+      ],
+    });
+    const option = toEChartsOption(series) as Record<string, unknown>;
+    const seriesArr = option.series as Array<{ name: string; stack?: string }>;
+    expect(seriesArr.map((s) => s.name)).toEqual(['Context', 'Compacted', 'Generation']);
+    expect(seriesArr.every((s) => s.stack === 'total')).toBe(true);
+  });
+
+  it('applies custom colors palette when provided on ChartSeries', () => {
+    const customColors = ['#112233', '#445566', '#778899'];
+    const series = makeSeries({
+      chartType: 'stacked_bar',
+      colors: customColors,
+      buckets: [makeBucket({ x: 'a', y: 10, series: 's1' })],
+    });
+    const option = toEChartsOption(series) as Record<string, unknown>;
+    expect(option.color).toEqual(customColors);
+  });
 });

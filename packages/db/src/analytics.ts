@@ -187,6 +187,8 @@ export interface ContextTimingPoint {
   readonly totalTokens: number | null;
   readonly contextTokens: number | null;
   readonly generationTokens: number | null;
+  readonly compactedTokens?: number | null;
+  readonly removedTokens?: number | null;
   readonly inputTokens?: number | null;
   readonly outputTokens?: number | null;
   readonly cacheCreationTokens?: number | null;

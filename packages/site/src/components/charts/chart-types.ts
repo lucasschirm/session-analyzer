@@ -37,6 +37,16 @@ export interface ChartEvidenceLink {
   readonly href: string;
 }
 
+export interface ChartClickDetail {
+  readonly dataIndex?: number;
+  readonly name?: string;
+  readonly seriesName?: string;
+  readonly value?: unknown;
+  readonly evidenceLink?: ChartEvidenceLink;
+  readonly messageId?: string;
+  readonly messageIndex?: number;
+}
+
 export interface ChartBucket {
   readonly x: string | number;
   readonly y: number | null;
@@ -64,6 +74,8 @@ export interface ChartSeries {
   readonly unit?: string;
   readonly buckets: readonly ChartBucket[];
   readonly annotations?: readonly ChartAnnotation[];
+  readonly seriesOrder?: readonly string[];
+  readonly colors?: readonly string[];
 }
 
 export interface TableRow {
@@ -159,7 +171,7 @@ export function textualSummary(series: ChartSeries, state?: ChartState | null): 
 
   let peak = '';
   for (const [key, values] of bySeries) {
-    const max = Math.max(...values);
+    const max = values.reduce((m, v) => Math.max(m, v), -Infinity);
     peak += `${key} peaks at ${formatChartValue(max, series.unit)}. `;
   }
 

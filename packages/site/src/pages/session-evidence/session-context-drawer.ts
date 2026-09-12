@@ -1,6 +1,7 @@
 import type { ContextTimingPoint } from '@lucasschirm/sal-db';
-import { css, html, LitElement } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { css, html, LitElement, type PropertyValues } from 'lit';
+import { customElement, property, query } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { formatChartValue } from '../../components/charts/chart-types';
 import { formatDateTime } from '../../lib/format';
@@ -257,28 +258,34 @@ export class SessionContextDrawer extends LitElement {
 
   @property({ attribute: false }) message: ContextTimingPoint | null = null;
 
+  @query('.close-button') private closeButtonEl?: HTMLButtonElement;
+  @query('.drawer-body') private drawerBodyEl?: HTMLElement;
+
   private cachedRenderedHtml: string | null = null;
   private isKeydownAttached = false;
   private previouslyFocusedElement: HTMLElement | null = null;
 
-  willUpdate(changed: Map<string, unknown>): void {
+  willUpdate(changed: PropertyValues<this>): void {
     super.willUpdate(changed);
     if (changed.has('message')) {
       this.cachedRenderedHtml = this.message?.content ? renderMarkdown(this.message.content) : null;
     }
   }
 
-  updated(changed: Map<string, unknown>): void {
+  updated(changed: PropertyValues<this>): void {
     super.updated(changed);
     if (changed.has('message')) {
-      if (this.message && !this.isKeydownAttached) {
-        this.previouslyFocusedElement = document.activeElement as HTMLElement | null;
-        window.addEventListener('keydown', this.handleKeyDown);
-        this.isKeydownAttached = true;
-        void this.updateComplete.then(() => {
-          this.shadowRoot?.querySelector<HTMLButtonElement>('.close-button')?.focus();
-        });
-      } else if (!this.message && this.isKeydownAttached) {
+      if (this.message) {
+        if (this.drawerBodyEl) {
+          this.drawerBodyEl.scrollTop = 0;
+        }
+        if (!this.isKeydownAttached) {
+          this.previouslyFocusedElement = document.activeElement as HTMLElement | null;
+          window.addEventListener('keydown', this.handleKeyDown);
+          this.isKeydownAttached = true;
+          this.closeButtonEl?.focus();
+        }
+      } else if (this.isKeydownAttached) {
         window.removeEventListener('keydown', this.handleKeyDown);
         this.isKeydownAttached = false;
         this.restoreFocus();
@@ -347,7 +354,7 @@ export class SessionContextDrawer extends LitElement {
 
   private close = (): void => {
     this.dispatchEvent(
-      new CustomEvent('drawer-close', {
+      new CustomEvent<void>('drawer-close', {
         bubbles: true,
         composed: true,
       }),
@@ -358,15 +365,17 @@ export class SessionContextDrawer extends LitElement {
     return html`
       <div class="stat-card">
         <span class="stat-label">${label}</span>
-        <span class="stat-value ${highlight ? 'highlight' : ''}">${value}</span>
+        <span class=${classMap({ 'stat-value': true, highlight })}>${value}</span>
       </div>
     `;
   }
 
   private renderTokenStats(m: ContextTimingPoint) {
     const fmt = (v: number | null | undefined) => (v != null ? formatChartValue(v) : '—');
+    const removed = m.compactedTokens ?? m.removedTokens;
     return html`
       ${this.renderStatCard('Context Tokens', fmt(m.contextTokens), true)}
+      ${removed != null && removed > 0 ? this.renderStatCard('Compacted Tokens', fmt(removed)) : ''}
       ${this.renderStatCard('Generation Tokens', fmt(m.generationTokens))}
       ${this.renderStatCard('Total Tokens', fmt(m.totalTokens))}
       ${this.renderStatCard('Input Tokens', fmt(m.inputTokens))}
@@ -401,7 +410,7 @@ export class SessionContextDrawer extends LitElement {
       <div class="drawer-header">
         <div class="header-info">
           <h2 class="drawer-title">Message #${index}</h2>
-          <span class="role-badge ${role}">${role}</span>
+          <span class=${classMap({ 'role-badge': true, [role]: Boolean(role) })}>${role}</span>
         </div>
         <button class="close-button" type="button" aria-label="Close message details" @click=${this.close}>
           ✕
