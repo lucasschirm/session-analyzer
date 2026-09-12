@@ -5,6 +5,7 @@ import type {
   EvidencePage,
   MetricValueDto,
   RootChildBreakdown,
+  ScopeUtilizationReportDto,
   SessionEvidenceSummary,
   SessionTree,
   SessionValidationSummary,
@@ -22,6 +23,7 @@ const sessionMock = vi.hoisted(() => ({
   getValidationSummary: vi.fn(),
   getEvidencePages: vi.fn(),
   getTranscriptPages: vi.fn(),
+  getUtilizationReport: vi.fn(),
 }));
 
 const searchMock = vi.hoisted(() => ({
@@ -112,17 +114,30 @@ function contextTimingFixture(overrides: Partial<ContextTimingSeries> = {}): Con
     points: [
       {
         turnNumber: 1,
+        messageIndex: 1,
+        messageId: 'msg-1',
+        role: 'user',
         timestamp: new Date(1_700_000_000_000).toISOString(),
         totalTokens: 100,
         contextTokens: 80,
         generationTokens: 20,
+        inputTokens: 80,
+        outputTokens: 20,
+        content: 'Hello assistant',
       },
       {
         turnNumber: 2,
+        messageIndex: 2,
+        messageId: 'msg-2',
+        role: 'assistant',
+        model: 'claude-3-7-sonnet',
         timestamp: new Date(1_700_000_100_000).toISOString(),
         totalTokens: 200,
         contextTokens: 150,
         generationTokens: 50,
+        inputTokens: 150,
+        outputTokens: 50,
+        content: 'I am here to help',
       },
     ],
     ...overrides,
@@ -268,6 +283,96 @@ function sessionTreeFixture(overrides: Partial<SessionTree> = {}): SessionTree {
   };
 }
 
+function utilizationFixture(): ScopeUtilizationReportDto {
+  return {
+    scopeType: 'session',
+    scopeId: 's1',
+    token: tokenFixture(),
+    domains: {
+      tool: {
+        domain: 'tool',
+        tiers: {
+          totalAvailable: 2,
+          totalUsed: 1,
+          totalUnused: 1,
+          usedLt10Pct: 0,
+          usedLt25Pct: 0,
+          usedLt50Pct: 0,
+          usedGte50Pct: 0,
+          insufficientSample: 0,
+        },
+        sampleSessions: 1,
+        eligibleSessions: 1,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+      skill: {
+        domain: 'skill',
+        tiers: {
+          totalAvailable: 1,
+          totalUsed: 0,
+          totalUnused: 1,
+          usedLt10Pct: 0,
+          usedLt25Pct: 0,
+          usedLt50Pct: 0,
+          usedGte50Pct: 0,
+          insufficientSample: 0,
+        },
+        sampleSessions: 1,
+        eligibleSessions: 1,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+      agent: {
+        domain: 'agent',
+        tiers: {
+          totalAvailable: 0,
+          totalUsed: 0,
+          totalUnused: 0,
+          usedLt10Pct: 0,
+          usedLt25Pct: 0,
+          usedLt50Pct: 0,
+          usedGte50Pct: 0,
+          insufficientSample: 0,
+        },
+        sampleSessions: 1,
+        eligibleSessions: 1,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+    },
+    sessionDomains: {
+      tool: {
+        domain: 'tool',
+        availableCount: 2,
+        usedCount: 1,
+        unusedCount: 1,
+        availableComponents: ['tool/Bash', 'tool/Edit'],
+        usedComponents: ['tool/Bash'],
+        unusedComponents: ['tool/Edit'],
+      },
+      skill: {
+        domain: 'skill',
+        availableCount: 1,
+        usedCount: 0,
+        unusedCount: 1,
+        availableComponents: ['skill/pr-review'],
+        usedComponents: [],
+        unusedComponents: ['skill/pr-review'],
+      },
+      agent: {
+        domain: 'agent',
+        availableCount: 0,
+        usedCount: 0,
+        unusedCount: 0,
+        availableComponents: [],
+        usedComponents: [],
+        unusedComponents: [],
+      },
+    },
+  };
+}
+
 function stubSessionLoad(): void {
   sessionMock.getSummary.mockResolvedValue(summaryFixture());
   sessionMock.getContextTimingSeries.mockResolvedValue(contextTimingFixture());
@@ -276,6 +381,7 @@ function stubSessionLoad(): void {
   sessionMock.getValidationSummary.mockResolvedValue(validationFixture());
   sessionMock.getEvidencePages.mockResolvedValue(evidencePageFixture());
   sessionMock.getTranscriptPages.mockResolvedValue(transcriptPageFixture());
+  sessionMock.getUtilizationReport.mockResolvedValue(utilizationFixture());
   searchMock.getRootSessionTree.mockResolvedValue(sessionTreeFixture());
 }
 
@@ -325,6 +431,88 @@ describe('session-evidence-view', () => {
     expect(chart).not.toBeNull();
     expect((chart as HTMLElement).getAttribute('aria-label')).toBeNull();
     expect(root.textContent).toContain('Context and request timing');
+  });
+
+  it('opens message details drawer on chart bar click and closes on drawer-close event', async () => {
+    const view = Object.assign(document.createElement('session-evidence-view'), {
+      sessionId: 's1',
+    }) as SessionEvidenceView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const drawer = root.querySelector('session-context-drawer') as LitElement;
+    expect(drawer).not.toBeNull();
+    // Initially no message is selected
+    expect(drawer.shadowRoot?.querySelector('.drawer-panel')).toBeNull();
+
+    const chart = root.querySelector('analytics-chart');
+    expect(chart).not.toBeNull();
+
+    // Simulate clicking the first bar (Message #1)
+    chart?.dispatchEvent(
+      new CustomEvent('chart-click', {
+        bubbles: true,
+        composed: true,
+        detail: {
+          dataIndex: 0,
+          name: '#1 user',
+          evidenceLink: { label: 'Message #1 (user)', href: '#/sessions/s1#msg-msg-1' },
+        },
+      }),
+    );
+    await flush(view);
+    await flush(drawer);
+
+    // Drawer should now be open with message #1 details
+    const panel = drawer.shadowRoot?.querySelector('.drawer-panel');
+    expect(panel).not.toBeNull();
+    expect(panel?.textContent).toContain('Message #1');
+    expect(panel?.textContent).toContain('user');
+    expect(panel?.textContent).toContain('Hello assistant');
+
+    // Simulate drawer close
+    drawer.dispatchEvent(
+      new CustomEvent('drawer-close', {
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    await flush(view);
+    await flush(drawer);
+
+    // Drawer is closed
+    expect(drawer.shadowRoot?.querySelector('.drawer-panel')).toBeNull();
+  });
+
+  it('supports opening drawer via chart-click with message name matching', async () => {
+    const view = Object.assign(document.createElement('session-evidence-view'), {
+      sessionId: 's1',
+    }) as SessionEvidenceView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const drawer = root.querySelector('session-context-drawer') as LitElement;
+    const chart = root.querySelector('analytics-chart');
+
+    // Simulate chart-click for message #2
+    chart?.dispatchEvent(
+      new CustomEvent('chart-click', {
+        bubbles: true,
+        composed: true,
+        detail: {
+          name: '#2 assistant',
+        },
+      }),
+    );
+    await flush(view);
+    await flush(drawer);
+
+    const panel = drawer.shadowRoot?.querySelector('.drawer-panel');
+    expect(panel).not.toBeNull();
+    expect(panel?.textContent).toContain('Message #2');
+    expect(panel?.textContent).toContain('assistant');
+    expect(panel?.textContent).toContain('claude-3-7-sonnet');
+    expect(panel?.textContent).toContain('I am here to help');
   });
 
   it('renders the root/child session tree', async () => {
@@ -483,6 +671,7 @@ describe('session-evidence-view', () => {
     sessionMock.getValidationSummary.mockRejectedValue(new Error('validation failed'));
     sessionMock.getEvidencePages.mockRejectedValue(new Error('evidence failed'));
     sessionMock.getTranscriptPages.mockRejectedValue(new Error('transcript failed'));
+    sessionMock.getUtilizationReport.mockRejectedValue(new Error('utilization failed'));
     searchMock.getRootSessionTree.mockRejectedValue(new Error('tree search failed'));
 
     const view = Object.assign(document.createElement('session-evidence-view'), {

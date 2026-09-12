@@ -280,6 +280,9 @@ function postReprocessProgress(progress: RebuildProgress): void {
       step: progress.step,
       completed: progress.completed,
       total: progress.total,
+      phase: progress.phase,
+      totalPhases: progress.totalPhases,
+      unit: progress.unit,
     } as AnalyticsReprocessProgressBroadcast);
   }
 }
@@ -712,10 +715,19 @@ function start(): void {
       .catch((error) => self.postMessage(withId(toErrorResponse(error), id)));
   };
 
-  void getState().then(() => {
-    ready = true;
-    flushPending();
-  });
+  void getState()
+    .then(() => {
+      ready = true;
+      flushPending();
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      postReprocessCompleted(message);
+      for (const { id } of pending) {
+        self.postMessage(withId(toErrorResponse(error), id));
+      }
+      pending = [];
+    });
 }
 
 start();

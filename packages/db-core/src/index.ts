@@ -1,4 +1,5 @@
 export * from './component-ecosystem.js';
+export * from './configurations.js';
 export * from './contract.js';
 export * from './generations.js';
 export * from './identity.js';

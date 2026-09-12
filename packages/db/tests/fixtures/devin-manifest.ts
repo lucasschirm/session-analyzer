@@ -228,6 +228,7 @@ export async function buildDevinManifestBundle(
     mainTranscriptRelativePath: 'transcript.jsonl',
     artifacts: manifestArtifacts,
     syncRuns: [],
+    syncRunsCount: 0,
   };
 
   const sourceIdentity: SourceIdentity = {

@@ -325,7 +325,7 @@ describe('processDelta', () => {
     expect(result.manifest?.projectId).toBe(session.projectId);
     expect(result.manifest?.sessionId).toBe(session.sessionId);
     expect(result.manifest?.artifacts).toHaveLength(1);
-    expect(result.manifest?.syncRuns).toHaveLength(1);
+    expect(result.manifest?.syncRunsCount).toBe(1);
     expect(uploader).toHaveBeenCalledTimes(2);
 
     const manifestCall = uploader.mock.calls.find(

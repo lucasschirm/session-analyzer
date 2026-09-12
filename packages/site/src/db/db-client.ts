@@ -8,6 +8,7 @@
 import type {
   Connection,
   DashboardSession,
+  ManifestFingerprint,
   PasskeyState,
   Project,
   SessionFileRecord,
@@ -192,8 +193,17 @@ export class DbClient {
   }
 
   /** Writes all sync mirror columns from a manifest onto a session row. */
-  updateSessionManifest(sessionId: string, manifest: SyncManifest): Promise<void> {
-    return this.call({ type: 'updateSessionManifest', sessionId, manifest }) as Promise<void>;
+  updateSessionManifest(
+    sessionId: string,
+    manifest: SyncManifest,
+    fingerprint?: ManifestFingerprint,
+  ): Promise<void> {
+    return this.call({
+      type: 'updateSessionManifest',
+      sessionId,
+      manifest,
+      fingerprint,
+    }) as Promise<void>;
   }
 
   /** Reads the sync manifest mirror columns back as a `SyncManifest`. */
@@ -201,9 +211,12 @@ export class DbClient {
     return this.call({ type: 'getSessionSyncManifest', sessionId }) as Promise<SyncManifest | null>;
   }
 
-  /** Returns the number of recorded sync runs for a session. */
-  getSyncRunCount(sessionId: string): Promise<number> {
-    return this.call({ type: 'getSyncRunCount', sessionId }) as Promise<number>;
+  /** Returns the `updated_at` timestamp for a session, or null if unset. */
+  getSessionUpdatedAt(sessionId: string): Promise<string | null> {
+    return this.call({
+      type: 'getSessionUpdatedAt',
+      sessionId,
+    }) as Promise<string | null>;
   }
 
   /** Marks every pending/processing session in a project as failed. */
@@ -229,6 +242,11 @@ export class DbClient {
   /** Inserts or updates a session file record on the (session_id, path) key. */
   upsertSessionFile(file: SessionFileRecord): Promise<void> {
     return this.call({ type: 'upsertSessionFile', file }) as Promise<void>;
+  }
+
+  /** Bulk insert/update session file records in a single transaction. */
+  bulkUpsertSessionFiles(files: SessionFileRecord[]): Promise<void> {
+    return this.call({ type: 'bulkUpsertSessionFiles', files }) as Promise<void>;
   }
 
   /** Deletes all file records for a session. */

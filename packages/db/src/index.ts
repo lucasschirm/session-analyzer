@@ -1,6 +1,7 @@
 export * from './analytics.js';
 export * from './analytics-portfolio.js';
 export * from './analytics-session.js';
+export * from './analytics-utilization.js';
 export * from './artifact-diff.js';
 export * from './component-lifecycle.js';
 export * from './configuration.js';
@@ -14,6 +15,7 @@ export * from './model-pricing.js';
 export * from './ports.js';
 export * from './processing-version.js';
 export * from './project-behavior.js';
+export * from './project-configuration.js';
 export * from './rebuild-frontiers.js';
 export * from './reprocessing.js';
 export * from './rollup-reconciliation.js';

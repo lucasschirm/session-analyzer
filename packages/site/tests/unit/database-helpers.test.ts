@@ -140,6 +140,8 @@ function makeSyncManifest(sessionId: string): SyncManifest {
     mainTranscriptRelativePath: 'transcript.jsonl',
     artifacts: [{ type: 'file', path: 'output.txt' }],
     syncRuns: [{ id: 'run-1', status: 'ok' }],
+    syncRunsCount: 1,
+    updatedAt: '2024-01-01T00:00:00.000Z',
   };
 }
 
@@ -869,7 +871,7 @@ describe('DatabaseManager', () => {
       expect(read!.syncRuns).toEqual([]);
     });
 
-    it('safeJsonLength: getSyncRunCount counts sync runs', () => {
+    it('updateSessionManifest writes sync_runs_count and updated_at', () => {
       const project = makeProject({ id: 'proj-manifest-6', name: 'Manifest Project 6' });
       mgr.createProject(project);
       const stub = makeSessionStub('proj-manifest-6', { id: 'sess-manifest-6' });
@@ -878,18 +880,57 @@ describe('DatabaseManager', () => {
       mgr.updateSessionManifest('sess-manifest-6', {
         ...makeSyncManifest('sess-manifest-6'),
         syncRuns: [{ id: 'r1' }, { id: 'r2' }, { id: 'r3' }],
+        syncRunsCount: 3,
+        updatedAt: '2026-09-20T12:00:00.000Z',
       });
 
-      expect(mgr.getSyncRunCount('sess-manifest-6')).toBe(3);
+      const read = mgr.getSessionSyncManifest('sess-manifest-6');
+      expect(read!.syncRunsCount).toBe(3);
+      expect(read!.updatedAt).toBe('2026-09-20T12:00:00.000Z');
     });
 
-    it('safeJsonLength: returns 0 when sync_runs is null', () => {
+    it('getSessionUpdatedAt returns the updated_at column', () => {
+      const project = makeProject({ id: 'proj-manifest-6b', name: 'Manifest Project 6b' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-manifest-6b', { id: 'sess-manifest-6b' });
+      mgr.upsertSessionStub(stub);
+
+      mgr.updateSessionManifest('sess-manifest-6b', {
+        ...makeSyncManifest('sess-manifest-6b'),
+        updatedAt: '2026-09-20T12:00:00.000Z',
+      });
+
+      expect(mgr.getSessionUpdatedAt('sess-manifest-6b')).toBe('2026-09-20T12:00:00.000Z');
+    });
+
+    it('getSessionUpdatedAt returns null when no manifest has been written', () => {
       const project = makeProject({ id: 'proj-manifest-7', name: 'Manifest Project 7' });
       mgr.createProject(project);
       const stub = makeSessionStub('proj-manifest-7', { id: 'sess-manifest-7' });
       mgr.upsertSessionStub(stub);
-      // No manifest written, sync_runs is null
-      expect(mgr.getSyncRunCount('sess-manifest-7')).toBe(0);
+      expect(mgr.getSessionUpdatedAt('sess-manifest-7')).toBeNull();
+    });
+
+    it('migration backfills sync_runs_count from existing sync_runs JSON', () => {
+      const project = makeProject({ id: 'proj-migrate', name: 'Migrate Project' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-migrate', { id: 'sess-migrate' });
+      mgr.upsertSessionStub(stub);
+      // Simulate an old row with sync_runs JSON but no sync_runs_count
+      mgr.updateSessionManifest('sess-migrate', {
+        ...makeSyncManifest('sess-migrate'),
+        syncRuns: [{ id: 'r1' }, { id: 'r2' }],
+        syncRunsCount: 0,
+      });
+      // Manually null out sync_runs_count to simulate pre-migration state
+      (mgr as unknown as { requireDb: () => { exec: (stmt: unknown) => void } }).requireDb().exec({
+        sql: 'UPDATE sessions SET sync_runs_count = NULL WHERE id = ?',
+        bind: ['sess-migrate'],
+      });
+      // Re-run backfill
+      (mgr as unknown as { backfillSyncRunsCount: () => void }).backfillSyncRunsCount();
+      const read = mgr.getSessionSyncManifest('sess-migrate');
+      expect(read!.syncRunsCount).toBe(2);
     });
 
     it('updateSessionManifest throws for a non-existent session', () => {
@@ -908,6 +949,153 @@ describe('DatabaseManager', () => {
         bind: ['sess-manifest-8', 'proj-manifest-8', 'claude', 'No Sync', 1000, 2000],
       });
       expect(mgr.getSessionSyncManifest('sess-manifest-8')).toBeNull();
+    });
+
+    it('updateSessionManifest with a fingerprint writes both columns and round-trips via getSessionBySyncId', () => {
+      const project = makeProject({ id: 'proj-manifest-9', name: 'Manifest Project 9' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-manifest-9', { id: 'sess-manifest-9' });
+      mgr.upsertSessionStub(stub);
+
+      // updateSessionManifest writes manifest.sessionId onto sync_session_id,
+      // so the post-update lookup key is the manifest's sessionId, not the
+      // stub's original (pre-manifest) sync_session_id.
+      const manifest = makeSyncManifest('sess-manifest-9');
+      mgr.updateSessionManifest('sess-manifest-9', manifest, {
+        etag: '"abc"',
+        lastModified: '2026-09-11T00:00:00.000Z',
+      });
+
+      const fetched = mgr.getSessionBySyncId('proj-manifest-9', manifest.sessionId);
+      expect(fetched!.sync_manifest_etag).toBe('"abc"');
+      expect(fetched!.sync_manifest_last_modified).toBe('2026-09-11T00:00:00.000Z');
+    });
+
+    it('updateSessionManifest without a fingerprint leaves a previously stored fingerprint unchanged', () => {
+      const project = makeProject({ id: 'proj-manifest-10', name: 'Manifest Project 10' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-manifest-10', { id: 'sess-manifest-10' });
+      mgr.upsertSessionStub(stub);
+
+      const manifest = makeSyncManifest('sess-manifest-10');
+      mgr.updateSessionManifest('sess-manifest-10', manifest, {
+        etag: '"first"',
+        lastModified: '2026-09-01T00:00:00.000Z',
+      });
+      // Second call omits the fingerprint entirely.
+      mgr.updateSessionManifest('sess-manifest-10', manifest);
+
+      const fetched = mgr.getSessionBySyncId('proj-manifest-10', manifest.sessionId);
+      expect(fetched!.sync_manifest_etag).toBe('"first"');
+      expect(fetched!.sync_manifest_last_modified).toBe('2026-09-01T00:00:00.000Z');
+    });
+
+    it('updateSessionManifest with a single-field fingerprint leaves the other field null, never empty-string (missing-is-never-zero)', () => {
+      const project = makeProject({ id: 'proj-manifest-11', name: 'Manifest Project 11' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-manifest-11', { id: 'sess-manifest-11' });
+      mgr.upsertSessionStub(stub);
+
+      const manifest = makeSyncManifest('sess-manifest-11');
+      mgr.updateSessionManifest('sess-manifest-11', manifest, {
+        etag: '"etag-only"',
+      });
+
+      const fetched = mgr.getSessionBySyncId('proj-manifest-11', manifest.sessionId);
+      expect(fetched!.sync_manifest_etag).toBe('"etag-only"');
+      expect(fetched!.sync_manifest_last_modified).toBeUndefined();
+    });
+
+    it('updateSessionManifest throws for a non-existent session even when a fingerprint is passed', () => {
+      expect(() =>
+        mgr.updateSessionManifest('no-such-session', makeSyncManifest('no-such-session'), {
+          etag: '"x"',
+        }),
+      ).toThrow('Session not found');
+    });
+
+    it('migrates an existing OLD-schema database (missing sync_manifest_etag/sync_manifest_last_modified) and reads back undefined fingerprints', async () => {
+      // Reproduces the schema exactly as it existed immediately before this
+      // PR: SESSIONS_TABLE_COLUMNS_SQL minus the two new fingerprint
+      // columns. CREATE TABLE IF NOT EXISTS is a no-op on an existing
+      // table, so a real returning-user database must go through migrate().
+      const m = await createManager();
+      const project = makeProject({ id: 'proj-old-fp-schema', name: 'Old FP Schema Project' });
+      m.createProject(project);
+
+      const db = m.getControlDb();
+      db.exec('DROP TABLE sessions');
+      db.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          source TEXT NOT NULL,
+          title TEXT NOT NULL DEFAULT '',
+          started_at INTEGER NOT NULL,
+          ended_at INTEGER NOT NULL,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+          total_tokens INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL,
+          model TEXT,
+          model_usage TEXT,
+          tasks TEXT,
+          external_id TEXT,
+          subagents TEXT,
+          context_compactions INTEGER,
+          total_turns INTEGER NOT NULL DEFAULT 0,
+          files_read INTEGER NOT NULL DEFAULT 0,
+          files_written INTEGER NOT NULL DEFAULT 0,
+          agent_invocations INTEGER NOT NULL DEFAULT 0,
+          sync_session_id TEXT,
+          sync_status TEXT,
+          sync_details TEXT,
+          sync_schema_version INTEGER,
+          sync_harness TEXT,
+          sync_harness_version TEXT,
+          sync_manifest_model TEXT,
+          sync_started_at TEXT,
+          sync_ended_at TEXT,
+          sync_duration_ms INTEGER,
+          sync_end_reason TEXT,
+          sync_engine_version TEXT,
+          sync_plugin_version TEXT,
+          sync_transcripts_captured INTEGER,
+          sync_main_transcript_relative_path TEXT,
+          sync_artifacts TEXT,
+          sync_runs TEXT,
+          sync_runs_count INTEGER,
+          updated_at TEXT,
+          FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+      `);
+
+      const stub = makeSessionStub('proj-old-fp-schema', { id: 'sess-old-fp-schema' });
+      m.upsertSessionStub(stub);
+
+      // Against the seeded old schema (pre-migration), a raw SELECT of the
+      // new columns must fail - this proves the column is really absent
+      // and that a post-migration read of `undefined` isn't vacuous.
+      expect(() => db.exec('SELECT sync_manifest_etag FROM sessions')).toThrow(/no such column/);
+
+      // Re-run the migration path (as a fresh `initialize()` on a returning
+      // user's browser would) against the now-seeded old schema. A second
+      // `initialize()` call is a no-op (`if (this.db) return this.storage;`),
+      // so `migrate()` is invoked directly via the private-method cast, same
+      // as the precedent test above.
+      (m as unknown as { migrate: () => void }).migrate();
+
+      // The rebuild must not have lost the project row it was scoped around.
+      expect(m.getProject('proj-old-fp-schema')).not.toBeNull();
+
+      const fetched = m.getSessionBySyncId('proj-old-fp-schema', stub.sync_session_id);
+      expect(fetched).not.toBeNull();
+      expect(fetched!.sync_manifest_etag).toBeUndefined();
+      expect(fetched!.sync_manifest_last_modified).toBeUndefined();
+
+      m.close();
     });
   });
 
@@ -984,6 +1172,71 @@ describe('DatabaseManager', () => {
       mgr.deleteSessionFiles('sess-files-4');
 
       expect(mgr.getSessionFiles('sess-files-4')).toHaveLength(0);
+    });
+
+    it('bulk upserts all file records in one call', () => {
+      const project = makeProject({ id: 'proj-bulk-1', name: 'Bulk Project 1' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-bulk-1', { id: 'sess-bulk-1' });
+      mgr.upsertSessionStub(stub);
+
+      const files = [
+        { ...makeSessionFile('proj-bulk-1', 'sess-bulk-1'), id: 'f1', path: 'a.txt' },
+        { ...makeSessionFile('proj-bulk-1', 'sess-bulk-1'), id: 'f2', path: 'b.txt' },
+        { ...makeSessionFile('proj-bulk-1', 'sess-bulk-1'), id: 'f3', path: 'c.txt' },
+      ];
+      mgr.bulkUpsertSessionFiles(files);
+
+      const result = mgr.getSessionFiles('sess-bulk-1');
+      expect(result).toHaveLength(3);
+      expect(result.map((f) => f.path)).toEqual(['a.txt', 'b.txt', 'c.txt']);
+    });
+
+    it('bulk upsert replaces conflicting (session_id, path) rows', () => {
+      const project = makeProject({ id: 'proj-bulk-2', name: 'Bulk Project 2' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-bulk-2', { id: 'sess-bulk-2' });
+      mgr.upsertSessionStub(stub);
+
+      // Insert initial file
+      mgr.upsertSessionFile({
+        ...makeSessionFile('proj-bulk-2', 'sess-bulk-2'),
+        path: 'a.txt',
+        status: 'downloaded',
+      });
+
+      // Bulk upsert with updated status for same path + new file
+      mgr.bulkUpsertSessionFiles([
+        {
+          ...makeSessionFile('proj-bulk-2', 'sess-bulk-2'),
+          path: 'a.txt',
+          status: 'processed',
+          etag: 'etag-updated',
+        },
+        {
+          ...makeSessionFile('proj-bulk-2', 'sess-bulk-2'),
+          id: 'new-id',
+          path: 'b.txt',
+          status: 'processed',
+        },
+      ]);
+
+      const result = mgr.getSessionFiles('sess-bulk-2');
+      expect(result).toHaveLength(2);
+      const aFile = result.find((f) => f.path === 'a.txt');
+      expect(aFile?.status).toBe('processed');
+      expect(aFile?.etag).toBe('etag-updated');
+      expect(result.find((f) => f.path === 'b.txt')).toBeDefined();
+    });
+
+    it('bulk upsert with empty array is a no-op', () => {
+      const project = makeProject({ id: 'proj-bulk-3', name: 'Bulk Project 3' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-bulk-3', { id: 'sess-bulk-3' });
+      mgr.upsertSessionStub(stub);
+
+      mgr.bulkUpsertSessionFiles([]);
+      expect(mgr.getSessionFiles('sess-bulk-3')).toHaveLength(0);
     });
   });
 

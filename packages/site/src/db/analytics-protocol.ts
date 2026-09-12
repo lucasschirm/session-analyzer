@@ -250,6 +250,9 @@ export interface AnalyticsReprocessProgressBroadcast {
   readonly step: string;
   readonly completed: number;
   readonly total: number;
+  readonly phase?: number;
+  readonly totalPhases?: number;
+  readonly unit?: string;
 }
 
 /**

@@ -5,6 +5,7 @@
  */
 
 import type { ArtifactScope, SyncManifest } from '@lucasschirm/sal-sync-core';
+import type { ManifestFingerprint } from '../types';
 
 /** In-memory S3 credential material sent with `START`. */
 export interface S3Credentials {
@@ -29,6 +30,11 @@ export interface FileToDownload {
    * (or compound hash for multipart uploads), NOT the SHA-256 content hash.
    * Available for future ETag-based skip optimization; the site would store
    * the last-seen ETag locally and skip downloads when it hasn't changed.
+   * Still unconsumed by any skip decision as of the sync-fingerprints feature
+   * (#403), which instead adds a session-level manifest fingerprint (see
+   * `ManifestFingerprint` in `types/index.ts`) that skips the manifest GET
+   * before per-file diffing is ever reached — a distinct mechanism from this
+   * per-file ETag.
    */
   etag?: string;
   size: number;
@@ -71,6 +77,19 @@ export interface SessionSyncContinueMessage {
   sync: boolean;
 }
 
+/**
+ * Local file state sent to the worker for hash-based diffing. The worker
+ * compares manifest artifact hashes against this map to decide which files
+ * to download. Replaces the previous `filesToDownload` + `localFileEtas`
+ * pre-computed lists, moving the diff logic to the worker which already
+ * has the manifest.
+ */
+export interface LocalFileHash {
+  sha256: string;
+  etag?: string;
+  status: string;
+}
+
 /** Main→Worker: decision after `SESSION_MANIFEST_READY`. */
 export interface SessionSyncMessage {
   type: 'SESSION_SYNC';
@@ -79,10 +98,11 @@ export interface SessionSyncMessage {
   sessionId: string;
   sync: boolean;
   exists: boolean;
-  filesToDownload?: FileToDownload[];
-  /** Local file records with ETags, used by the worker to skip unchanged files
-   * when falling back to listing-based discovery (no manifest hashes). */
-  localFileEtas?: Record<string, string>;
+  /**
+   * Local file hashes keyed by logical path, used by the worker to skip
+   * unchanged files. When absent, the worker downloads all in-scope files.
+   */
+  localFileHashes?: Record<string, LocalFileHash>;
 }
 
 /** Main→Worker: abort the sync and release resources. */
@@ -129,6 +149,8 @@ export interface SessionFoundMessage {
   connectionId?: string;
   projectId: string;
   sessionId: string;
+  /** D1 manifest fingerprint from the discovery listing; undefined when the session has no manifest.json entry. */
+  fingerprint?: ManifestFingerprint;
 }
 
 /** Worker→Main: manifest downloaded and validated. */
@@ -138,6 +160,8 @@ export interface SessionManifestReadyMessage {
   projectId: string;
   sessionId: string;
   manifest: SyncManifest;
+  /** D1 manifest fingerprint carried through from discovery (D5: persisted by the manager at this point). */
+  fingerprint?: ManifestFingerprint;
 }
 
 /** Worker→Main: per-file download progress for a session. */

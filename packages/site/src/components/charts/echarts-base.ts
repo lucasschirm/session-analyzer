@@ -32,7 +32,14 @@ import { css, html, LitElement } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { createRef, ref } from 'lit/directives/ref.js';
-import type { ChartEvidenceLink, ChartSeries, ChartState, EChartsCoreOption } from './chart-types';
+import { repeat } from 'lit/directives/repeat.js';
+import type {
+  ChartEvidenceLink,
+  ChartSeries,
+  ChartState,
+  EChartsCoreOption,
+  TableRow,
+} from './chart-types';
 import { stateIcon, stateLabel, toTableRows } from './chart-types';
 
 echarts.use([
@@ -173,6 +180,17 @@ export class EchartsBase extends LitElement {
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
+    .table-row.interactive {
+      cursor: pointer;
+    }
+
+    .table-row.interactive:hover,
+    .table-row.interactive:focus-visible {
+      background: var(--md-sys-color-surface-container-high, #29303d);
+      outline: 2px solid var(--md-sys-color-primary, #4f8cff);
+      outline-offset: -2px;
+    }
+
     a {
       color: var(--md-sys-color-primary, #4f8cff);
       text-decoration: none;
@@ -260,17 +278,64 @@ export class EchartsBase extends LitElement {
   private bindChartEvents(): void {
     if (!this.chartInstance) return;
     this.chartInstance.on('click', (params: unknown) => {
-      const p = params as { data?: { evidenceLink?: ChartEvidenceLink } };
-      if (p.data?.evidenceLink) {
+      const p = params as {
+        data?: { evidenceLink?: ChartEvidenceLink; [key: string]: unknown } | number;
+        dataIndex?: number;
+        name?: string;
+        seriesName?: string;
+        value?: unknown;
+      };
+      const evidenceLink =
+        typeof p.data === 'object' && p.data !== null ? p.data.evidenceLink : undefined;
+      if (evidenceLink) {
         this.dispatchEvent(
           new CustomEvent('point-click', {
-            detail: p.data.evidenceLink,
+            detail: evidenceLink,
             bubbles: true,
             composed: true,
           }),
         );
       }
+      this.dispatchEvent(
+        new CustomEvent('chart-click', {
+          detail: {
+            dataIndex: p.dataIndex,
+            name: p.name,
+            seriesName: p.seriesName,
+            value: p.value,
+            evidenceLink,
+          },
+          bubbles: true,
+          composed: true,
+        }),
+      );
     });
+  }
+
+  private handleTableRowClick(dataIndex: number, row: TableRow): void {
+    const bucket = this.series?.buckets[dataIndex];
+    if (bucket?.evidenceLink) {
+      this.dispatchEvent(
+        new CustomEvent('point-click', {
+          detail: bucket.evidenceLink,
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    }
+    this.dispatchEvent(
+      new CustomEvent('chart-click', {
+        detail: {
+          dataIndex,
+          name: row.x,
+          seriesName: row.series,
+          value: row.y,
+          evidenceLink: bucket?.evidenceLink,
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private handleKeyDown(event: KeyboardEvent): void {
@@ -291,6 +356,32 @@ export class EchartsBase extends LitElement {
     `;
   }
 
+  private handleTableRowKeyDown(event: KeyboardEvent, index: number, row: TableRow): void {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      this.handleTableRowClick(index, row);
+    }
+  }
+
+  private renderTableRow(row: TableRow, index: number) {
+    return html`
+      <tr
+        class="table-row interactive"
+        tabindex="0"
+        @click=${() => this.handleTableRowClick(index, row)}
+        @keydown=${(e: KeyboardEvent) => this.handleTableRowKeyDown(e, index, row)}
+      >
+        <td>${row.x}</td>
+        <td>${row.y}</td>
+        <td>${row.label}</td>
+        <td>
+          ${row.evidenceHref ? html`<a href="${row.evidenceHref}">${row.series}</a>` : row.series}
+        </td>
+      </tr>
+    `;
+  }
+
   private renderTable() {
     if (!this.series) return '';
     const rows = toTableRows(this.series);
@@ -307,21 +398,10 @@ export class EchartsBase extends LitElement {
             </tr>
           </thead>
           <tbody>
-            ${rows.map(
-              (row) => html`
-                <tr>
-                  <td>${row.x}</td>
-                  <td>${row.y}</td>
-                  <td>${row.label}</td>
-                  <td>
-                    ${
-                      row.evidenceHref
-                        ? html`<a href="${row.evidenceHref}">${row.series}</a>`
-                        : row.series
-                    }
-                  </td>
-                </tr>
-              `,
+            ${repeat(
+              rows,
+              (row, index) => `${index}-${row.series}-${row.x}`,
+              (row, index) => this.renderTableRow(row, index),
             )}
           </tbody>
         </table>

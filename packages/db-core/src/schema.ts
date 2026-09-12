@@ -287,6 +287,23 @@ CREATE INDEX IF NOT EXISTS idx_project_mappings_type ON project_mappings(mapping
 CREATE INDEX IF NOT EXISTS idx_project_mappings_created ON project_mappings(created_at);
 `;
 
+export const CREATE_PROJECT_CONFIGURATIONS_TABLE = `
+CREATE TABLE IF NOT EXISTS project_configurations (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_configurations_key
+  ON project_configurations(project_id, key);
+CREATE INDEX IF NOT EXISTS idx_project_configurations_project
+  ON project_configurations(project_id);
+`;
+
 const CREATE_REPOSITORIES_TABLE = `
 CREATE TABLE IF NOT EXISTS repositories (
   id TEXT PRIMARY KEY,
@@ -423,6 +440,12 @@ export const MIGRATIONS: readonly Migration[] = [
   ...SESSION_EVIDENCE_MIGRATIONS_FRAGMENT,
   ...METRICS_MIGRATIONS_FRAGMENT,
   ...ROLLUPS_MIGRATIONS_FRAGMENT,
+  {
+    id: 82,
+    name: 'create-project-configurations',
+    sql: CREATE_PROJECT_CONFIGURATIONS_TABLE,
+    checksum: checksumOf(CREATE_PROJECT_CONFIGURATIONS_TABLE),
+  },
 ].sort((a, b) => a.id - b.id);
 
 /**
@@ -444,6 +467,7 @@ ${CREATE_ENVIRONMENTS_TABLE}
 ${CREATE_PROJECTS_TABLE}
 ${CREATE_SOURCE_PROJECTS_TABLE}
 ${CREATE_PROJECT_MAPPINGS_TABLE}
+${CREATE_PROJECT_CONFIGURATIONS_TABLE}
 ${CREATE_REPOSITORIES_TABLE}
 ${CREATE_WORKSPACES_TABLE}
 ${CREATE_SOURCE_MANIFESTS_TABLE}

@@ -49,6 +49,7 @@ function manifestBundle(
       },
     ],
     syncRuns: [],
+    syncRunsCount: 0,
   };
   return {
     manifest,

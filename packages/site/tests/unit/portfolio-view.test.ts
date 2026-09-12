@@ -6,6 +6,7 @@ import type {
   PortfolioOverview,
   PortfolioTrendSeries,
   ProjectListPage,
+  ScopeUtilizationReportDto,
 } from '@lucasschirm/sal-db';
 import type { LitElement } from 'lit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,11 +19,20 @@ const portfolioMock = vi.hoisted(() => ({
   getComponentUtilization: vi.fn(),
   getModelHarnessCohorts: vi.fn(),
   getProjectList: vi.fn(),
+  getUtilizationReport: vi.fn(),
+}));
+
+const metadataMock = vi.hoisted(() => ({
+  getHarnesses: vi.fn(),
 }));
 
 const mockAnalyticsClient = vi.hoisted(() => {
-  const client = new EventTarget() as { portfolio: typeof portfolioMock } & EventTarget;
+  const client = new EventTarget() as {
+    portfolio: typeof portfolioMock;
+    metadata: typeof metadataMock;
+  } & EventTarget;
   client.portfolio = portfolioMock;
+  client.metadata = metadataMock;
   return client;
 });
 
@@ -190,12 +200,78 @@ function projectsFixture(overrides: Partial<ProjectListPage> = {}): ProjectListP
   };
 }
 
+function utilizationFixture(): ScopeUtilizationReportDto {
+  return {
+    scopeType: 'portfolio',
+    scopeId: 'portfolio',
+    token: tokenFixture(),
+    domains: {
+      tool: {
+        domain: 'tool',
+        tiers: {
+          totalAvailable: 5,
+          totalUsed: 3,
+          totalUnused: 1,
+          usedLt10Pct: 0,
+          usedLt25Pct: 1,
+          usedLt50Pct: 0,
+          usedGte50Pct: 2,
+          insufficientSample: 1,
+        },
+        sampleSessions: 10,
+        eligibleSessions: 10,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+      skill: {
+        domain: 'skill',
+        tiers: {
+          totalAvailable: 2,
+          totalUsed: 1,
+          totalUnused: 1,
+          usedLt10Pct: 0,
+          usedLt25Pct: 0,
+          usedLt50Pct: 0,
+          usedGte50Pct: 1,
+          insufficientSample: 0,
+        },
+        sampleSessions: 10,
+        eligibleSessions: 10,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+      agent: {
+        domain: 'agent',
+        tiers: {
+          totalAvailable: 1,
+          totalUsed: 1,
+          totalUnused: 0,
+          usedLt10Pct: 0,
+          usedLt25Pct: 0,
+          usedLt50Pct: 0,
+          usedGte50Pct: 1,
+          insufficientSample: 0,
+        },
+        sampleSessions: 10,
+        eligibleSessions: 10,
+        minSampleSizeConfig: 5,
+        components: [],
+      },
+    },
+  };
+}
+
 function stubPortfolioLoad(): void {
   portfolioMock.getOverview.mockResolvedValue(overviewFixture());
   portfolioMock.getTrends.mockResolvedValue(trendsFixture());
   portfolioMock.getComponentUtilization.mockResolvedValue(componentsFixture());
   portfolioMock.getModelHarnessCohorts.mockResolvedValue(cohortsFixture());
   portfolioMock.getProjectList.mockResolvedValue(projectsFixture());
+  portfolioMock.getUtilizationReport.mockResolvedValue(utilizationFixture());
+  metadataMock.getHarnesses.mockResolvedValue([
+    { harness: 'claude-code', sessionCount: 10 },
+    { harness: 'devin', sessionCount: 5 },
+  ]);
 }
 
 beforeEach(() => {
@@ -332,6 +408,126 @@ describe('portfolio-view', () => {
 
     const callsAfter = portfolioMock.getOverview.mock.calls.length;
     expect(callsAfter).toBe(callsBefore);
+
+    view.remove();
+  });
+
+  it('deduplicates headline metrics with the same metricId', async () => {
+    const rootOnlyMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:root_only',
+      label: 'Total tokens (root-only)',
+      value: 100,
+    });
+    const inclusiveMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:inclusive',
+      label: 'Total tokens (inclusive)',
+      value: 200,
+    });
+    const dupRootOnlyMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:root_only',
+      label: 'Total tokens (root-only)',
+      value: 150,
+    });
+    portfolioMock.getOverview.mockResolvedValue(
+      overviewFixture({
+        headlineMetrics: [rootOnlyMetric, inclusiveMetric, dupRootOnlyMetric],
+      }),
+    );
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const cards = allShadowTexts(root, 'metrics-card');
+    const totalTokensCards = cards.filter((t) => t.includes('Total tokens'));
+    expect(totalTokensCards).toHaveLength(1);
+    expect(totalTokensCards[0]).toContain('100');
+
+    view.remove();
+  });
+
+  it('renders only root-only metrics when sessions scope is main', async () => {
+    const rootOnlyMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:root_only',
+      label: 'Total tokens (root-only)',
+      value: 100,
+    });
+    const inclusiveMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:inclusive',
+      label: 'Total tokens (inclusive)',
+      value: 300,
+    });
+    portfolioMock.getOverview.mockResolvedValue(
+      overviewFixture({
+        headlineMetrics: [rootOnlyMetric, inclusiveMetric],
+      }),
+    );
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const cards = allShadowTexts(root, 'metrics-card');
+    const totalTokensCards = cards.filter((t) => t.includes('Total tokens'));
+    expect(totalTokensCards).toHaveLength(1);
+    expect(totalTokensCards[0]).toContain('100');
+
+    view.remove();
+  });
+
+  it('renders only inclusive metrics when sessions scope is all', async () => {
+    window.location.hash = '#/?sessions=all';
+
+    const rootOnlyMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:root_only',
+      label: 'Total tokens (root-only)',
+      value: 100,
+    });
+    const inclusiveMetric = metricValueFixture({
+      metricId: 'claude:tokens:total:inclusive',
+      label: 'Total tokens (inclusive)',
+      value: 300,
+    });
+    portfolioMock.getOverview.mockResolvedValue(
+      overviewFixture({
+        headlineMetrics: [rootOnlyMetric, inclusiveMetric],
+      }),
+    );
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const cards = allShadowTexts(root, 'metrics-card');
+    const totalTokensCards = cards.filter((t) => t.includes('Total tokens'));
+    expect(totalTokensCards).toHaveLength(1);
+    expect(totalTokensCards[0]).toContain('300');
+
+    view.remove();
+    window.location.hash = '#/';
+  });
+
+  it('adds a description tooltip to metric cards', async () => {
+    const metric = metricValueFixture({
+      metricId: 'claude:tokens:total:root_only',
+      label: 'Total tokens (root-only)',
+      value: 100,
+    });
+    portfolioMock.getOverview.mockResolvedValue(overviewFixture({ headlineMetrics: [metric] }));
+
+    const view = document.createElement('portfolio-view') as PortfolioView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const card = root.querySelector('metrics-card') as LitElement;
+    expect(card).not.toBeNull();
+    await flush(card);
+    const cardRoot = card.shadowRoot as ShadowRoot;
+    const cardEl = cardRoot.querySelector('.metrics-card') as HTMLElement;
+    expect(cardEl).not.toBeNull();
+    const tooltip = cardEl.getAttribute('data-tooltip');
+    expect(tooltip).toBeTruthy();
+    expect(tooltip).toContain('token');
 
     view.remove();
   });

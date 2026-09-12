@@ -120,6 +120,8 @@ const KNOWN_TOP_LEVEL_FIELDS = [
   'sourceTombstones',
   'artifacts',
   'syncRuns',
+  'syncRunsCount',
+  'updatedAt',
 ];
 
 function assertRecord(value: unknown, label: string): Record<string, unknown> {
@@ -485,6 +487,7 @@ function buildSyncManifest(
     sourceTombstones,
     artifacts: [],
     syncRuns: [],
+    syncRunsCount: 0,
   } as unknown as SyncManifest;
 }
 
@@ -508,10 +511,11 @@ function parseArtifactArray(record: Record<string, unknown>): ManifestArtifact[]
 }
 
 function parseSyncRunArray(record: Record<string, unknown>): SyncRun[] {
+  if (record.syncRuns === undefined) return [];
   if (!Array.isArray(record.syncRuns)) {
     throw new ManifestParseError(
       'SYNC_JSON_PARSE_FAILED',
-      'syncRuns is required and must be an array',
+      'syncRuns must be an array when present',
     );
   }
   return record.syncRuns.map((item, index) => {
@@ -551,7 +555,15 @@ export function parseSyncManifest(json: unknown): SyncManifest {
     | typeof MANIFEST_SCHEMA_VERSION_LATEST;
   const manifest = buildSyncManifest(record, version);
   manifest.artifacts = parseArtifactArray(record);
-  manifest.syncRuns = parseSyncRunArray(record);
+  const syncRuns = parseSyncRunArray(record);
+  manifest.syncRuns = syncRuns;
+  // Prefer explicit syncRunsCount; fall back to syncRuns.length for backward compat.
+  if (record.syncRunsCount !== undefined) {
+    manifest.syncRunsCount = assertNumber(record.syncRunsCount, 'syncRunsCount');
+  } else {
+    manifest.syncRunsCount = syncRuns.length;
+  }
+  manifest.updatedAt = assertOptionalString(record.updatedAt, 'updatedAt');
   applyUnknownFields(record, manifest, KNOWN_TOP_LEVEL_FIELDS);
   return manifest;
 }

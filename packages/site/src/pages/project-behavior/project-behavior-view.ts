@@ -1,15 +1,24 @@
+import LitTypeahead from '@lucasschirm/litjs-typeahead';
 import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { analyticsClient } from '../../db/analytics-client';
+import { dbClient } from '../../db/db-client';
 import { navigateTo } from '../../router';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
+import '../../components/component-utilization-panel';
+import '../../components/project-sessions-table';
 import type {
+  AnalyticsQuery,
   ComparisonPage,
   ConfigurationTimeline,
+  Filter,
+  HarnessOption,
   OutlierPage,
   ProjectBehaviorSummary,
+  ProjectSessionListItem,
+  ScopeUtilizationReportDto,
   SessionTrendSeries,
 } from '@lucasschirm/sal-db';
 import type { ChartSeries, ChartState } from '../../components/charts/chart-types';
@@ -126,6 +135,34 @@ export class ProjectBehaviorPage extends PageLitElement {
       font: inherit;
     }
 
+    .filter-bar select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239aa4b2' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      padding-right: 28px;
+    }
+
+    @media (max-width: 640px) {
+      .filter-bar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .filter-bar label {
+        min-width: 0;
+      }
+    }
+
+    @media (max-width: 400px) {
+      .filter-bar {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .filter-bar button {
       background: var(--md-sys-color-primary, #4f8cff);
       color: var(--md-sys-color-on-primary, #fff);
@@ -216,6 +253,68 @@ export class ProjectBehaviorPage extends PageLitElement {
       font-weight: 600;
       color: var(--md-sys-color-error, #ff6b6b);
     }
+
+    .sessions-section {
+      margin-top: 8px;
+    }
+
+    .sessions-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .sessions-header-left {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .sessions-header-left h2 {
+      margin: 0;
+    }
+
+    .sessions-count {
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      font-size: 14px;
+    }
+
+    .sessions-header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .session-search-box input {
+      background: var(--md-sys-color-surface, #171a21);
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-radius: 6px;
+      padding: 6px 12px;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      font: inherit;
+      font-size: 13px;
+      min-width: 220px;
+    }
+
+    .session-search-box input:focus {
+      outline: 2px solid var(--md-sys-color-primary, #4f8cff);
+      outline-offset: 1px;
+    }
+
+    .see-all-link {
+      color: var(--md-sys-color-primary, #4f8cff);
+      font-size: 13px;
+      font-weight: 500;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .see-all-link:hover {
+      text-decoration: underline;
+    }
   `,
   ];
 
@@ -242,6 +341,27 @@ export class ProjectBehaviorPage extends PageLitElement {
 
   @state() private comparisons: PanelState<ComparisonPage> = { data: null, state: 'idle' };
 
+  @state() private utilization: PanelState<ScopeUtilizationReportDto> = {
+    data: null,
+    state: 'idle',
+  };
+
+  @state() private sessions: ProjectSessionListItem[] = [];
+
+  @state() private sessionsLoading = false;
+
+  @state() private sessionsError: string | null = null;
+
+  @state() private sessionTotalCount = 0;
+
+  @state() private totalProjectSessions = 0;
+
+  @state() private sessionSearchQuery = '';
+
+  private sessionSearchDebounceTimer: number | undefined;
+
+  @state() private harnessOptions: readonly HarnessOption[] = [];
+
   private hashListener = () => this.handleHashChange();
 
   connectedCallback(): void {
@@ -254,23 +374,25 @@ export class ProjectBehaviorPage extends PageLitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    clearTimeout(this.sessionSearchDebounceTimer);
     window.removeEventListener('hashchange', this.hashListener);
   }
 
   willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
     if (changed.has('projectId') && this.projectId) {
       void this.load();
     }
   }
 
   private handleHashChange(): void {
-    if (window.location.hash.startsWith(`#/projects/${this.projectId}`)) {
+    if (window.location.hash.startsWith('#/projects/')) {
       void this.load();
     }
   }
 
   private async load(): Promise<void> {
-    if (this.loading || !this.projectId) return;
+    if (this.loading) return;
     this.loading = true;
     this.globalState = 'loading';
     this.globalError = null;
@@ -286,7 +408,17 @@ export class ProjectBehaviorPage extends PageLitElement {
       }
     })();
     try {
-      const resolved = await analyticsClient.resolveProjectId(decodedProjectId);
+      let resolved = await analyticsClient.resolveProjectId(decodedProjectId);
+      if (!resolved) {
+        const project =
+          (await dbClient?.getProject?.(decodedProjectId)) ??
+          (await dbClient?.getProjectByReadableId?.(decodedProjectId));
+        if (project) {
+          resolved =
+            (await analyticsClient.resolveProjectId(project.name)) ||
+            (await analyticsClient.resolveProjectId(project.id));
+        }
+      }
       this.resolvedProjectId = resolved;
       if (!resolved) {
         this.globalState = 'empty';
@@ -306,19 +438,36 @@ export class ProjectBehaviorPage extends PageLitElement {
     this.filters = { ...parsed, projectId: this.projectId };
     const query = projectBehaviorParamsToQuery(this.filters);
 
-    const [summary, trends, timeline, outliers, comparisons] = await Promise.allSettled([
-      analyticsClient.project.getSummary(analyticsProjectId, query),
-      analyticsClient.project.getSessionTrendSeries(analyticsProjectId, query),
-      analyticsClient.project.getConfigurationTimeline(analyticsProjectId, query),
-      analyticsClient.project.getOutliers(analyticsProjectId, query),
-      analyticsClient.project.getComparisons(analyticsProjectId, query),
-    ]);
+    const [summary, trends, timeline, outliers, comparisons, utilization, , harnesses] =
+      await Promise.allSettled([
+        analyticsClient.project.getSummary(analyticsProjectId, query),
+        analyticsClient.project.getSessionTrendSeries(analyticsProjectId, query),
+        analyticsClient.project.getConfigurationTimeline(analyticsProjectId, query),
+        analyticsClient.project.getOutliers(analyticsProjectId, query),
+        analyticsClient.project.getComparisons(analyticsProjectId, query),
+        analyticsClient.project.getUtilizationReport(analyticsProjectId, query),
+        this.loadSessions(analyticsProjectId),
+        analyticsClient.metadata.getHarnesses({
+          ...query,
+          filters: [
+            ...(query.filters ?? []),
+            { field: 'projectId', operator: 'eq', value: analyticsProjectId },
+          ],
+        }),
+      ]);
 
     this.summary = panelStateFromResult(summary, (d) => d.headlineMetrics.length === 0);
     this.trends = panelStateFromResult(trends, (d) => d.series.length === 0);
     this.timeline = panelStateFromResult(timeline, (d) => d.events.length === 0);
     this.outliers = panelStateFromResult(outliers, (d) => d.items.length === 0);
     this.comparisons = panelStateFromResult(comparisons, (d) => d.items.length === 0);
+    this.utilization = panelStateFromResult(
+      utilization,
+      (d) => !d || Object.keys(d.domains).length === 0,
+    );
+    if (harnesses.status === 'fulfilled') {
+      this.harnessOptions = harnesses.value ?? [];
+    }
 
     const states = [
       this.summary.state,
@@ -326,6 +475,7 @@ export class ProjectBehaviorPage extends PageLitElement {
       this.timeline.state,
       this.outliers.state,
       this.comparisons.state,
+      this.utilization.state,
     ];
     if (states.every((s) => s === 'ok' || s === 'empty')) {
       this.globalState = states.some((s) => s === 'ok') ? 'ok' : 'empty';
@@ -378,11 +528,51 @@ export class ProjectBehaviorPage extends PageLitElement {
     }
   }
 
+  private async loadSessions(analyticsProjectId: string): Promise<void> {
+    this.sessionsLoading = true;
+    this.sessionsError = null;
+    try {
+      const filters: Filter[] = [];
+      if (this.sessionSearchQuery.trim()) {
+        filters.push({
+          field: 'search',
+          operator: 'contains',
+          value: this.sessionSearchQuery.trim(),
+        });
+      }
+      const query: AnalyticsQuery = {
+        limit: 20,
+        cursor: '0',
+        filters: filters.length > 0 ? filters : undefined,
+      };
+      const page = await analyticsClient.search.getProjectSessionList(analyticsProjectId, query);
+      this.sessions = [...page.items];
+      this.sessionTotalCount = page.totalCount ?? page.items.length;
+      if (!this.sessionSearchQuery.trim()) {
+        this.totalProjectSessions = page.totalCount ?? page.items.length;
+      }
+    } catch (err) {
+      this.sessionsError = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.sessionsLoading = false;
+    }
+  }
+
+  private handleSessionSearch(e: Event): void {
+    const input = e.target as HTMLInputElement;
+    this.sessionSearchQuery = input.value;
+    clearTimeout(this.sessionSearchDebounceTimer);
+    this.sessionSearchDebounceTimer = window.setTimeout(() => {
+      const analyticsProjectId = this.resolvedProjectId ?? this.projectId;
+      void this.loadSessions(analyticsProjectId);
+    }, 250);
+  }
+
   private renderBreadcrumb() {
     const back = this.filters.returnContext
       ? `#/?${new URLSearchParams(this.filters.returnContext).toString()}`
       : '#/';
-    return html`<a class="back-link" href=${back}>← Back to Dashboard</a>`;
+    return html`<a class="back-link" href=${back}>&lt; Dashboard</a>`;
   }
 
   private renderFilters() {
@@ -408,12 +598,13 @@ export class ProjectBehaviorPage extends PageLitElement {
         </label>
         <label>
           Harness
-          <input
-            type="text"
+          <lit-typeahead
+            .items=${this.harnessOptions.map((opt) => ({ label: opt.harness, value: opt.harness }))}
             .value=${this.filters.harness ?? ''}
-            @change=${(e: Event) =>
-              this.updateFilter('harness', (e.target as HTMLInputElement).value)}
-          />
+            placeholder="All"
+            @change=${(e: CustomEvent<{ value: string }>) =>
+              this.updateFilter('harness', e.detail.value)}
+          ></lit-typeahead>
         </label>
         <label>
           Model
@@ -551,6 +742,7 @@ export class ProjectBehaviorPage extends PageLitElement {
                 label=${card.label}
                 value=${card.value}
                 sub=${card.sub}
+                description=${card.description}
                 valueTitle=${card.valueTitle ?? ''}
                 .clickable=${Boolean(card.href)}
                 @card-click=${() => this.goToMetric(card)}
@@ -722,6 +914,57 @@ export class ProjectBehaviorPage extends PageLitElement {
     this.goToSession(row.sessionId);
   }
 
+  private renderSessions() {
+    const encodedProjectId = encodeURIComponent(this.projectId);
+    const seeAllHref = `#/projects/${encodedProjectId}/sessions`;
+    const hasMoreThan20 = this.totalProjectSessions > 20 || this.sessionTotalCount > 20;
+    const countDisplay = this.sessionSearchQuery.trim()
+      ? `${this.sessionTotalCount} of ${this.totalProjectSessions}`
+      : `${this.totalProjectSessions || this.sessionTotalCount}`;
+
+    return html`
+      <div class="section sessions-section">
+        <div class="sessions-header">
+          <div class="sessions-header-left">
+            <h2>Sessions</h2>
+            ${
+              this.totalProjectSessions > 0 || this.sessionTotalCount > 0
+                ? html`<span class="sessions-count">(${countDisplay})</span>`
+                : ''
+            }
+          </div>
+          <div class="sessions-header-right">
+            <div class="session-search-box">
+              <input
+                type="text"
+                placeholder="Search sessions..."
+                .value=${this.sessionSearchQuery}
+                @input=${this.handleSessionSearch}
+                aria-label="Search sessions"
+              />
+            </div>
+            ${
+              hasMoreThan20
+                ? html`
+                  <a class="see-all-link" href=${seeAllHref}>
+                    See all (${this.totalProjectSessions || this.sessionTotalCount}) →
+                  </a>
+                `
+                : ''
+            }
+          </div>
+        </div>
+
+        <project-sessions-table
+          .sessions=${this.sessions}
+          .loading=${this.sessionsLoading}
+          .error=${this.sessionsError}
+          .searchQuery=${this.sessionSearchQuery}
+        ></project-sessions-table>
+      </div>
+    `;
+  }
+
   render() {
     return html`
       <div class="project-behavior-view">
@@ -735,6 +978,11 @@ export class ProjectBehaviorPage extends PageLitElement {
         ${this.renderFilters()}
         ${this.loading ? html`<p class="notice">Loading project behavior…</p>` : ''}
         ${this.renderOverview()}
+        ${this.renderSessions()}
+        <component-utilization-panel
+          .report=${this.utilization.data}
+          heading="Project Component Utilization (Tools, Skills, Agents)"
+        ></component-utilization-panel>
         ${this.renderTrends()}
         ${this.renderConfigurationTimeline()}
         ${this.renderCohorts()}

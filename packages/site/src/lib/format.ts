@@ -58,3 +58,35 @@ export function estimateTokenCount(text: string): number {
 export function formatEstimatedTokens(count: number): string {
   return `~${formatCompactNumber(count)} tokens (est.)`;
 }
+
+/** Formats a timestamp (ISO string or epoch milliseconds) into a localized date-time string. */
+export function formatDateTime(value: string | number | undefined | null): string {
+  if (!value) return '—';
+  const ts = typeof value === 'number' ? value : Date.parse(value);
+  if (Number.isNaN(ts)) return String(value);
+  return new Date(ts).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Formats a timestamp into a localized date string without time, guarding against NaN. */
+export function formatDate(value: string | number | undefined | null): string {
+  if (!value) return '';
+  const ts = typeof value === 'number' ? value : Date.parse(String(value));
+  if (Number.isNaN(ts)) return '';
+  return new Date(ts).toLocaleDateString();
+}
+
+/** Formats a human-readable session title with safe fallback to "Session <Date>" or "Session". */
+export function formatSessionTitle(
+  title: string | undefined | null,
+  startedAt: string | number | undefined | null,
+): string {
+  if (title?.trim()) return title.trim();
+  const dateStr = formatDate(startedAt);
+  return dateStr ? `Session ${dateStr}` : 'Session';
+}

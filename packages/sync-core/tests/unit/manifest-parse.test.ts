@@ -117,6 +117,44 @@ describe('parseSyncManifest', () => {
     expect(() => parseSyncManifest(makeManifest({ syncRuns: [{ invalid: true }] }))).toThrow();
   });
 
+  it('parses syncRunsCount and updatedAt from a v3 manifest', () => {
+    const manifest = parseSyncManifest(
+      makeManifest({ syncRunsCount: 3, updatedAt: '2026-09-20T12:00:00Z' }, 3),
+    );
+    expect(manifest.syncRunsCount).toBe(3);
+    expect(manifest.updatedAt).toBe('2026-09-20T12:00:00Z');
+  });
+
+  it('falls back to syncRuns.length when syncRunsCount is absent', () => {
+    const manifest = parseSyncManifest(makeManifest({ syncRuns: [makeSyncRun(), makeSyncRun()] }));
+    expect(manifest.syncRunsCount).toBe(2);
+  });
+
+  it('falls back to 0 when neither syncRunsCount nor syncRuns is present', () => {
+    const { syncRuns: _, ...withoutRuns } = makeManifest();
+    const manifest = parseSyncManifest(withoutRuns);
+    expect(manifest.syncRunsCount).toBe(0);
+  });
+
+  it('parses updatedAt as optional string', () => {
+    const manifest = parseSyncManifest(makeManifest());
+    expect(manifest.updatedAt).toBeUndefined();
+    const withDate = parseSyncManifest(makeManifest({ updatedAt: '2026-09-20T12:00:00Z' }));
+    expect(withDate.updatedAt).toBe('2026-09-20T12:00:00Z');
+  });
+
+  it('rejects non-numeric syncRunsCount', () => {
+    expect(() =>
+      parseSyncManifest(makeManifest({ syncRunsCount: 'three' as unknown as number })),
+    ).toThrow();
+  });
+
+  it('rejects non-string updatedAt', () => {
+    expect(() =>
+      parseSyncManifest(makeManifest({ updatedAt: 12345 as unknown as string })),
+    ).toThrow();
+  });
+
   it('parses v2 as partial with unknown category coverage by default', () => {
     const manifest = parseSyncManifest(makeManifest());
     expect(manifest.schemaVersion).toBe(MANIFEST_SCHEMA_VERSION);

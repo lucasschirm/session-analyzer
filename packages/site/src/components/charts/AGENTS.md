@@ -15,3 +15,4 @@ Reusable chart web components built on tree-shaken ECharts.
 - Components consume only `ChartSeries` DTOs from `chart-types.ts`.
 - Every aggregate is paired with sample size (n=X) in the textual summary.
 - Charts are color-independent: status and series are encoded through labels, patterns, and textual summaries, not color alone.
+- Mouse wheel must never zoom or pan a chart. Any ECharts `dataZoom` with `type: 'inside'` must set `zoomOnMouseWheel: false` and `moveOnMouseWheel: false` so wheel events scroll the page. Window/view changes are still available through the `slider` dataZoom.

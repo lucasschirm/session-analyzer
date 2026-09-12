@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_LIST_KEYS } from '@lucasschirm/sal-sync-core';
 import { expect, type Locator, type Page, test } from '@playwright/test';
 import { verifyExportContents } from './helpers/export-verify.js';
 import { assertHeartbeat, syncProgressFilesParser } from './helpers/heartbeat.js';
@@ -10,6 +11,21 @@ import {
 } from './sync-fixtures.js';
 
 const PASSKEY = 'e2e-passkey';
+
+/**
+ * Production contract: a project listing page holds at most
+ * `DEFAULT_MAX_LIST_KEYS` keys, so a re-sync of `sessionCount` sessions
+ * (each contributing `filesPerSession` files plus its own manifest.json),
+ * plus the project-level manifest.json itself (the `+ 1`), issues this many
+ * `list:<projectId>/` requests. For UX-025's small fixture this evaluates
+ * to 1 because `FixtureBucket` does not truncate listings (see AGENTS.md /
+ * §9 backlog item) — the formula documents the production contract; true
+ * multi-page straddling is proven at the unit level by SYNC-013
+ * (`session-sync.worker.test.ts`).
+ */
+function expectedProjectListingRequests(sessionCount: number, filesPerSession: number): number {
+  return Math.ceil((sessionCount * (filesPerSession + 1) + 1) / DEFAULT_MAX_LIST_KEYS);
+}
 
 function attachLoggers(page: Page): void {
   page.on('pageerror', (err) => {
@@ -153,11 +169,14 @@ async function waitForSyncCompleted(page: Page, timeout = 30000): Promise<void> 
 }
 
 /**
- * Wait for the progress bar to completely hide (including the 6-second
- * completed-summary display). Use this when you just need the sync to be
- * finished and don't need to inspect the modal.
+ * Wait for the sync to finish and dismiss the completed summary. The completed
+ * summary stays visible until the user clicks "Close" (it no longer auto-hides),
+ * so this waits for the completed state and then clicks the Close button.
  */
 async function waitForSyncIdle(page: Page, timeout = 30000): Promise<void> {
+  await waitForSyncCompleted(page, timeout);
+  const closeButton = page.locator('sync-progress-bar').getByRole('button', { name: 'Close' });
+  await closeButton.click();
   await expect(progressBar(page)).toBeHidden({ timeout });
 }
 
@@ -672,6 +691,9 @@ test('offline event aborts the active run', async ({ page }) => {
 
   await startSyncFromHome(page, bucket);
   await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
+  // Wait for the worker to discover at least one session before aborting,
+  // so the session appears in the sync status modal after the abort.
+  await expect(progressBar(page)).toContainText('Sessions', { timeout: 10000 });
 
   await page.evaluate(() => window.dispatchEvent(new Event('offline')));
   await waitForSyncCompleted(page);
@@ -1142,4 +1164,160 @@ test('UX-008: mocked S3 5xx mid-sync surfaces a distinct error affordance', asyn
   await startSyncFromHome(page, bucket);
   await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
   await assertSyncErrorAffordance(page, 'e2e-err');
+});
+
+// =============================================================================
+// UX-025: Re-sync of an unchanged bucket issues one project object listing
+// and zero session-manifest GETs
+// =============================================================================
+
+test('UX-025: re-sync of an unchanged bucket issues one project listing and zero manifest/transcript GETs', async ({
+  page,
+}) => {
+  const projectId = 'ux025-proj';
+  const sessionIds = ['e2e-sess-a', 'e2e-sess-b'];
+  const filesPerSession = 1; // one session-scope file (transcript.jsonl) per session below
+  const bucket = new FixtureBucket();
+  bucket.addProject(projectId, 'UX-025 Project', '');
+  for (const sessionId of sessionIds) {
+    bucket.addSession(projectId, sessionId, {
+      files: [
+        {
+          scope: 'session',
+          relativePath: 'transcript.jsonl',
+          content: fixtureBuffer('claude-session.jsonl'),
+        },
+      ],
+    });
+  }
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+  await waitForSyncIdle(page);
+  await openProjectBehavior(page, projectId);
+  await expectChartContains(page, 'Token usage trends', 'Total tokens');
+
+  bucket.clearRequests();
+  await openConnectForResync(page);
+  await clickRowSyncAndConfirm(page, { syncOnlyNew: false });
+  await waitForSyncIdle(page);
+
+  const expectedListingRequests = expectedProjectListingRequests(
+    sessionIds.length,
+    filesPerSession,
+  );
+  const projectListingGets = bucket
+    .getRequests({ method: 'GET' })
+    .filter((r) => r.key === `list:${projectId}/`);
+  expect(projectListingGets).toHaveLength(expectedListingRequests);
+
+  const sessionManifestGets = bucket
+    .getRequests({ method: 'GET' })
+    .filter((r) => r.key.endsWith('/manifest.json'))
+    .filter((r) => r.key.split('/').length > 2);
+  expect(sessionManifestGets).toHaveLength(0);
+
+  const transcriptGets = bucket
+    .getRequests({ method: 'GET' })
+    .filter((r) => r.key.includes('transcript.jsonl'));
+  expect(transcriptGets).toHaveLength(0);
+
+  // Dashboard is still queryable after an all-skipped resync.
+  await openProjectBehavior(page, projectId);
+  await expectChartContains(page, 'Token usage trends', 'Total tokens');
+});
+
+// =============================================================================
+// UX-026: Re-sync after a manifest+content re-upload re-fetches only that
+// session; a project listing 5xx surfaces the error affordance, not the
+// empty state.
+// =============================================================================
+
+test('UX-026: re-sync re-fetches only a changed session, and a listing 5xx surfaces the error affordance', async ({
+  page,
+}) => {
+  const projectId = 'ux026-proj';
+  const sessionA = 'e2e-sess-a';
+  const sessionB = 'e2e-sess-b';
+  const bucket = new FixtureBucket();
+  bucket.addProject(projectId, 'UX-026 Project', '');
+  for (const sessionId of [sessionA, sessionB]) {
+    bucket.addSession(projectId, sessionId, {
+      files: [
+        {
+          scope: 'session',
+          relativePath: 'transcript.jsonl',
+          content: fixtureBuffer('claude-session.jsonl'),
+        },
+      ],
+    });
+  }
+  attachLoggers(page);
+
+  // Run 1: initial sync, both sessions in_sync.
+  await startSyncFromHome(page, bucket);
+  await waitForSyncIdle(page);
+  await openProjectBehavior(page, projectId);
+  await expectChartContains(page, 'Token usage trends', 'Total tokens');
+
+  // Run 2: re-upload session A's manifest + transcript content with a
+  // genuinely changed body (a new sha256, so the worker actually re-fetches
+  // it rather than deduplicating against the already-downloaded content).
+  // Only A's manifest and transcript should be re-fetched; B must see zero
+  // GETs.
+  const updatedTranscript = Buffer.concat([
+    fixtureBuffer('claude-session.jsonl'),
+    Buffer.from(
+      '{"type": "assistant", "sessionId": "e2e-claude-session", "uuid": "a3", "timestamp": "2026-08-11T10:00:15.000Z", "message": {"role": "assistant", "usage": {"input_tokens": 10, "output_tokens": 5}, "content": [{"type": "text", "text": "Sure thing."}]}}\n',
+    ),
+  ]);
+  bucket.updateSessionFile(projectId, sessionA, 'transcript.jsonl', updatedTranscript);
+  bucket.clearRequests();
+  await openConnectForResync(page);
+  await clickRowSyncAndConfirm(page, { syncOnlyNew: false });
+  await waitForSyncIdle(page);
+
+  expect(
+    bucket
+      .getRequests({ method: 'GET' })
+      .filter((r) => r.key === `${projectId}/${sessionA}/manifest.json`),
+  ).toHaveLength(1);
+  expect(
+    bucket
+      .getRequests({ method: 'GET' })
+      .filter((r) => r.key === transcriptFileKey(projectId, sessionA)),
+  ).toHaveLength(1);
+  expect(
+    bucket
+      .getRequests({ method: 'GET' })
+      .filter((r) => r.key === `${projectId}/${sessionB}/manifest.json`),
+  ).toHaveLength(0);
+  expect(
+    bucket
+      .getRequests({ method: 'GET' })
+      .filter((r) => r.key === transcriptFileKey(projectId, sessionB)),
+  ).toHaveLength(0);
+
+  // Run 3: inject a project-listing failure. This must surface the sync
+  // error affordance (toast + failed progress bar), never the empty state.
+  bucket.setHttpError(`list:${projectId}/`, 500);
+  bucket.clearRequests();
+  await openConnectForResync(page);
+  await clickRowSyncAndConfirm(page, { syncOnlyNew: false });
+  await waitForSyncCompleted(page, 30000);
+
+  const bar = progressBar(page);
+  await expect(bar).toHaveAttribute('class', /completed-failed/);
+  await expect(page.locator('.toast.error')).toBeVisible();
+
+  // withRetry (MAX_RETRIES = 1) retries a 5xx listing once: exactly two
+  // `list:<projectId>/` requests are logged for this run.
+  const listingGets = bucket
+    .getRequests({ method: 'GET' })
+    .filter((r) => r.key === `list:${projectId}/`);
+  expect(listingGets).toHaveLength(2);
+
+  // A listing failure does not corrupt or hide prior analytics.
+  await openProjectBehavior(page, projectId);
+  await expectChartContains(page, 'Token usage trends', 'Total tokens');
 });

@@ -25,6 +25,7 @@ import type {
   ProjectListPage,
   TimeSeriesPoint,
 } from './analytics.js';
+import { getPortfolioUtilizationReport } from './analytics-utilization.js';
 import {
   type AnalyticsToken,
   type Coverage,
@@ -37,6 +38,13 @@ import {
 type Queryable = SqliteExecutor | SqliteTransaction;
 
 const DEFAULT_LIMIT = 50;
+
+function filterValue(query: AnalyticsQuery | undefined, field: string): string | null {
+  const filter = query?.filters?.find((f) => f.field === field);
+  if (!filter) return null;
+  if (typeof filter.value === 'string') return filter.value;
+  return null;
+}
 
 /**
  * Per-harness total-inclusive token metric ids feeding the portfolio
@@ -487,7 +495,19 @@ function metricFromDistribution(
 async function countProjectsInPortfolio(
   queryable: Queryable,
   portfolioId: string,
+  query: AnalyticsQuery,
 ): Promise<number> {
+  const harness = filterValue(query, 'harness');
+  if (harness) {
+    const { rows } = await queryable.exec(
+      `SELECT COUNT(DISTINCT p.id) AS c
+       FROM projects p
+       JOIN sessions s ON s.project_id = p.id
+       WHERE p.portfolio_id = ? AND s.harness = ?`,
+      [portfolioId, harness],
+    );
+    return asNumber(rows[0]?.c);
+  }
   const { rows } = await queryable.exec(
     'SELECT COUNT(*) AS c FROM projects WHERE portfolio_id = ?',
     [portfolioId],
@@ -501,16 +521,19 @@ async function countSessionsInPortfolio(
   query: AnalyticsQuery,
 ): Promise<number> {
   const generationId = query.generationId;
+  const harness = filterValue(query, 'harness');
+  const harnessClause = harness ? 'AND s.harness = ?' : '';
   const sql = generationId
     ? `SELECT COUNT(*) AS c
        FROM sessions s
        JOIN projects p ON p.id = s.project_id
-       WHERE p.portfolio_id = ? AND s.current_generation_id = ?`
+       WHERE p.portfolio_id = ? AND s.current_generation_id = ? ${harnessClause}`
     : `SELECT COUNT(*) AS c
        FROM sessions s
        JOIN projects p ON p.id = s.project_id
-       WHERE p.portfolio_id = ?`;
-  const params = generationId ? [portfolioId, generationId] : [portfolioId];
+       WHERE p.portfolio_id = ? ${harnessClause}`;
+  const params: SqliteValue[] = generationId ? [portfolioId, generationId] : [portfolioId];
+  if (harness) params.push(harness);
   const { rows } = await queryable.exec(sql, params);
   return asNumber(rows[0]?.c);
 }
@@ -544,6 +567,23 @@ async function countDistinctModelsInPortfolio(
   query: AnalyticsQuery,
 ): Promise<number> {
   const generationId = query.generationId;
+  const harness = filterValue(query, 'harness');
+  const harnessClause = harness ? 'AND s.harness = ?' : '';
+  const rollupSql = generationId
+    ? `SELECT COUNT(DISTINCT dimension_value) AS c
+       FROM portfolio_dimension_rollups
+       WHERE portfolio_id = ? AND dimension_name = 'model' AND is_unknown = 0
+         AND generation_id = ?`
+    : `SELECT COUNT(DISTINCT dimension_value) AS c
+       FROM portfolio_dimension_rollups
+       WHERE portfolio_id = ? AND dimension_name = 'model' AND is_unknown = 0`;
+  const rollupParams = generationId ? [portfolioId, generationId] : [portfolioId];
+  const { rows: rollupRows } = await queryable.exec(rollupSql, rollupParams);
+  const rollupCount = asNumber(rollupRows[0]?.c);
+  if (rollupCount > 0 && !harness) {
+    return rollupCount;
+  }
+
   const typeIn = MODEL_EVENT_TYPES.map(() => '?').join(', ');
   const sql = generationId
     ? `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
@@ -552,16 +592,22 @@ async function countDistinctModelsInPortfolio(
        JOIN projects p ON p.id = s.project_id
        WHERE p.portfolio_id = ? AND s.current_generation_id = ?
          AND e.event_type IN (${typeIn})
-         AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL`
+         AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL
+         ${harnessClause}`
     : `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
        FROM normalized_events e
        JOIN sessions s ON s.id = e.session_id
        JOIN projects p ON p.id = s.project_id
        WHERE p.portfolio_id = ?
          AND e.event_type IN (${typeIn})
-         AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL`;
-  const base = generationId ? [portfolioId, generationId] : [portfolioId];
-  const { rows } = await queryable.exec(sql, [...base, ...MODEL_EVENT_TYPES]);
+         AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL
+         ${harnessClause}`;
+  const base: SqliteValue[] = generationId ? [portfolioId, generationId] : [portfolioId];
+  const { rows } = await queryable.exec(sql, [
+    ...base,
+    ...MODEL_EVENT_TYPES,
+    ...(harness ? [harness] : []),
+  ]);
   return asNumber(rows[0]?.c);
 }
 
@@ -571,16 +617,19 @@ async function countDistinctHarnessesInPortfolio(
   query: AnalyticsQuery,
 ): Promise<number> {
   const generationId = query.generationId;
+  const harness = filterValue(query, 'harness');
+  const harnessClause = harness ? 'AND s.harness = ?' : '';
   const sql = generationId
     ? `SELECT COUNT(DISTINCT s.harness) AS c
        FROM sessions s
        JOIN projects p ON p.id = s.project_id
-       WHERE p.portfolio_id = ? AND s.current_generation_id = ?`
+       WHERE p.portfolio_id = ? AND s.current_generation_id = ? ${harnessClause}`
     : `SELECT COUNT(DISTINCT s.harness) AS c
        FROM sessions s
        JOIN projects p ON p.id = s.project_id
-       WHERE p.portfolio_id = ?`;
-  const params = generationId ? [portfolioId, generationId] : [portfolioId];
+       WHERE p.portfolio_id = ? ${harnessClause}`;
+  const params: SqliteValue[] = generationId ? [portfolioId, generationId] : [portfolioId];
+  if (harness) params.push(harness);
   const { rows } = await queryable.exec(sql, params);
   return asNumber(rows[0]?.c);
 }
@@ -608,6 +657,7 @@ async function findUnusedOfferedComponents(
   portfolioId: string,
   query: AnalyticsQuery,
 ): Promise<readonly string[]> {
+  const harness = filterValue(query, 'harness');
   const allIdentities = await ComponentIdentityStore.listByPortfolio(queryable, portfolioId);
   // component_rollups is not populated by the current ingestion pipeline.
   // Use session_component_exposures to determine which components are
@@ -618,8 +668,11 @@ async function findUnusedOfferedComponents(
      JOIN sessions s ON s.id = sce.session_id
      JOIN projects p ON p.id = s.project_id
      WHERE p.portfolio_id = ?
-       AND (? IS NULL OR sce.generation_id = ?)`,
-    [portfolioId, query.generationId ?? null, query.generationId ?? null],
+       AND (? IS NULL OR sce.generation_id = ?)
+       ${harness ? 'AND s.harness = ?' : ''}`,
+    harness
+      ? [portfolioId, query.generationId ?? null, query.generationId ?? null, harness]
+      : [portfolioId, query.generationId ?? null, query.generationId ?? null],
   );
   const usedIds = new Set(usedRows.map((r) => asString(r.component_id)));
   // Return human-friendly labels (e.g. `skill/multi-issue-agent`), never raw
@@ -705,13 +758,23 @@ export async function getPortfolioOverview(
   const rollupMetrics = await loadHeadlineMetricsFromRollups(queryable, portfolioId, query);
   headlineMetrics.push(...rollupMetrics);
 
-  const projectCount = await countProjectsInPortfolio(queryable, portfolioId);
-  const sessionCount = await countSessionsInPortfolio(queryable, portfolioId, query);
-  const componentCounts = await countComponentsByKind(queryable, portfolioId);
-  const unusedOfferedComponents = await findUnusedOfferedComponents(queryable, portfolioId, query);
-  const totalTokens = await sumTotalTokensInPortfolio(queryable, portfolioId, query);
-  const modelCount = await countDistinctModelsInPortfolio(queryable, portfolioId, query);
-  const harnessCount = await countDistinctHarnessesInPortfolio(queryable, portfolioId, query);
+  const [
+    projectCount,
+    sessionCount,
+    componentCounts,
+    unusedOfferedComponents,
+    totalTokens,
+    modelCount,
+    harnessCount,
+  ] = await Promise.all([
+    countProjectsInPortfolio(queryable, portfolioId, query),
+    countSessionsInPortfolio(queryable, portfolioId, query),
+    countComponentsByKind(queryable, portfolioId),
+    findUnusedOfferedComponents(queryable, portfolioId, query),
+    sumTotalTokensInPortfolio(queryable, portfolioId, query),
+    countDistinctModelsInPortfolio(queryable, portfolioId, query),
+    countDistinctHarnessesInPortfolio(queryable, portfolioId, query),
+  ]);
 
   const countToken: AnalyticsToken = {
     ...overviewToken,
@@ -821,6 +884,7 @@ export async function getComponentUtilization(
   }
 
   const generationId = query.generationId ?? null;
+  const harness = filterValue(query, 'harness');
 
   // Aggregate component utilization from session_component_exposures, which
   // is populated during ingestion. The component_rollups and
@@ -845,9 +909,12 @@ export async function getComponentUtilization(
      LEFT JOIN component_identities ci ON ci.id = sce.component_id
      WHERE p.portfolio_id = ?
        AND (? IS NULL OR sce.generation_id = ?)
+       ${harness ? 'AND s.harness = ?' : ''}
      GROUP BY sce.component_id, ci.kind, ci.native_id, ci.display_name
      ORDER BY sce.component_id`,
-    [portfolioId, generationId, generationId],
+    harness
+      ? [portfolioId, generationId, generationId, harness]
+      : [portfolioId, generationId, generationId],
   );
 
   const items: ComponentUtilizationRow[] = [];
@@ -907,6 +974,7 @@ export async function getModelHarnessCohorts(
   }
 
   const generationId = query.generationId ?? null;
+  const harness = filterValue(query, 'harness');
 
   // Build true (model, harness) cohort pairs by joining sessions with
   // model_requests. This avoids the previous per-dimension grouping that
@@ -924,9 +992,12 @@ export async function getModelHarnessCohorts(
        AND mr.generation_id = s.current_generation_id
      WHERE p.portfolio_id = ?
        AND (? IS NULL OR s.current_generation_id = ?)
+       ${harness ? 'AND s.harness = ?' : ''}
      GROUP BY COALESCE(mr.model, 'unknown'), COALESCE(s.harness, 'unknown')
      ORDER BY session_count DESC, model, harness`,
-    [portfolioId, generationId, generationId],
+    harness
+      ? [portfolioId, generationId, generationId, harness]
+      : [portfolioId, generationId, generationId],
   );
 
   const analysisReleaseId = query.analysisReleaseId ?? 'unknown';
@@ -1031,14 +1102,17 @@ async function loadProjectListRows(
   query: AnalyticsQuery,
 ): Promise<ProjectListItem[]> {
   const generationId = query.generationId;
-  const baseParams = generationId ? [portfolioId, generationId] : [portfolioId];
+  const harness = filterValue(query, 'harness');
+  const baseParams: SqliteValue[] = generationId ? [portfolioId, generationId] : [portfolioId];
   const generationFilter = generationId ? 'AND s.current_generation_id = ?' : '';
+  const harnessFilter = harness ? 'AND s.harness = ?' : '';
+  if (harness) baseParams.push(harness);
 
   const { rows: sessionRows } = await queryable.exec(
     `SELECT s.project_id, s.occurrence_time, s.ingestion_source_id, s.harness, s.finality
      FROM sessions s
      JOIN projects p ON p.id = s.project_id
-     WHERE p.portfolio_id = ? ${generationFilter}
+     WHERE p.portfolio_id = ? ${generationFilter} ${harnessFilter}
      ORDER BY s.occurrence_time DESC`,
     baseParams,
   );
@@ -1252,5 +1326,6 @@ export function createPortfolioView(queryable: Queryable): PortfolioView {
     getComponentUtilization: (query) => getComponentUtilization(queryable, query),
     getModelHarnessCohorts: (query) => getModelHarnessCohorts(queryable, query),
     getProjectList: (query) => getProjectList(queryable, query),
+    getUtilizationReport: (query) => getPortfolioUtilizationReport(queryable, query),
   };
 }

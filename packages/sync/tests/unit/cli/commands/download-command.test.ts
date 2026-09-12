@@ -79,6 +79,7 @@ function makeManifest(sessionId: string, artifacts: ManifestArtifact[]): SyncMan
     transcriptsCaptured: true,
     artifacts,
     syncRuns: [],
+    syncRunsCount: 0,
   };
 }
 

@@ -13,7 +13,7 @@ import {
 } from './sync-fixtures.js';
 
 /**
- * UX-026: Artifact Diff (`#/artifact-diff`) renders real diff content across
+ * UX-033: Artifact Diff (`#/artifact-diff`) renders real diff content across
  * a version change, resolved through the OPFS-backed blob store
  * (`createOpfsArtifactBlobStore`, issue #399), with structurally distinct
  * empty and error affordances.
@@ -106,7 +106,20 @@ async function startSyncFromHome(page: Page, bucket: FixtureBucket): Promise<voi
   await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
 }
 
+async function waitForSyncCompleted(page: Page, timeout = 30000): Promise<void> {
+  await expect(progressBar(page)).toBeVisible({ timeout });
+  await expect(progressBar(page)).toContainText(/[✓⊘⚠]/, { timeout });
+}
+
+/**
+ * Wait for the sync to finish and dismiss the completed summary. The completed
+ * summary stays visible until the user clicks "Close" (it no longer auto-hides),
+ * so this waits for the completed state and then clicks the Close button.
+ */
 async function waitForSyncIdle(page: Page, timeout = 30000): Promise<void> {
+  await waitForSyncCompleted(page, timeout);
+  const closeButton = page.locator('sync-progress-bar').getByRole('button', { name: 'Close' });
+  await closeButton.click();
   await expect(progressBar(page)).toBeHidden({ timeout });
 }
 
@@ -298,7 +311,7 @@ async function installFakeFailingAnalyticsWorker(page: Page): Promise<void> {
   }, FAKE_FAILING_ANALYTICS_WORKER);
 }
 
-test.describe('UX-026: Artifact Diff real data (OPFS-backed blob store)', () => {
+test.describe('UX-033: Artifact Diff real data (OPFS-backed blob store)', () => {
   test('diff content correctness across a version change, resolved through the real OPFS-backed store, with the same content confirmed from Component Ecosystem', async ({
     page,
   }) => {
@@ -346,7 +359,7 @@ test.describe('UX-026: Artifact Diff real data (OPFS-backed blob store)', () => 
       leftVersion: ids.leftArtifact,
       rightVersion: ids.rightArtifact,
     });
-    await page.goto(`/#/artifacts/ux-026-spot-check?${ecosystemParams.toString()}`);
+    await page.goto(`/#/artifacts/ux-033-spot-check?${ecosystemParams.toString()}`);
 
     // Real-browser regression coverage for the routing bug this same
     // cutover surfaced and fixed: `componentId` (`@property({ attribute:
@@ -356,16 +369,16 @@ test.describe('UX-026: Artifact Diff real data (OPFS-backed blob store)', () => 
     // component-specific one -- unit-tested at the jsdom level, but never
     // through a real attribute-upgrade path until now. Asserts the heading
     // differs from the generic fallback, proving the attribute correctly
-    // bound. `ux-026-spot-check` is a placeholder id with no real
+    // bound. `ux-033-spot-check` is a placeholder id with no real
     // `component_identities` row (`loadDiff()` only needs
     // `filters.leftVersion`/`rightVersion`), so `getIdentity()` resolves to
     // `undefined` here and the heading falls back to the generic "Artifact"
     // label -- this also doubles as real-browser coverage of that fallback
     // path never leaking the raw id (`never-display-raw-ids.md`), which the
-    // resolved-label case (`ux-026-spot-check`'s real counterpart) doesn't
+    // resolved-label case (`ux-033-spot-check`'s real counterpart) doesn't
     // exercise.
     await expect(page.locator('h1')).not.toHaveText('Artifact Ecosystem');
-    await expect(page.locator('h1')).not.toContainText('ux-026-spot-check');
+    await expect(page.locator('h1')).not.toContainText('ux-033-spot-check');
 
     const ecosystemDiffPanel = page.locator('.diff-panel').first();
     await expect(ecosystemDiffPanel).toBeVisible({ timeout: 15000 });

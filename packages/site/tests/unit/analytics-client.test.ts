@@ -10,6 +10,7 @@ import type {
 class FakeWorker {
   onmessage: ((event: MessageEvent<AnalyticsResponse>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
+  onmessageerror: ((event: MessageEvent) => void) | null = null;
   posted: AnalyticsRequest[] = [];
 
   postMessage(request: AnalyticsRequest): void {
@@ -22,6 +23,10 @@ class FakeWorker {
 
   fail(message: string): void {
     this.onerror?.({ message } as ErrorEvent);
+  }
+
+  failMessage(): void {
+    this.onmessageerror?.({} as MessageEvent);
   }
 }
 
@@ -106,6 +111,81 @@ describe('AnalyticsClient', () => {
 
     await readyAssertion;
     await projectsAssertion;
+  });
+
+  it('dispatches reprocess-completed when worker errors', async () => {
+    const ready = client.ensureReady();
+    const reprocessCompletedSpy = vi.fn();
+    client.addEventListener('reprocess-completed', (event) => {
+      reprocessCompletedSpy((event as CustomEvent).detail);
+    });
+
+    worker.fail('Fatal worker initialization error');
+
+    await expect(ready).rejects.toThrow('Fatal worker initialization error');
+    expect(reprocessCompletedSpy).toHaveBeenCalledWith({
+      ok: false,
+      error: 'Fatal worker initialization error',
+    });
+  });
+
+  it('dispatches reprocess-completed when worker message deserialization errors', async () => {
+    const ready = client.ensureReady();
+    const reprocessCompletedSpy = vi.fn();
+    client.addEventListener('reprocess-completed', (event) => {
+      reprocessCompletedSpy((event as CustomEvent).detail);
+    });
+
+    worker.failMessage();
+
+    await expect(ready).rejects.toThrow('Worker message deserialization error');
+    expect(reprocessCompletedSpy).toHaveBeenCalledWith({
+      ok: false,
+      error: 'Worker message deserialization error',
+    });
+  });
+
+  it('forwards reprocess broadcast events to client listeners', () => {
+    void client.ensureReady();
+    const startedSpy = vi.fn();
+    const progressSpy = vi.fn();
+    const completedSpy = vi.fn();
+
+    client.addEventListener('reprocess-started', (e) => startedSpy((e as CustomEvent).detail));
+    client.addEventListener('reprocess-progress', (e) => progressSpy((e as CustomEvent).detail));
+    client.addEventListener('reprocess-completed', (e) => completedSpy((e as CustomEvent).detail));
+
+    worker.respond({
+      type: 'reprocessStarted',
+      ok: true,
+      reason: 'Testing migration',
+    } as unknown as AnalyticsResponse);
+    expect(startedSpy).toHaveBeenCalledWith({ reason: 'Testing migration' });
+
+    worker.respond({
+      type: 'reprocessProgress',
+      ok: true,
+      step: 'Rebuilding session rollups',
+      completed: 0,
+      total: 5,
+      phase: 1,
+      totalPhases: 2,
+      unit: 'sessions parsing',
+    } as unknown as AnalyticsResponse);
+    expect(progressSpy).toHaveBeenCalledWith({
+      step: 'Rebuilding session rollups',
+      completed: 0,
+      total: 5,
+      phase: 1,
+      totalPhases: 2,
+      unit: 'sessions parsing',
+    });
+
+    worker.respond({
+      type: 'reprocessCompleted',
+      ok: true,
+    } as unknown as AnalyticsResponse);
+    expect(completedSpy).toHaveBeenCalledWith({ ok: true, error: undefined });
   });
 
   it('lazily initializes on the first ordinary call', async () => {

@@ -1,6 +1,19 @@
 import { formatCompactNumber } from '../../lib/format';
 import type { ChartBucket, ChartSeries, EChartsCoreOption } from './chart-types';
 
+function uniquePreservingOrder(items: readonly (string | number)[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of items) {
+    const s = String(item);
+    if (!seen.has(s)) {
+      seen.add(s);
+      result.push(s);
+    }
+  }
+  return result;
+}
+
 function sortedUnique<T>(items: T[]): T[] {
   return [...new Set(items)].sort((a, b) => String(a).localeCompare(String(b)));
 }
@@ -52,7 +65,11 @@ const baseYAxis = {
   nameTextStyle: { color: AXIS_TEXT_COLOR },
 };
 const baseDataZoom = [
-  { type: 'inside', start: 0, end: 100 },
+  // Wheel zoom and pan are disabled site-wide so scrolling the page does not
+  // accidentally change the chart. The slider below still lets users change
+  // the visible window. Any new chart that adds an inside dataZoom must keep
+  // zoomOnMouseWheel and moveOnMouseWheel false (see chart-helpers.test.ts).
+  { type: 'inside', start: 0, end: 100, zoomOnMouseWheel: false, moveOnMouseWheel: false },
   {
     type: 'slider',
     start: 0,
@@ -73,21 +90,31 @@ function buildSeries(
   return Array.from(groups.entries())
     .sort(([a], [b]) => (a || '').localeCompare(b || ''))
     .map(([name, buckets]) => {
-      const byX = new Map(buckets.map((b) => [String(b.x), b.y]));
+      const byX = new Map(buckets.map((b) => [String(b.x), b]));
       return {
         name: name || 'value',
         type,
         stack: stacked ? 'total' : undefined,
         areaStyle: area ? {} : undefined,
         emphasis: { focus: 'series' },
-        data: xAxisData.map((x) => byX.get(x) ?? null),
+        data: xAxisData.map((x) => {
+          const b = byX.get(x);
+          if (!b || b.y === null) return null;
+          if (b.evidenceLink) {
+            return {
+              value: b.y,
+              evidenceLink: b.evidenceLink,
+            };
+          }
+          return b.y;
+        }),
       };
     });
 }
 
 function timeSeriesOption(series: ChartSeries): EChartsCoreOption {
   const groups = groupBySeries(series.buckets);
-  const xAxisData = sortedUnique(series.buckets.map((b) => String(b.x)));
+  const xAxisData = uniquePreservingOrder(series.buckets.map((b) => b.x));
   return {
     aria: { enabled: true },
     tooltip: baseTooltip,
@@ -103,7 +130,7 @@ function timeSeriesOption(series: ChartSeries): EChartsCoreOption {
 
 function stackedBarOption(series: ChartSeries): EChartsCoreOption {
   const groups = groupBySeries(series.buckets);
-  const xAxisData = sortedUnique(series.buckets.map((b) => String(b.x)));
+  const xAxisData = uniquePreservingOrder(series.buckets.map((b) => b.x));
   return {
     aria: { enabled: true },
     tooltip: baseTooltip,
@@ -119,7 +146,7 @@ function stackedBarOption(series: ChartSeries): EChartsCoreOption {
 
 function stackedAreaOption(series: ChartSeries): EChartsCoreOption {
   const groups = groupBySeries(series.buckets);
-  const xAxisData = sortedUnique(series.buckets.map((b) => String(b.x)));
+  const xAxisData = uniquePreservingOrder(series.buckets.map((b) => b.x));
   return {
     aria: { enabled: true },
     tooltip: baseTooltip,
@@ -134,8 +161,8 @@ function stackedAreaOption(series: ChartSeries): EChartsCoreOption {
 }
 
 function histogramOption(series: ChartSeries): EChartsCoreOption {
-  const xAxisData = sortedUnique(series.buckets.map((b) => String(b.x)));
-  const byX = new Map(series.buckets.map((b) => [String(b.x), b.y]));
+  const xAxisData = uniquePreservingOrder(series.buckets.map((b) => b.x));
+  const byX = new Map(series.buckets.map((b) => [String(b.x), b]));
   return {
     aria: { enabled: true },
     tooltip: baseTooltip,
@@ -147,7 +174,17 @@ function histogramOption(series: ChartSeries): EChartsCoreOption {
       {
         name: series.label,
         type: 'bar',
-        data: xAxisData.map((x) => byX.get(x) ?? null),
+        data: xAxisData.map((x) => {
+          const b = byX.get(x);
+          if (!b || b.y === null) return null;
+          if (b.evidenceLink) {
+            return {
+              value: b.y,
+              evidenceLink: b.evidenceLink,
+            };
+          }
+          return b.y;
+        }),
       },
     ],
     animation: false,
@@ -176,10 +213,11 @@ function scatterOption(series: ChartSeries): EChartsCoreOption {
     : 'category';
   const xValues =
     xAxisType === 'category' ? sortedUnique(series.buckets.map((b) => String(b.x))) : [];
+  const xMap = xAxisType === 'category' ? new Map(xValues.map((v, i) => [v, i])) : null;
   const data = series.buckets
     .filter((b) => b.y !== null)
     .map((b) => {
-      const x = xAxisType === 'category' ? xValues.indexOf(String(b.x)) : (b.x as number);
+      const x = xMap ? (xMap.get(String(b.x)) ?? -1) : (b.x as number);
       return [x, b.y as number, b.label];
     });
 
@@ -210,11 +248,13 @@ function scatterOption(series: ChartSeries): EChartsCoreOption {
 function heatmapOption(series: ChartSeries): EChartsCoreOption {
   const yLabels = sortedUnique(series.buckets.map((b) => b.series ?? series.label));
   const xLabels = sortedUnique(series.buckets.map((b) => String(b.x)));
+  const xMap = new Map(xLabels.map((l, i) => [l, i]));
+  const yMap = new Map(yLabels.map((l, i) => [l, i]));
   const data = series.buckets
     .filter((b) => b.y !== null)
     .map((b) => [
-      xLabels.indexOf(String(b.x)),
-      yLabels.indexOf(b.series ?? series.label),
+      xMap.get(String(b.x)) ?? -1,
+      yMap.get(b.series ?? series.label) ?? -1,
       b.y as number,
     ]);
 

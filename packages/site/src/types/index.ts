@@ -56,6 +56,13 @@ export interface DashboardSession {
   sync_status?: SessionSyncStatus;
   /** Detail text for a failed sync. */
   sync_details?: string;
+  /** ISO timestamp of the last manifest update, used for staleness checks. */
+  sync_updated_at?: string;
+  /** Manifest fingerprint captured the last time this session's manifest
+   *  was actually downloaded and read; used to skip re-downloading an
+   *  unchanged manifest on a later sync. */
+  sync_manifest_etag?: string;
+  sync_manifest_last_modified?: string;
 }
 
 /**
@@ -249,7 +256,22 @@ export interface SyncManifest {
   transcriptsCaptured?: number | boolean;
   mainTranscriptRelativePath?: string;
   artifacts: unknown[];
-  syncRuns: unknown[];
+  /** @deprecated Use syncRunsCount. Kept for backward compat with old manifests. */
+  syncRuns?: unknown[];
+  syncRunsCount: number;
+  updatedAt?: string;
+}
+
+/**
+ * A change-detection fingerprint for a session's `manifest.json`, taken
+ * from an S3 object listing entry (never from reading the manifest body).
+ * Both fields are `undefined`, never `''`, when the listing omits them
+ * (missing-is-never-zero) — fingerprints are correlation data, never
+ * displayed to a user.
+ */
+export interface ManifestFingerprint {
+  etag?: string;
+  lastModified?: string;
 }
 
 /**

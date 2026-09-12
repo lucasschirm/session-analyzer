@@ -50,6 +50,7 @@ function createManifestFixture(content: string, sha256: string, relativePath: st
       },
     ],
     syncRuns: [],
+    syncRunsCount: 0,
   };
 
   return {
@@ -230,6 +231,7 @@ describe('DefaultIngestionOrchestrator', () => {
         },
       ],
       syncRuns: [],
+      syncRunsCount: 0,
     };
 
     const executor = await createExecutor();
@@ -574,6 +576,7 @@ describe('DefaultIngestionOrchestrator', () => {
         })),
       ],
       syncRuns: [],
+      syncRunsCount: 0,
     };
 
     const executor = await createExecutor();

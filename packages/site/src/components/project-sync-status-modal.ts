@@ -1,9 +1,10 @@
-import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
+import { css, html, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { formatCompactNumber, formatFullNumber } from '../lib/format';
 import { type SyncManager, type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
+import { ModalBase, type ModalStyles } from './modal-base';
 
 type SessionStatus =
   | 'pending'
@@ -22,37 +23,21 @@ type SessionSnapshot = SyncManagerSnapshot['sessions'][number];
  * - Opened from a project spinner, it filters to that project via `project-id`.
  */
 @customElement('project-sync-status-modal')
-export class ProjectSyncStatusModal extends LitElement {
-  static styles = css`
-    :host {
-      display: contents;
-    }
+export class ProjectSyncStatusModal extends ModalBase {
+  ariaLabel = 'Sync status';
 
-    .modal {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.6);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 100;
-      padding: 16px;
-    }
+  static styles: ModalStyles = [
+    ModalBase.styles,
+    css`
+      .panel {
+        width: min(640px, 100%);
+        max-height: min(80vh, 600px);
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
 
-    .panel {
-      background: var(--md-sys-color-surface, #171a21);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 12px;
-      padding: 24px;
-      width: min(640px, 100%);
-      max-height: min(80vh, 600px);
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
-    }
-
-    h2 {
+      h2 {
       margin: 0;
       font-size: 18px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
@@ -191,9 +176,8 @@ export class ProjectSyncStatusModal extends LitElement {
         transform: rotate(360deg);
       }
     }
-  `;
-
-  @property({ type: Boolean, reflect: true }) open = false;
+    `,
+  ];
 
   @property({ type: String, attribute: 'project-id' }) projectId = '';
 
@@ -212,6 +196,8 @@ export class ProjectSyncStatusModal extends LitElement {
   }
 
   willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    this.ariaLabel = this.projectId ? `Sync: ${this.projectId}` : 'Sync status';
     if (changed.has('open')) {
       if (this.open) {
         this.snapshot = this.syncManager.getSnapshot();
@@ -226,22 +212,6 @@ export class ProjectSyncStatusModal extends LitElement {
   private handleChange = (event: Event): void => {
     this.snapshot = (event as CustomEvent<SyncManagerSnapshot>).detail;
   };
-
-  private handleOverlayClick(event: MouseEvent): void {
-    if (event.target === event.currentTarget) {
-      this.close();
-    }
-  }
-
-  private handleKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      this.close();
-    }
-  }
-
-  private close(): void {
-    this.dispatchEvent(new CustomEvent('modal-close', { bubbles: true, composed: true }));
-  }
 
   private stateIcon(status: SessionStatus): string {
     switch (status) {
@@ -346,29 +316,17 @@ export class ProjectSyncStatusModal extends LitElement {
     return this.snapshot ?? this.syncManager.getSnapshot();
   }
 
-  render(): TemplateResult {
-    if (!this.open) {
-      return html``;
-    }
-
+  renderPanel(): TemplateResult {
     const snapshot = this.currentSnapshot();
     const projects = this.projectId
       ? snapshot.projects.filter((p) => p.projectId === this.projectId)
       : snapshot.projects;
 
     return html`
-      <div
-        class="modal"
-        @click=${this.handleOverlayClick}
-        @keydown=${this.handleKeydown}
-      >
-        <div class="panel" role="dialog" aria-modal="true" aria-label="Sync status">
-          <h2>${this.projectId ? `Sync: ${this.projectId}` : 'Sync status'}</h2>
-          ${this.renderProjects(projects, snapshot.sessions)}
-          ${this.renderWarnings(snapshot.warnings)}
-          <button class="close-button" @click=${this.close} type="button">Close</button>
-        </div>
-      </div>
+      <h2>${this.projectId ? `Sync: ${this.projectId}` : 'Sync status'}</h2>
+      ${this.renderProjects(projects, snapshot.sessions)}
+      ${this.renderWarnings(snapshot.warnings)}
+      <button class="close-button" @click=${this.close} type="button">Close</button>
     `;
   }
 }

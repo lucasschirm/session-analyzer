@@ -114,7 +114,7 @@ const handlers: Record<DbRequest['type'], Handler> = {
   },
   updateSessionManifest: (request) => {
     const req = request as DbRequestOf<'updateSessionManifest'>;
-    manager.updateSessionManifest(req.sessionId, req.manifest);
+    manager.updateSessionManifest(req.sessionId, req.manifest, req.fingerprint);
     return { id: request.id, ok: true };
   },
   getSessionSyncManifest: (request) => ({
@@ -124,10 +124,10 @@ const handlers: Record<DbRequest['type'], Handler> = {
       (request as DbRequestOf<'getSessionSyncManifest'>).sessionId,
     ),
   }),
-  getSyncRunCount: (request) => ({
+  getSessionUpdatedAt: (request) => ({
     id: request.id,
     ok: true,
-    result: manager.getSyncRunCount((request as DbRequestOf<'getSyncRunCount'>).sessionId),
+    result: manager.getSessionUpdatedAt((request as DbRequestOf<'getSessionUpdatedAt'>).sessionId),
   }),
   failStaleSessions: (request) => {
     const req = request as DbRequestOf<'failStaleSessions'>;
@@ -146,6 +146,10 @@ const handlers: Record<DbRequest['type'], Handler> = {
   }),
   upsertSessionFile: (request) => {
     manager.upsertSessionFile((request as DbRequestOf<'upsertSessionFile'>).file);
+    return { id: request.id, ok: true };
+  },
+  bulkUpsertSessionFiles: (request) => {
+    manager.bulkUpsertSessionFiles((request as DbRequestOf<'bulkUpsertSessionFiles'>).files);
     return { id: request.id, ok: true };
   },
   deleteSessionFiles: (request) => {

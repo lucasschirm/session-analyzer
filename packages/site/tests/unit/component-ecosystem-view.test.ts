@@ -32,9 +32,17 @@ const artifactMock = vi.hoisted(() => ({
   getMetadata: vi.fn(),
 }));
 
+const metadataMock = vi.hoisted(() => ({
+  getHarnesses: vi.fn(),
+}));
+
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
-  analyticsClient: { component: componentMock, artifact: artifactMock },
+  analyticsClient: {
+    component: componentMock,
+    artifact: artifactMock,
+    metadata: metadataMock,
+  },
 }));
 
 async function flush(element: LitElement): Promise<void> {
@@ -248,6 +256,10 @@ function stubComponentLoad(): void {
   componentMock.getDistributions.mockResolvedValue(distributionsFixture());
   componentMock.getProjectsSessions.mockResolvedValue(projectSessionsFixture());
   componentMock.getLifecycleComparisons.mockResolvedValue(lifecycleFixture());
+  metadataMock.getHarnesses.mockResolvedValue([
+    { harness: 'claude-code', sessionCount: 10 },
+    { harness: 'devin', sessionCount: 5 },
+  ]);
 }
 
 beforeEach(() => {

@@ -1,8 +1,10 @@
 import type {
   ComponentFactPage,
+  ContextTimingPoint,
   ContextTimingSeries,
   EvidencePage,
   RootChildBreakdown,
+  ScopeUtilizationReportDto,
   SessionEvidenceSummary,
   SessionEvidenceView as SessionEvidenceViewApi,
   SessionTree,
@@ -10,15 +12,17 @@ import type {
 } from '@lucasschirm/sal-db';
 import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import type { ChartSeries } from '../../components/charts/chart-types';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
+import '../../components/component-utilization-panel';
 import { analyticsClient } from '../../db/analytics-client';
 import { navigateTo } from '../../router';
 import {
   componentFactsToChartSeries,
   componentFactsToRows,
-  contextTimingToChartSeries,
+  contextGrowthToChartSeries,
   summaryToMetricCards,
 } from './session-evidence-chart-helpers';
 import {
@@ -26,6 +30,7 @@ import {
   parseSessionEvidenceHash,
   sessionEvidenceParamsToQuery,
 } from './session-evidence-params';
+import './session-context-drawer';
 import './session-evidence-evidence';
 import './session-evidence-transcript';
 import './session-evidence-tree';
@@ -36,6 +41,50 @@ interface PanelState<T> {
   data: T | null;
   state: LoadState;
   error?: string;
+}
+
+function matchByHrefOrName(
+  detail: Record<string, unknown>,
+  points: readonly ContextTimingPoint[],
+): ContextTimingPoint | undefined {
+  const href = (detail.href ?? (detail.evidenceLink as { href?: string } | undefined)?.href) as
+    | string
+    | undefined;
+  if (typeof href === 'string') {
+    const match = href.match(/#msg-(.+)$/);
+    if (match) {
+      return points.find(
+        (p) =>
+          String(p.messageId) === match[1] || String(p.messageIndex ?? p.turnNumber) === match[1],
+      );
+    }
+  }
+  const name = (detail.name ?? detail.label) as string | undefined;
+  if (typeof name === 'string') {
+    const match = name.match(/#(\d+)/);
+    if (match) {
+      return points.find((p) => (p.messageIndex ?? p.turnNumber) === parseInt(match[1], 10));
+    }
+  }
+  return undefined;
+}
+
+function resolveTimingPoint(
+  detail: Record<string, unknown>,
+  points: readonly ContextTimingPoint[],
+): ContextTimingPoint | undefined {
+  if (detail.messageId) {
+    return points.find((p) => p.messageId === detail.messageId);
+  }
+  if (typeof detail.messageIndex === 'number') {
+    return points.find((p) => (p.messageIndex ?? p.turnNumber) === detail.messageIndex);
+  }
+  const matched = matchByHrefOrName(detail, points);
+  if (matched) return matched;
+  if (typeof detail.dataIndex === 'number' && points[detail.dataIndex]) {
+    return points[detail.dataIndex];
+  }
+  return undefined;
 }
 
 @customElement('session-evidence-view')
@@ -293,11 +342,23 @@ export class SessionEvidenceView extends PageLitElement {
 
   @state() private sessionTree: PanelState<SessionTree> = { data: null, state: 'idle' };
 
+  @state() private utilization: PanelState<ScopeUtilizationReportDto> = {
+    data: null,
+    state: 'idle',
+  };
+
+  @state() private selectedMessage: ContextTimingPoint | null = null;
+
+  private cachedContextTimingSeries: ChartSeries | null = null;
+
   private hashListener = () => this.handleHashChange();
 
   connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener('hashchange', this.hashListener);
+    if (this.sessionId) {
+      void this.load();
+    }
   }
 
   disconnectedCallback(): void {
@@ -305,28 +366,26 @@ export class SessionEvidenceView extends PageLitElement {
     window.removeEventListener('hashchange', this.hashListener);
   }
 
-  private handleHashChange(): void {
-    const match = window.location.hash.match(/^#\/sessions\/([^/?]+)/);
-    if (match) {
-      try {
-        if (decodeURIComponent(match[1]) === this.sessionId) {
-          this.load();
-        }
-      } catch {
-        if (match[1] === this.sessionId) {
-          this.load();
-        }
-      }
+  willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
+    if (changed.has('sessionId') && this.sessionId) {
+      void this.load();
+    }
+    if (changed.has('contextTiming') || changed.has('sessionId')) {
+      this.cachedContextTimingSeries = this.contextTiming.data
+        ? contextGrowthToChartSeries(this.contextTiming.data, this.sessionId)
+        : null;
     }
   }
 
-  willUpdate(changed: PropertyValues): void {
-    if (changed.has('sessionId') && this.sessionId) {
-      this.load();
+  private handleHashChange(): void {
+    if (window.location.hash.startsWith('#/sessions/')) {
+      void this.load();
     }
   }
 
   private async load(): Promise<void> {
+    if (!this.sessionId) return;
     if (this.loading) return;
     this.loading = true;
     this.globalState = 'loading';
@@ -349,6 +408,7 @@ export class SessionEvidenceView extends PageLitElement {
       evidence,
       transcript,
       sessionTree,
+      utilization,
     ] = await Promise.allSettled([
       sessionApi.getSummary(this.sessionId, query),
       sessionApi.getContextTimingSeries(this.sessionId, query),
@@ -358,6 +418,7 @@ export class SessionEvidenceView extends PageLitElement {
       sessionApi.getEvidencePages(this.sessionId, query),
       sessionApi.getTranscriptPages(this.sessionId, query),
       searchApi.getRootSessionTree(this.sessionId),
+      sessionApi.getUtilizationReport(this.sessionId, query),
     ]);
 
     this.summary = panelStateFromResult(summary);
@@ -368,6 +429,7 @@ export class SessionEvidenceView extends PageLitElement {
     this.evidence = panelStateFromResult(evidence);
     this.transcript = panelStateFromResult(transcript);
     this.sessionTree = panelStateFromResult(sessionTree);
+    this.utilization = panelStateFromResult(utilization);
 
     this.isTombstone =
       hasTombstone(this.evidence) ||
@@ -383,6 +445,7 @@ export class SessionEvidenceView extends PageLitElement {
       this.evidence.state,
       this.transcript.state,
       this.sessionTree.state,
+      this.utilization.state,
     ];
 
     if (states.every((s) => s === 'ok' || s === 'empty')) {
@@ -481,6 +544,7 @@ export class SessionEvidenceView extends PageLitElement {
               label=${card.label}
               value=${card.value}
               sub=${card.sub}
+              description=${card.description || ''}
               .clickable=${Boolean(card.href)}
               @card-click=${() => this.goToMetric(card)}
             ></metrics-card>
@@ -490,17 +554,29 @@ export class SessionEvidenceView extends PageLitElement {
     `;
   }
 
+  private handleBarClick = (e: CustomEvent): void => {
+    if (!e.detail) return;
+    const points = this.contextTiming.data?.points ?? [];
+    const point = resolveTimingPoint(e.detail as Record<string, unknown>, points);
+    if (point) {
+      this.selectedMessage = point;
+    }
+  };
+
+  private handleDrawerClose = (): void => {
+    this.selectedMessage = null;
+  };
+
   private renderContextTiming() {
-    const series = this.contextTiming.data
-      ? contextTimingToChartSeries(this.contextTiming.data)
-      : null;
     return html`
-      <div class="section">
+      <div class="section" id="context-growth">
         <h2>Context and request timing</h2>
         <analytics-chart
-          title="Token composition by turn"
-          .series=${series}
+          title="Context growth across session"
+          description="Context size (in tokens) for each message in chronological order. Click any bar to view message details."
+          .series=${this.cachedContextTimingSeries}
           .state=${this.chartState(this.contextTiming.state)}
+          @chart-click=${this.handleBarClick}
         ></analytics-chart>
       </div>
     `;
@@ -698,11 +774,19 @@ export class SessionEvidenceView extends PageLitElement {
         ${this.loading ? html`<p class="notice">Loading session evidence…</p>` : ''}
 
         ${this.renderOverview()}
+        <component-utilization-panel
+          .report=${this.utilization.data}
+          heading="Session Component Availability & Invocations"
+        ></component-utilization-panel>
         ${this.renderContextTiming()}
         ${this.renderRootChild()}
         ${this.renderComponentFacts()}
         ${this.renderValidation()}
         ${this.renderEvidenceSection()}
+        <session-context-drawer
+          .message=${this.selectedMessage}
+          @drawer-close=${this.handleDrawerClose}
+        ></session-context-drawer>
       </div>
     `;
   }

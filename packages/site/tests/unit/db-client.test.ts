@@ -4,10 +4,12 @@ import { DbClient } from '../../src/db/db-client';
 import type { DbRequest, DbResponse } from '../../src/db/db-protocol';
 import type {
   Connection,
+  ManifestFingerprint,
   Project,
   SessionFileRecord,
   SessionStub,
   StoredS3Credentials,
+  SyncManifest,
 } from '../../src/types';
 
 /** Minimal Worker double that records posted messages and lets tests reply. */
@@ -384,6 +386,50 @@ describe('DbClient', () => {
       status: 'failed',
       details: 'timeout',
     });
+  });
+
+  it('updateSessionManifest forwards an optional fingerprint to the worker', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const manifest: SyncManifest = {
+      sessionId: 's1',
+      schemaVersion: 1,
+      artifacts: [],
+      syncRunsCount: 0,
+    };
+    const fingerprint: ManifestFingerprint = {
+      etag: '"abc"',
+      lastModified: '2026-09-11T00:00:00.000Z',
+    };
+    void client.updateSessionManifest('s1', manifest, fingerprint);
+
+    expect(worker.posted[1]).toMatchObject({
+      type: 'updateSessionManifest',
+      sessionId: 's1',
+      manifest,
+      fingerprint,
+    });
+  });
+
+  it('updateSessionManifest omits a truthy fingerprint when none is passed', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'opfs' });
+
+    const manifest: SyncManifest = {
+      sessionId: 's1',
+      schemaVersion: 1,
+      artifacts: [],
+      syncRunsCount: 0,
+    };
+    void client.updateSessionManifest('s1', manifest);
+
+    expect(worker.posted[1]).toMatchObject({
+      type: 'updateSessionManifest',
+      sessionId: 's1',
+      manifest,
+    });
+    expect((worker.posted[1] as { fingerprint?: unknown }).fingerprint).toBeUndefined();
   });
 
   it('resolves typed method results from the worker result field', async () => {

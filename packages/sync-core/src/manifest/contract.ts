@@ -54,5 +54,15 @@ export interface SyncManifest {
   categoryCoverage?: Record<string, CategoryCoverageDetail>;
   sourceTombstones?: SourceTombstone[];
   artifacts: ManifestArtifact[];
-  syncRuns: SyncRun[];
+  /**
+   * @deprecated Use {@link syncRunsCount} instead. Kept optional for one
+   * schema version so older manifests can still be parsed; the parser
+   * derives {@link syncRunsCount} from this array when the new field is
+   * absent.
+   */
+  syncRuns?: SyncRun[];
+  /** Number of sync runs recorded by the plugin. Replaces {@link syncRuns}. */
+  syncRunsCount: number;
+  /** ISO timestamp of the most recent plugin upload. Used for staleness checks. */
+  updatedAt?: string;
 }

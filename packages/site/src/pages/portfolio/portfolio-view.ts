@@ -1,3 +1,4 @@
+import LitTypeahead from '@lucasschirm/litjs-typeahead';
 import { css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { analyticsClient } from '../../db/analytics-client';
@@ -5,12 +6,15 @@ import { navigateTo } from '../../router';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
+import '../../components/component-utilization-panel';
 import type {
   ComponentUtilizationPage,
+  HarnessOption,
   ModelHarnessCohortPage,
   PortfolioOverview,
   PortfolioTrendSeries,
   ProjectListPage,
+  ScopeUtilizationReportDto,
 } from '@lucasschirm/sal-db';
 import type {
   ChartEvidenceLink,
@@ -86,6 +90,34 @@ export class PortfolioView extends PageLitElement {
       padding: 8px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
       font: inherit;
+    }
+
+    .filter-bar select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239aa4b2' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      padding-right: 28px;
+    }
+
+    @media (max-width: 640px) {
+      .filter-bar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .filter-bar label {
+        min-width: 0;
+      }
+    }
+
+    @media (max-width: 400px) {
+      .filter-bar {
+        grid-template-columns: 1fr;
+      }
     }
 
     .filter-bar button {
@@ -220,6 +252,13 @@ export class PortfolioView extends PageLitElement {
 
   @state() private projects: PanelState<ProjectListPage> = { data: null, state: 'idle' };
 
+  @state() private utilization: PanelState<ScopeUtilizationReportDto> = {
+    data: null,
+    state: 'idle',
+  };
+
+  @state() private harnessOptions: readonly HarnessOption[] = [];
+
   private pendingReload = false;
 
   private hashListener = () => this.handleHashChange();
@@ -249,16 +288,16 @@ export class PortfolioView extends PageLitElement {
     if (window.location.hash !== '#/' && !window.location.hash.startsWith('#/?')) {
       return;
     }
-    this.load();
-  }
-
-  private async load(): Promise<void> {
     if (this.loading) {
       this.pendingReload = true;
       return;
     }
+    this.load();
+  }
+
+  private async load(): Promise<void> {
+    if (this.loading) return;
     this.loading = true;
-    this.pendingReload = false;
     this.globalState = 'loading';
     this.globalError = null;
 
@@ -266,19 +305,26 @@ export class PortfolioView extends PageLitElement {
     this.filters = params;
     const query = portfolioParamsToQuery(params);
 
-    const [overview, trends, components, cohorts, projects] = await Promise.allSettled([
-      analyticsClient.portfolio.getOverview(query),
-      analyticsClient.portfolio.getTrends(query),
-      analyticsClient.portfolio.getComponentUtilization(query),
-      analyticsClient.portfolio.getModelHarnessCohorts(query),
-      analyticsClient.portfolio.getProjectList({ ...query, limit: 50 }),
-    ]);
+    const [overview, trends, components, cohorts, projects, utilization, harnesses] =
+      await Promise.allSettled([
+        analyticsClient.portfolio.getOverview(query),
+        analyticsClient.portfolio.getTrends(query),
+        analyticsClient.portfolio.getComponentUtilization(query),
+        analyticsClient.portfolio.getModelHarnessCohorts(query),
+        analyticsClient.portfolio.getProjectList({ ...query, limit: 50 }),
+        analyticsClient.portfolio.getUtilizationReport(query),
+        analyticsClient.metadata.getHarnesses(query),
+      ]);
 
     this.overview = panelStateFromResult(overview);
     this.trends = panelStateFromResult(trends);
     this.components = panelStateFromResult(components);
     this.cohorts = panelStateFromResult(cohorts);
     this.projects = panelStateFromResult(projects);
+    this.utilization = panelStateFromResult(utilization);
+    if (harnesses.status === 'fulfilled') {
+      this.harnessOptions = harnesses.value ?? [];
+    }
 
     const states = [
       this.overview.state,
@@ -286,6 +332,7 @@ export class PortfolioView extends PageLitElement {
       this.components.state,
       this.cohorts.state,
       this.projects.state,
+      this.utilization.state,
     ];
     if (states.every((s) => s === 'ok' || s === 'empty')) {
       this.globalState = states.some((s) => s === 'ok') ? 'ok' : 'empty';
@@ -341,11 +388,12 @@ export class PortfolioView extends PageLitElement {
         </label>
         <label>
           Harness
-          <input
-            type="text"
+          <lit-typeahead
+            .items=${this.harnessOptions.map((opt) => ({ label: opt.harness, value: opt.harness }))}
             .value=${this.filters.harness ?? ''}
-            @change=${(e: Event) => this.updateFilter('harness', (e.target as HTMLInputElement).value)}
-          />
+            placeholder="All"
+            @change=${(e: CustomEvent<{ value: string }>) => this.updateFilter('harness', e.detail.value)}
+          ></lit-typeahead>
         </label>
         <label>
           Model
@@ -442,12 +490,17 @@ export class PortfolioView extends PageLitElement {
                 label=${card.label}
                 value=${card.value}
                 sub=${card.sub}
+                description=${card.description}
                 .clickable=${Boolean(card.href)}
                 @card-click=${() => this.goToMetric(card)}
               ></metrics-card>
             `,
           )}
         </div>
+        <component-utilization-panel
+          .report=${this.utilization.data}
+          heading="Component Utilization (Tools, Skills, Agents)"
+        ></component-utilization-panel>
         ${
           overview.unusedOfferedComponents.length > 0
             ? html`

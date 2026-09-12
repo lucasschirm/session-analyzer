@@ -1,3 +1,4 @@
+import LitTypeahead from '@lucasschirm/litjs-typeahead';
 import type {
   AnalyticsQuery,
   ArtifactDiff,
@@ -8,6 +9,7 @@ import type {
   ComponentScopePage,
   ComponentUtilizationDetail,
   ComponentVersionPage,
+  HarnessOption,
   LifecycleComparisonPage,
 } from '@lucasschirm/sal-db';
 import { css, html, type PropertyValues } from 'lit';
@@ -125,6 +127,34 @@ export class ComponentEcosystemView extends PageLitElement {
       padding: 8px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
       font: inherit;
+    }
+
+    .filter-bar select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239aa4b2' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      padding-right: 28px;
+    }
+
+    @media (max-width: 640px) {
+      .filter-bar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .filter-bar label {
+        min-width: 0;
+      }
+    }
+
+    @media (max-width: 400px) {
+      .filter-bar {
+        grid-template-columns: 1fr;
+      }
     }
 
     .filter-bar button {
@@ -354,6 +384,8 @@ export class ComponentEcosystemView extends PageLitElement {
 
   @state() private diffLoading = false;
 
+  @state() private harnessOptions: readonly HarnessOption[] = [];
+
   private hashListener = () => this.handleHashChange();
 
   connectedCallback(): void {
@@ -433,6 +465,17 @@ export class ComponentEcosystemView extends PageLitElement {
     this.startLoad();
 
     const query = componentEcosystemParamsToQuery(this.filters);
+
+    // Load harness options for the filter drop-down (not component-specific).
+    void analyticsClient.metadata
+      .getHarnesses(query)
+      .then((opts) => {
+        this.harnessOptions = opts;
+      })
+      .catch(() => {
+        // Harness options are best-effort; failure is non-fatal.
+      });
+
     if (this.componentId) {
       await this.loadComponentDetail(query);
     } else {
@@ -690,12 +733,13 @@ export class ComponentEcosystemView extends PageLitElement {
         </label>
         <label>
           Harness
-          <input
-            type="text"
+          <lit-typeahead
+            .items=${this.harnessOptions.map((opt) => ({ label: opt.harness, value: opt.harness }))}
             .value=${this.filters.harness ?? ''}
-            @change=${(e: Event) =>
-              this.updateFilter('harness', (e.target as HTMLInputElement).value)}
-          />
+            placeholder="All"
+            @change=${(e: CustomEvent<{ value: string }>) =>
+              this.updateFilter('harness', e.detail.value)}
+          ></lit-typeahead>
         </label>
         <label>
           Model
@@ -769,6 +813,7 @@ export class ComponentEcosystemView extends PageLitElement {
                 label=${card.label}
                 value=${card.value}
                 sub=${card.sub}
+                description=${card.description}
                 .clickable=${Boolean(card.href)}
                 @card-click=${() => this.goToMetric(card)}
               ></metrics-card>
@@ -938,6 +983,7 @@ export class ComponentEcosystemView extends PageLitElement {
                 label=${card.label}
                 value=${card.value}
                 sub=${card.sub}
+                description=${card.description}
               ></metrics-card>
             `,
           )}

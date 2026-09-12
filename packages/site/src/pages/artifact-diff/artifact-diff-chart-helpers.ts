@@ -14,6 +14,7 @@ export interface MetricCardView {
   label: string;
   value: string;
   sub: string;
+  description: string;
   icon?: string;
   href?: string;
 }
@@ -67,48 +68,58 @@ export function metadataToMetricCards(
       label: `${side === 'left' ? 'Left' : 'Right'} path`,
       value: meta.artifactId || '—',
       sub: isTombstoneMetadata(meta) ? 'No metadata available' : 'Artifact path',
+      description: 'The artifact path or identifier for this side of the comparison.',
     },
     {
       metricId: `${prefix}-sha256`,
       label: 'SHA-256',
       value: meta.sha256 ? truncate(meta.sha256, 16) : '—',
       sub: 'Content hash',
+      description:
+        'SHA-256 content hash of the artifact. Empty when the artifact has been purged (metadata-only tombstone).',
     },
     {
       metricId: `${prefix}-size`,
       label: 'Size',
       value: meta.size > 0 ? formatChartValue(meta.size, 'bytes') : '—',
       sub: 'Retained bytes',
+      description:
+        'Size of the retained artifact blob in bytes. Zero when the content has been purged.',
     },
     {
       metricId: `${prefix}-media`,
       label: 'Media type',
       value: meta.mediaType || '—',
       sub: 'Detected media',
+      description: 'Detected media type of the artifact (e.g. text/plain, application/json).',
     },
     {
       metricId: `${prefix}-capture`,
       label: 'Capture time',
       value: meta.captureTime ?? '—',
       sub: 'When the artifact was captured',
+      description: 'Timestamp when the artifact was first captured into the analytics store.',
     },
     {
       metricId: `${prefix}-retention`,
       label: 'Retention',
       value: meta.retentionClass || '—',
       sub: 'Retention class',
+      description: 'Retention class governing how long the artifact blob is kept before purging.',
     },
     {
       metricId: `${prefix}-sessions`,
       label: 'Sessions exposed',
       value: formatChartValue(sessionCount, 'count'),
       sub: sessionCount === 1 ? '1 session' : `${sessionCount} sessions`,
+      description: 'Number of sessions that observed this version of the artifact.',
     },
     {
       metricId: `${prefix}-components`,
       label: 'Artifacts',
       value: formatChartValue(componentCount, 'count'),
       sub: componentCount === 1 ? '1 artifact' : `${componentCount} artifacts`,
+      description: 'Number of distinct component artifacts contained within this artifact version.',
     },
   ];
 }

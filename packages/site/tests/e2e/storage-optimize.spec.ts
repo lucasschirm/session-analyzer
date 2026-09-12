@@ -2,7 +2,7 @@ import { expect, type Locator, type Page, test } from '@playwright/test';
 import { verifyExportContents } from './helpers/export-verify.js';
 
 /**
- * UX-025: Storage settings page — per-row Optimize button, the
+ * UX-032: Storage settings page — per-row Optimize button, the
  * optimize/download overlay state machine (running -> stalled -> success |
  * error), and the Size column's loading/ok/error distinction.
  *
@@ -158,7 +158,7 @@ function actionButton(row: Locator, label: 'Download' | 'Optimize'): Locator {
   return row.getByRole('button', { name: label });
 }
 
-test.describe('UX-025: Storage page Optimize / Download / Size column', () => {
+test.describe('UX-032: Storage page Optimize / Download / Size column', () => {
   test('terminal success: Download triggers a real, valid SQLite export', async ({ page }) => {
     await waitForStoragePageReady(page);
 

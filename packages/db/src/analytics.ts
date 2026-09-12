@@ -7,7 +7,13 @@ import {
   createProjectSessionSearchView,
   createSessionEvidenceView,
 } from './analytics-session.js';
-import type { AnalyticsToken, Coverage, EvidenceLink, MetricValueDto } from './dto.js';
+import type {
+  AnalyticsToken,
+  Coverage,
+  EvidenceLink,
+  MetricValueDto,
+  ScopeUtilizationReportDto,
+} from './dto.js';
 import { createSha256ContentHasher } from './ingestion.js';
 import type { ArtifactBlobStore, ContentHasher } from './ports.js';
 import { createProjectBehaviorView } from './project-behavior.js';
@@ -173,10 +179,22 @@ export interface SessionEvidenceSummary {
 
 export interface ContextTimingPoint {
   readonly turnNumber: number;
+  readonly messageIndex?: number;
+  readonly messageId?: string;
+  readonly role?: string;
+  readonly model?: string;
   readonly timestamp?: string;
   readonly totalTokens: number | null;
   readonly contextTokens: number | null;
   readonly generationTokens: number | null;
+  readonly inputTokens?: number | null;
+  readonly outputTokens?: number | null;
+  readonly cacheCreationTokens?: number | null;
+  readonly cacheReadTokens?: number | null;
+  readonly thinkingTokens?: number | null;
+  readonly effort?: string | null;
+  readonly normalizedEffort?: string | null;
+  readonly content?: string;
 }
 
 export interface ContextTimingSeries {
@@ -341,12 +359,16 @@ export interface ProjectSessionListItem {
   readonly parentSessionId?: string;
   readonly harness: string;
   readonly finality: 'final' | 'partial' | 'censored';
+  readonly title?: string;
+  readonly subagentCount?: number;
   readonly startedAt?: string;
   readonly endedAt?: string;
   readonly coverage: Coverage;
 }
 
-export interface ProjectSessionListPage extends CursorPage<ProjectSessionListItem> {}
+export interface ProjectSessionListPage extends CursorPage<ProjectSessionListItem> {
+  readonly totalCount?: number;
+}
 
 export interface SessionTreeNode {
   readonly sessionId: string;
@@ -390,6 +412,7 @@ export interface PortfolioView {
   getComponentUtilization(query: AnalyticsQuery): Promise<ComponentUtilizationPage>;
   getModelHarnessCohorts(query: AnalyticsQuery): Promise<ModelHarnessCohortPage>;
   getProjectList(query: AnalyticsQuery): Promise<ProjectListPage>;
+  getUtilizationReport(query?: AnalyticsQuery): Promise<ScopeUtilizationReportDto>;
 }
 
 export interface ProjectBehaviorView {
@@ -401,6 +424,10 @@ export interface ProjectBehaviorView {
   ): Promise<ConfigurationTimeline>;
   getOutliers(projectId: string, query: AnalyticsQuery): Promise<OutlierPage>;
   getComparisons(projectId: string, query: AnalyticsQuery): Promise<ComparisonPage>;
+  getUtilizationReport(
+    projectId: string,
+    query?: AnalyticsQuery,
+  ): Promise<ScopeUtilizationReportDto>;
 }
 
 export interface SessionEvidenceView {
@@ -414,6 +441,10 @@ export interface SessionEvidenceView {
   ): Promise<SessionValidationSummary>;
   getEvidencePages(sessionId: string, query?: AnalyticsQuery): Promise<EvidencePage>;
   getTranscriptPages(sessionId: string, query?: AnalyticsQuery): Promise<EvidencePage>;
+  getUtilizationReport(
+    sessionId: string,
+    query?: AnalyticsQuery,
+  ): Promise<ScopeUtilizationReportDto>;
 }
 
 export interface ComponentEcosystemView {
@@ -451,9 +482,15 @@ export interface ProjectSessionSearchView {
   getChildSessionTree(sessionId: string): Promise<SessionTree>;
 }
 
+export interface HarnessOption {
+  readonly harness: string;
+  readonly sessionCount: number;
+}
+
 export interface MetadataView {
   getFilterMetadata(query?: AnalyticsQuery): Promise<FilterMetadata>;
   getCoverageExplanation(metricId: string, query?: AnalyticsQuery): Promise<CoverageExplanation>;
+  getHarnesses(query?: AnalyticsQuery): Promise<readonly HarnessOption[]>;
 }
 
 export interface AnalyticsDataSource {

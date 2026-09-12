@@ -47,6 +47,7 @@ interface S3ListObjectEntry {
   key: string;
   size: number;
   etag?: string;
+  lastModified?: string;
 }
 
 export function sha256Hex(data: Buffer | string): string {
@@ -153,6 +154,8 @@ export function buildSessionManifest(
     mainTranscriptRelativePath,
     artifacts,
     syncRuns: [buildSyncRun(files.length)],
+    syncRunsCount: 1,
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -182,8 +185,11 @@ function buildListXml(
     xml += `<CommonPrefixes><Prefix>${encodeXml(prefix)}</Prefix></CommonPrefixes>`;
   }
   for (const object of objects) {
+    const lastModified = object.lastModified
+      ? `<LastModified>${encodeXml(object.lastModified)}</LastModified>`
+      : '';
     const etag = object.etag ? `<ETag>${encodeXml(object.etag)}</ETag>` : '';
-    xml += `<Contents><Key>${encodeXml(object.key)}</Key>${etag}<Size>${object.size}</Size></Contents>`;
+    xml += `<Contents><Key>${encodeXml(object.key)}</Key>${lastModified}${etag}<Size>${object.size}</Size></Contents>`;
   }
   xml += `<IsTruncated>${isTruncated ? 'true' : 'false'}</IsTruncated>`;
   xml += '</ListBucketResult>';
@@ -210,15 +216,30 @@ export class FixtureBucket {
   readonly globalChildren: Set<string> = new Set();
 
   private readonly objectStore: Map<string, Buffer> = new Map();
+  private readonly objectTimestamps: Map<string, string> = new Map();
   private readonly delays: Map<string, number> = new Map();
   private readonly httpErrors: Map<string, FixtureHttpError> = new Map();
 
+  /**
+   * Single owner of object-store writes (workspace-rules no-duplicate-logic):
+   * every write also stamps a per-key last-modified timestamp, captured once
+   * at write time so it stays stable across repeated listings of an
+   * unchanged object.
+   */
+  private writeObject(key: string, content: Buffer): void {
+    this.objectStore.set(key, content);
+    this.objectTimestamps.set(key, new Date().toISOString());
+  }
+
+  private findSession(projectId: string, sessionId: string): FixtureSession | undefined {
+    return this.projects
+      .find((p) => p.projectId === projectId)
+      ?.sessions.find((s) => s.sessionId === sessionId);
+  }
+
   addProject(projectId: string, name: string, description = ''): void {
     const projectManifest = buildProjectManifest(projectId, name, description);
-    this.objectStore.set(
-      `${projectId}/manifest.json`,
-      Buffer.from(JSON.stringify(projectManifest)),
-    );
+    this.writeObject(`${projectId}/manifest.json`, Buffer.from(JSON.stringify(projectManifest)));
     this.projects.push({
       projectId,
       name,
@@ -250,14 +271,14 @@ export class FixtureBucket {
     const session: FixtureSession = { sessionId, manifest, files: options.files, legacy };
     const project = this.projects.find((p) => p.projectId === projectId);
     if (project) project.sessions.push(session);
-    this.objectStore.set(
+    this.writeObject(
       `${projectId}/${sessionId}/manifest.json`,
       Buffer.from(JSON.stringify(manifest)),
     );
     for (const file of options.files) {
       const actualSha256 = sha256Hex(file.content);
       const key = objectKeyForFile(projectId, sessionId, file, actualSha256);
-      this.objectStore.set(key, file.content);
+      this.writeObject(key, file.content);
       if (file.scope !== 'session') {
         this.globalChildren.add('cas');
       }
@@ -277,7 +298,7 @@ export class FixtureBucket {
   addGlobalSession(sessionId: string, files: FixtureFile[]): void {
     for (const file of files) {
       const key = `global/${sessionId}/${file.scope}/${file.relativePath}`;
-      this.objectStore.set(key, file.content);
+      this.writeObject(key, file.content);
       if (file.scope !== 'session') {
         this.globalChildren.add('cas');
       }
@@ -290,14 +311,14 @@ export class FixtureBucket {
    */
   addRawSession(projectId: string, sessionId: string, files: FixtureFile[]): void {
     const manifest = buildSessionManifest(projectId, sessionId, files, true);
-    this.objectStore.set(
+    this.writeObject(
       `${projectId}/${sessionId}/manifest.json`,
       Buffer.from(JSON.stringify(manifest)),
     );
     for (const file of files) {
       const actualSha256 = sha256Hex(file.content);
       const key = objectKeyForFile(projectId, sessionId, file, actualSha256);
-      this.objectStore.set(key, file.content);
+      this.writeObject(key, file.content);
       if (file.scope !== 'session') {
         this.globalChildren.add('cas');
       }
@@ -305,11 +326,11 @@ export class FixtureBucket {
   }
 
   setProjectManifest(projectId: string, content: Buffer): void {
-    this.objectStore.set(`${projectId}/manifest.json`, content);
+    this.writeObject(`${projectId}/manifest.json`, content);
   }
 
   setObjectContent(objectKey: string, content: Buffer): void {
-    this.objectStore.set(objectKey, content);
+    this.writeObject(objectKey, content);
   }
 
   clearRequests(): void {
@@ -327,7 +348,42 @@ export class FixtureBucket {
   }
 
   setManifestContent(projectId: string, sessionId: string, content: Buffer): void {
-    this.objectStore.set(`${projectId}/${sessionId}/manifest.json`, content);
+    this.writeObject(`${projectId}/${sessionId}/manifest.json`, content);
+  }
+
+  /** Manifest-only bump: 1 manifest GET, 0 transcript GETs for a consuming resync. */
+  reuploadSessionManifest(projectId: string, sessionId: string): void {
+    const session = this.findSession(projectId, sessionId);
+    if (!session) return;
+    const manifest = { ...session.manifest, updatedAt: new Date().toISOString() };
+    this.setManifestContent(projectId, sessionId, Buffer.from(JSON.stringify(manifest)));
+  }
+
+  /**
+   * Re-uploads a session file's content and rebuilds the session manifest
+   * from the session's current files, so both the file body and the
+   * manifest's listing fingerprint change in one call.
+   */
+  updateSessionFile(
+    projectId: string,
+    sessionId: string,
+    relativePath: string,
+    content: Buffer,
+  ): void {
+    const session = this.findSession(projectId, sessionId);
+    const file = session?.files.find((f) => f.relativePath === relativePath);
+    if (!session || !file) return;
+    file.content = content;
+    file.sha256 = undefined;
+    this.writeObject(objectKeyForFile(projectId, sessionId, file, sha256Hex(content)), content);
+    const manifest = buildSessionManifest(
+      projectId,
+      sessionId,
+      session.files,
+      session.manifest.transcriptsCaptured ?? true,
+    );
+    session.manifest = manifest;
+    this.setManifestContent(projectId, sessionId, Buffer.from(JSON.stringify(manifest)));
   }
 
   hasGlobalFolder(): boolean {
@@ -439,6 +495,12 @@ export class FixtureBucket {
   ): Promise<void> {
     const prefix = url.searchParams.get('prefix') ?? '';
     const delimiter = url.searchParams.get('delimiter') ?? '';
+    const listKey = `list:${prefix}`;
+    const httpError = this.httpErrors.get(listKey);
+    if (httpError) {
+      await this.fulfillHttpError(route, listKey, httpError, corsHeaders);
+      return;
+    }
     const status = 200;
     let body = '';
     if (delimiter) {
@@ -448,7 +510,7 @@ export class FixtureBucket {
       const objects = this.listObjectContents(prefix);
       body = buildListXml([], objects, false);
     }
-    this.logRequest('GET', `list:${prefix}`, status);
+    this.logRequest('GET', listKey, status);
     await route.fulfill({
       status,
       contentType: 'application/xml',
@@ -525,7 +587,7 @@ export class FixtureBucket {
     corsHeaders: Record<string, string>,
   ): Promise<void> {
     const body = (await request.postDataBuffer()) ?? Buffer.alloc(0);
-    this.objectStore.set(objectKey, body);
+    this.writeObject(objectKey, body);
     this.putObjects.set(objectKey, body);
     if (objectKey.endsWith('/manifest.json')) {
       try {
@@ -568,10 +630,15 @@ export class FixtureBucket {
     const entries: S3ListObjectEntry[] = [];
     for (const [key, body] of this.objectStore) {
       if (key.startsWith(prefix)) {
-        entries.push({ key, size: body.length, etag: `"${key}-etag"` });
+        entries.push({
+          key,
+          size: body.length,
+          etag: `"${sha256Hex(body)}"`,
+          lastModified: this.objectTimestamps.get(key),
+        });
       }
     }
-    return entries.sort((a, b) => a.key.localeCompare(b.key));
+    return entries.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   }
 
   private logRequest(method: string, key: string, status: number): void {

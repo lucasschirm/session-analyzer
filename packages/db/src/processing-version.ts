@@ -1,8 +1,16 @@
-import type { SqliteExecutor, SqliteTransaction } from '@lucasschirm/sal-db-core';
+import type { RollupPolicy, SqliteExecutor, SqliteTransaction } from '@lucasschirm/sal-db-core';
 import {
   applySessionRollupContributions,
+  loadOrDefaultRollupPolicy,
   rebuildProjectPortfolioRollups,
 } from './rollup-reconciliation.js';
+
+declare const console:
+  | {
+      warn?: (...args: unknown[]) => void;
+      error?: (...args: unknown[]) => void;
+    }
+  | undefined;
 
 /**
  * Analytics-derived-data processing version. Bump this whenever the logic
@@ -12,7 +20,7 @@ import {
  * the stored version is older, runs {@link rebuildAnalyticsDerivedData}
  * before serving queries.
  */
-export const ANALYTICS_PROCESSING_VERSION = 2;
+export const ANALYTICS_PROCESSING_VERSION = 3;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.
@@ -31,6 +39,9 @@ export interface RebuildProgress {
   readonly step: string;
   readonly completed: number;
   readonly total: number;
+  readonly phase?: number;
+  readonly totalPhases?: number;
+  readonly unit?: string;
 }
 
 export type RebuildProgressCallback = (progress: RebuildProgress) => void;
@@ -111,6 +122,62 @@ async function listSessionsForRebuild(executor: SqliteExecutor): Promise<readonl
   }));
 }
 
+async function rebuildSingleSession(
+  executor: SqliteExecutor,
+  session: SessionRow,
+  policy: RollupPolicy,
+): Promise<void> {
+  await executor.transaction(async (tx) => {
+    await applySessionRollupContributions(tx, {
+      sessionId: session.id,
+      generationId: session.currentGenerationId,
+      analysisReleaseId: session.analysisReleaseId,
+      skipBucketRecompute: true,
+      rollupPolicy: policy,
+    });
+  });
+}
+
+async function rebuildSessionBatchWithFallback(
+  executor: SqliteExecutor,
+  chunk: readonly SessionRow[],
+  getPolicy: (releaseId: string) => Promise<RollupPolicy>,
+): Promise<void> {
+  try {
+    await executor.transaction(async (tx) => {
+      for (const session of chunk) {
+        const policy = await getPolicy(session.analysisReleaseId);
+        await applySessionRollupContributions(tx, {
+          sessionId: session.id,
+          generationId: session.currentGenerationId,
+          analysisReleaseId: session.analysisReleaseId,
+          skipBucketRecompute: true,
+          rollupPolicy: policy,
+        });
+      }
+    });
+  } catch (chunkErr) {
+    // Invariant: Session Failure Isolation. If a batched transaction fails,
+    // fall back to processing that chunk session-by-session so bad sessions
+    // are isolated and valid sessions in the batch are still committed.
+    console?.warn?.(
+      '[rebuildAnalyticsDerivedData] Batched chunk failed, falling back to session-by-session:',
+      chunkErr,
+    );
+    for (const session of chunk) {
+      try {
+        const policy = await getPolicy(session.analysisReleaseId);
+        await rebuildSingleSession(executor, session, policy);
+      } catch (err) {
+        console?.warn?.(
+          `[rebuildAnalyticsDerivedData] Failed to rebuild contributions for session ${session.id}:`,
+          err,
+        );
+      }
+    }
+  }
+}
+
 /**
  * Rebuilds all analytics-derived data (rollup contributions, daily/dimension
  * rollups) for every committed session in the database. Idempotent: deleting
@@ -142,23 +209,47 @@ export async function rebuildAnalyticsDerivedData(
     else projectGroups.set(key, [session]);
   }
 
+  // Cache rollup policies by analysisReleaseId to avoid redundant policy lookups
+  // for every session and project group.
+  const policyCache = new Map<string, RollupPolicy>();
+  async function getPolicy(releaseId: string): Promise<RollupPolicy> {
+    let policy = policyCache.get(releaseId);
+    if (!policy) {
+      policy = await loadOrDefaultRollupPolicy(executor, releaseId);
+      policyCache.set(releaseId, policy);
+    }
+    return policy;
+  }
+
   // Step 1: re-apply rollup contributions per session. This repopulates the
   // model dimension from model_requests and is the bulk of the work.
+  // We pass skipBucketRecompute: true because Step 2 recomputes all project and
+  // portfolio rollups in bulk in a single efficient pass.
+  // Sessions are processed in batches per transaction to eliminate thousands of
+  // intermediate OPFS disk sync flushes while preserving Session Failure Isolation.
   const totalSessions = sessions.length;
   let completed = 0;
-  for (const session of sessions) {
-    await executor.transaction(async (tx) => {
-      await applySessionRollupContributions(tx, {
-        sessionId: session.id,
-        generationId: session.currentGenerationId,
-        analysisReleaseId: session.analysisReleaseId,
-      });
-    });
-    completed += 1;
+  onProgress?.({
+    step: 'Rebuilding session rollups',
+    completed: 0,
+    total: totalSessions,
+    phase: 1,
+    totalPhases: 2,
+    unit: 'sessions processed',
+  });
+
+  const BATCH_SIZE = 50;
+  for (let i = 0; i < sessions.length; i += BATCH_SIZE) {
+    const chunk = sessions.slice(i, i + BATCH_SIZE);
+    await rebuildSessionBatchWithFallback(executor, chunk, getPolicy);
+    completed += chunk.length;
     onProgress?.({
       step: 'Rebuilding session rollups',
       completed,
       total: totalSessions,
+      phase: 1,
+      totalPhases: 2,
+      unit: 'sessions processed',
     });
   }
 
@@ -166,20 +257,41 @@ export async function rebuildAnalyticsDerivedData(
   const groupList = [...projectGroups.values()];
   const totalGroups = groupList.length;
   let groupsCompleted = 0;
+  onProgress?.({
+    step: 'Recomputing project rollups',
+    completed: 0,
+    total: totalGroups,
+    phase: 2,
+    totalPhases: 2,
+    unit: 'analytics calculations',
+  });
   for (const group of groupList) {
-    const first = group[0]!;
-    await rebuildProjectPortfolioRollups(
-      executor,
-      first.projectId,
-      first.portfolioId,
-      first.analysisReleaseId,
-      first.currentGenerationId,
-    );
+    try {
+      const first = group[0];
+      if (!first) continue;
+      const policy = await getPolicy(first.analysisReleaseId);
+      await rebuildProjectPortfolioRollups(
+        executor,
+        first.projectId,
+        first.portfolioId,
+        first.analysisReleaseId,
+        first.currentGenerationId,
+        policy,
+      );
+    } catch (err) {
+      console?.warn?.(
+        '[rebuildAnalyticsDerivedData] Failed to rebuild rollups for project group:',
+        err,
+      );
+    }
     groupsCompleted += 1;
     onProgress?.({
       step: 'Recomputing project rollups',
       completed: groupsCompleted,
       total: totalGroups,
+      phase: 2,
+      totalPhases: 2,
+      unit: 'analytics calculations',
     });
   }
 

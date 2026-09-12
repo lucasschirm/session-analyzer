@@ -749,7 +749,7 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       pluginVersion: '0.0.0',
       transcriptsCaptured: false,
       artifacts: [],
-      syncRuns: [],
+      syncRunsCount: 0,
     };
     return this.resolveCanonicalIdentity(manifest, source);
   }

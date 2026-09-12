@@ -1,8 +1,9 @@
 /**
  * Session Sync Web Worker
  *
- * One worker instance per project. It lists session folders, fetches and
- * validates manifests, downloads only the requested files as transferred
+ * One worker instance per project. It derives session ids and manifest
+ * fingerprints from a single non-delimited project object listing, fetches
+ * and validates manifests, downloads only the requested files as transferred
  * `ArrayBuffer`s, and never touches SQLite.
  *
  * The constructor accepts an optional `S3Client` so unit tests can inject a
@@ -20,14 +21,14 @@ import {
   type S3GetObjectOptions,
   type S3ListObjectEntry,
   type S3ListObjectsOptions,
-  type S3ListOptions,
-  type S3ListPage,
+  type S3ListObjectsPage,
   type SyncManifest,
   sha256Hex,
 } from '@lucasschirm/sal-sync-core';
 import type {
   FileSummary,
   FileToDownload,
+  LocalFileHash,
   SessionFileDownloadedMessage,
   SessionSyncCompleteMessage,
   SessionSyncContinueMessage,
@@ -38,6 +39,7 @@ import type {
   SyncMessageFromWorker,
   SyncMessageToWorker,
 } from '../sync/sync-protocol';
+import type { ManifestFingerprint } from '../types';
 
 const SESSION_POOL_SIZE = 6;
 const FILE_POOL_SIZE = 8;
@@ -50,24 +52,32 @@ type PostFn = (message: SyncMessageFromWorker, transfer?: Transferable[]) => voi
  * satisfies this interface; tests can substitute a fake implementation.
  */
 export interface S3Client {
-  listSessionFolders(projectId: string, options?: S3ListOptions): Promise<string[]>;
-  listSessionObjects(
+  listProjectObjects(
     projectId: string,
-    sessionId: string,
     options?: S3ListObjectsOptions,
   ): Promise<S3ListObjectEntry[]>;
   getObject(key: string, options?: S3GetObjectOptions): Promise<ArrayBuffer>;
 }
 
+/** Buffered entries and derived fingerprint for one finalized session. */
+interface SessionListingData {
+  entries: S3ListObjectEntry[];
+  fingerprint: ManifestFingerprint | undefined;
+}
+
 interface SessionSyncDecision {
   sync: boolean;
   exists: boolean;
-  filesToDownload?: FileToDownload[];
-  localFileEtas?: Record<string, string>;
+  localFileHashes?: Record<string, LocalFileHash>;
 }
 
 interface SessionState {
-  files: Array<FileToDownload & { status: 'downloaded' | 'failed' | 'unchanged' }>;
+  files: Array<
+    FileToDownload & {
+      status: 'downloaded' | 'failed' | 'unchanged';
+      code?: string;
+    }
+  >;
   filesFound: number;
   downloadedCount: number;
   failedCount: number;
@@ -120,6 +130,23 @@ export class SessionSyncWorker {
   // the parallel SessionSyncWorker instances SyncManager spawns per project.
   private lastProgressTimestampMs = 0;
   private readonly sessionStates = new Map<string, SessionState>();
+  // D4 session-discovery buffering: the currently-open contiguous run of
+  // listing entries for one session id, flushed when a different session id
+  // arrives or the listing completes.
+  private currentBufferSessionId: string | undefined;
+  private currentBufferEntries: S3ListObjectEntry[] = [];
+  // Session ids whose buffer has already been finalized (flushed). A later,
+  // non-contiguous key for a finalized id is appended to its stored entries
+  // but never re-finalized, re-emitted, or re-queued.
+  private readonly finalizedSessionIds = new Set<string>();
+  // Populated at finalize time; cleared per session by runSession's finally.
+  // A session starts downloading (and reconcileSessionFiles reads this map)
+  // as soon as its buffer finalizes, independent of overall listing progress
+  // — so on a non-contiguous (non-AWS-compatible) endpoint, a late key for an
+  // already-downloading session is a best-effort addition, not a guarantee;
+  // standard AWS S3 never reorders same-prefix keys, so this only matters off
+  // AWS. See appendToFinalizedSession.
+  private readonly sessionListingData = new Map<string, SessionListingData>();
 
   constructor(post: PostFn, client?: S3Client) {
     this.post = post;
@@ -189,9 +216,9 @@ export class SessionSyncWorker {
     this.listControllers.add(controller);
     const foundSessionIds: string[] = [];
     try {
-      await this.client.listSessionFolders(this.projectId, {
+      await this.client.listProjectObjects(this.projectId, {
         signal: controller.signal,
-        onPage: (page) => this.handleSessionListPage(page, foundSessionIds),
+        onPage: (page) => this.handleObjectListingPage(page, foundSessionIds),
       });
       this.listingComplete = true;
       this.emitProjectFolderFound(foundSessionIds.length);
@@ -204,18 +231,120 @@ export class SessionSyncWorker {
     this.checkDone();
   }
 
-  private handleSessionListPage(page: S3ListPage, foundSessionIds: string[]): void {
+  /**
+   * Handle one page of the non-delimited project object listing (D4). Keys
+   * arrive in lexicographic order, so a session's keys are contiguous; this
+   * buffers them and finalizes (flushes) a session when a different session
+   * id arrives, or — on the last page — once every entry has been buffered.
+   */
+  private handleObjectListingPage(page: S3ListObjectsPage, foundSessionIds: string[]): void {
     if (this.cancelled) return;
-    const sessionIds = this.filterTargetSessionIds(page.prefixes);
-    foundSessionIds.push(...sessionIds);
+    const isLastPage = page.continuationToken === undefined;
+    const finalizedIds = this.bufferPageEntries(page.objects, isLastPage);
+    foundSessionIds.push(...finalizedIds);
     this.markConnected();
-    this.emitSessionBatch(sessionIds, page.continuationToken === undefined);
-    for (const sessionId of sessionIds) this.queueSession(sessionId);
+    this.emitSessionBatch(finalizedIds, isLastPage);
+    for (const sessionId of finalizedIds) this.queueSession(sessionId);
   }
 
-  private filterTargetSessionIds(sessionIds: string[]): string[] {
-    if (!this.targetSessionIds) return sessionIds;
-    return sessionIds.filter((id) => this.targetSessionIds?.has(id));
+  private bufferPageEntries(objects: S3ListObjectEntry[], isLastPage: boolean): string[] {
+    const finalized: string[] = [];
+    for (const entry of objects) {
+      const id = this.processListingEntry(entry);
+      if (id !== undefined) finalized.push(id);
+    }
+    if (isLastPage) {
+      const last = this.finalizeCurrentBuffer();
+      if (last !== undefined) finalized.push(last);
+    }
+    return finalized;
+  }
+
+  /**
+   * Buffer a single listing entry. Returns the session id that got
+   * finalized as a side effect (a different session id arrived while a
+   * buffer was open), or `undefined` when no finalize happened.
+   */
+  private processListingEntry(entry: S3ListObjectEntry): string | undefined {
+    const sessionId = parseObjectKey(entry.key)?.sessionId;
+    if (!sessionId) return undefined;
+    if (this.finalizedSessionIds.has(sessionId)) {
+      this.appendToFinalizedSession(sessionId, entry);
+      return undefined;
+    }
+    if (this.currentBufferSessionId !== undefined && this.currentBufferSessionId !== sessionId) {
+      const finalizedId = this.finalizeCurrentBuffer();
+      this.openBuffer(sessionId, entry);
+      return finalizedId;
+    }
+    this.openBuffer(sessionId, entry);
+    return undefined;
+  }
+
+  /**
+   * A non-contiguous listing order (D4) can deliver a session's manifest.json
+   * key after that session already finalized. Append the entry to its stored
+   * buffer, and — since the fingerprint (D1) is otherwise only computed once,
+   * at finalize time — backfill it here too so a late manifest key is not
+   * silently lost. Once a session starts downloading its files, whether this
+   * late key arrives before `reconcileSessionFiles` reads the buffer depends
+   * on page-fetch timing relative to the session's own manifest/download
+   * latency; standard AWS S3 never reorders same-prefix keys, so this path
+   * exists only for non-AWS-compatible endpoints, where it is best-effort.
+   */
+  private appendToFinalizedSession(sessionId: string, entry: S3ListObjectEntry): void {
+    const data = this.sessionListingData.get(sessionId);
+    if (!data) return;
+    data.entries.push(entry);
+    if (data.fingerprint !== undefined) return;
+    const parsed = parseObjectKey(entry.key);
+    if (parsed?.scope === 'manifest' && parsed.relativePath === 'manifest.json') {
+      data.fingerprint = { etag: entry.etag, lastModified: entry.lastModified };
+    }
+  }
+
+  private openBuffer(sessionId: string, entry: S3ListObjectEntry): void {
+    if (this.currentBufferSessionId !== sessionId) {
+      this.currentBufferSessionId = sessionId;
+      this.currentBufferEntries = [];
+    }
+    this.currentBufferEntries.push(entry);
+  }
+
+  /**
+   * Flush the currently-open buffer, applying `targetSessionIds` filtering
+   * (D4). Returns the finalized session id when it passed the filter (and
+   * should be queued/counted), or `undefined` when there was no open buffer
+   * or it was filtered out (discarded, never queued or counted).
+   */
+  private finalizeCurrentBuffer(): string | undefined {
+    const sessionId = this.currentBufferSessionId;
+    if (sessionId === undefined) return undefined;
+    const entries = this.currentBufferEntries;
+    this.currentBufferSessionId = undefined;
+    this.currentBufferEntries = [];
+    this.finalizedSessionIds.add(sessionId);
+    if (!this.passesTargetFilter(sessionId)) return undefined;
+    this.sessionListingData.set(sessionId, {
+      entries,
+      fingerprint: this.extractFingerprint(entries),
+    });
+    return sessionId;
+  }
+
+  private passesTargetFilter(sessionId: string): boolean {
+    return !this.targetSessionIds || this.targetSessionIds.has(sessionId);
+  }
+
+  /** D1 fingerprint: the manifest.json entry's raw etag/lastModified, or undefined. */
+  private extractFingerprint(entries: S3ListObjectEntry[]): ManifestFingerprint | undefined {
+    for (const entry of entries) {
+      const parsed = parseObjectKey(entry.key);
+      if (parsed?.scope === 'manifest' && parsed.relativePath === 'manifest.json') {
+        return { etag: entry.etag, lastModified: entry.lastModified };
+      }
+    }
+    return undefined;
   }
 
   private markConnected(): void {
@@ -250,38 +379,41 @@ export class SessionSyncWorker {
     try {
       if (this.cancelled) return;
       this.emitSessionFound(sessionId);
-      if (this.syncOnlyNew) {
-        const shouldSync = await this.waitForContinue(sessionId);
-        if (!shouldSync) {
-          this.counts.skipped++;
-          return;
-        }
-      }
-      const manifest = await this.downloadManifest(sessionId);
-      if (!manifest || this.cancelled) return;
-      this.emitSessionManifestReady(sessionId, manifest);
-      const decision = await this.waitForSync(sessionId);
-      if (this.cancelled) return;
-      if (!decision.sync) {
-        this.counts.synced++;
-        if (decision.exists) {
-          await this.emitUnchangedSummary(sessionId, manifest);
-        } else {
-          this.emitSyncComplete(sessionId, []);
-        }
+      // D3: every run now awaits SESSION_SYNC_CONTINUE, not only syncOnlyNew
+      // runs; the 30s watchdog in waitForContinue still resolves to true.
+      const shouldSync = await this.waitForContinue(sessionId);
+      if (!shouldSync) {
+        this.counts.skipped++;
         return;
       }
-      await this.downloadSessionFiles(
-        sessionId,
-        manifest,
-        decision.filesToDownload,
-        decision.localFileEtas,
-      );
+      await this.runSessionManifestPhase(sessionId);
     } catch (error) {
       if (this.cancelled) return;
       this.counts.failed++;
       this.emitSessionFailed(sessionId, 'WORKER_ERROR', this.errorMessage(error));
+    } finally {
+      // Every exit path (skip, manifest failure/cancel, sync decision, or
+      // normal completion) releases this session's buffered listing data.
+      this.sessionListingData.delete(sessionId);
     }
+  }
+
+  private async runSessionManifestPhase(sessionId: string): Promise<void> {
+    const manifest = await this.downloadManifest(sessionId);
+    if (!manifest || this.cancelled) return;
+    this.emitSessionManifestReady(sessionId, manifest);
+    const decision = await this.waitForSync(sessionId);
+    if (this.cancelled) return;
+    if (!decision.sync) {
+      this.counts.synced++;
+      if (decision.exists) {
+        await this.emitUnchangedSummary(sessionId, manifest);
+      } else {
+        this.emitSyncComplete(sessionId, []);
+      }
+      return;
+    }
+    await this.downloadSessionFiles(sessionId, manifest, decision.localFileHashes);
   }
 
   private waitForContinue(sessionId: string): Promise<boolean> {
@@ -341,8 +473,7 @@ export class SessionSyncWorker {
       pending.resolve({
         sync: message.sync,
         exists: message.exists,
-        filesToDownload: message.filesToDownload,
-        localFileEtas: message.localFileEtas,
+        localFileHashes: message.localFileHashes,
       });
     }
   }
@@ -415,16 +546,10 @@ export class SessionSyncWorker {
   private async downloadSessionFiles(
     sessionId: string,
     manifest: SyncManifest,
-    filesToDownload?: FileToDownload[],
-    localFileEtas?: Record<string, string>,
+    localFileHashes?: Record<string, LocalFileHash>,
   ): Promise<void> {
     if (this.cancelled) return;
-    const files = await this.resolveRequestedFiles(
-      manifest,
-      filesToDownload,
-      sessionId,
-      localFileEtas,
-    );
+    const files = await this.resolveRequestedFiles(manifest, sessionId, localFileHashes);
     if (this.cancelled) return;
     if (files.length === 0) {
       this.emitSyncComplete(sessionId, []);
@@ -433,26 +558,25 @@ export class SessionSyncWorker {
     }
     const state = this.createSessionState(sessionId, files);
     try {
-      const mainFile = files.find((file) => file.isMainTranscript);
-      const otherFiles = files.filter((file) => file !== mainFile);
-      if (this.cancelled) return;
-      if (mainFile) {
-        const result = await this.downloadAndVerifyFile(sessionId, mainFile, state);
-        if (this.cancelled) return;
-        if (result.status !== 'downloaded') {
-          this.counts.failed++;
-          this.emitSessionFailed(
-            sessionId,
-            this.downloadErrorCode(result),
-            'Main transcript failed',
-          );
-          return;
-        }
-      }
+      // All files go through the download pool together — no main-transcript
+      // gate. A main transcript failure does not prevent sibling files from
+      // downloading. The main transcript status is inspected at completion to
+      // determine session viability.
       if (!this.cancelled) {
-        await this.downloadFilesInPool(sessionId, otherFiles, state);
+        await this.downloadFilesInPool(sessionId, files, state);
       }
       if (this.cancelled) return;
+      const mainFile = files.find((file) => file.isMainTranscript);
+      const mainResult = mainFile ? state.files.find((f) => f.file === mainFile.file) : undefined;
+      if (mainResult && mainResult.status === 'failed') {
+        this.counts.failed++;
+        this.emitSessionFailed(
+          sessionId,
+          this.mainTranscriptErrorCode(mainResult),
+          'Main transcript failed',
+        );
+        return;
+      }
       this.emitSyncComplete(sessionId, this.buildFileSummary(state));
       this.counts.synced++;
     } finally {
@@ -462,20 +586,16 @@ export class SessionSyncWorker {
 
   private async resolveRequestedFiles(
     manifest: SyncManifest,
-    filesToDownload: FileToDownload[] | undefined,
     sessionId: string,
-    localFileEtas?: Record<string, string>,
+    localFileHashes?: Record<string, LocalFileHash>,
   ): Promise<FileToDownload[]> {
-    if (filesToDownload === undefined) {
-      return this.resolveInScopeFiles(manifest, sessionId, localFileEtas);
-    }
-    return filesToDownload;
+    return this.resolveInScopeFiles(manifest, sessionId, localFileHashes);
   }
 
   private async resolveInScopeFiles(
     manifest: SyncManifest,
     sessionId: string,
-    localFileEtas?: Record<string, string>,
+    localFileHashes?: Record<string, LocalFileHash>,
   ): Promise<FileToDownload[]> {
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
     const fileMap = new Map<string, FileToDownload>();
@@ -485,13 +605,14 @@ export class SessionSyncWorker {
         fileMap.set(file.file, file);
       }
     }
-    await this.reconcileSessionFiles(fileMap, sessionId, mainPath);
-    // ETag-based skip: remove files whose S3 listing ETag matches the locally
-    // stored ETag. This avoids redundant GET calls for unchanged files when
-    // the sync manager couldn't pre-compute filesToDownload (no manifest hashes).
-    if (localFileEtas) {
+    this.reconcileSessionFiles(fileMap, sessionId, mainPath);
+    // Hash-based skip: remove files whose local SHA-256 matches the manifest
+    // hash and whose status is 'processed'. Files with a different hash, a
+    // non-processed status (e.g. 'failed'), or no local entry are downloaded.
+    if (localFileHashes) {
       for (const [path, file] of fileMap) {
-        if (file.etag && localFileEtas[path] === file.etag) {
+        const local = localFileHashes[path];
+        if (local && local.sha256 === file.hash && local.status === 'processed') {
           fileMap.delete(path);
         }
       }
@@ -499,32 +620,28 @@ export class SessionSyncWorker {
     return [...fileMap.values()];
   }
 
-  private async reconcileSessionFiles(
+  /**
+   * D6: feed session-scoped files from the buffered project-listing entries
+   * (populated at discovery finalize time) instead of a redundant per-session
+   * listing call.
+   */
+  private reconcileSessionFiles(
     fileMap: Map<string, FileToDownload>,
     sessionId: string,
     mainPath: string,
-  ): Promise<void> {
-    if (!this.client) return;
-    const controller = new AbortController();
-    this.listControllers.add(controller);
-    try {
-      const entries = await this.client.listSessionObjects(this.projectId, sessionId, {
-        signal: controller.signal,
-      });
-      for (const entry of entries) {
-        const parsed = parseObjectKey(entry.key);
-        if (parsed?.scope !== 'session' || !parsed.relativePath) continue;
-        if (!this.isInScopeRelativePath(parsed.relativePath, mainPath)) continue;
-        const file = this.toFileToDownloadFromListing(
-          parsed.relativePath,
-          entry.size ?? 0,
-          mainPath,
-          entry.etag,
-        );
-        if (!fileMap.has(file.file)) fileMap.set(file.file, file);
-      }
-    } finally {
-      this.listControllers.delete(controller);
+  ): void {
+    const entries = this.sessionListingData.get(sessionId)?.entries ?? [];
+    for (const entry of entries) {
+      const parsed = parseObjectKey(entry.key);
+      if (parsed?.scope !== 'session' || !parsed.relativePath) continue;
+      if (!this.isInScopeRelativePath(parsed.relativePath, mainPath)) continue;
+      const file = this.toFileToDownloadFromListing(
+        parsed.relativePath,
+        entry.size ?? 0,
+        mainPath,
+        entry.etag,
+      );
+      if (!fileMap.has(file.file)) fileMap.set(file.file, file);
     }
   }
 
@@ -675,7 +792,7 @@ export class SessionSyncWorker {
       const actualHash = await sha256Hex(new Uint8Array(buffer));
       if (file.hash && actualHash !== file.hash.toLowerCase()) {
         file.hash = actualHash;
-        this.setFileStatus(state, file, 'failed');
+        this.setFileStatus(state, file, 'failed', 'HASH_MISMATCH');
         this.emitProgress(sessionId, state);
         return { status: 'hash-mismatch' };
       }
@@ -687,7 +804,7 @@ export class SessionSyncWorker {
     } catch (error) {
       if (this.cancelled) return { status: 'failed' };
       const code = this.classifyDownloadError(error);
-      this.setFileStatus(state, file, 'failed');
+      this.setFileStatus(state, file, 'failed', code);
       this.emitProgress(sessionId, state);
       return { status: 'failed', code };
     } finally {
@@ -700,13 +817,20 @@ export class SessionSyncWorker {
     state: SessionState,
     file: FileToDownload,
     status: 'downloaded' | 'failed' | 'unchanged',
+    code?: string,
   ): void {
     const entry = state.files.find((f) => f.file === file.file);
     if (!entry) return;
     entry.status = status;
+    entry.code = code;
     entry.hash = file.hash;
     if (status === 'downloaded') state.downloadedCount++;
     if (status === 'failed') state.failedCount++;
+  }
+
+  private mainTranscriptErrorCode(mainResult: SessionState['files'][number]): string {
+    if (mainResult.code) return mainResult.code;
+    return 'DOWNLOAD_FAILED';
   }
 
   private updateProgress(
@@ -734,11 +858,6 @@ export class SessionSyncWorker {
       bytes_received: state.bytesReceived,
       timestamp: new Date(ms).toISOString(),
     });
-  }
-
-  private downloadErrorCode(result: FileDownloadResult): string {
-    if (result.status === 'hash-mismatch') return 'HASH_MISMATCH';
-    return result.code ?? 'DOWNLOAD_FAILED';
   }
 
   private classifyDownloadError(error: unknown): string {
@@ -810,6 +929,7 @@ export class SessionSyncWorker {
       connectionId: this.connectionId,
       projectId: this.projectId,
       sessionId,
+      fingerprint: this.sessionListingData.get(sessionId)?.fingerprint,
     });
   }
 
@@ -840,6 +960,7 @@ export class SessionSyncWorker {
       projectId: this.projectId,
       sessionId,
       manifest,
+      fingerprint: this.sessionListingData.get(sessionId)?.fingerprint,
     });
   }
 

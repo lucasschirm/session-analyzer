@@ -103,6 +103,12 @@ beforeEach(() => {
     activeRun: null,
     queuedRuns: [],
   });
+  vi.spyOn(analyticsClient, 'ensureReady').mockResolvedValue({
+    backendName: 'wasm-memory',
+    durability: 'ephemeral',
+    journalMode: 'delete',
+    storage: 'memory',
+  });
 });
 
 describe('app-root', () => {
@@ -187,7 +193,7 @@ describe('app-root', () => {
 
   it('binds the :componentId route param to component-ecosystem-view via the component-id attribute', async () => {
     // Regression coverage for a routing wiring bug found while verifying
-    // issue #399's UX-026 E2E coverage: app-root.ts's route render callback
+    // issue #399's UX-033 E2E coverage: app-root.ts's route render callback
     // sets the `component-id` (kebab-case) attribute, but
     // component-ecosystem-view.ts's `componentId` property must declare a
     // matching `attribute: 'component-id'` override -- Lit's default
@@ -211,8 +217,18 @@ describe('app-root', () => {
     expect(view.componentId).toBe('comp-routing-test');
   });
 
-  it('does not render the left nav on session routes', async () => {
+  it('renders the left nav on session routes', async () => {
     window.location.hash = '#/sessions/s1';
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    const leftNav = root.querySelector('left-nav');
+    expect(leftNav).not.toBeNull();
+  });
+
+  it('does not render the left nav on artifact routes', async () => {
+    window.location.hash = '#/artifacts';
     const app = await mount(document.createElement('app-root') as AppRoot);
     await flush(app);
 
@@ -255,5 +271,127 @@ describe('app-root', () => {
     closeButton?.click();
     await flush(app);
     expect(root.querySelector('.reprocess-overlay')).toBeNull();
+  });
+
+  it('updates step description and progress bar on reprocess-progress events', async () => {
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    analyticsClient.dispatchEvent(
+      new CustomEvent('reprocess-started', { detail: { reason: 'Analytics data format updated' } }),
+    );
+    await flush(app);
+
+    const root = app.shadowRoot as ShadowRoot;
+    expect(root.querySelector('.reprocess-step')?.textContent?.trim()).toBe('Preparing…');
+    expect(root.querySelector('.reprocess-percent')?.textContent?.trim()).toBe('0%');
+
+    // Emit initial progress at 0%
+    analyticsClient.dispatchEvent(
+      new CustomEvent('reprocess-progress', {
+        detail: {
+          step: 'Rebuilding session rollups',
+          completed: 0,
+          total: 10,
+          phase: 1,
+          totalPhases: 2,
+          unit: 'sessions parsing',
+        },
+      }),
+    );
+    await flush(app);
+
+    expect(root.querySelector('.reprocess-phase')?.textContent?.trim()).toBe('Phase 1 of 2');
+    expect(root.querySelector('.reprocess-step')?.textContent?.trim()).toBe(
+      'Rebuilding session rollups',
+    );
+    expect(root.querySelector('.reprocess-counts')?.textContent?.trim()).toBe(
+      '0 / 10 sessions parsing',
+    );
+    expect(root.querySelector('.reprocess-percent')?.textContent?.trim()).toBe('0%');
+    expect(root.querySelector('.reprocess-spinner')).not.toBeNull();
+
+    // Emit progress at 50%
+    analyticsClient.dispatchEvent(
+      new CustomEvent('reprocess-progress', {
+        detail: {
+          step: 'Rebuilding session rollups',
+          completed: 5,
+          total: 10,
+          phase: 1,
+          totalPhases: 2,
+          unit: 'sessions parsing',
+        },
+      }),
+    );
+    await flush(app);
+
+    expect(root.querySelector('.reprocess-percent')?.textContent?.trim()).toBe('50%');
+    expect(root.querySelector('.reprocess-counts')?.textContent?.trim()).toBe(
+      '5 / 10 sessions parsing',
+    );
+    const fill = root.querySelector<HTMLElement>('.reprocess-bar-fill');
+    expect(fill?.style.width).toBe('50%');
+
+    // Emit successful completion
+    analyticsClient.dispatchEvent(new CustomEvent('reprocess-completed', { detail: { ok: true } }));
+    await flush(app);
+
+    expect(root.querySelector('.reprocess-overlay')).toBeNull();
+  });
+
+  it('eagerly initializes analytics client on mount', async () => {
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    expect(analyticsClient.ensureReady).toHaveBeenCalled();
+  });
+
+  it('renders polished loading card and disables settings while app is initializing', async () => {
+    let resolveAnalytics!: () => void;
+    vi.spyOn(analyticsClient, 'ensureReady').mockReturnValue(
+      new Promise((resolve) => {
+        resolveAnalytics = () =>
+          resolve({
+            backendName: 'wasm-memory',
+            durability: 'ephemeral',
+            journalMode: 'delete',
+            storage: 'memory',
+          });
+      }),
+    );
+
+    const app = document.createElement('app-root') as AppRoot;
+    document.body.appendChild(app);
+    await app.updateComplete;
+
+    const root = app.shadowRoot as ShadowRoot;
+    const loadingCard = root.querySelector('.app-loading .loading-card');
+    expect(loadingCard).not.toBeNull();
+    expect(root.querySelector('.loading-title')?.textContent).toBe('Session Analyzer');
+    expect(root.querySelector('.loading-subtitle')?.textContent).toContain(
+      'Initializing workspace and analytics engine',
+    );
+    expect(root.querySelector('.spinner-glow')).not.toBeNull();
+
+    const settingsButton = root.querySelector<HTMLButtonElement>('.settings-button');
+    expect(settingsButton?.hasAttribute('disabled')).toBe(true);
+
+    // Now resolve initialization
+    resolveAnalytics();
+    await flush(app);
+
+    expect(root.querySelector('.app-loading')).toBeNull();
+    expect(settingsButton?.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('renders project-sessions-page when navigating to #/projects/:projectId/sessions', async () => {
+    window.location.hash = '#/projects/alpha/sessions';
+    const app = await mount(document.createElement('app-root') as AppRoot);
+    await flush(app);
+
+    const page = app.shadowRoot?.querySelector('project-sessions-page');
+    expect(page).not.toBeNull();
+    expect(page?.getAttribute('project-id')).toBe('alpha');
   });
 });
