@@ -32,7 +32,7 @@ import {
   MIGRATIONS,
   MigrationRunner,
 } from '@lucasschirm/sal-db-core';
-import { parseSyncManifest } from '@lucasschirm/sal-sync-core';
+import { type ManifestArtifact, parseSyncManifest } from '@lucasschirm/sal-sync-core';
 import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
 import type { TransformerRegistry } from '@lucasschirm/sal-transformer-shared';
 import type {
@@ -164,7 +164,7 @@ export async function backfillArtifactBlobsToOpfs(executor: WasmSqliteExecutor):
   }
 }
 
-export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState> {
+async function initializeAnalyticsExecutor(): Promise<WasmSqliteExecutor> {
   const executor = await WasmSqliteExecutor.create({
     filename: ANALYTICS_DB_FILENAME,
     preferOpfs: true,
@@ -172,35 +172,39 @@ export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState
 
   const runner = new MigrationRunner(executor, MIGRATIONS, ANALYTICS_SCHEMA_NAME);
   await runner.migrate();
+  return executor;
+}
 
-  // After migrations, check whether the stored analytics processing version
-  // is older than the current version. If so, rebuild all derived data
-  // (rollup contributions, daily/dimension rollups) so charts reflect the
-  // latest processing logic. Broadcasts progress so the UI can surface
-  // "Updating analytics data…".
-  if (await needsRebuild(executor)) {
-    postReprocessStarted('Analytics data format updated');
+async function maybeRebuildDerivedData(executor: WasmSqliteExecutor): Promise<void> {
+  if (!(await needsRebuild(executor))) return;
+
+  postReprocessStarted('Analytics data format updated');
+  try {
+    await rebuildAnalyticsDerivedData(executor, postReprocessProgress);
+    postReprocessCompleted();
+    postDataChanged();
     try {
-      await rebuildAnalyticsDerivedData(executor, postReprocessProgress);
-      postReprocessCompleted();
-      postDataChanged();
-      try {
-        await executor.vacuum();
-      } catch (vacuumError) {
-        // A VACUUM failure must never block worker startup.
-        console.error('Post-rebuild VACUUM failed', vacuumError);
-      }
-    } catch (err) {
-      postReprocessCompleted(err instanceof Error ? err.message : String(err));
+      await executor.vacuum();
+    } catch (vacuumError) {
+      console.error('Post-rebuild VACUUM failed', vacuumError);
     }
+  } catch (err) {
+    postReprocessCompleted(err instanceof Error ? err.message : String(err));
   }
+}
 
+interface IngestionContextBundle {
+  readonly context: IngestionContext;
+  readonly blobStore: ArtifactBlobStore;
+  readonly syncCache: SyncArtifactCache;
+}
+
+function buildIngestionContext(executor: WasmSqliteExecutor): IngestionContextBundle {
   const hasher = createBrowserContentHasher();
   const blobStore = createOpfsArtifactBlobStore(executor);
   const syncCache = createSyncArtifactCache();
   const resolver = createBrowserArtifactResolver({ blobStore, syncCache });
   const registry = createDefaultRegistry();
-
   const context: IngestionContext = {
     executor,
     resolver,
@@ -209,16 +213,16 @@ export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState
     registry,
     analysisReleaseId: DEFAULT_ANALYSIS_RELEASE,
   };
+  return { context, blobStore, syncCache };
+}
 
-  // Fire-and-forget: this pass is unpaginated and can be slow against a
-  // large pre-existing artifact_blobs table. It must not block worker
-  // init — every consumer already handles both pre- and post-backfill
-  // rows transparently (see ArtifactDiffRepository's read-side fallback),
-  // so nothing needs to wait for it to finish. All internal errors are
-  // caught and logged inside backfillArtifactBlobsToOpfs itself.
-  void backfillArtifactBlobsToOpfs(executor);
-
-  const dataSource = createAnalyticsDataSource(executor, hasher, blobStore);
+function buildAnalyticsState(
+  executor: WasmSqliteExecutor,
+  context: IngestionContext,
+  blobStore: ArtifactBlobStore,
+  syncCache: SyncArtifactCache,
+): AnalyticsWorkerState {
+  const dataSource = createAnalyticsDataSource(executor, context.hasher, blobStore);
   const ingestion = new DefaultIngestionOrchestrator(context);
   const manualIngestion = new ManualIngestionOrchestrator(context);
   const reprocessing = new DefaultReprocessingEngine(context);
@@ -230,11 +234,19 @@ export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState
     manualIngestion,
     reprocessing,
     context,
-    registry,
+    registry: context.registry,
     blobStore,
     syncCache,
     backend: buildBackendReport(executor),
   };
+}
+
+export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState> {
+  const executor = await initializeAnalyticsExecutor();
+  await maybeRebuildDerivedData(executor);
+  const { context, blobStore, syncCache } = buildIngestionContext(executor);
+  void backfillArtifactBlobsToOpfs(executor);
+  return buildAnalyticsState(executor, context, blobStore, syncCache);
 }
 
 function getState(): Promise<AnalyticsWorkerState> {
@@ -416,6 +428,46 @@ async function handleResolveManualConflict(
   }
 }
 
+async function resolveManifestArtifact(
+  state: AnalyticsWorkerState,
+  artifact: ManifestArtifact,
+): Promise<ResolvedArtifact | undefined> {
+  // The blob store returns artifacts with relativePath='' (keyed by sha256), so
+  // restore the manifest's relativePath/mediaType on the resolved artifact —
+  // the transformer's classifier needs the original path.
+  try {
+    const resolved = await state.context.resolver.resolve({
+      sha256: artifact.sha256,
+      size: artifact.size ?? 0,
+      relativePath: artifact.relativePath,
+      mediaType: artifact.mediaType ?? 'application/octet-stream',
+    });
+    return {
+      ...resolved,
+      relativePath: artifact.relativePath,
+      mediaType: artifact.mediaType ?? resolved.mediaType ?? 'application/octet-stream',
+    };
+  } catch {
+    // Artifact not retained by sync (e.g. skipped/failed upload) — skip.
+    return undefined;
+  }
+}
+
+async function resolveManifestArtifacts(
+  state: AnalyticsWorkerState,
+  artifacts: ManifestArtifact[],
+): Promise<ResolvedArtifact[]> {
+  // Resolve artifacts from the blob store / sync cache that were retained during
+  // sync file download. Any artifact not retained is skipped gracefully so the
+  // whole ingestion does not abort.
+  const resolvedArtifacts: ResolvedArtifact[] = [];
+  for (const artifact of artifacts) {
+    const resolved = await resolveManifestArtifact(state, artifact);
+    if (resolved) resolvedArtifacts.push(resolved);
+  }
+  return resolvedArtifacts;
+}
+
 async function handleIngestSyncManifest(
   state: AnalyticsWorkerState,
   request: Extract<AnalyticsRequest, { type: 'ingestSyncManifest' }>,
@@ -428,37 +480,7 @@ async function handleIngestSyncManifest(
       projectId: request.source.projectId ?? manifest.projectId,
       sessionId: request.source.sessionId ?? manifest.sessionId,
     };
-
-    // Resolve artifacts from the blob store / sync cache that were retained
-    // during sync file download. The sync worker downloads session-scoped
-    // files (transcript + subagents) and workspace/global config artifacts
-    // (MCP, settings, skills, agents, rules). Any artifact not retained
-    // (e.g. skipped or failed uploads) is skipped gracefully instead of
-    // aborting the entire ingestion.
-    //
-    // The blob store returns artifacts with relativePath='' (it's keyed by
-    // sha256 only), so we restore the manifest's relativePath/mediaType on
-    // the resolved artifact — the transformer's classifier needs the original
-    // path (e.g. "transcript.jsonl" or ".claude/settings.json").
-    const resolvedArtifacts: ResolvedArtifact[] = [];
-    for (const artifact of manifest.artifacts) {
-      try {
-        const resolved = await state.context.resolver.resolve({
-          sha256: artifact.sha256,
-          size: artifact.size ?? 0,
-          relativePath: artifact.relativePath,
-          mediaType: artifact.mediaType ?? 'application/octet-stream',
-        });
-        resolvedArtifacts.push({
-          ...resolved,
-          relativePath: artifact.relativePath,
-          mediaType: artifact.mediaType ?? resolved.mediaType ?? 'application/octet-stream',
-        });
-      } catch {
-        // Artifact not retained by sync (e.g. skipped/failed upload) — skip.
-      }
-    }
-
+    const resolvedArtifacts = await resolveManifestArtifacts(state, manifest.artifacts);
     const bundle: VerifiedManifestBundle = {
       manifest,
       source,
