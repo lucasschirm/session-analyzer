@@ -24,6 +24,8 @@ export function contextGrowthToChartSeries(
   sessionId = '',
 ): ChartSeries {
   const buckets: ChartBucket[] = [];
+  let prevContextTokens: number | null = null;
+
   for (const point of series.points) {
     const idx = point.messageIndex ?? point.turnNumber;
     const role = point.role ?? 'message';
@@ -39,6 +41,27 @@ export function contextGrowthToChartSeries(
       series: 'Context',
       evidenceLink,
     });
+
+    let removedTokens = point.compactedTokens ?? point.removedTokens ?? null;
+    if (
+      removedTokens === null &&
+      prevContextTokens !== null &&
+      point.contextTokens !== null &&
+      prevContextTokens > point.contextTokens
+    ) {
+      removedTokens = prevContextTokens - point.contextTokens;
+    }
+
+    if (removedTokens !== null && removedTokens > 0) {
+      buckets.push({
+        x,
+        y: removedTokens,
+        label: `Message #${idx} (${role}): compacted ${formatChartValue(removedTokens)} tokens`,
+        series: 'Compacted',
+        evidenceLink,
+      });
+    }
+
     if (point.generationTokens !== null && point.generationTokens > 0) {
       buckets.push({
         x,
@@ -48,6 +71,10 @@ export function contextGrowthToChartSeries(
         evidenceLink,
       });
     }
+
+    if (point.contextTokens !== null) {
+      prevContextTokens = point.contextTokens;
+    }
   }
 
   return {
@@ -56,6 +83,8 @@ export function contextGrowthToChartSeries(
     chartType: 'stacked_bar',
     xLabel: 'Message',
     yLabel: 'Tokens',
+    seriesOrder: ['Context', 'Compacted', 'Generation'],
+    colors: ['#4f8cff', '#ffb86c', '#3ecf8e'],
     buckets,
   };
 }

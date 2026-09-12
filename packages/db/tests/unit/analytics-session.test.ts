@@ -680,6 +680,162 @@ describe('AnalyticsDataSource session, component, search and artifact views', ()
     expect(p2?.content).toBe('I fixed the index');
   });
 
+  it('extracts compaction events and populates compactedTokens on the subsequent response', async () => {
+    const compactSessionId = 'session-compact-test';
+    const genId = 'gen-c-1';
+    await createSession(executor, compactSessionId);
+    await createGeneration(executor, compactSessionId, genId);
+
+    // Message 1: Turn 1 (user)
+    await NormalizedEventStore.insert(executor, {
+      id: 'c-turn-1',
+      sessionId: compactSessionId,
+      generationId: genId,
+      eventType: 'turn',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'c-turn-1',
+        recordType: 'turn',
+        sessionId: compactSessionId,
+        payload: { ordinal: 1, role: 'human', timestamp: '2026-08-11T10:00:00.000Z' },
+      }),
+      retainRaw: true,
+    });
+    await NormalizedEventStore.insert(executor, {
+      id: 'c-msg-1',
+      sessionId: compactSessionId,
+      generationId: genId,
+      eventType: 'message',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'c-msg-1',
+        recordType: 'message',
+        sessionId: compactSessionId,
+        parentId: 'c-turn-1',
+        payload: {
+          role: 'human',
+          content: 'Hello, long context',
+          timestamp: '2026-08-11T10:00:00.000Z',
+        },
+      }),
+      retainRaw: true,
+    });
+    await NormalizedEventStore.insert(executor, {
+      id: 'c-req-1',
+      sessionId: compactSessionId,
+      generationId: genId,
+      eventType: 'model_request',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'c-req-1',
+        recordType: 'model_request',
+        sessionId: compactSessionId,
+        parentId: 'c-turn-1',
+        payload: {
+          requestOrder: 1,
+          model: 'claude-3-7-sonnet',
+          inputTokens: 50000,
+          outputTokens: 100,
+          timestamp: '2026-08-11T10:00:00.000Z',
+        },
+      }),
+      retainRaw: true,
+    });
+
+    // Compaction event between message 1 and 2
+    await NormalizedEventStore.insert(executor, {
+      id: 'c-compact-1',
+      sessionId: compactSessionId,
+      generationId: genId,
+      eventType: 'normalized_event',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'c-compact-1',
+        recordType: 'normalized_event',
+        sessionId: compactSessionId,
+        payload: {
+          category: 'compaction',
+          eventType: 'compact_boundary',
+          timestamp: '2026-08-11T10:00:05.000Z',
+          timestampMs: 1786442405000, // 2026-08-11T10:00:05.000Z
+          sourceEventId: 'sys-compact-1',
+          preTokens: 50000,
+          postTokens: 12000,
+          cumulativeDroppedTokens: 38000,
+        },
+      }),
+      retainRaw: true,
+    });
+
+    // Message 2: Turn 2 (assistant - compaction response)
+    await NormalizedEventStore.insert(executor, {
+      id: 'c-turn-2',
+      sessionId: compactSessionId,
+      generationId: genId,
+      eventType: 'turn',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'c-turn-2',
+        recordType: 'turn',
+        sessionId: compactSessionId,
+        payload: { ordinal: 2, role: 'assistant', timestamp: '2026-08-11T10:00:10.000Z' },
+      }),
+      retainRaw: true,
+    });
+    await NormalizedEventStore.insert(executor, {
+      id: 'c-msg-2',
+      sessionId: compactSessionId,
+      generationId: genId,
+      eventType: 'message',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'c-msg-2',
+        recordType: 'message',
+        sessionId: compactSessionId,
+        parentId: 'c-turn-2',
+        payload: {
+          role: 'assistant',
+          content: 'Continuing after compaction',
+          timestamp: '2026-08-11T10:00:10.000Z',
+        },
+      }),
+      retainRaw: true,
+    });
+    await NormalizedEventStore.insert(executor, {
+      id: 'c-req-2',
+      sessionId: compactSessionId,
+      generationId: genId,
+      eventType: 'model_request',
+      eventVersion: 1,
+      rawDetails: JSON.stringify({
+        recordId: 'c-req-2',
+        recordType: 'model_request',
+        sessionId: compactSessionId,
+        parentId: 'c-turn-2',
+        payload: {
+          requestOrder: 2,
+          model: 'claude-3-7-sonnet',
+          inputTokens: 12000,
+          outputTokens: 50,
+          timestamp: '2026-08-11T10:00:10.000Z',
+        },
+      }),
+      retainRaw: true,
+    });
+
+    const series = await ds.session.getContextTimingSeries(compactSessionId);
+    expect(series.points.length).toBe(2);
+
+    // Message 1: pre-compaction
+    expect(series.points[0]?.contextTokens).toBe(50000);
+    expect(series.points[0]?.compactedTokens).toBeUndefined();
+
+    // Message 2: compaction response with 12000 post-tokens and 38000 compacted tokens
+    expect(series.points[1]?.contextTokens).toBe(12000);
+    expect(series.points[1]?.compactedTokens).toBe(38000);
+    expect(series.points[1]?.removedTokens).toBe(38000);
+  });
+
   it('returns root child breakdown with session tree', async () => {
     const breakdown = await ds.session.getRootChildBreakdown(sessionId);
     expect(breakdown.root.sessionId).toBe(sessionId);

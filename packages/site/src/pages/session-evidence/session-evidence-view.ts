@@ -12,7 +12,13 @@ import type {
 } from '@lucasschirm/sal-db';
 import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import type { ChartSeries } from '../../components/charts/chart-types';
+import { classMap } from 'lit/directives/class-map.js';
+import { repeat } from 'lit/directives/repeat.js';
+import type {
+  ChartClickDetail,
+  ChartSeries,
+  ChartState,
+} from '../../components/charts/chart-types';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/charts/analytics-chart';
 import '../../components/metrics-card';
@@ -92,7 +98,8 @@ export class SessionEvidenceView extends PageLitElement {
   static styles = [
     pageHostStyles,
     css`
-    .session-evidence {
+    .session-evidence,
+    .session-evidence-view {
       display: flex;
       flex-direction: column;
       gap: 24px;
@@ -384,9 +391,11 @@ export class SessionEvidenceView extends PageLitElement {
     }
   }
 
+  private currentRequestId = 0;
+
   private async load(): Promise<void> {
     if (!this.sessionId) return;
-    if (this.loading) return;
+    const requestId = ++this.currentRequestId;
     this.loading = true;
     this.globalState = 'loading';
     this.globalError = null;
@@ -420,6 +429,8 @@ export class SessionEvidenceView extends PageLitElement {
       searchApi.getRootSessionTree(this.sessionId),
       sessionApi.getUtilizationReport(this.sessionId, query),
     ]);
+
+    if (requestId !== this.currentRequestId) return;
 
     this.summary = panelStateFromResult(summary);
     this.contextTiming = panelStateFromResult(contextTiming);
@@ -460,9 +471,7 @@ export class SessionEvidenceView extends PageLitElement {
     this.loading = false;
   }
 
-  private chartState(
-    state: LoadState,
-  ): import('../../components/charts/chart-types').ChartState | null {
+  private chartState(state: LoadState): ChartState | null {
     switch (state) {
       case 'loading':
         return 'loading';
@@ -538,7 +547,9 @@ export class SessionEvidenceView extends PageLitElement {
 
     return html`
       <div class="metric-grid">
-        ${cards.map(
+        ${repeat(
+          cards,
+          (card) => card.metricId,
           (card) => html`
             <metrics-card
               label=${card.label}
@@ -554,7 +565,7 @@ export class SessionEvidenceView extends PageLitElement {
     `;
   }
 
-  private handleBarClick = (e: CustomEvent): void => {
+  private handleBarClick = (e: CustomEvent<ChartClickDetail>): void => {
     if (!e.detail) return;
     const points = this.contextTiming.data?.points ?? [];
     const point = resolveTimingPoint(e.detail as Record<string, unknown>, points);
@@ -573,7 +584,7 @@ export class SessionEvidenceView extends PageLitElement {
         <h2>Context and request timing</h2>
         <analytics-chart
           title="Context growth across session"
-          description="Context size (in tokens) for each message in chronological order. Click any bar to view message details."
+          description="Context size (in tokens) for each message in chronological order, showing active context and tokens removed by compaction. Click any bar to view message details."
           .series=${this.cachedContextTimingSeries}
           .state=${this.chartState(this.contextTiming.state)}
           @chart-click=${this.handleBarClick}
@@ -636,7 +647,9 @@ export class SessionEvidenceView extends PageLitElement {
             </tr>
           </thead>
           <tbody>
-            ${rows.map(
+            ${repeat(
+              rows,
+              (row) => `${row.kind}:${row.componentId}`,
               (row) => html`
                 <tr>
                   <td><span class="kind-badge">${row.kind}</span></td>
@@ -667,7 +680,9 @@ export class SessionEvidenceView extends PageLitElement {
       <div class="section">
         <h2>Validation</h2>
         <ul class="validation-list">
-          ${this.validation.data.validations.map(
+          ${repeat(
+            this.validation.data.validations,
+            (v) => v.validationType,
             (v) => html`
               <li class="validation-row">
                 <span>${v.validationType}</span>
@@ -685,7 +700,7 @@ export class SessionEvidenceView extends PageLitElement {
     return html`
       <div class="view-tabs" role="tablist" aria-label="Evidence view">
         <a
-          class="view-tab ${currentView === 'evidence' ? 'active' : ''}"
+          class=${classMap({ 'view-tab': true, active: currentView === 'evidence' })}
           href="#/sessions/${this.sessionId}?view=evidence"
           @click=${(e: Event) => {
             e.preventDefault();
@@ -695,7 +710,7 @@ export class SessionEvidenceView extends PageLitElement {
           Evidence
         </a>
         <a
-          class="view-tab ${currentView === 'transcript' ? 'active' : ''}"
+          class=${classMap({ 'view-tab': true, active: currentView === 'transcript' })}
           href="#/sessions/${this.sessionId}?view=transcript"
           @click=${(e: Event) => {
             e.preventDefault();
@@ -755,7 +770,7 @@ export class SessionEvidenceView extends PageLitElement {
 
   render() {
     return html`
-      <div class="session-evidence">
+      <div class="session-evidence session-evidence-view">
         ${this.renderBackLink()}
         ${this.renderHeader()}
 

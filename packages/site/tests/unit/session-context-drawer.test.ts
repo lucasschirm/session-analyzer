@@ -179,4 +179,42 @@ describe('session-context-drawer', () => {
 
     expect(prevSpy).toHaveBeenCalled();
   });
+
+  it('renders Compacted Tokens stat card when compactedTokens is present', async () => {
+    const drawer = Object.assign(document.createElement('session-context-drawer'), {
+      message: {
+        ...sampleMessage,
+        compactedTokens: 38000,
+      },
+    }) as SessionContextDrawer;
+    await mount(drawer);
+    const root = shadow(drawer);
+
+    expect(root.textContent).toContain('Compacted Tokens');
+    expect(root.textContent).toContain('38,000');
+  });
+
+  it('renders Compacted Tokens stat card when removedTokens fallback is present', async () => {
+    const drawer = Object.assign(document.createElement('session-context-drawer'), {
+      message: {
+        ...sampleMessage,
+        removedTokens: 25000,
+      },
+    }) as SessionContextDrawer;
+    await mount(drawer);
+    const root = shadow(drawer);
+
+    expect(root.textContent).toContain('Compacted Tokens');
+    expect(root.textContent).toContain('25,000');
+  });
+
+  it('does not render Compacted Tokens stat card when neither is present', async () => {
+    const drawer = Object.assign(document.createElement('session-context-drawer'), {
+      message: sampleMessage,
+    }) as SessionContextDrawer;
+    await mount(drawer);
+    const root = shadow(drawer);
+
+    expect(root.textContent).not.toContain('Compacted Tokens');
+  });
 });

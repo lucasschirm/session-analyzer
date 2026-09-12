@@ -86,30 +86,44 @@ function buildSeries(
   groups: Map<string, ChartBucket[]>,
   stacked = false,
   area = false,
+  seriesOrder?: readonly string[],
 ): unknown[] {
-  return Array.from(groups.entries())
-    .sort(([a], [b]) => (a || '').localeCompare(b || ''))
-    .map(([name, buckets]) => {
-      const byX = new Map(buckets.map((b) => [String(b.x), b]));
-      return {
-        name: name || 'value',
-        type,
-        stack: stacked ? 'total' : undefined,
-        areaStyle: area ? {} : undefined,
-        emphasis: { focus: 'series' },
-        data: xAxisData.map((x) => {
-          const b = byX.get(x);
-          if (!b || b.y === null) return null;
-          if (b.evidenceLink) {
-            return {
-              value: b.y,
-              evidenceLink: b.evidenceLink,
-            };
-          }
-          return b.y;
-        }),
-      };
+  const entries = Array.from(groups.entries());
+  if (seriesOrder && seriesOrder.length > 0) {
+    const orderMap = new Map(seriesOrder.map((name, idx) => [name, idx]));
+    entries.sort(([a], [b]) => {
+      const idxA = orderMap.get(a) ?? -1;
+      const idxB = orderMap.get(b) ?? -1;
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return (a || '').localeCompare(b || '');
     });
+  } else {
+    entries.sort(([a], [b]) => (a || '').localeCompare(b || ''));
+  }
+
+  return entries.map(([name, buckets]) => {
+    const byX = new Map(buckets.map((b) => [String(b.x), b]));
+    return {
+      name: name || 'value',
+      type,
+      stack: stacked ? 'total' : undefined,
+      areaStyle: area ? {} : undefined,
+      emphasis: { focus: 'series' },
+      data: xAxisData.map((x) => {
+        const b = byX.get(x);
+        if (!b || b.y === null) return null;
+        if (b.evidenceLink) {
+          return {
+            value: b.y,
+            evidenceLink: b.evidenceLink,
+          };
+        }
+        return b.y;
+      }),
+    };
+  });
 }
 
 function timeSeriesOption(series: ChartSeries): EChartsCoreOption {
@@ -123,7 +137,8 @@ function timeSeriesOption(series: ChartSeries): EChartsCoreOption {
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
     dataZoom: baseDataZoom,
-    series: buildSeries('line', xAxisData, groups),
+    ...(series.colors && series.colors.length > 0 ? { color: [...series.colors] } : {}),
+    series: buildSeries('line', xAxisData, groups, false, false, series.seriesOrder),
     animation: false,
   } as EChartsCoreOption;
 }
@@ -139,7 +154,8 @@ function stackedBarOption(series: ChartSeries): EChartsCoreOption {
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
     dataZoom: baseDataZoom,
-    series: buildSeries('bar', xAxisData, groups, true),
+    ...(series.colors && series.colors.length > 0 ? { color: [...series.colors] } : {}),
+    series: buildSeries('bar', xAxisData, groups, true, false, series.seriesOrder),
     animation: false,
   } as EChartsCoreOption;
 }
@@ -155,7 +171,8 @@ function stackedAreaOption(series: ChartSeries): EChartsCoreOption {
     xAxis: { ...baseXAxis, name: series.xLabel, data: xAxisData },
     yAxis: { ...baseYAxis, name: series.yLabel },
     dataZoom: baseDataZoom,
-    series: buildSeries('line', xAxisData, groups, true, true),
+    ...(series.colors && series.colors.length > 0 ? { color: [...series.colors] } : {}),
+    series: buildSeries('line', xAxisData, groups, true, true, series.seriesOrder),
     animation: false,
   } as EChartsCoreOption;
 }
@@ -258,7 +275,7 @@ function heatmapOption(series: ChartSeries): EChartsCoreOption {
       b.y as number,
     ]);
 
-  const maxValue = Math.max(1, ...data.map((d) => d[2] as number));
+  const maxValue = data.reduce((max, d) => Math.max(max, d[2] as number), 1);
 
   return {
     aria: { enabled: true },
