@@ -1,4 +1,4 @@
-import { css, html, LitElement, type PropertyValues, type TemplateResult } from 'lit';
+import { css, html, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, query, state } from 'lit/decorators.js';
 import {
   createPasskey,
@@ -11,6 +11,7 @@ import {
   unlock,
   unlockWithWebAuthnDevice,
 } from '../sync/credential-crypto';
+import { ModalBase, type ModalStyles } from './modal-base';
 
 /**
  * Passkey modal: create, unlock, or confirm forgetting the global vault
@@ -24,36 +25,14 @@ import {
  * passkey.
  */
 @customElement('passkey-modal')
-export class PasskeyModal extends LitElement {
-  static styles = css`
-    :host {
-      display: contents;
-    }
+export class PasskeyModal extends ModalBase {
+  overlayClass = 'passkey-modal';
+  ariaLabel = 'Passkey';
 
-    .passkey-modal {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.6);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 100;
-      padding: 16px;
-    }
-
-    .panel {
-      background: var(--md-sys-color-surface, #171a21);
-      border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 12px;
-      padding: 24px;
-      width: min(480px, 100%);
-      max-height: calc(100vh - 32px);
-      overflow-y: auto;
-      box-sizing: border-box;
-      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
-    }
-
-    h2 {
+  static styles: ModalStyles = [
+    ModalBase.styles,
+    css`
+      h2 {
       margin: 0 0 16px;
       font-size: 18px;
       color: var(--md-sys-color-on-surface, #e6e9ef);
@@ -178,9 +157,8 @@ export class PasskeyModal extends LitElement {
       width: auto;
       margin-bottom: 0;
     }
-  `;
-
-  @property({ type: Boolean, reflect: true }) open = false;
+    `,
+  ];
 
   @property({ type: String, reflect: true }) mode: 'create' | 'unlock' | 'forgot' = 'create';
 
@@ -204,17 +182,15 @@ export class PasskeyModal extends LitElement {
 
   private webauthnCheckId = 0;
 
-  willUpdate(changed: PropertyValues<this>): void {
+  willUpdate(changed: PropertyValues): void {
+    super.willUpdate(changed);
     if (changed.has('open') && this.open) {
       this.resetState();
     }
   }
 
-  async updated(changed: PropertyValues<this>): Promise<void> {
-    if (changed.has('open') && this.open) {
-      await this.updateComplete;
-      this.focusFirstInput();
-    }
+  async updated(changed: PropertyValues): Promise<void> {
+    super.updated(changed);
     if (changed.has('mode') || changed.has('open')) {
       this.checkWebAuthn();
     }
@@ -246,25 +222,9 @@ export class PasskeyModal extends LitElement {
     this.hasWebauthnCredential = hasCredential;
   }
 
-  private focusFirstInput(): void {
+  protected focusFirst(): void {
     if (this.mode === 'create' || this.mode === 'unlock') {
       this.passkeyInput?.focus();
-    }
-  }
-
-  private close(): void {
-    this.dispatchEvent(new CustomEvent('modal-close', { bubbles: true, composed: true }));
-  }
-
-  private handleOverlayClick(event: MouseEvent): void {
-    if (event.target === event.currentTarget) {
-      this.close();
-    }
-  }
-
-  private handleKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape') {
-      this.close();
     }
   }
 
@@ -529,22 +489,8 @@ export class PasskeyModal extends LitElement {
     }
   }
 
-  render(): TemplateResult {
-    if (!this.open) {
-      return html``;
-    }
-
-    return html`
-      <div
-        class="passkey-modal"
-        @click=${this.handleOverlayClick}
-        @keydown=${this.handleKeydown}
-      >
-        <div class="panel" role="dialog" aria-modal="true" aria-label="Passkey">
-          ${this.renderContent()}
-        </div>
-      </div>
-    `;
+  renderPanel(): TemplateResult {
+    return this.renderContent();
   }
 }
 
