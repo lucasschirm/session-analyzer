@@ -4,13 +4,8 @@ import {
   selectArtifactBlobContent,
   selectManifestArtifactsByRelativePath,
 } from './helpers/export-verify.js';
-import {
-  FixtureBucket,
-  fixtureBuffer,
-  S3_BUCKET,
-  S3_ENDPOINT,
-  sha256Hex,
-} from './sync-fixtures.js';
+import { startSyncFromHome, waitForSyncIdle } from './helpers/sync-flow.js';
+import { FixtureBucket, fixtureBuffer, sha256Hex } from './sync-fixtures.js';
 
 /**
  * UX-033: Artifact Diff (`#/artifact-diff`) renders real diff content across
@@ -46,82 +41,11 @@ import {
  * component-specific one -- only unit-tested at the jsdom level until now.
  */
 
-const PASSKEY = 'e2e-passkey-artifact-diff';
 const SETTINGS_PATH = '.claude/settings.json';
 const LEFT_MODEL = 'claude-3-5-sonnet-before';
 const RIGHT_MODEL = 'claude-3-5-sonnet-after';
 const LEFT_CONTENT = Buffer.from(JSON.stringify({ model: LEFT_MODEL }, null, 2));
 const RIGHT_CONTENT = Buffer.from(JSON.stringify({ model: RIGHT_MODEL }, null, 2));
-
-// ---------------------------------------------------------------------------
-// Sync-flow helpers. Mirrors sync.spec.ts's own local, unexported helpers --
-// each browser E2E spec in this repo is self-contained by convention (see
-// this skill's Step 5: fixtures/flows are deliberately duplicated per spec
-// file rather than sharing private test-only helpers across files).
-// ---------------------------------------------------------------------------
-
-function progressBar(page: Page): Locator {
-  return page.locator('app-root').locator('sync-progress-bar').getByRole('status');
-}
-
-async function openConnectModal(page: Page): Promise<void> {
-  await page.goto('/#/settings/data-sources');
-  await expect(
-    page.locator('connect-modal').getByRole('heading', { name: 'Connections' }),
-  ).toBeVisible({ timeout: 10000 });
-}
-
-async function fillConnectionForm(page: Page): Promise<void> {
-  const panel = page.locator('connect-modal');
-  await panel.getByRole('button', { name: '+ New connection' }).click();
-  await panel.getByLabel('Connection name').fill('E2E Artifact Diff');
-  await panel.getByLabel('Region').fill('us-east-1');
-  await panel.getByLabel('Bucket').fill(S3_BUCKET);
-  await panel.getByLabel('Endpoint (optional)').fill(S3_ENDPOINT);
-  await panel.getByLabel('Access key ID').fill('AKIA');
-  await panel.getByLabel('Secret access key').fill('secret');
-  await panel.getByLabel('Save to local storage').check();
-}
-
-async function confirmPasskey(page: Page): Promise<void> {
-  const modal = page.getByRole('dialog', { name: 'Passkey' });
-  await expect(modal).toBeVisible({ timeout: 10000 });
-  const inputs = modal.getByLabel('Passkey');
-  await inputs.first().fill(PASSKEY);
-  const confirm = modal.getByLabel('Confirm passkey');
-  if (await confirm.isVisible().catch(() => false)) {
-    await confirm.fill(PASSKEY);
-  }
-  await modal.getByRole('button', { name: /Create Passkey|Unlock/ }).click();
-  await expect(modal).toBeHidden({ timeout: 10000 });
-}
-
-async function startSyncFromHome(page: Page, bucket: FixtureBucket): Promise<void> {
-  await bucket.installRoute(page);
-  await openConnectModal(page);
-  await fillConnectionForm(page);
-  const panel = page.locator('connect-modal');
-  await panel.getByRole('button', { name: 'Sync' }).click();
-  await confirmPasskey(page);
-  await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
-}
-
-async function waitForSyncCompleted(page: Page, timeout = 30000): Promise<void> {
-  await expect(progressBar(page)).toBeVisible({ timeout });
-  await expect(progressBar(page)).toContainText(/[✓⊘⚠]/, { timeout });
-}
-
-/**
- * Wait for the sync to finish and dismiss the completed summary. The completed
- * summary stays visible until the user clicks "Close" (it no longer auto-hides),
- * so this waits for the completed state and then clicks the Close button.
- */
-async function waitForSyncIdle(page: Page, timeout = 30000): Promise<void> {
-  await waitForSyncCompleted(page, timeout);
-  const closeButton = page.locator('sync-progress-bar').getByRole('button', { name: 'Close' });
-  await closeButton.click();
-  await expect(progressBar(page)).toBeHidden({ timeout });
-}
 
 // ---------------------------------------------------------------------------
 // Storage-page download helper (mirrors storage-optimize.spec.ts's `dbRow`/

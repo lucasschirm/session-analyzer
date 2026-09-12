@@ -1,4 +1,4 @@
-import { css, html, type TemplateResult } from 'lit';
+import { css, html, nothing, type TemplateResult } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
@@ -306,7 +306,7 @@ export class StoragePage extends PageLitElement {
     },
   };
 
-  async connectedCallback(): Promise<void> {
+  connectedCallback(): void {
     super.connectedCallback();
     void this.loadStorageInfo();
   }
@@ -535,7 +535,7 @@ export class StoragePage extends PageLitElement {
     this.singleDeleting = true;
 
     try {
-      if (target.name === 'Control DB') {
+      if (target.id === 'control') {
         // 1. Terminate the db worker (releases OPFS file handles).
         dbClient.reset();
         // 2. Remove the OPFS file so a fresh empty DB is created on next boot.
@@ -619,10 +619,10 @@ export class StoragePage extends PageLitElement {
   /** Renders the Size column body: distinguishes loading, a resolved value
    * (including a legitimate `0`), and a failed size query — never collapsing
    * failure onto the same "—" a legitimate empty/loading state would show. */
-  private renderSizeCell(db: DatabaseRow): TemplateResult {
+  private renderSizeCell(db: DatabaseRow): TemplateResult | string {
     if (db.sizeState === 'loading') return html`Calculating…`;
     if (db.sizeState === 'error') return html`<span class="size-error">Error</span>`;
-    return html`${this.formatSize(db.size)}`;
+    return this.formatSize(db.size);
   }
 
   /** A row's actions are disabled while its own size is (re)loading, or while
@@ -674,12 +674,66 @@ export class StoragePage extends PageLitElement {
     }
   }
 
-  private renderOverlay(): TemplateResult | string {
+  private renderOverlay(): TemplateResult | typeof nothing {
     const overlay = this.overlay;
-    if (!overlay) return '';
+    if (!overlay) return nothing;
     return html`
       <div class="storage-overlay" role="status" aria-live="polite">
         <div class="storage-overlay-panel">${this.renderOverlayBody(overlay)}</div>
+      </div>
+    `;
+  }
+
+  private handleRowDownload(event: Event): void {
+    const button = event.currentTarget as HTMLButtonElement | null;
+    const id = button?.dataset.id;
+    if (id !== 'control' && id !== 'analytics') return;
+    void this.handleDownload(event, id);
+  }
+
+  private handleRowOptimize(event: Event): void {
+    const button = event.currentTarget as HTMLButtonElement | null;
+    const id = button?.dataset.id;
+    if (id !== 'control' && id !== 'analytics') return;
+    void this.handleOptimize(event, id);
+  }
+
+  private handleRowDelete(event: Event): void {
+    const button = event.currentTarget as HTMLButtonElement | null;
+    const id = button?.dataset.id;
+    if (id !== 'control' && id !== 'analytics') return;
+    const db = this.databases.find((row) => row.id === id);
+    if (db) this.handleSingleDeleteClick(db);
+  }
+
+  private renderDatabaseRowActions(db: DatabaseRow): TemplateResult {
+    const busy = this.isRowBusy(db);
+    return html`
+      <div class="actions-group">
+        <button
+          class="secondary"
+          ?disabled=${busy}
+          data-id=${db.id}
+          @click=${this.handleRowDownload}
+        >
+          Download
+        </button>
+        <button
+          class="secondary"
+          ?disabled=${busy}
+          data-id=${db.id}
+          @click=${this.handleRowOptimize}
+        >
+          Optimize
+        </button>
+        <button
+          class="danger"
+          ?disabled=${busy}
+          data-id=${db.id}
+          @click=${this.handleRowDelete}
+        >
+          Delete
+        </button>
       </div>
     `;
   }
@@ -690,29 +744,7 @@ export class StoragePage extends PageLitElement {
         <td>${db.name}<br /><small class="filename">${db.filename}</small></td>
         <td>${db.backend}</td>
         <td>${this.renderSizeCell(db)}</td>
-        <td class="actions">
-          <button
-            class="secondary"
-            ?disabled=${this.isRowBusy(db)}
-            @click=${(event: Event) => this.handleDownload(event, db.id)}
-          >
-            Download
-          </button>
-          <button
-            class="secondary"
-            ?disabled=${this.isRowBusy(db)}
-            @click=${(event: Event) => this.handleOptimize(event, db.id)}
-          >
-            Optimize
-          </button>
-          <button
-            class="danger"
-            ?disabled=${this.isRowBusy(db)}
-            @click=${() => this.handleSingleDeleteClick(db)}
-          >
-            Delete
-          </button>
-        </td>
+        <td class="actions">${this.renderDatabaseRowActions(db)}</td>
       </tr>
     `;
   }
@@ -788,7 +820,6 @@ export class StoragePage extends PageLitElement {
               this.databases,
               (db) => db.id,
               (db) => this.renderDatabaseRow(db),
-            )}
             )}
           </tbody>
         </table>

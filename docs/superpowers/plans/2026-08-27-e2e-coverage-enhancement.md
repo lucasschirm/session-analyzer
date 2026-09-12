@@ -53,14 +53,14 @@ backfilled into §6.1 by this plan:
 | `passkey.spec.ts` | Locked-vault passkey prompt and "Forgot" vault deletion (UX-016) |
 | `portfolio-refresh.spec.ts` | Live portfolio metric/chart refresh after a second upload (UX-003) |
 | `sessions-filter.spec.ts` | Scope filter URL sync and reload persistence (UX-010) |
-| `storage-optimize.spec.ts` | Storage page per-row Optimize/Download overlay terminal states and Size-column loading/ok/error distinction (UX-025) |
+| `storage-optimize.spec.ts` | Storage page per-row Optimize/Download overlay terminal states and Size-column loading/ok/error distinction (UX-032) |
 | `sync.spec.ts` | Full CAS sync journey, retry, cancel, offline, reload reconciliation, second-tab follower, plus catalog entries UX-004 (ingestion seam), UX-005 (heartbeat), UX-006 (export content), UX-008 (S3 5xx affordance) |
 | `transcript-xss.spec.ts` | Transcript XSS sanitization (UX-011) |
 | `ux-002-empty-error.spec.ts` | Empty vs. error state disambiguation (UX-002) |
 | `ux-007-import-failure.spec.ts` | Manual import failure-class specificity (UX-007) |
 | `ux-009-query-hang.spec.ts` | Bounded timeout on a blocked analytics query (UX-009) |
 | `ux-015-delete-confirmation.spec.ts` | Delete-confirmation focus trap / keyboard contract (UX-015) |
-| `ux-026-artifact-diff.spec.ts` | Artifact Diff real diff content across a version change resolved through the OPFS-backed blob store, empty/error affordance distinction, and a Component Ecosystem inline-diff-panel spot check (UX-026) |
+| `ux-033-artifact-diff.spec.ts` | Artifact Diff real diff content across a version change resolved through the OPFS-backed blob store, empty/error affordance distinction, and a Component Ecosystem inline-diff-panel spot check (UX-033) |
 
 `packages/site/tests/e2e/helpers/heartbeat.spec.ts` is infrastructure —
 a regression spec for the `assertHeartbeat` helper itself (§7.3), not a
