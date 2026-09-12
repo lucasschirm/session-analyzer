@@ -26,13 +26,30 @@ async function setupPipeline() {
 describe('PIPE-014: devin drill-down data presence and missing-data reporting', () => {
   it('ingests a golden devin manifest and surfaces available drill-down data', async () => {
     const { harness, orchestrator } = await setupPipeline();
-    const { bundle } = await buildDevinManifestBundle();
+    const { bundle, resolvedArtifacts } = await buildDevinManifestBundle();
 
     const receipt = await orchestrator.ingestManifest(bundle);
     expect(receipt.status).toBe('committed');
     expect(receipt.issueIds).toEqual([]);
 
-    const dataSource = createAnalyticsDataSource(harness);
+    const inMemoryBlobs = new Map<string, Uint8Array>();
+    for (const art of resolvedArtifacts) {
+      if (art.sha256 && art.content) {
+        const bytes =
+          typeof art.content === 'string' ? new TextEncoder().encode(art.content) : art.content;
+        inMemoryBlobs.set(art.sha256, bytes);
+      }
+    }
+    const blobStore = {
+      read: async (sha256: string) => {
+        const bytes = inMemoryBlobs.get(sha256);
+        return bytes ? { content: bytes } : undefined;
+      },
+      write: async () => {},
+      has: async (sha256: string) => inMemoryBlobs.has(sha256),
+    };
+
+    const dataSource = createAnalyticsDataSource(harness, createSha256ContentHasher(), blobStore);
 
     // Dashboard-level summary is present with the token headline metric and
     // the sample-size token required by the aggregates-expose-sample-size rule.

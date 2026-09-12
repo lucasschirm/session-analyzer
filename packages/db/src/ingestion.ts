@@ -340,7 +340,11 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       projectId: bundle.projectId,
       sessionId: bundle.sessionId,
     };
-    const sourceFingerprint = await this.hashArtifacts(bundle.artifacts);
+    // Stamp content-derived sha256 onto artifacts that lack one so evidence
+    // pointers resolve to `sha256:<hash>` blob references — required now that
+    // verbatim message content is no longer persisted in normalized_events.
+    const artifacts = await this.withContentHashes(bundle.artifacts);
+    const sourceFingerprint = await this.hashArtifacts(artifacts);
 
     let transformer: SessionTransformer<UnknownArtifactBundle>;
     try {
@@ -362,11 +366,7 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       });
     }
 
-    const artifactBundle = this.buildArtifactBundle(
-      bundle.artifacts,
-      sourceIdentity,
-      sourceFingerprint,
-    );
+    const artifactBundle = this.buildArtifactBundle(artifacts, sourceIdentity, sourceFingerprint);
     const transformContext = {
       analysisReleaseId: this.context.analysisReleaseId,
       parserId: transformer.id,
@@ -409,15 +409,16 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
 
     const current = await getCurrentGenerationId(this.context.executor, rootSession.sessionId);
     if (current === generationId) {
+      const retainIssues = await this.retainArtifacts(artifacts);
       return this.committedReceipt({
         generationId,
         sessionId: rootSession.sessionId,
         analysisReleaseId: this.context.analysisReleaseId,
-        issues: validationIssues,
+        issues: [...validationIssues, ...retainIssues],
       });
     }
 
-    return this.commitAtomic({
+    const receipt = await this.commitAtomic({
       generationId,
       sessionId: rootSession.sessionId,
       rootSessionId: rootSession.rootSessionId,
@@ -427,6 +428,85 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       result,
       source: sourceIdentity,
     });
+
+    if (receipt.status === 'committed') {
+      const retainIssues = await this.retainArtifacts(artifacts);
+      if (retainIssues.length > 0) {
+        return this.committedReceipt({
+          generationId: receipt.generationId,
+          sessionId: receipt.sessionId,
+          analysisReleaseId: receipt.analysisReleaseId,
+          issues: retainIssues,
+        });
+      }
+    }
+    return receipt;
+  }
+
+  /**
+   * Retains artifact bytes in the configured blob store so artifact-blob
+   * evidence pointers (`path: 'sha256:<hash>'`) stay resolvable after
+   * normalized_events stops carrying verbatim message content. No-op when no
+   * blob store is configured; per-artifact failures surface as recoverable
+   * issues rather than failing the import.
+   */
+  async retainArtifacts(
+    artifacts: ReadonlyArray<{
+      readonly relativePath: string;
+      readonly sha256?: string;
+      readonly size?: number;
+      readonly mediaType?: string;
+      readonly content?: ArtifactContent;
+    }>,
+  ): Promise<IngestionIssue[]> {
+    const blobStore = this.context.blobStore;
+    if (!blobStore) return [];
+    const issues: IngestionIssue[] = [];
+    for (const artifact of artifacts) {
+      if (artifact.content === undefined || !artifact.sha256) continue;
+      try {
+        await blobStore.retain({
+          sha256: artifact.sha256,
+          size:
+            artifact.size ??
+            (typeof artifact.content === 'string'
+              ? artifact.content.length
+              : artifact.content.byteLength),
+          relativePath: artifact.relativePath,
+          mediaType: artifact.mediaType ?? 'application/octet-stream',
+          content: artifact.content,
+          sourceLocation: {
+            reacquisitionKey: artifact.relativePath,
+            sourceNamespace: 'manual',
+            relativePath: artifact.relativePath,
+            retentionClass: 'local',
+          },
+        });
+      } catch (error) {
+        issues.push({
+          code: 'artifact_blob_retain_failed',
+          severity: 'recoverable',
+          message: `Failed to retain artifact bytes for ${artifact.relativePath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          entityType: 'artifact',
+          entityId: artifact.relativePath,
+        });
+      }
+    }
+    return issues;
+  }
+
+  private async withContentHashes(
+    artifacts: readonly Artifact<ArtifactContent>[],
+  ): Promise<Artifact<ArtifactContent>[]> {
+    return Promise.all(
+      artifacts.map(async (artifact) =>
+        artifact.sha256 || artifact.content === undefined
+          ? artifact
+          : { ...artifact, sha256: await this.context.hasher.hash(artifact.content) },
+      ),
+    );
   }
 
   async validateBatch(result: TransformResult): Promise<readonly IngestionIssue[]> {
@@ -1346,13 +1426,27 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     result: TransformResult,
   ): Promise<void> {
     for (const record of result.evidence) {
+      let recordToStore = record;
+      if (record.recordType === 'message' && record.payload && typeof record.payload === 'object') {
+        const payload = { ...(record.payload as Record<string, unknown>) };
+        if ('content' in payload) {
+          delete payload.content;
+          if (!payload.storage) {
+            payload.storage = 'artifact-blob';
+          }
+          if (!payload.path && record.provenance?.path) {
+            payload.path = record.provenance.path;
+          }
+          recordToStore = { ...record, payload };
+        }
+      }
       await NormalizedEventStore.insert(tx, {
-        id: record.recordId,
-        sessionId: record.sessionId,
+        id: recordToStore.recordId,
+        sessionId: recordToStore.sessionId,
         generationId,
-        eventType: record.recordType,
+        eventType: recordToStore.recordType,
         eventVersion: 1,
-        rawDetails: JSON.stringify(record),
+        rawDetails: JSON.stringify(recordToStore),
         retainRaw: true,
       });
     }

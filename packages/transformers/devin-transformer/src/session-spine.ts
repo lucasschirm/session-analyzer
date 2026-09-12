@@ -80,13 +80,6 @@ function sessionTimestamps(
   };
 }
 
-function messageContent(chatMessage: unknown): string | undefined {
-  if (!chatMessage || typeof chatMessage !== 'object') return undefined;
-  const content = (chatMessage as { content?: unknown }).content;
-  if (typeof content === 'string') return content;
-  return undefined;
-}
-
 function messageRole(chatMessage: unknown, normalizedRole: string): string {
   if (chatMessage && typeof chatMessage === 'object') {
     const raw = (chatMessage as { role?: unknown }).role;
@@ -208,7 +201,8 @@ export function buildSessionSpine(
         messageId: eventId,
         nodeId: message.nodeId,
         parentNodeId: message.parentNodeId,
-        content: messageContent(message.chatMessage),
+        storage: 'artifact-blob',
+        path: rootArtifactId,
         ...subagentTagFields(message),
       },
     });

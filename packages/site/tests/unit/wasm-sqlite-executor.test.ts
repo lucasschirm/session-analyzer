@@ -91,6 +91,42 @@ describe('WasmSqliteExecutor.vacuum', () => {
   });
 });
 
+describe('WasmSqliteExecutor.checkpointWal and vacuumIfNeeded', () => {
+  it('checkpoints WAL without error', async () => {
+    const executor = await WasmSqliteExecutor.create({ preferOpfs: false });
+    try {
+      expect(() => executor.checkpointWal('TRUNCATE')).not.toThrow();
+    } finally {
+      await executor.close();
+    }
+  });
+
+  it('reports freelist count and vacuums only when threshold exceeded', async () => {
+    const executor = await WasmSqliteExecutor.create({ preferOpfs: false });
+    try {
+      executor.exec('CREATE TABLE t (v TEXT)');
+      for (let i = 0; i < 500; i++) {
+        executor.exec('INSERT INTO t (v) VALUES (?)', [`row-${i}`.padEnd(200, 'x')]);
+      }
+      executor.exec('DELETE FROM t WHERE rowid > 1');
+
+      const freelist = executor.getFreelistCount();
+      expect(freelist).toBeGreaterThan(0);
+
+      // Higher threshold than available freelist: should not vacuum
+      const didVacuumHigh = executor.vacuumIfNeeded(freelist + 100);
+      expect(didVacuumHigh).toBe(false);
+
+      // Lower threshold than available freelist: should vacuum
+      const didVacuumLow = executor.vacuumIfNeeded(1);
+      expect(didVacuumLow).toBe(true);
+      expect(executor.getFreelistCount()).toBe(0);
+    } finally {
+      await executor.close();
+    }
+  });
+});
+
 describe('WasmSqliteExecutor.getSizeBytes', () => {
   it('returns page_count * page_size, matching direct PRAGMA reads', async () => {
     const executor = await WasmSqliteExecutor.create({ preferOpfs: false });

@@ -147,6 +147,12 @@ export interface VacuumAnalyticsDatabaseRequest extends BaseRequest {
   readonly type: 'vacuumAnalyticsDatabase';
 }
 
+/** Checkpoints the WAL and optionally vacuums if freelist threshold is met. */
+export interface CheckpointAnalyticsDatabaseRequest extends BaseRequest {
+  readonly type: 'checkpointAnalyticsDatabase';
+  readonly minFreelistPages?: number;
+}
+
 /**
  * Serialize-free export via `VACUUM INTO` (OPFS backend) or the existing
  * `exportAnalyticsDatabase` path (memory backend) — see
@@ -174,6 +180,7 @@ export type AnalyticsRequest =
   | DeleteProjectRequest
   | ExportAnalyticsDatabaseRequest
   | VacuumAnalyticsDatabaseRequest
+  | CheckpointAnalyticsDatabaseRequest
   | ExportAnalyticsDatabaseOptimizedRequest
   | GetAnalyticsDatabaseSizeRequest
   | CloseRequest;
@@ -191,6 +198,7 @@ export type AnalyticsRequestPayload =
   | Omit<DeleteProjectRequest, 'id'>
   | Omit<ExportAnalyticsDatabaseRequest, 'id'>
   | Omit<VacuumAnalyticsDatabaseRequest, 'id'>
+  | Omit<CheckpointAnalyticsDatabaseRequest, 'id'>
   | Omit<ExportAnalyticsDatabaseOptimizedRequest, 'id'>
   | Omit<GetAnalyticsDatabaseSizeRequest, 'id'>
   | Omit<CloseRequest, 'id'>;

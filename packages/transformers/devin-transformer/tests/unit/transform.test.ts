@@ -89,11 +89,11 @@ describe('DevinTransformer.transform', () => {
       expect(turns.length).toBe(2);
 
       const nodeOnePayload = messages.find((r) => (r.payload as { nodeId?: number }).nodeId === 1)
-        ?.payload as { content?: string } | undefined;
-      // The transformer's Map-based last-write-wins (parse-bundle.ts's
-      // `byId`) resolves to the LATER transcript line's content, matching
-      // what an in-place edit replay actually means.
-      expect(nodeOnePayload?.content).toBe('Run the build (edited)');
+        ?.payload as { content?: string; storage?: string; path?: string } | undefined;
+      // Message records omit verbatim content and store artifact-blob pointer
+      expect(nodeOnePayload?.storage).toBe('artifact-blob');
+      expect(nodeOnePayload?.path).toBeDefined();
+      expect(nodeOnePayload?.content).toBeUndefined();
 
       // No duplicate recordIds anywhere -- a replayed node_id must never
       // reach ingestion as a PK violation (mirrors the tool-call-replay
@@ -244,5 +244,17 @@ describe('DevinTransformer.transform', () => {
       rev.sessionSummaries.map((s) => s.sessionId),
     );
     expect(normal.evidence.map((r) => r.recordId)).toEqual(rev.evidence.map((r) => r.recordId));
+  });
+
+  it('emits message evidence with artifact-blob storage pointer and omits verbatim content', () => {
+    const result = DevinTransformer.transform(linearBundle, defaultContext);
+    const messages = result.evidence.filter((r) => r.recordType === 'message');
+    expect(messages.length).toBeGreaterThan(0);
+    for (const msg of messages) {
+      const payload = msg.payload as Record<string, unknown>;
+      expect(payload.storage).toBe('artifact-blob');
+      expect(typeof payload.path).toBe('string');
+      expect(payload.content).toBeUndefined();
+    }
   });
 });

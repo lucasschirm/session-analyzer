@@ -10,6 +10,7 @@ import type { ManifestSchemaVersion, SyncManifest } from '@lucasschirm/sal-sync-
 import { MANIFEST_SCHEMA_VERSION } from '@lucasschirm/sal-sync-core';
 import type {
   Artifact,
+  ArtifactStatus,
   ComponentCompleteness,
   RegistryResolution,
   SessionSummary,
@@ -67,7 +68,7 @@ interface ManualSuppliedFile {
   readonly sha256: string;
   readonly size: number;
   readonly mediaType: string;
-  readonly status: string;
+  readonly status: ArtifactStatus;
 }
 
 interface ManualArtifactReference {
@@ -75,7 +76,7 @@ interface ManualArtifactReference {
   readonly sha256: string;
   readonly size: number;
   readonly mediaType: string;
-  readonly status: string;
+  readonly status: ArtifactStatus;
   readonly content?: ArtifactContent;
 }
 
@@ -139,9 +140,17 @@ export class ManualIngestionOrchestrator {
       const artifactInventory = await this.buildArtifactInventory(bundle.artifacts);
       const sourceFingerprint = await this.hashArtifactInventory(artifactInventory);
 
+      // Stamp content-derived sha256 onto artifacts that lack one so evidence
+      // pointers resolve to `sha256:<hash>` blob references — required now that
+      // verbatim message content is no longer persisted in normalized_events.
+      const hashedArtifacts = bundle.artifacts.map((artifact, index) => {
+        const sha256 = artifact.sha256 || artifactInventory[index]?.sha256;
+        return sha256 && sha256 !== artifact.sha256 ? { ...artifact, sha256 } : artifact;
+      });
+
       // 4. Transform outside the write transaction.
       const artifactBundle: UnknownArtifactBundle = {
-        artifacts: bundle.artifacts as Artifact<unknown>[],
+        artifacts: hashedArtifacts as Artifact<unknown>[],
         sourceIdentity,
         sourceFingerprint,
       };
@@ -203,11 +212,12 @@ export class ManualIngestionOrchestrator {
       );
 
       if (existingSession?.currentGenerationId === generationId) {
+        const retainIssues = await this.delegate.retainArtifacts(artifactInventory);
         return this.committedReceipt({
           generationId,
           sessionId: rootSession.sessionId,
           analysisReleaseId: this.context.analysisReleaseId,
-          issues: validationIssues,
+          issues: [...validationIssues, ...retainIssues],
         });
       }
 
@@ -242,13 +252,24 @@ export class ManualIngestionOrchestrator {
 
       const receipt = await this.delegate.commitAtomic(commit);
 
-      // Preserve recoverable validation issues on a successful commit.
-      if (receipt.status === 'committed' && validationIssues.length > 0) {
+      // Persist the supplied bytes into the blob store so the artifact-blob
+      // evidence pointers committed above resolve to real content (manual
+      // uploads have no remote CAS to reacquire them from).
+      const retainIssues =
+        receipt.status === 'committed'
+          ? await this.delegate.retainArtifacts(artifactInventory)
+          : [];
+
+      // Preserve recoverable validation/retention issues on a successful commit.
+      if (
+        receipt.status === 'committed' &&
+        (validationIssues.length > 0 || retainIssues.length > 0)
+      ) {
         return this.committedReceipt({
           generationId: receipt.generationId,
           sessionId: receipt.sessionId,
           analysisReleaseId: receipt.analysisReleaseId,
-          issues: validationIssues,
+          issues: [...validationIssues, ...retainIssues],
         });
       }
 
@@ -388,7 +409,20 @@ export class ManualIngestionOrchestrator {
       pluginVersion: 'manual',
       transcriptsCaptured: mainTranscript !== undefined,
       mainTranscriptRelativePath: mainTranscript?.relativePath,
-      artifacts: [],
+      // Persist the supplied files as manifest artifacts so manifest_artifacts
+      // rows exist for evidence-pointer resolution and reprocessing — manual
+      // uploads previously recorded them only in raw_metadata's
+      // suppliedFileInventory, leaving artifact-blob pointers unresolvable.
+      artifacts: inventory.map((item) => ({
+        projectId: bundle.projectId,
+        sessionId: bundle.sessionId,
+        scope: 'session' as const,
+        relativePath: item.relativePath,
+        sha256: item.sha256,
+        size: item.size,
+        status: item.status,
+        mediaType: item.mediaType,
+      })),
       syncRunsCount: 0,
       importBatchId: bundle.importBatchId,
       suppliedFileInventory: inventory.map((item) => ({

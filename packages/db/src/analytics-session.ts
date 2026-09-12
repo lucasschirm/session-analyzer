@@ -69,6 +69,13 @@ import type { ArtifactBlobStore, ContentHasher } from './ports.js';
 
 type Queryable = SqliteExecutor | SqliteTransaction;
 
+// TextDecoder is a stable global in Node and browsers but is not part of the
+// ES2021 lib used by this package. This local declaration keeps the module runtime-agnostic.
+interface TextDecoder {
+  decode(input?: Uint8Array): string;
+}
+declare const TextDecoder: { new (): TextDecoder };
+
 const DEFAULT_LIMIT = 50;
 
 function asString(value: unknown): string {
@@ -436,7 +443,10 @@ async function getRootAndParent(
 
 // Session evidence view
 
-export function createSessionEvidenceView(queryable: Queryable): SessionEvidenceView {
+export function createSessionEvidenceView(
+  queryable: Queryable,
+  blobStore?: ArtifactBlobStore,
+): SessionEvidenceView {
   return {
     getSummary: (sessionId, query) => getSessionEvidenceSummary(queryable, sessionId, query),
     getContextTimingSeries: (sessionId, query) =>
@@ -445,7 +455,8 @@ export function createSessionEvidenceView(queryable: Queryable): SessionEvidence
     getComponentFacts: (sessionId, query) => getComponentFacts(queryable, sessionId, query),
     getValidationSummary: (sessionId, query) => getValidationSummary(queryable, sessionId, query),
     getEvidencePages: (sessionId, query) => getEvidencePages(queryable, sessionId, query),
-    getTranscriptPages: (sessionId, query) => getTranscriptPages(queryable, sessionId, query),
+    getTranscriptPages: (sessionId, query) =>
+      getTranscriptPages(queryable, sessionId, query, blobStore),
     getUtilizationReport: (sessionId, query) =>
       getSessionUtilizationReport(queryable, sessionId, query),
   };
@@ -1323,6 +1334,7 @@ async function getTranscriptPages(
   queryable: Queryable,
   sessionId: string,
   query: AnalyticsQuery | undefined,
+  blobStore?: ArtifactBlobStore,
 ): Promise<EvidencePage> {
   const state = await resolveEvidenceState(queryable, sessionId, query);
   const tokens = pageTokens(query, {
@@ -1382,6 +1394,138 @@ async function getTranscriptPages(
     };
   }
 
+  // If blobStore is provided, attempt to resolve the transcript on demand from OPFS / blob storage
+  if (blobStore) {
+    try {
+      let sha256: string | undefined;
+      const { rows: pathRows } = await queryable.exec(
+        `SELECT json_extract(raw_details, '$.payload.path') AS path
+         FROM normalized_events
+         WHERE session_id = ? AND event_type = 'message' AND raw_details IS NOT NULL
+         LIMIT 1`,
+        [sessionId],
+      );
+      const artifactPath = pathRows[0]?.path ? String(pathRows[0].path) : undefined;
+      if (artifactPath) {
+        if (artifactPath.startsWith('sha256:')) {
+          sha256 = artifactPath.slice('sha256:'.length);
+        } else {
+          const relPath = artifactPath.startsWith('path:')
+            ? artifactPath.slice('path:'.length)
+            : artifactPath;
+          const { rows: artRows } = await queryable.exec(
+            `SELECT sha256 FROM manifest_artifacts WHERE relative_path = ? LIMIT 1`,
+            [relPath],
+          );
+          if (artRows[0]?.sha256) sha256 = String(artRows[0].sha256);
+        }
+      }
+
+      if (!sha256) {
+        let rootSessionId = sessionId;
+        const { rows: relRows } = await queryable.exec(
+          `SELECT root_session_id FROM session_relations WHERE session_id = ? LIMIT 1`,
+          [sessionId],
+        );
+        if (relRows[0]?.root_session_id) {
+          rootSessionId = String(relRows[0].root_session_id);
+        }
+
+        const { rows: manifestRows } = await queryable.exec(
+          `SELECT ma.sha256
+           FROM source_manifests sm
+           JOIN manifest_artifacts ma ON ma.source_manifest_id = sm.id
+           WHERE sm.session_id = ?
+             AND (ma.relative_path = sm.main_transcript_relative_path OR ma.role = 'transcript' OR ma.relative_path LIKE '%.jsonl')
+           LIMIT 1`,
+          [rootSessionId],
+        );
+        if (manifestRows[0]?.sha256) sha256 = String(manifestRows[0].sha256);
+      }
+
+      if (sha256) {
+        const blob = await blobStore.read(sha256);
+        if (blob?.content) {
+          const rawText =
+            typeof blob.content === 'string'
+              ? blob.content
+              : new TextDecoder().decode(blob.content);
+          const lines = rawText.split('\n');
+          const parsedItems: EvidenceRow[] = [];
+          let turnIndex = 0;
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const entry = JSON.parse(line);
+              let chatMsg = entry.chat_message;
+              if (typeof chatMsg === 'string') {
+                try {
+                  chatMsg = JSON.parse(chatMsg);
+                } catch {
+                  // ignore
+                }
+              }
+              const isUser =
+                entry.type === 'user' ||
+                (entry.type === 'message' && (chatMsg?.role === 'user' || entry.role === 'user'));
+              const isAssistant =
+                entry.type === 'assistant' ||
+                (entry.type === 'message' &&
+                  (chatMsg?.role === 'assistant' || entry.role === 'assistant'));
+              if (!isUser && !isAssistant) continue;
+
+              turnIndex++;
+              const role = isUser ? 'user' : 'assistant';
+              let contentText = '';
+              if (entry.message?.content) {
+                contentText = extractMessageText(entry.message.content);
+              } else if (chatMsg?.content) {
+                contentText = extractMessageText(chatMsg.content);
+              } else if (entry.content) {
+                contentText = extractMessageText(entry.content);
+              }
+              const evidenceId = String(entry.uuid ?? entry.node_id ?? `msg-${turnIndex}`);
+              const ts = entry.timestamp ?? entry.created_at;
+              const timestamp =
+                typeof ts === 'string'
+                  ? ts
+                  : typeof ts === 'number'
+                    ? formatTimestamp(ts)
+                    : undefined;
+              const summary = contentText
+                ? `Message ${turnIndex} (${role})\n\n${contentText}`
+                : `Message ${turnIndex} (${role})`;
+              parsedItems.push({
+                evidenceId,
+                entityType: 'message',
+                turnNumber: turnIndex,
+                timestamp,
+                summary,
+                evidenceLinks: [evidenceLink('message', evidenceId, summary)],
+              });
+            } catch {
+              // ignore malformed line
+            }
+          }
+
+          if (parsedItems.length > 0) {
+            const hasMore = parsedItems.length > offset + limit;
+            const pageItems = parsedItems.slice(offset, offset + limit);
+            return {
+              items: pageItems,
+              nextCursor: hasMore ? String(offset + limit) : undefined,
+              previousCursor: offset > 0 ? String(Math.max(0, offset - limit)) : undefined,
+              generationToken: tokens.generationId,
+              analysisReleaseToken: tokens.analysisReleaseId,
+            };
+          }
+        }
+      }
+    } catch {
+      // Fall through to normalized_events on error
+    }
+  }
+
   // Fallback: the ingestion pipeline currently persists message evidence as
   // raw normalized events. Surface those when the dedicated messages table has
   // not been populated yet, so the transcript view is not empty.
@@ -1405,7 +1549,9 @@ async function getTranscriptPages(
     const content = extractMessageText(payload?.content);
     const ordering = index + offset + 1;
     const timestamp = typeof payload?.timestamp === 'string' ? payload.timestamp : undefined;
-    const summary = `Message ${ordering} (${role})\n\n${content}`;
+    const summary = content
+      ? `Message ${ordering} (${role})\n\n${content}`
+      : `Message ${ordering} (${role})`;
     const evidenceId = asString(row.id);
     return {
       evidenceId,

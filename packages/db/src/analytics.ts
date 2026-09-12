@@ -513,7 +513,7 @@ export function createAnalyticsDataSource(
   return {
     portfolio: createPortfolioView(queryable),
     project: createProjectBehaviorView(queryable),
-    session: createSessionEvidenceView(queryable),
+    session: createSessionEvidenceView(queryable, blobStore),
     component: createComponentEcosystemView(queryable),
     artifact: createArtifactVersionView(
       queryable,
