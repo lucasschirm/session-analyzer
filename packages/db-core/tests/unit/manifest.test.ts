@@ -356,6 +356,55 @@ describe('manifest schema and stores', () => {
       const blobs = await ArtifactBlobStore.listBySha256Prefix(executor, 'pre');
       expect(blobs.map((blob) => blob.sha256)).toEqual(['pre-1', 'pre-2']);
     });
+
+    it('clearContent nulls only the content column and updated_at for that single row', async () => {
+      const executor = await createManifestExecutor();
+      const content = encodeText('content to clear');
+      await ArtifactBlobStore.insert(executor, {
+        sha256: 'sha256-clear',
+        mediaType: 'text/plain',
+        retentionClass: 'transcript',
+        content,
+        size: content.length,
+        redactionScheme: 'local-keyed-digest',
+        keyDomainId: 'domain-a',
+        sensitiveDigest: 'digest-of-sensitive-value',
+        redactionChangeMarker: true,
+        isRedacted: true,
+        verifiedAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+
+      await ArtifactBlobStore.insert(executor, {
+        sha256: 'sha256-untouched',
+        mediaType: 'text/plain',
+        retentionClass: 'configuration',
+        content: encodeText('untouched'),
+        size: 9,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+
+      await ArtifactBlobStore.clearContent(executor, 'sha256-clear', 2);
+
+      const cleared = await ArtifactBlobStore.getBySha256(executor, 'sha256-clear');
+      expect(cleared?.content).toBeNull();
+      expect(cleared?.updatedAt).toBe(2);
+      expect(cleared?.createdAt).toBe(1);
+      expect(cleared?.retentionClass).toBe('transcript');
+      expect(cleared?.mediaType).toBe('text/plain');
+      expect(cleared?.size).toBe(content.length);
+      expect(cleared?.redactionScheme).toBe('local-keyed-digest');
+      expect(cleared?.keyDomainId).toBe('domain-a');
+      expect(cleared?.sensitiveDigest).toBe('digest-of-sensitive-value');
+      expect(cleared?.redactionChangeMarker).toBe(1);
+      expect(cleared?.isRedacted).toBe(true);
+      expect(cleared?.verifiedAt).toBe(1);
+
+      const untouched = await ArtifactBlobStore.getBySha256(executor, 'sha256-untouched');
+      expect(untouched?.content).not.toBeNull();
+    });
   });
 
   describe('ArtifactReferenceStore', () => {

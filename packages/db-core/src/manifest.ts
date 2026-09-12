@@ -1278,6 +1278,27 @@ export class ArtifactBlobStore {
     return rows.map(ArtifactBlobStore.rowToArtifactBlob);
   }
 
+  static async listWhereContentNotNull(queryable: Queryable): Promise<readonly ArtifactBlob[]> {
+    const { rows } = await queryable.exec(
+      `SELECT sha256, media_type, retention_class, content, size, redaction_scheme, key_domain_id,
+              sensitive_digest, redaction_change_marker, is_redacted, verified_at, created_at, updated_at
+       FROM artifact_blobs WHERE content IS NOT NULL`,
+      [],
+    );
+    return rows.map(ArtifactBlobStore.rowToArtifactBlob);
+  }
+
+  static async clearContent(
+    queryable: Queryable,
+    sha256: string,
+    updatedAt?: number,
+  ): Promise<void> {
+    await queryable.exec(
+      'UPDATE artifact_blobs SET content = NULL, updated_at = ? WHERE sha256 = ?',
+      [updatedAt ?? Date.now(), sha256],
+    );
+  }
+
   private static rowToArtifactBlob(row: SqliteRow): ArtifactBlob {
     return {
       sha256: asString(row.sha256),
