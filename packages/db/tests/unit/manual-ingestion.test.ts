@@ -20,6 +20,7 @@ import type {
 } from '@lucasschirm/sal-transformer-shared';
 import { describe, expect, it } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
+import { createAnalyticsDataSource } from '../../src/analytics.js';
 import {
   createSha256ContentHasher,
   DefaultIngestionOrchestrator,
@@ -30,6 +31,7 @@ import {
   type ManualIngestionFlowInput,
   ManualIngestionOrchestrator,
 } from '../../src/manual-ingestion.js';
+import type { ArtifactBlobStore } from '../../src/ports.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(__dirname, '../../../parsers/claude-session-parser/tests/fixtures');
@@ -620,5 +622,68 @@ describe('ManualIngestionOrchestrator', () => {
     );
     const raw = JSON.parse(String(rows[0]?.raw_metadata ?? '{}'));
     expect(raw.suppliedFileInventory[0]?.relativePath).toBe('transcript.jsonl');
+  });
+
+  it('retains supplied artifacts in the blob store so transcript pages resolve message content', async () => {
+    const executor = await createExecutor();
+    const blobs = new Map<string, ArtifactContent>();
+    const blobStore: ArtifactBlobStore = {
+      retain: async (blob) => {
+        blobs.set(blob.sha256, blob.content);
+        const { content: _content, ...reference } = blob;
+        return reference;
+      },
+      read: async (sha256) => {
+        const content = blobs.get(sha256);
+        return content === undefined
+          ? undefined
+          : {
+              sha256,
+              size: 0,
+              relativePath: '',
+              mediaType: 'application/octet-stream',
+              content,
+            };
+      },
+      remove: async () => false,
+      list: async () => [],
+    };
+    const context: IngestionContext = { ...createIngestionContext(executor), blobStore };
+    const orchestrator = new ManualIngestionOrchestrator(context);
+
+    const receipt = await orchestrator.ingestManual(
+      createManualBundle([
+        {
+          relativePath: 'session/transcript.jsonl',
+          mediaType: 'application/jsonl',
+          content: readFixture('t2-happy-path.jsonl'),
+        },
+      ]),
+    );
+    expect(receipt.status).toBe('committed');
+
+    // Message evidence stores only an artifact-blob pointer; the transcript
+    // view must resolve the retained bytes rather than render empty bodies.
+    const { rows: messageEvents } = await executor.exec(
+      `SELECT raw_details FROM normalized_events
+       WHERE session_id = ? AND event_type = 'message' LIMIT 1`,
+      [receipt.sessionId],
+    );
+    const rawDetails = JSON.parse(String(messageEvents[0]?.raw_details ?? '{}'));
+    expect(rawDetails.payload?.storage).toBe('artifact-blob');
+    expect(rawDetails.payload?.content).toBeUndefined();
+    expect(String(rawDetails.payload?.path ?? '')).toMatch(/^sha256:/);
+
+    const { rows: manifestArtifacts } = await executor.exec(
+      'SELECT relative_path, sha256 FROM manifest_artifacts',
+      [],
+    );
+    expect(manifestArtifacts.length).toBeGreaterThan(0);
+
+    const dataSource = createAnalyticsDataSource(executor, context.hasher, blobStore);
+    const page = await dataSource.session.getTranscriptPages(receipt.sessionId, {});
+    const rendered = page.items.map((item) => item.summary).join('\n');
+    expect(rendered).toContain('Please read the README and summarize it.');
+    expect(rendered).toContain("I'll read the README first.");
   });
 });
