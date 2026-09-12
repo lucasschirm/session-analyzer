@@ -5,7 +5,8 @@ const CONTROL_PLANE_TIMEOUT_MS = 20_000;
 const STALL_TIMEOUT_MS = 15_000;
 const RETRY_BACKOFF_MS = 1_000;
 const MAX_RETRIES = 1;
-const DEFAULT_MAX_LIST_KEYS = 1_000;
+/** Max keys per `ListObjectsV2` page (S3's own cap); exported so callers deriving expected page counts don't redeclare it. */
+export const DEFAULT_MAX_LIST_KEYS = 1_000;
 const DEFAULT_PUT_CONTENT_TYPE = 'application/json';
 
 /**
