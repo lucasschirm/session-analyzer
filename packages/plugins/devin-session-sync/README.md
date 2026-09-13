@@ -100,7 +100,8 @@ Required variables:
 | `SAL_STORAGE_SECRET_ACCESS_KEY` | AWS secret access key.                       |
 
 See the sync engine documentation for the full option list and LocalStack
-configuration.
+configuration. Uploaded objects are gzip-compressed by default; set
+`SAL_DISABLE_GZIP=true` to disable compression.
 
 ## What it does
 

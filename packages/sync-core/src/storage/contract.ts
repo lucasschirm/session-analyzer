@@ -24,8 +24,8 @@ export interface PutObjectInput {
 }
 
 /**
- * Result of a successful PUT. `sha256` is always the hex digest of the body
- * and can be used for content-addressed verification.
+ * Result of a successful PUT. `sha256` is always the hex digest of the
+ * (uncompressed) body and can be used for content-addressed verification.
  */
 export interface PutObjectResult {
   key: string;

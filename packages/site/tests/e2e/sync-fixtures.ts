@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 import type { ManifestArtifact, SyncManifest, SyncRun } from '@lucasschirm/sal-sync-core';
 import type { Page, Request, Route } from '@playwright/test';
 
@@ -216,6 +217,7 @@ export class FixtureBucket {
   readonly globalChildren: Set<string> = new Set();
 
   private readonly objectStore: Map<string, Buffer> = new Map();
+  private readonly objectEncodings: Map<string, string> = new Map();
   private readonly objectTimestamps: Map<string, string> = new Map();
   private readonly delays: Map<string, number> = new Map();
   private readonly httpErrors: Map<string, FixtureHttpError> = new Map();
@@ -224,10 +226,16 @@ export class FixtureBucket {
    * Single owner of object-store writes (workspace-rules no-duplicate-logic):
    * every write also stamps a per-key last-modified timestamp, captured once
    * at write time so it stays stable across repeated listings of an
-   * unchanged object.
+   * unchanged object. `contentEncoding` mirrors an S3 object's stored
+   * Content-Encoding property (e.g. `gzip`), replayed verbatim on GET.
    */
-  private writeObject(key: string, content: Buffer): void {
+  private writeObject(key: string, content: Buffer, contentEncoding?: string): void {
     this.objectStore.set(key, content);
+    if (contentEncoding) {
+      this.objectEncodings.set(key, contentEncoding);
+    } else {
+      this.objectEncodings.delete(key);
+    }
     this.objectTimestamps.set(key, new Date().toISOString());
   }
 
@@ -256,10 +264,17 @@ export class FixtureBucket {
       files: FixtureFile[];
       legacy?: boolean;
       transcriptsCaptured?: boolean;
+      /**
+       * Store the session's objects gzip-compressed with `Content-Encoding:
+       * gzip`, mirroring sync-plugin uploads (gzip is the upload default).
+       * Manifest hashes and CAS keys still cover the UNCOMPRESSED content.
+       */
+      gzip?: boolean;
     },
   ): FixtureSession {
     const legacy = options.legacy ?? false;
     const transcriptsCaptured = options.transcriptsCaptured ?? true;
+    const gzip = options.gzip ?? false;
     const manifest = buildSessionManifest(projectId, sessionId, options.files, transcriptsCaptured);
     if (legacy) {
       for (const file of options.files) {
@@ -271,14 +286,20 @@ export class FixtureBucket {
     const session: FixtureSession = { sessionId, manifest, files: options.files, legacy };
     const project = this.projects.find((p) => p.projectId === projectId);
     if (project) project.sessions.push(session);
+    const manifestBody = Buffer.from(JSON.stringify(manifest));
     this.writeObject(
       `${projectId}/${sessionId}/manifest.json`,
-      Buffer.from(JSON.stringify(manifest)),
+      gzip ? gzipSync(manifestBody) : manifestBody,
+      gzip ? 'gzip' : undefined,
     );
     for (const file of options.files) {
       const actualSha256 = sha256Hex(file.content);
       const key = objectKeyForFile(projectId, sessionId, file, actualSha256);
-      this.writeObject(key, file.content);
+      this.writeObject(
+        key,
+        gzip ? gzipSync(file.content) : file.content,
+        gzip ? 'gzip' : undefined,
+      );
       if (file.scope !== 'session') {
         this.globalChildren.add('cas');
       }
@@ -549,10 +570,15 @@ export class FixtureBucket {
       return;
     }
     this.logRequest('GET', objectKey, 200);
+    const contentEncoding = this.objectEncodings.get(objectKey);
     await this.tryFulfill(route, {
       status: 200,
       contentType: 'application/octet-stream',
-      headers: { ...corsHeaders, ETag: `"${sha256Hex(body)}"` },
+      headers: {
+        ...corsHeaders,
+        ETag: `"${sha256Hex(body)}"`,
+        ...(contentEncoding ? { 'Content-Encoding': contentEncoding } : {}),
+      },
       body,
     });
   }
@@ -587,7 +613,7 @@ export class FixtureBucket {
     corsHeaders: Record<string, string>,
   ): Promise<void> {
     const body = (await request.postDataBuffer()) ?? Buffer.alloc(0);
-    this.writeObject(objectKey, body);
+    this.writeObject(objectKey, body, request.headers()['content-encoding']);
     this.putObjects.set(objectKey, body);
     if (objectKey.endsWith('/manifest.json')) {
       try {

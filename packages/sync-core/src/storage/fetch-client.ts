@@ -389,6 +389,36 @@ async function pumpChunks(
   return chunks;
 }
 
+function hasGzipMagic(bytes: Uint8Array): boolean {
+  return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+}
+
+/**
+ * Decode `buffer` when it carries the gzip magic number; return it unchanged
+ * otherwise or when decompression fails (the bytes were not actually gzip).
+ * Uses only web-standard primitives (`DecompressionStream`, `Blob`,
+ * `Response`) so it runs identically in browsers, workers, and Node >= 18.
+ *
+ * Trade-off: response `Content-Encoding`/`x-amz-meta-*` headers cannot
+ * disambiguate a still-compressed body from one the transport already
+ * decoded (the header survives decoding), so detection is by magic bytes
+ * alone. A synced artifact whose own uncompressed bytes form a valid gzip
+ * stream (e.g. a `.gz` file captured raw under `SAL_DISABLE_GZIP`) would be
+ * decoded once too many and surface as a per-file HASH_MISMATCH — visible
+ * and retryable, never silent corruption. Synced artifacts are text formats
+ * (jsonl/json/md), so this is not expected to occur in practice.
+ */
+async function decodeGzipBuffer(buffer: ArrayBuffer): Promise<ArrayBuffer> {
+  const bytes = new Uint8Array(buffer);
+  if (!hasGzipMagic(bytes)) return buffer;
+  try {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return await new Response(stream).arrayBuffer();
+  } catch {
+    return buffer;
+  }
+}
+
 async function readBodyWithStallWatchdog(
   body: ReadableStream<Uint8Array>,
   onProgress: ((bytes: number) => void) | undefined,
@@ -500,10 +530,18 @@ export class S3FetchClient {
    *
    * Keys are caller-supplied and are not re-encoded. For large transcript
    * files, pass `{ streaming: true }` to enable the stall watchdog.
+   *
+   * Objects uploaded with `Content-Encoding: gzip` arrive already decoded on
+   * spec-compliant fetch implementations (browser, undici). When an endpoint
+   * or intermediate drops that metadata and the stored gzip bytes arrive
+   * verbatim, they are detected by magic number and decoded here instead, so
+   * callers always receive the uncompressed object content.
    */
   async getObject(key: string, options: S3GetObjectOptions = {}): Promise<ArrayBuffer> {
-    if (options.streaming) return this.getObjectStreaming(key, options);
-    return this.getObjectControlPlane(key, options);
+    const buffer = options.streaming
+      ? await this.getObjectStreaming(key, options)
+      : await this.getObjectControlPlane(key, options);
+    return decodeGzipBuffer(buffer);
   }
 
   /**

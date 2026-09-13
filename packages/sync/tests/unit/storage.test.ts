@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import {
   type GetObjectCommand,
   type HeadObjectCommand,
@@ -522,10 +523,26 @@ describe('S3StorageAdapter', () => {
     const command = sendSpy.mock.calls[0][0] as PutObjectCommand;
     expect(command.input.Bucket).toBe('my-bucket');
     expect(command.input.Key).toBe('proj-1/sess-1/.claude/settings.json');
-    expect(command.input.Body).toBe(input.body);
+    // gzip is enabled by default: the wire body is compressed, but the sha256
+    // metadata still describes the uncompressed content.
+    expect(gunzipSync(command.input.Body as Uint8Array)).toEqual(Buffer.from(input.body));
+    expect(command.input.ContentEncoding).toBe('gzip');
     expect(command.input.Metadata).toEqual({
       sha256: sha256Hex(input.body),
+      'sal-content-encoding': 'gzip',
     });
+  });
+
+  it('sends an uncompressed body when gzip is disabled', async () => {
+    const adapter = new S3StorageAdapter(makeS3Config({ gzip: false }));
+    const input = makeInput();
+    const result = await adapter.putObject(input);
+
+    expect(result.sha256).toBe(sha256Hex(input.body));
+    const command = sendSpy.mock.calls[0][0] as PutObjectCommand;
+    expect(command.input.Body).toBe(input.body);
+    expect(command.input.ContentEncoding).toBeUndefined();
+    expect(command.input.Metadata).toEqual({ sha256: sha256Hex(input.body) });
   });
 
   it('sets ContentType when provided', async () => {
@@ -648,7 +665,85 @@ describe('S3StorageAdapter', () => {
 
     expect(result.sha256).toBe(providedSha);
     const command = sendSpy.mock.calls[0][0] as PutObjectCommand;
-    expect(command.input.Metadata).toEqual({ sha256: providedSha });
+    expect(command.input.Metadata).toEqual({
+      sha256: providedSha,
+      'sal-content-encoding': 'gzip',
+    });
+  });
+
+  it('gzips the body and marks Content-Encoding when gzip is enabled', async () => {
+    const adapter = new S3StorageAdapter(makeS3Config({ gzip: true }));
+    const input = makeInput();
+    const result = await adapter.putObject(input);
+
+    // sha256 metadata and result always describe the uncompressed body.
+    expect(result.sha256).toBe(sha256Hex(input.body));
+    const command = sendSpy.mock.calls[0][0] as PutObjectCommand;
+    expect(command.input.ContentEncoding).toBe('gzip');
+    expect(command.input.Metadata).toEqual({
+      sha256: sha256Hex(input.body),
+      'sal-content-encoding': 'gzip',
+    });
+    const body = command.input.Body as Uint8Array;
+    expect(body[0]).toBe(0x1f);
+    expect(body[1]).toBe(0x8b);
+    expect(gunzipSync(body)).toEqual(Buffer.from(input.body));
+  });
+
+  it('getObject decompresses gzip-encoded objects', async () => {
+    const plain = new TextEncoder().encode('hello gzip');
+    sendSpy.mockResolvedValueOnce({
+      Body: { transformToByteArray: async () => gzipSync(Buffer.from(plain)) } as never,
+      ContentEncoding: 'gzip',
+      ContentType: 'text/plain',
+      Metadata: { sha256: sha256Hex(plain), 'sal-content-encoding': 'gzip' },
+    } as never);
+
+    const adapter = new S3StorageAdapter(baseConfig, { retries: 0 });
+    const result = await adapter.getObject?.(makeInput({ relativePath: 'file.json' }));
+
+    expect(result).toBeDefined();
+    expect(result?.body).toEqual(plain);
+  });
+
+  it('getObject decompresses when only the sal-content-encoding metadata marker is present', async () => {
+    const plain = new TextEncoder().encode('hello marker');
+    sendSpy.mockResolvedValueOnce({
+      Body: { transformToByteArray: async () => gzipSync(Buffer.from(plain)) } as never,
+      Metadata: { sha256: sha256Hex(plain), 'sal-content-encoding': 'gzip' },
+    } as never);
+
+    const adapter = new S3StorageAdapter(baseConfig, { retries: 0 });
+    const result = await adapter.getObject?.(makeInput({ relativePath: 'file.json' }));
+
+    expect(result?.body).toEqual(plain);
+  });
+
+  it('getObject passes through uncompressed objects unchanged', async () => {
+    const plain = new TextEncoder().encode('plain body');
+    sendSpy.mockResolvedValueOnce({
+      Body: { transformToByteArray: async () => plain } as never,
+      ContentType: 'text/plain',
+      Metadata: { sha256: sha256Hex(plain) },
+    } as never);
+
+    const adapter = new S3StorageAdapter(baseConfig, { retries: 0 });
+    const result = await adapter.getObject?.(makeInput({ relativePath: 'file.json' }));
+
+    expect(result?.body).toEqual(plain);
+  });
+
+  it('getObject throws a non-retryable StorageError when a marked object fails to decompress', async () => {
+    sendSpy.mockResolvedValueOnce({
+      Body: { transformToByteArray: async () => new TextEncoder().encode('not gzip') } as never,
+      ContentEncoding: 'gzip',
+    } as never);
+
+    const adapter = new S3StorageAdapter(baseConfig, { retries: 0 });
+    await expect(adapter.getObject?.(makeInput())).rejects.toMatchObject({
+      code: 'SYNC_STORAGE_ERROR',
+      retryable: false,
+    });
   });
 
   it('rejects invalid object keys with a non-retryable StorageError', async () => {

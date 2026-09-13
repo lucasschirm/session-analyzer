@@ -286,6 +286,35 @@ test('full CAS sync journey', async ({ page }) => {
 });
 
 // =============================================================================
+// Scenario 1b: gzip-compressed objects. Sync plugins gzip every object before
+// upload (Content-Encoding: gzip, sha256 metadata over the uncompressed
+// content). The site must transparently decode both the manifest and the
+// artifact bodies so hash verification and ingestion see the original bytes.
+// =============================================================================
+
+test('syncs gzip-compressed session objects', async ({ page }) => {
+  const bucket = new FixtureBucket();
+  bucket.addProject('gzip-proj', 'Gzip Project', 'gzip layout');
+  bucket.addSession('gzip-proj', 'e2e-gzip-session', {
+    gzip: true,
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+  await waitForSyncIdle(page);
+
+  await openProjectByName(page, 'Gzip Project');
+  await expectChartContains(page, 'Token usage trends', 'Total tokens');
+});
+
+// =============================================================================
 // Scenario 2: global/ is reserved; non-CAS children produce a warning and no
 // project is created. The global/cas workspace artifact is not fetched.
 // =============================================================================

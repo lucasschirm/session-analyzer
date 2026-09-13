@@ -55,10 +55,11 @@ export async function build(options = {}) {
     sourcemap: false,
     metafile: true,
     banner: { js: SHEBANG },
-    // node:sqlite (used by the extractor bundled into every bin here) has no
-    // JS shim; esbuild must leave it as a runtime import rather than trying
-    // to resolve/bundle it.
-    external: ['node:sqlite'],
+    // node:sqlite (used by the extractor bundled into every bin here) and
+    // node:zlib (gzip in the sync engine's S3 adapter) have no JS shim;
+    // esbuild must leave them as runtime imports rather than trying to
+    // resolve/bundle them.
+    external: ['node:sqlite', 'node:zlib'],
     ...options.esbuildOptions,
   });
 

@@ -38,6 +38,7 @@ export {
   type DeleteObjectsResult,
   type DeletionBehavior,
   ENV_SAL_CAPTURE_TRANSCRIPTS,
+  ENV_SAL_DISABLE_GZIP,
   ENV_SAL_HOOK_UPLOAD_TIMEOUT,
   ENV_SAL_MAX_FILE_BYTES,
   ENV_SAL_MAX_FILES,

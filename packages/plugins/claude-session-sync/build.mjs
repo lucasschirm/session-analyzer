@@ -62,6 +62,10 @@ export async function build(options = {}) {
     sourcemap: false,
     metafile: true,
     banner: { js: SHEBANG },
+    // node:zlib (gzip in the sync engine's S3 adapter) has no JS shim;
+    // esbuild must leave it as a runtime import rather than trying to
+    // resolve/bundle it.
+    external: ['node:zlib'],
     ...options.esbuildOptions,
   });
 
