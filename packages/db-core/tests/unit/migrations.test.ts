@@ -164,4 +164,30 @@ describe('MigrationRunner', () => {
     );
     expect(afterRows.length).toBe(0);
   });
+
+  it('migration 84 creates session_context_series with its indexes', async () => {
+    const executor = await createExecutor();
+    // Run migrations up to 83 — the series table must not exist yet.
+    const v83Migrations = MIGRATIONS.filter((m) => m.id <= 83);
+    const runner83 = new MigrationRunner(executor, v83Migrations);
+    await runner83.migrate();
+
+    const { rows: beforeRows } = await executor.exec(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name = 'session_context_series'",
+    );
+    expect(beforeRows.length).toBe(0);
+
+    const runner = new MigrationRunner(executor, MIGRATIONS);
+    await runner.migrate();
+
+    const { rows: tableRows } = await executor.exec(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name = 'session_context_series'",
+    );
+    expect(tableRows.length).toBe(1);
+
+    const { rows: indexRows } = await executor.exec(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_session_context_series_unique', 'idx_session_context_series_session')",
+    );
+    expect(indexRows.length).toBe(2);
+  });
 });

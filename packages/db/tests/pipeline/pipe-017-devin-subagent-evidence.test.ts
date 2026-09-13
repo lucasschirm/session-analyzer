@@ -39,22 +39,26 @@ async function setupPipeline() {
 
 interface NormalizedEventPayload {
   category?: string;
-  agentId?: string;
-  kind?: string;
-  content?: string;
-  isBackground?: boolean;
-  rootNodeId?: number;
   [key: string]: unknown;
 }
 
-function payloadOf(rawDetails: string | null): NormalizedEventPayload {
+interface NormalizedEventRecordShape {
+  recordId?: string;
+  recordType?: string;
+  parentId?: string;
+  sourceEventId?: string;
+  sourceField?: string;
+  provenance?: { path?: string };
+  payload?: NormalizedEventPayload;
+}
+
+function recordOf(rawDetails: string | null): NormalizedEventRecordShape {
   if (!rawDetails) return {};
-  const parsed = JSON.parse(rawDetails) as { payload?: NormalizedEventPayload };
-  return parsed.payload ?? {};
+  return JSON.parse(rawDetails) as NormalizedEventRecordShape;
 }
 
 describe('PIPE-017: Devin sub-agent evidence and ordering-corruption fixes', () => {
-  it('reaches normalized_events with correct foreground/background subagent_turn evidence and no fabricated fields', async () => {
+  it('reaches normalized_events with pointer-only subagent_turn evidence preserving category and source linkage', async () => {
     const { harness, orchestrator } = await setupPipeline();
     const { bundle } = await buildDevinManifestBundle({ useSubagentBundle: true });
 
@@ -65,42 +69,39 @@ describe('PIPE-017: Devin sub-agent evidence and ordering-corruption fixes', () 
     const events = await NormalizedEventStore.listBySession(harness, receipt.sessionId);
     const normalizedEvents = events.filter((e) => e.eventType === 'normalized_event');
 
+    // Post-#430: raw_details is a pointer-only skeleton — record linkage
+    // (sourceEventId/provenance) and the category discriminator survive, while
+    // payload contents (agentId/kind/content/…) are no longer duplicated into
+    // SQLite. The full field-level assertions live in the transformer's own
+    // unit/conformance tests.
     const subagentTurns = normalizedEvents
-      .map((e) => payloadOf(e.rawDetails))
-      .filter((p) => p.category === 'subagent_turn');
+      .map((e) => recordOf(e.rawDetails))
+      .filter((r) => r.payload?.category === 'subagent_turn');
     expect(subagentTurns).toHaveLength(4); // 2 prompts + 2 results (foreground + background)
 
-    const foreground = subagentTurns.filter((p) => p.agentId === '44472e00');
-    const background = subagentTurns.filter((p) => p.agentId === '55c47591');
-    expect(foreground).toHaveLength(2);
-    expect(background).toHaveLength(2);
-
-    const backgroundResult = background.find((p) => p.kind === 'result');
-    // Sourced from the untagged <subagent_completion_notification> node, not
-    // the tagged "started" pointer -- finding #3's foreground/background
-    // asymmetry, verified through real ingestion.
-    expect(backgroundResult?.content).toBe(
-      '<subagent_completion_notification>\n[Background subagent with agent_id=55c47591 completed]\n\nfull background report',
-    );
-    expect(backgroundResult?.isBackground).toBe(true);
-
-    // missing-is-never-zero: no token/cache/cost/resolved-model-id fields
-    // anywhere in the ingested payloads.
-    for (const payload of subagentTurns) {
-      expect(payload).not.toHaveProperty('tokens');
-      expect(payload).not.toHaveProperty('cost');
-      expect(payload).not.toHaveProperty('cachedTokens');
+    for (const record of subagentTurns) {
+      expect(record.recordType).toBe('normalized_event');
+      expect(record.recordId).toBeTruthy();
+      expect(record.sourceEventId).toMatch(/^node-/);
+      expect(record.sourceField).toBe('chat_message.metadata.extensions');
+      expect(record.provenance?.path).toBeTruthy();
+      // No payload content, tokens, or resolved model data is duplicated.
+      expect(record.payload).not.toHaveProperty('content');
+      expect(record.payload).not.toHaveProperty('agentId');
+      expect(record.payload).not.toHaveProperty('kind');
+      expect(record.payload).not.toHaveProperty('tokens');
+      expect(record.payload).not.toHaveProperty('cost');
+      expect(record.payload).not.toHaveProperty('cachedTokens');
     }
-    const foregroundResult = foreground.find((p) => p.kind === 'result');
-    expect(foregroundResult?.model).toBe('Subagent Default');
 
-    // Finding #5: the orphaned sub-agent tree is captured (not dropped) but
-    // never claims a subagent correlation it can't back up.
+    // Finding #5: the orphaned sub-agent tree is captured (not dropped) —
+    // sourceEventId `node-317` is the same linkage the pre-skeleton
+    // `rootNodeId === 317` assertion verified.
     const detached = normalizedEvents
-      .map((e) => payloadOf(e.rawDetails))
-      .filter((p) => p.category === 'detached_conversation');
+      .map((e) => recordOf(e.rawDetails))
+      .filter((r) => r.payload?.category === 'detached_conversation');
     expect(detached).toHaveLength(1);
-    expect(detached[0]?.rootNodeId).toBe(317);
+    expect(detached[0]?.sourceEventId).toBe('node-317');
   });
 
   it('does not inflate devin:turns:count from the duplicate message_nodes pair or the orphaned tree (findings #4/#5)', async () => {

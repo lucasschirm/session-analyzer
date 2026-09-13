@@ -2101,6 +2101,41 @@ export const NormalizedEventStore = createSessionScopedStore<
   idFrom: ['sessionId', 'eventType'],
 });
 
+export interface NormalizedTimingEventRow {
+  readonly id: string;
+  readonly eventType: string;
+  readonly rawDetails: string | null;
+}
+
+/**
+ * Returns the normalized_events rows that feed context-timing computation
+ * (messages, turns, model requests/usage, and compaction events) for one
+ * session+generation. Used by the legacy read fallback and by the
+ * processing-version backfill that materializes `session_context_series`.
+ */
+export async function listNormalizedTimingEventRows(
+  queryable: Queryable,
+  sessionId: string,
+  generationId: string,
+): Promise<readonly NormalizedTimingEventRow[]> {
+  const { rows } = await queryable.exec(
+    `SELECT id, event_type, raw_details
+     FROM normalized_events
+     WHERE session_id = ? AND generation_id = ?
+       AND (event_type IN ('turn','message','model_request','model_usage','compaction')
+         OR (event_type = 'normalized_event'
+           AND json_extract(raw_details, '$.payload.category') = 'compaction'))
+     ORDER BY id`,
+    [sessionId, generationId],
+  );
+  return rows.map((row) => ({
+    id: String(row.id),
+    eventType: String(row.event_type),
+    rawDetails:
+      row.raw_details === null || row.raw_details === undefined ? null : String(row.raw_details),
+  }));
+}
+
 // Tasks
 
 const TASK_COLUMNS: readonly Column[] = [

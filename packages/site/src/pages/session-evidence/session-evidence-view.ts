@@ -93,6 +93,29 @@ function resolveTimingPoint(
   return undefined;
 }
 
+/**
+ * Extracts the message body from a transcript page summary, which is rendered
+ * as `Message N (role)\n\n<content>` by the data source. Returns null when
+ * the summary does not carry a body.
+ */
+function transcriptSummaryBody(summary: string): string | null {
+  const match = summary.match(/^Message \d+ \([^)]*\)\n\n([\s\S]*)$/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Loose role comparison between a timing point's normalized role and a
+ * transcript summary header role (transcript pages keep harness-native role
+ * labels such as `human` while timing points normalize to `user`).
+ */
+function transcriptRoleMatches(summary: string, role: string | undefined): boolean {
+  if (!role) return true;
+  const match = summary.match(/^Message \d+ \(([^)]*)\)/);
+  const summaryRole = match?.[1]?.toLowerCase();
+  const expected = role === 'human' ? 'user' : role.toLowerCase();
+  return summaryRole === expected || (summaryRole === 'human' && expected === 'user');
+}
+
 @customElement('session-evidence-view')
 export class SessionEvidenceView extends PageLitElement {
   static styles = [
@@ -571,8 +594,45 @@ export class SessionEvidenceView extends PageLitElement {
     const point = resolveTimingPoint(e.detail as Record<string, unknown>, points);
     if (point) {
       this.selectedMessage = point;
+      void this.hydrateDrawerContent(point);
     }
   };
+
+  /**
+   * Context-series points carry no message content — bodies live in the
+   * retained transcript artifact. Fetch the single transcript row aligned to
+   * the point's transcript position on demand and fill the drawer's Message
+   * Content section. `transcriptIndex` (position among chat messages) is the
+   * primary join key; `messageIndex` (position among all message records) is
+   * the fallback for transcript pages served from legacy normalized events.
+   */
+  private async hydrateDrawerContent(point: ContextTimingPoint): Promise<void> {
+    if (point.content !== undefined) return;
+    const positions = [point.transcriptIndex, point.messageIndex ?? point.turnNumber].filter(
+      (v, i, arr): v is number => typeof v === 'number' && v > 0 && arr.indexOf(v) === i,
+    );
+    for (const position of positions) {
+      let body: string | null = null;
+      try {
+        const page = await analyticsClient.session.getTranscriptPages(this.sessionId, {
+          cursor: String(position - 1),
+          limit: 1,
+        });
+        const item = page.items[0];
+        if (item && transcriptRoleMatches(item.summary, point.role)) {
+          body = transcriptSummaryBody(item.summary);
+        }
+      } catch {
+        continue;
+      }
+      if (body !== null && body.length > 0) {
+        if (this.selectedMessage === point) {
+          this.selectedMessage = { ...point, content: body };
+        }
+        return;
+      }
+    }
+  }
 
   private handleDrawerClose = (): void => {
     this.selectedMessage = null;

@@ -3508,6 +3508,293 @@ export class InsightEvidenceStore {
   }
 }
 
+// session_context_series
+//
+// One row per (session_id, generation_id) holding the context-growth series
+// computed at ingest time, so the session context chart never needs to re-derive
+// it from normalized_events. Arrays are position-aligned with the session's
+// transcript message order: index i corresponds to the i-th message.
+//
+// `context_tokens` stores a signed integer per position:
+//   v > 0    — context tokens (input + cacheRead + cacheCreation) attributed to
+//              that message's model request, after carry-forward fill.
+//   v < 0    — a compaction applied at that position; |v| is the removed token
+//              count. The point's own post-compaction context level is carried
+//              in `point_meta[i].ctx`.
+//   v = null — no context signal for that position (missing is never zero).
+// `generation_tokens` is a parallel array of output-token values.
+// `point_meta` is a sparse parallel array of small metadata objects (role,
+// model, timestamp, request token breakdown, effort, message/source ids,
+// transcript position) — never message content, which stays in the retained
+// artifact blob.
+// `models` is a JSON array of distinct model ids observed on
+// model_request/model_usage records, replacing the normalized_events fallback
+// for portfolio model counts.
+
+const SESSION_CONTEXT_SERIES_COLUMNS: readonly Column[] = [
+  { name: 'id', field: 'id', type: 'TEXT', pkey: true, notNull: true },
+  {
+    name: 'session_id',
+    field: 'sessionId',
+    type: 'TEXT',
+    notNull: true,
+    fk: { table: 'sessions', column: 'id', onDelete: 'CASCADE' },
+  },
+  {
+    name: 'generation_id',
+    field: 'generationId',
+    type: 'TEXT',
+    notNull: true,
+    fk: { table: 'transformation_generations', column: 'id', onDelete: 'CASCADE' },
+  },
+  { name: 'message_count', field: 'messageCount', type: 'INTEGER', notNull: true },
+  { name: 'context_tokens', field: 'contextTokens', type: 'TEXT', notNull: true },
+  { name: 'generation_tokens', field: 'generationTokens', type: 'TEXT' },
+  { name: 'point_meta', field: 'pointMeta', type: 'TEXT' },
+  { name: 'models', field: 'models', type: 'TEXT' },
+  { name: 'created_at', field: 'createdAt', type: 'INTEGER', notNull: true },
+  { name: 'updated_at', field: 'updatedAt', type: 'INTEGER', notNull: true },
+];
+
+const SESSION_CONTEXT_SERIES_INDEXES: readonly IndexSpec[] = [
+  {
+    name: 'idx_session_context_series_unique',
+    columns: ['session_id', 'generation_id'],
+    unique: true,
+  },
+  { name: 'idx_session_context_series_session', columns: ['session_id'] },
+];
+
+export const CREATE_SESSION_CONTEXT_SERIES_TABLE = buildCreateTable(
+  'session_context_series',
+  SESSION_CONTEXT_SERIES_COLUMNS,
+  SESSION_CONTEXT_SERIES_INDEXES,
+);
+
+export interface SessionContextSeries {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly generationId: string;
+  readonly messageCount: number;
+  readonly contextTokens: string;
+  readonly generationTokens: string | null;
+  readonly pointMeta: string | null;
+  readonly models: string | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface InsertSessionContextSeriesInput {
+  readonly id?: string;
+  readonly sessionId: string;
+  readonly generationId: string;
+  readonly messageCount: number;
+  readonly contextTokens: string;
+  readonly generationTokens?: string | null;
+  readonly pointMeta?: string | null;
+  readonly models?: string | null;
+}
+
+export interface UpdateSessionContextSeriesInput {
+  readonly messageCount?: number;
+  readonly contextTokens?: string;
+  readonly generationTokens?: string | null;
+  readonly pointMeta?: string | null;
+  readonly models?: string | null;
+}
+
+export interface SessionContextSeriesMissingTarget {
+  readonly sessionId: string;
+  readonly generationId: string;
+}
+
+// biome-ignore lint/complexity/noStaticOnlyClass: typed rollup store
+export class SessionContextSeriesStore {
+  private static selectColumns(): string {
+    return SESSION_CONTEXT_SERIES_COLUMNS.map((c) => c.name).join(', ');
+  }
+
+  private static rowTo(row: SqliteRow): SessionContextSeries {
+    return {
+      id: asString(row.id),
+      sessionId: asString(row.session_id),
+      generationId: asString(row.generation_id),
+      messageCount: toNumber(row.message_count),
+      contextTokens: asString(row.context_tokens),
+      generationTokens: toOptionalString(row.generation_tokens),
+      pointMeta: toOptionalString(row.point_meta),
+      models: toOptionalString(row.models),
+      createdAt: toNumber(row.created_at),
+      updatedAt: toNumber(row.updated_at),
+    };
+  }
+
+  static async insert(
+    queryable: Queryable,
+    input: InsertSessionContextSeriesInput,
+  ): Promise<string> {
+    const now = Date.now();
+    const id =
+      input.id ??
+      `ctxs-${deterministicId('session-context-series', input.sessionId, input.generationId)}`;
+    await queryable.exec(
+      buildInsertSql('session_context_series', SESSION_CONTEXT_SERIES_COLUMNS),
+      toInsertParams<InsertSessionContextSeriesInput>(
+        SESSION_CONTEXT_SERIES_COLUMNS,
+        input,
+        id,
+        now,
+      ),
+    );
+    return id;
+  }
+
+  static async getBySessionAndGeneration(
+    queryable: Queryable,
+    sessionId: string,
+    generationId: string,
+  ): Promise<SessionContextSeries | undefined> {
+    const { rows } = await queryable.exec(
+      `SELECT ${SessionContextSeriesStore.selectColumns()}
+       FROM session_context_series
+       WHERE session_id = ? AND generation_id = ?`,
+      [sessionId, generationId],
+    );
+    if (rows.length === 0) return undefined;
+    return SessionContextSeriesStore.rowTo(rows[0]);
+  }
+
+  /** Returns the series row for the session's current generation, if any. */
+  static async getBySession(
+    queryable: Queryable,
+    sessionId: string,
+  ): Promise<SessionContextSeries | undefined> {
+    const { rows } = await queryable.exec(
+      `SELECT ${SessionContextSeriesStore.selectColumns()}
+       FROM session_context_series
+       WHERE session_id = ?
+         AND generation_id = (SELECT current_generation_id FROM sessions WHERE id = ?)`,
+      [sessionId, sessionId],
+    );
+    if (rows.length === 0) return undefined;
+    return SessionContextSeriesStore.rowTo(rows[0]);
+  }
+
+  static async update(
+    queryable: Queryable,
+    sessionId: string,
+    generationId: string,
+    input: UpdateSessionContextSeriesInput,
+  ): Promise<void> {
+    const existing = await SessionContextSeriesStore.getBySessionAndGeneration(
+      queryable,
+      sessionId,
+      generationId,
+    );
+    if (!existing) {
+      throw new Error(
+        `SessionContextSeries not found for session ${sessionId} generation ${generationId}`,
+      );
+    }
+    const now = Date.now();
+    const { sql, params } = buildUpdate<UpdateSessionContextSeriesInput>(
+      'session_context_series',
+      SESSION_CONTEXT_SERIES_COLUMNS,
+      input,
+      existing.id,
+      now,
+    );
+    await queryable.exec(sql, params);
+  }
+
+  /** Idempotent write keyed on (session_id, generation_id). */
+  static async upsert(
+    queryable: Queryable,
+    input: InsertSessionContextSeriesInput,
+  ): Promise<string> {
+    const existing = await SessionContextSeriesStore.getBySessionAndGeneration(
+      queryable,
+      input.sessionId,
+      input.generationId,
+    );
+    if (existing) {
+      await SessionContextSeriesStore.update(queryable, input.sessionId, input.generationId, {
+        messageCount: input.messageCount,
+        contextTokens: input.contextTokens,
+        generationTokens: input.generationTokens,
+        pointMeta: input.pointMeta,
+        models: input.models,
+      });
+      return existing.id;
+    }
+    return SessionContextSeriesStore.insert(queryable, input);
+  }
+
+  static async deleteBySession(queryable: Queryable, sessionId: string): Promise<void> {
+    await queryable.exec('DELETE FROM session_context_series WHERE session_id = ?', [sessionId]);
+  }
+
+  /**
+   * Sessions whose current generation has no series row — the rebuild/backfill
+   * frontier used by the processing-version upgrade path.
+   */
+  static async listMissingCurrentGeneration(
+    queryable: Queryable,
+  ): Promise<readonly SessionContextSeriesMissingTarget[]> {
+    const { rows } = await queryable.exec(
+      `SELECT s.id AS session_id, s.current_generation_id AS generation_id
+       FROM sessions s
+       WHERE s.current_generation_id IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM session_context_series scs
+           WHERE scs.session_id = s.id AND scs.generation_id = s.current_generation_id
+         )
+       ORDER BY s.id`,
+    );
+    return rows.map((row) => ({
+      sessionId: asString(row.session_id),
+      generationId: asString(row.generation_id),
+    }));
+  }
+
+  /**
+   * Distinct models for a portfolio from `session_context_series.models`,
+   * unioned with the legacy normalized_events payload.model source so sessions
+   * that predate the series table (and may not have been backfilled) still
+   * contribute.
+   */
+  static async countDistinctModelsInPortfolio(
+    queryable: Queryable,
+    params: { portfolioId: string; generationId?: string; harness?: string },
+  ): Promise<number> {
+    const { portfolioId, generationId, harness } = params;
+    const harnessClause = harness ? ' AND s.harness = ?' : '';
+    const args: SqliteValue[] = generationId ? [portfolioId, generationId] : [portfolioId];
+    if (harness) args.push(harness);
+
+    const { rows } = await queryable.exec(
+      `SELECT COUNT(DISTINCT model) AS c FROM (
+         SELECT je.value AS model
+         FROM session_context_series scs
+         JOIN sessions s ON s.id = scs.session_id AND scs.generation_id = s.current_generation_id
+         JOIN projects p ON p.id = s.project_id
+         JOIN json_each(scs.models) je
+         WHERE p.portfolio_id = ?${generationId ? ' AND s.current_generation_id = ?' : ''}${harnessClause}
+         UNION
+         SELECT json_extract(e.raw_details, '$.payload.model') AS model
+         FROM normalized_events e
+         JOIN sessions s ON s.id = e.session_id
+         JOIN projects p ON p.id = s.project_id
+         WHERE p.portfolio_id = ?
+           AND ${generationId ? 's.current_generation_id = ?' : 's.current_generation_id = e.generation_id'}
+           AND e.event_type IN ('model_request', 'model_usage')${harnessClause}
+       ) AS models WHERE model IS NOT NULL`,
+      [...args, ...args],
+    );
+    return toNumber(rows[0]?.c ?? 0);
+  }
+}
+
 /**
  * Combined DDL for all rollup, summary, distribution, cohort, and insight
  * tables. Tests can execute this after `FRESH_SCHEMA_SQL` to set up the rollup
@@ -3518,6 +3805,7 @@ ${CREATE_ROLLUP_POLICIES_TABLE}
 ${CREATE_SESSION_SUMMARIES_TABLE}
 ${CREATE_SESSION_COMPONENT_STATS_TABLE}
 ${CREATE_SESSION_CHART_SERIES_TABLE}
+${CREATE_SESSION_CONTEXT_SERIES_TABLE}
 ${CREATE_ROLLUP_CONTRIBUTIONS_TABLE}
 ${CREATE_PROJECT_DAILY_ROLLUPS_TABLE}
 ${CREATE_PORTFOLIO_DAILY_ROLLUPS_TABLE}
@@ -3626,5 +3914,11 @@ export const ROLLUPS_MIGRATIONS_FRAGMENT: readonly Migration[] = [
     name: 'create-insight-evidence',
     sql: CREATE_INSIGHT_EVIDENCE_TABLE,
     checksum: checksumOf(CREATE_INSIGHT_EVIDENCE_TABLE),
+  },
+  {
+    id: 84,
+    name: 'create-session-context-series',
+    sql: CREATE_SESSION_CONTEXT_SERIES_TABLE,
+    checksum: checksumOf(CREATE_SESSION_CONTEXT_SERIES_TABLE),
   },
 ];

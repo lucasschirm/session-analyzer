@@ -11,6 +11,7 @@ import {
   PortfolioDailyRollupStore,
   PortfolioDistributionStore,
   ProjectStore,
+  SessionContextSeriesStore,
 } from '@lucasschirm/sal-db-core';
 import type {
   AnalyticsQuery,
@@ -57,14 +58,6 @@ const TOTAL_TOKENS_METRIC_IDS = [
   'claude:tokens:total:inclusive',
   'devin:tokens:total:inclusive',
 ] as const;
-
-/**
- * Normalized-event types carrying a `$.payload.model` field, feeding the
- * portfolio headline `modelCount` KPI (#325). Claude Code emits
- * `model_request` records; the Devin transformer emits `model_usage`
- * records instead — both count toward distinct models.
- */
-const MODEL_EVENT_TYPES = ['model_request', 'model_usage'] as const;
 
 /**
  * Maps a stored component kind to its display-friendly form.
@@ -568,7 +561,6 @@ async function countDistinctModelsInPortfolio(
 ): Promise<number> {
   const generationId = query.generationId;
   const harness = filterValue(query, 'harness');
-  const harnessClause = harness ? 'AND s.harness = ?' : '';
   const rollupSql = generationId
     ? `SELECT COUNT(DISTINCT dimension_value) AS c
        FROM portfolio_dimension_rollups
@@ -584,31 +576,14 @@ async function countDistinctModelsInPortfolio(
     return rollupCount;
   }
 
-  const typeIn = MODEL_EVENT_TYPES.map(() => '?').join(', ');
-  const sql = generationId
-    ? `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
-       FROM normalized_events e
-       JOIN sessions s ON s.id = e.session_id
-       JOIN projects p ON p.id = s.project_id
-       WHERE p.portfolio_id = ? AND s.current_generation_id = ?
-         AND e.event_type IN (${typeIn})
-         AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL
-         ${harnessClause}`
-    : `SELECT COUNT(DISTINCT json_extract(e.raw_details, '$.payload.model')) AS c
-       FROM normalized_events e
-       JOIN sessions s ON s.id = e.session_id
-       JOIN projects p ON p.id = s.project_id
-       WHERE p.portfolio_id = ?
-         AND e.event_type IN (${typeIn})
-         AND json_extract(e.raw_details, '$.payload.model') IS NOT NULL
-         ${harnessClause}`;
-  const base: SqliteValue[] = generationId ? [portfolioId, generationId] : [portfolioId];
-  const { rows } = await queryable.exec(sql, [
-    ...base,
-    ...MODEL_EVENT_TYPES,
-    ...(harness ? [harness] : []),
-  ]);
-  return asNumber(rows[0]?.c);
+  // Preferred source: `session_context_series.models` materialized at ingest.
+  // The store query unions it with the legacy normalized_events payload.model
+  // source so sessions committed before the series table existed still count.
+  return SessionContextSeriesStore.countDistinctModelsInPortfolio(queryable, {
+    portfolioId,
+    generationId,
+    harness: harness ?? undefined,
+  });
 }
 
 async function countDistinctHarnessesInPortfolio(

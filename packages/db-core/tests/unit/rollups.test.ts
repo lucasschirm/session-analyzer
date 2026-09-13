@@ -33,6 +33,7 @@ import {
   RollupPolicyStore,
   SessionChartSeriesStore,
   SessionComponentStatStore,
+  SessionContextSeriesStore,
   SessionSummaryStore,
 } from '../../src/rollups.js';
 import { FRESH_SCHEMA_SQL } from '../../src/schema.js';
@@ -338,6 +339,7 @@ describe('rollups schema and stores', () => {
     expect(names).toContain('comparison_cohorts');
     expect(names).toContain('comparison_cohort_members');
     expect(names).toContain('insight_evidence');
+    expect(names).toContain('session_context_series');
   });
 
   it('round-trips session summaries with root-only and inclusive separation', async () => {
@@ -1048,5 +1050,125 @@ describe('rollups schema and stores', () => {
     expect(updated?.valueCount).toBe(2);
     expect(updated?.valueSum).toBe(84);
     expect(updated?.valueMean).toBe(42);
+  });
+});
+
+describe('session context series store', () => {
+  const seriesInput = (overrides: Record<string, unknown> = {}) => ({
+    sessionId: 'session-rollups',
+    generationId: 'gen-rollups',
+    messageCount: 3,
+    contextTokens: JSON.stringify([100, -40, 90]),
+    generationTokens: JSON.stringify([10, 20, 30]),
+    pointMeta: JSON.stringify([
+      { role: 'user', msgId: 'm1' },
+      { role: 'assistant', msgId: 'm2', rq: 1, model: 'claude-3-7' },
+      { role: 'assistant', msgId: 'm3', ctx: 90 },
+    ]),
+    models: JSON.stringify(['claude-3-7']),
+    ...overrides,
+  });
+
+  it('inserts and reads a series row by session+generation', async () => {
+    const { executor, sessionId, generationId } = await createSeededExecutor();
+    const id = await SessionContextSeriesStore.insert(executor, seriesInput());
+    expect(id).toMatch(/^ctxs-/);
+
+    const row = await SessionContextSeriesStore.getBySessionAndGeneration(
+      executor,
+      sessionId,
+      generationId,
+    );
+    expect(row?.messageCount).toBe(3);
+    expect(row ? JSON.parse(row.contextTokens) : null).toEqual([100, -40, 90]);
+    expect(row?.models).toBe(JSON.stringify(['claude-3-7']));
+
+    const bySession = await SessionContextSeriesStore.getBySession(executor, sessionId);
+    expect(bySession?.id).toBe(row?.id);
+  });
+
+  it('enforces the (session_id, generation_id) uniqueness', async () => {
+    const { executor } = await createSeededExecutor();
+    await SessionContextSeriesStore.insert(executor, seriesInput());
+    await expect(SessionContextSeriesStore.insert(executor, seriesInput())).rejects.toThrow();
+  });
+
+  it('upserts idempotently for the same session+generation', async () => {
+    const { executor, sessionId, generationId } = await createSeededExecutor();
+    const id1 = await SessionContextSeriesStore.upsert(executor, seriesInput());
+    const id2 = await SessionContextSeriesStore.upsert(
+      executor,
+      seriesInput({ messageCount: 5, contextTokens: JSON.stringify([1, 2, 3, 4, 5]) }),
+    );
+    expect(id2).toBe(id1);
+    const row = await SessionContextSeriesStore.getBySessionAndGeneration(
+      executor,
+      sessionId,
+      generationId,
+    );
+    expect(row?.messageCount).toBe(5);
+  });
+
+  it('deleteBySession removes all generations for the session', async () => {
+    const { executor, sessionId } = await createSeededExecutor();
+    await SessionContextSeriesStore.insert(executor, seriesInput());
+    await SessionContextSeriesStore.deleteBySession(executor, sessionId);
+    const row = await SessionContextSeriesStore.getBySession(executor, sessionId);
+    expect(row).toBeUndefined();
+  });
+
+  it('cascades on session delete', async () => {
+    const { executor, sessionId } = await createSeededExecutor();
+    await SessionContextSeriesStore.insert(executor, seriesInput());
+    await executor.exec('DELETE FROM sessions WHERE id = ?', [sessionId]);
+    const { rows } = await executor.exec(
+      'SELECT COUNT(*) AS n FROM session_context_series WHERE session_id = ?',
+      [sessionId],
+    );
+    expect(Number(rows[0]?.n ?? 0)).toBe(0);
+  });
+
+  it('lists sessions missing a series row for the current generation', async () => {
+    const { executor, sessionId } = await createSeededExecutor();
+    const missingBefore = await SessionContextSeriesStore.listMissingCurrentGeneration(executor);
+    expect(missingBefore.map((m) => m.sessionId)).toContain(sessionId);
+
+    await SessionContextSeriesStore.insert(executor, seriesInput());
+    const missingAfter = await SessionContextSeriesStore.listMissingCurrentGeneration(executor);
+    expect(missingAfter.map((m) => m.sessionId)).not.toContain(sessionId);
+  });
+
+  it('counts distinct models from series rows for the portfolio', async () => {
+    const { executor, portfolioId, sessionId, generationId } = await createSeededExecutor();
+    await SessionContextSeriesStore.insert(
+      executor,
+      seriesInput({ models: JSON.stringify(['claude-3-7', 'claude-4']) }),
+    );
+    const count = await SessionContextSeriesStore.countDistinctModelsInPortfolio(executor, {
+      portfolioId,
+    });
+    expect(count).toBe(2);
+
+    const byGeneration = await SessionContextSeriesStore.countDistinctModelsInPortfolio(executor, {
+      portfolioId,
+      generationId,
+    });
+    expect(byGeneration).toBe(2);
+    const otherGeneration = await SessionContextSeriesStore.countDistinctModelsInPortfolio(
+      executor,
+      { portfolioId, generationId: 'gen-other' },
+    );
+    expect(otherGeneration).toBe(0);
+    const matchingHarness = await SessionContextSeriesStore.countDistinctModelsInPortfolio(
+      executor,
+      { portfolioId, harness: 'claude_code' },
+    );
+    expect(matchingHarness).toBe(2);
+    const otherHarness = await SessionContextSeriesStore.countDistinctModelsInPortfolio(executor, {
+      portfolioId,
+      harness: 'devin',
+    });
+    expect(otherHarness).toBe(0);
+    void sessionId;
   });
 });
