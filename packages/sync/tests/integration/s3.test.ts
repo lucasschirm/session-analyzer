@@ -1,5 +1,6 @@
 import type { Server } from 'node:http';
 import http from 'node:http';
+import { gunzipSync } from 'node:zlib';
 import { GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -19,6 +20,7 @@ const TEST_SECRET_KEY = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
 interface StoredObject {
   body: Buffer;
   contentType?: string;
+  contentEncoding?: string;
   metadata?: Record<string, string>;
   etag: string;
 }
@@ -124,7 +126,7 @@ class MockS3Server {
         chunks.push(chunk as Buffer);
       }
       const body = Buffer.concat(chunks);
-      const sha256 = sha256Hex(body.toString('utf8'));
+      const sha256 = sha256Hex(body);
 
       const metadata: Record<string, string> = {};
       for (const [header, value] of Object.entries(req.headers)) {
@@ -134,7 +136,8 @@ class MockS3Server {
       }
 
       const contentType = req.headers['content-type'] as string | undefined;
-      this.objects.set(key, { body, contentType, metadata, etag: `"${sha256}"` });
+      const contentEncoding = req.headers['content-encoding'] as string | undefined;
+      this.objects.set(key, { body, contentType, contentEncoding, metadata, etag: `"${sha256}"` });
 
       res.writeHead(200, {
         'Content-Type': 'application/xml',
@@ -159,21 +162,27 @@ class MockS3Server {
         return;
       }
 
+      const objectHeaders: Record<string, string> = {
+        'Content-Length': String(object.body.length),
+        'Content-Type': object.contentType ?? 'application/octet-stream',
+        ETag: object.etag,
+      };
+      // Real S3 returns the stored ContentEncoding as a Content-Encoding
+      // response header on both GET and HEAD.
+      if (object.contentEncoding) {
+        objectHeaders['Content-Encoding'] = object.contentEncoding;
+      }
+      for (const [name, value] of Object.entries(object.metadata ?? {})) {
+        objectHeaders[`x-amz-meta-${name}`] = value;
+      }
+
       if (req.method === 'HEAD') {
-        res.writeHead(200, {
-          'Content-Length': String(object.body.length),
-          'Content-Type': object.contentType ?? 'application/octet-stream',
-          ETag: object.etag,
-        });
+        res.writeHead(200, objectHeaders);
         res.end();
         return;
       }
 
-      res.writeHead(200, {
-        'Content-Length': String(object.body.length),
-        'Content-Type': object.contentType ?? 'application/octet-stream',
-        ETag: object.etag,
-      });
+      res.writeHead(200, objectHeaders);
       res.end(object.body);
       return;
     }
@@ -226,7 +235,11 @@ function unescapeXml(value: string): string {
   return value.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
-function makeS3Config(endpoint: string, bucket = 'test-bucket'): StorageConfig {
+function makeS3Config(
+  endpoint: string,
+  bucket = 'test-bucket',
+  overrides: Partial<StorageConfig> = {},
+): StorageConfig {
   return {
     type: 's3',
     bucket,
@@ -234,6 +247,7 @@ function makeS3Config(endpoint: string, bucket = 'test-bucket'): StorageConfig {
     endpoint,
     accessKeyId: TEST_ACCESS_KEY,
     secretAccessKey: TEST_SECRET_KEY,
+    ...overrides,
   };
 }
 
@@ -301,8 +315,12 @@ describe.skipIf(!process.env.SAL_S3_TEST_ENDPOINT)('S3 storage integration', () 
     expect(result.sha256).toBe(sha256Hex(body));
 
     if (server) {
+      // Stored body is gzip-compressed; the reported sha256 still covers the
+      // uncompressed content.
       const stored = server.getStoredBody(result.key);
-      expect(stored?.toString('utf8')).toBe(body);
+      expect(stored?.[0]).toBe(0x1f);
+      expect(stored?.[1]).toBe(0x8b);
+      expect(gunzipSync(stored as Buffer).toString('utf8')).toBe(body);
     }
   });
 
@@ -321,7 +339,8 @@ describe.skipIf(!process.env.SAL_S3_TEST_ENDPOINT)('S3 storage integration', () 
     expect(result.sha256).toBe(sha256Hex(body));
 
     if (server) {
-      expect(server.getStoredBody(result.key)?.toString('utf8')).toBe(body);
+      const stored = server.getStoredBody(result.key);
+      expect(gunzipSync(stored as Buffer).toString('utf8')).toBe(body);
     }
   });
 
@@ -374,7 +393,8 @@ describe.skipIf(!process.env.SAL_S3_TEST_ENDPOINT)('S3 storage integration', () 
     expect(result.sha256).toBe(sha256Hex(body));
 
     if (server) {
-      expect(server.getStoredBody(result.key)?.toString('utf8')).toBe(body);
+      const stored = server.getStoredBody(result.key);
+      expect(gunzipSync(stored as Buffer).toString('utf8')).toBe(body);
     }
   });
 
@@ -401,7 +421,8 @@ describe.skipIf(!process.env.SAL_S3_TEST_ENDPOINT)('S3 storage integration', () 
     expect(r1.sha256).toBe(r2.sha256);
 
     if (server) {
-      expect(server.getStoredBody(r1.key)?.toString('utf8')).toBe(body);
+      const stored = server.getStoredBody(r1.key);
+      expect(gunzipSync(stored as Buffer).toString('utf8')).toBe(body);
     }
   });
 
@@ -461,15 +482,59 @@ describe.skipIf(!process.env.SAL_S3_TEST_ENDPOINT)('S3 storage integration', () 
     const head = await client.send(
       new HeadObjectCommand({ Bucket: 'test-bucket', Key: result.key }),
     );
-    expect(head.ContentLength).toBe(Buffer.byteLength(body, 'utf8'));
-    expect(head.ETag).toBe(`"${result.sha256}"`);
+    // Content-Length and ETag describe the stored (compressed) object.
+    const storedBody = server.getStoredBody(result.key);
+    expect(head.ContentLength).toBe(storedBody?.length);
+    expect(head.ETag).toBe(`"${sha256Hex(storedBody ?? Buffer.alloc(0))}"`);
+    expect(head.ContentEncoding).toBe('gzip');
 
     const get = await client.send(new GetObjectCommand({ Bucket: 'test-bucket', Key: result.key }));
+    expect(get.ContentEncoding).toBe('gzip');
     const chunks: Buffer[] = [];
     for await (const chunk of get.Body as AsyncIterable<Buffer>) {
       chunks.push(chunk);
     }
-    expect(Buffer.concat(chunks).toString('utf8')).toBe(body);
+    expect(gunzipSync(Buffer.concat(chunks)).toString('utf8')).toBe(body);
+  });
+
+  it('getObject transparently decompresses gzip-encoded objects', async () => {
+    if (!server) return;
+
+    const adapter = new S3StorageAdapter(makeS3Config(endpoint), { retries: 0 });
+    const body = 'transparent round trip';
+    const putResult = await adapter.putObject(makeInput('round-trip-gzip.json', body, 'session'));
+
+    const result = await adapter.getObject?.({
+      projectId,
+      sessionId,
+      scope: 'session',
+      relativePath: 'round-trip-gzip.json',
+    });
+
+    expect(result?.body).toEqual(new TextEncoder().encode(body));
+    expect(result?.metadata?.['sal-content-encoding']).toBe('gzip');
+    expect(putResult.sha256).toBe(sha256Hex(body));
+  });
+
+  it('stores objects uncompressed when gzip is disabled', async () => {
+    if (!server) return;
+
+    const adapter = new S3StorageAdapter(makeS3Config(endpoint, 'test-bucket', { gzip: false }), {
+      retries: 0,
+    });
+    const body = 'uncompressed store';
+    const result = await adapter.putObject(makeInput('plain.json', body, 'session'));
+
+    const stored = server.getStoredBody(result.key);
+    expect(stored?.toString('utf8')).toBe(body);
+
+    const fetched = await adapter.getObject?.({
+      projectId,
+      sessionId,
+      scope: 'session',
+      relativePath: 'plain.json',
+    });
+    expect(fetched?.body).toEqual(new TextEncoder().encode(body));
   });
 
   it('lists and deletes every object under a project prefix, leaving CAS objects untouched', async () => {

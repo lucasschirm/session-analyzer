@@ -61,6 +61,31 @@ describe('loadConfig', () => {
     expect(result.config.captureTranscripts).toBe(false);
   });
 
+  it('enables gzip upload compression by default', () => {
+    const result = loadConfig({ ...baseEnv });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+    expect(result.config.storage.gzip).toBe(true);
+  });
+
+  it('disables gzip upload compression when SAL_DISABLE_GZIP is truthy', () => {
+    for (const value of ['true', '1', 'TRUE']) {
+      const result = loadConfig({ ...baseEnv, SAL_DISABLE_GZIP: value });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected success');
+      expect(result.config.storage.gzip).toBe(false);
+    }
+  });
+
+  it('keeps gzip enabled when SAL_DISABLE_GZIP is not truthy', () => {
+    for (const value of ['false', '0', 'yes', '']) {
+      const result = loadConfig({ ...baseEnv, SAL_DISABLE_GZIP: value });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected success');
+      expect(result.config.storage.gzip).toBe(true);
+    }
+  });
+
   it('uses default values when optional env vars are unset', () => {
     const result = loadConfig({ ...baseEnv });
     expect(result.ok).toBe(true);
@@ -76,6 +101,7 @@ describe('loadConfig', () => {
       accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
       secretAccessKey: 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
       sessionToken: undefined,
+      gzip: true,
     });
     expect(result.config.timeouts).toEqual(DEFAULT_SYNC_TIMEOUTS);
     expect(result.config.retries).toBe(DEFAULT_SYNC_RETRIES);
@@ -230,7 +256,15 @@ describe('loadStorageConfig', () => {
     if (!result.ok) throw new Error('expected success');
     expect(result.config.storage.type).toBe('s3');
     expect(result.config.storage.bucket).toBe('my-bucket');
+    expect(result.config.storage.gzip).toBe(true);
     expect(result.config.retries).toBe(DEFAULT_SYNC_RETRIES);
+  });
+
+  it('honors SAL_DISABLE_GZIP for storage-only commands', () => {
+    const result = loadStorageConfig({ ...storageEnv, SAL_DISABLE_GZIP: 'true' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected success');
+    expect(result.config.storage.gzip).toBe(false);
   });
 
   it('rejects missing SAL_STORAGE_TYPE', () => {

@@ -13,6 +13,7 @@ import {
   DEFAULT_SYNC_RETRIES,
   DEFAULT_SYNC_TIMEOUT_MS,
   ENV_SAL_CAPTURE_TRANSCRIPTS,
+  ENV_SAL_DISABLE_GZIP,
   ENV_SAL_HOOK_UPLOAD_TIMEOUT,
   ENV_SAL_MAX_FILE_BYTES,
   ENV_SAL_MAX_FILES,
@@ -140,6 +141,7 @@ function parseStorageConfig(env: ConfigEnv): StorageParseResult {
     accessKeyId: envValue(env, ENV_SAL_STORAGE_ACCESS_KEY_ID),
     secretAccessKey: envValue(env, ENV_SAL_STORAGE_SECRET_ACCESS_KEY),
     sessionToken: envValue(env, ENV_SAL_STORAGE_SESSION_TOKEN),
+    gzip: !isTruthy(envValue(env, ENV_SAL_DISABLE_GZIP)),
   };
 
   return { config };

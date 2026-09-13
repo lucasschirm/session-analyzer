@@ -347,6 +347,7 @@ shell before launching `claude`.
 | `SAL_STORAGE_SESSION_TOKEN`    | _(none)_    | Temporary AWS session token (for STS credentials).                |
 | `SAL_SYNC_DISABLED`            | `false`     | Set to `true` to fully disable synchronization.                   |
 | `SAL_CAPTURE_TRANSCRIPTS`      | `true`      | Set to `false` to skip transcript capture (config still syncs).   |
+| `SAL_DISABLE_GZIP`             | `false`     | Set to `true` to upload objects without gzip compression.          |
 | `SAL_SYNC_TIMEOUT`             | `30000`     | Per-upload timeout in milliseconds.                               |
 | `SAL_SYNC_RETRIES`             | `3`         | Number of retry attempts on upload failure.                       |
 | `SAL_SESSION_END_BUDGET_MS`    | `120000`    | Time budget for the final SessionEnd sync in milliseconds.        |

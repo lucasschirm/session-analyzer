@@ -97,6 +97,7 @@ Key points:
 - Configuration files are sanitized to remove secrets, credentials, and tokens.
 - Transcript files are captured raw by default and can be disabled with `SAL_CAPTURE_TRANSCRIPTS=false`.
 - Synchronization can be fully disabled with `SAL_SYNC_DISABLED=true`.
+- Objects are gzip-compressed before upload by default (the stored `sha256` metadata, CAS keys, and manifest hashes always cover the uncompressed content); set `SAL_DISABLE_GZIP=true` to disable compression.
 
 ## Development
 

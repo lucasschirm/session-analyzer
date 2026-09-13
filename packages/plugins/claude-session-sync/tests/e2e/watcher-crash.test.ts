@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import {
   type StatusReport,
   sessionStart,
@@ -39,7 +40,12 @@ interface MockS3Server {
   getTranscript: () => Buffer | undefined;
 }
 
-function s3Handler(objects: Map<string, Buffer>, req: IncomingMessage, res: ServerResponse) {
+interface StoredObject {
+  body: Buffer;
+  contentEncoding?: string;
+}
+
+function s3Handler(objects: Map<string, StoredObject>, req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', `http://127.0.0.1`);
   const key = url.pathname.split('/').filter(Boolean).slice(1).join('/');
   if (req.method === 'PUT') {
@@ -48,26 +54,35 @@ function s3Handler(objects: Map<string, Buffer>, req: IncomingMessage, res: Serv
     req.on('end', () => {
       const body = Buffer.concat(chunks);
       const sha256 = createHash('sha256').update(body).digest('hex');
-      objects.set(key, body);
-      res.writeHead(200, { 'Content-Type': 'application/xml', ETag: `"${sha256}"` });
+      const contentEncoding = req.headers['content-encoding'] as string | undefined;
+      objects.set(key, { body, contentEncoding });
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/xml',
+        ETag: `"${sha256}"`,
+      };
+      res.writeHead(200, headers);
       res.end(`<?xml version="1.0"?><PutObjectOutput><ETag>${sha256}</ETag></PutObjectOutput>`);
     });
     return;
   }
   if (req.method === 'GET' || req.method === 'HEAD') {
-    const body = objects.get(key);
-    if (!body) {
+    const object = objects.get(key);
+    if (!object) {
       res.writeHead(404);
       res.end();
       return;
     }
-    const sha256 = createHash('sha256').update(body).digest('hex');
-    res.writeHead(200, {
+    const sha256 = createHash('sha256').update(object.body).digest('hex');
+    const headers: Record<string, string> = {
       'Content-Type': 'application/octet-stream',
-      'Content-Length': String(body.length),
+      'Content-Length': String(object.body.length),
       ETag: `"${sha256}"`,
-    });
-    res.end(req.method === 'GET' ? body : undefined);
+    };
+    if (object.contentEncoding) {
+      headers['Content-Encoding'] = object.contentEncoding;
+    }
+    res.writeHead(200, headers);
+    res.end(req.method === 'GET' ? object.body : undefined);
     return;
   }
   res.writeHead(405);
@@ -75,7 +90,7 @@ function s3Handler(objects: Map<string, Buffer>, req: IncomingMessage, res: Serv
 }
 
 function startMockS3Server(): Promise<MockS3Server> {
-  const objects = new Map<string, Buffer>();
+  const objects = new Map<string, StoredObject>();
   const server = createServer((req, res) => s3Handler(objects, req, res));
   return new Promise((resolve, reject) => {
     server.listen(0, '127.0.0.1', (err) => {
@@ -84,7 +99,13 @@ function startMockS3Server(): Promise<MockS3Server> {
       resolve({
         endpoint: `http://127.0.0.1:${(addr as { port: number }).port}`,
         stop: () => server.close(),
-        getTranscript: () => objects.get('proj-crash/sess-crash/transcript.jsonl'),
+        // Return the DECODED body so tests can string-match the transcript —
+        // uploads are gzip-compressed by default (SAL_DISABLE_GZIP opts out).
+        getTranscript: () => {
+          const object = objects.get('proj-crash/sess-crash/transcript.jsonl');
+          if (!object) return undefined;
+          return object.contentEncoding === 'gzip' ? gunzipSync(object.body) : object.body;
+        },
       });
     });
   });

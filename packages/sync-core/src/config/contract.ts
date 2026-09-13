@@ -14,6 +14,8 @@ export const ENV_SAL_STORAGE_SESSION_TOKEN = 'SAL_STORAGE_SESSION_TOKEN';
 
 export const ENV_SAL_STORAGE_URL = 'SAL_STORAGE_URL';
 
+export const ENV_SAL_DISABLE_GZIP = 'SAL_DISABLE_GZIP';
+
 export const SYNC_STORAGE_URL_CONFLATION_PROHIBITED = true;
 
 export const ENV_SAL_SYNC_TIMEOUT = 'SAL_SYNC_TIMEOUT';
@@ -39,6 +41,7 @@ export type SyncEnvVar =
   | typeof ENV_SAL_STORAGE_ACCESS_KEY_ID
   | typeof ENV_SAL_STORAGE_SECRET_ACCESS_KEY
   | typeof ENV_SAL_STORAGE_SESSION_TOKEN
+  | typeof ENV_SAL_DISABLE_GZIP
   | typeof ENV_SAL_SYNC_TIMEOUT
   | typeof ENV_SAL_SYNC_RETRIES
   | typeof ENV_SAL_SESSION_END_BUDGET_MS
@@ -60,6 +63,7 @@ export const STORAGE_CONFIG_FIELDS: readonly (keyof StorageConfig)[] = [
   'accessKeyId',
   'secretAccessKey',
   'sessionToken',
+  'gzip',
 ];
 
 export interface StorageConfig {
@@ -70,6 +74,11 @@ export interface StorageConfig {
   accessKeyId?: string;
   secretAccessKey?: string;
   sessionToken?: string;
+  /**
+   * When `false`, objects are uploaded without gzip compression. Defaults to
+   * enabled (`true`/`undefined`); sourced from `SAL_DISABLE_GZIP`.
+   */
+  gzip?: boolean;
 }
 
 export const DEFAULT_SYNC_TIMEOUT_MS = 30_000;
