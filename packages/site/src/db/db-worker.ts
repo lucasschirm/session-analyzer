@@ -144,6 +144,13 @@ const handlers: Record<DbRequest['type'], Handler> = {
     ok: true,
     result: manager.getSessionFiles((request as DbRequestOf<'getSessionFiles'>).sessionId),
   }),
+  getProcessedFileHashes: (request) => ({
+    id: request.id,
+    ok: true,
+    result: manager.getProcessedFileHashes(
+      (request as DbRequestOf<'getProcessedFileHashes'>).hashes,
+    ),
+  }),
   upsertSessionFile: (request) => {
     manager.upsertSessionFile((request as DbRequestOf<'upsertSessionFile'>).file);
     return { id: request.id, ok: true };

@@ -8,7 +8,7 @@ import {
   FRESH_SCHEMA_SQL,
 } from '@lucasschirm/sal-db-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { backfillArtifactBlobsToOpfs } from '../../src/db/analytics-worker';
+import { backfillArtifactBlobsToOpfs, handleHasArtifactBlobs } from '../../src/db/analytics-worker';
 import {
   createOpfsArtifactBlobStore,
   resetOpfsArtifactBlobsDirectoryCacheForTests,
@@ -463,5 +463,36 @@ describe('backfillArtifactBlobsToOpfs', () => {
     expect(after?.content).toEqual(bytes);
     expect(after?.sensitiveDigest).toBe('digest-backfill');
     expect(after?.keyDomainId).toBe('domain-backfill');
+  });
+
+  describe('handleHasArtifactBlobs', () => {
+    it('returns present hashes from syncCache and blobStore', async () => {
+      const executor = await createExecutor();
+      const shaInCache = 'a'.repeat(64);
+      const shaInBlobStore = 'b'.repeat(64);
+      const shaMissing = 'c'.repeat(64);
+
+      await DbArtifactBlobStore.insert(executor, makeBackfillRow(shaInBlobStore, 'blob-content'));
+
+      const syncCache = {
+        get: (hash: string) => (hash === shaInCache ? {} : undefined),
+      };
+
+      const state = {
+        executor,
+        syncCache,
+      } as unknown as Parameters<typeof handleHasArtifactBlobs>[0];
+
+      const response = await handleHasArtifactBlobs(state, {
+        id: 1,
+        type: 'hasArtifactBlobs',
+        hashes: [shaInCache.toUpperCase(), shaInBlobStore, shaMissing],
+      });
+
+      expect(response.ok).toBe(true);
+      if (response.ok) {
+        expect(response.result).toEqual([shaInCache, shaInBlobStore]);
+      }
+    });
   });
 });

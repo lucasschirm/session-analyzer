@@ -7,6 +7,7 @@ import { requestPasskey, setPasskeyPrompt } from '../../src/sync/passkey-prompt'
 import {
   type DownloadedFile,
   type S3Client,
+  type StorageSessionItem,
   SyncManager,
   type SyncManagerOptions,
   syncManager,
@@ -959,5 +960,133 @@ describe('SyncManager cherry pick and storage sessions', () => {
 
     const snapshot = manager.getSnapshot();
     expect(snapshot.activeRun?.connectionId).toBe('conn-target');
+  });
+
+  it('refreshStorageSessionStatuses refreshes sync status and title from local db without calling S3', async () => {
+    const mockDb = {
+      getProjectByReadableId: vi.fn().mockImplementation(async (readableId: string) => {
+        if (readableId === 'proj-a') return { id: 'local-proj-a', name: 'Alpha Project' };
+        return null;
+      }),
+      getSessionBySyncId: vi
+        .fn()
+        .mockImplementation(async (_projId: string, syncSessionId: string) => {
+          if (syncSessionId === 'sess-2') {
+            return { sync_status: 'in_sync', title: 'Session Two Updated' };
+          }
+          return null;
+        }),
+    } as unknown as DbClient;
+
+    const manager = createManager({ dbClient: mockDb });
+
+    const items: StorageSessionItem[] = [
+      {
+        projectId: 'proj-a',
+        projectName: 'Alpha Project',
+        sessionId: 'sess-2',
+        title: 'Session Two',
+        modifiedTimestamp: 1000,
+        synced: false,
+      },
+    ];
+
+    const refreshed = await manager.refreshStorageSessionStatuses(items);
+    expect(refreshed[0].synced).toBe(true);
+    expect(refreshed[0].title).toBe('Session Two Updated');
+  });
+
+  it('sends SESSION_SYNC message with knownHashes when artifacts exist in db or blob store', async () => {
+    const candidateHash1 = 'a'.repeat(64);
+    const candidateHash2 = 'b'.repeat(64);
+    const mockDb = {
+      getSessionBySyncId: vi.fn().mockResolvedValue(null),
+      upsertSessionStub: vi.fn().mockResolvedValue(undefined),
+      updateSessionManifest: vi.fn().mockResolvedValue(undefined),
+      setSessionSyncStatus: vi.fn().mockResolvedValue(undefined),
+      getSessionFiles: vi.fn().mockResolvedValue([]),
+      getProcessedFileHashes: vi.fn().mockResolvedValue([candidateHash1]),
+    } as unknown as DbClient;
+
+    const hasArtifactBlobsMock = vi.fn().mockResolvedValue([candidateHash2]);
+    const manager = createManager({
+      dbClient: mockDb,
+      hasArtifactBlobs: hasArtifactBlobsMock,
+    });
+
+    const postMessageSpy = vi.fn();
+    const mockWorker = {
+      postMessage: postMessageSpy,
+      terminate: vi.fn(),
+    } as unknown as Worker;
+
+    const manifest: SyncManifest = {
+      schemaVersion: 2,
+      projectId: 'proj-1',
+      sessionId: 'sess-1',
+      harness: 'claude-code',
+      harnessVersion: '0.1.0',
+      syncVersion: '0.1.0',
+      pluginVersion: '0.1.0',
+      transcriptsCaptured: true,
+      syncRuns: [],
+      syncRunsCount: 0,
+      mainTranscriptRelativePath: 'transcript.jsonl',
+      artifacts: [
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          scope: 'session',
+          relativePath: 'transcript.jsonl',
+          sha256: candidateHash1,
+          size: 100,
+          status: 'uploaded',
+        },
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          scope: 'global',
+          relativePath: 'settings.json',
+          sha256: candidateHash2,
+          size: 50,
+          status: 'uploaded',
+        },
+      ],
+    };
+
+    const project = {
+      projectId: 'proj-1',
+      localProjectId: 'local-proj-1',
+      status: 'syncing' as const,
+      worker: mockWorker,
+      totalSessions: 1,
+      sessionsDone: 0,
+      sessionsFailed: 0,
+      sessions: new Map(),
+    };
+
+    await (
+      manager as unknown as {
+        handleSessionManifestReady: (
+          run: unknown,
+          proj: unknown,
+          worker: unknown,
+          msg: unknown,
+        ) => Promise<void>;
+      }
+    ).handleSessionManifestReady({} as never, project, mockWorker, {
+      type: 'SESSION_MANIFEST_READY',
+      sessionId: 'sess-1',
+      manifest,
+    });
+
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'SESSION_SYNC',
+        sessionId: 'sess-1',
+        sync: true,
+        knownHashes: expect.arrayContaining([candidateHash1, candidateHash2]),
+      }),
+    );
   });
 });

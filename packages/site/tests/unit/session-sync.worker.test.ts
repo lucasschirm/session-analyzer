@@ -331,7 +331,7 @@ function startMessage(
 function syncMessage(
   sessionId: string,
   localFileHashes?: Record<string, { sha256: string; etag?: string; status: string }>,
-  options?: { sync?: boolean; exists?: boolean },
+  options?: { sync?: boolean; exists?: boolean; knownHashes?: string[] },
 ): SyncMessageToWorker {
   return {
     type: 'SESSION_SYNC',
@@ -339,6 +339,7 @@ function syncMessage(
     sync: options?.sync ?? true,
     exists: options?.exists ?? false,
     localFileHashes,
+    knownHashes: options?.knownHashes,
   };
 }
 
@@ -550,6 +551,65 @@ describe('SessionSyncWorker', () => {
     }>;
     expect(fileMessages.length).toBe(1);
     expect(fileMessages[0].message.file).toBe('transcript.jsonl');
+  });
+
+  it('skips downloading files whose hash matches knownHashes', async () => {
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+      { scope: 'global', relativePath: 'settings.json', content: '{"env":"prod"}\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    const settingsFile = downloads.find((d) => d.relativePath === 'settings.json')!;
+    worker.handleMessage(syncMessage('sess-1', undefined, { knownHashes: [settingsFile.hash] }));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    const fileMessages = findMessages(posted, 'SESSION_FILE_DOWNLOADED') as Array<{
+      message: SessionFileDownloadedMessage;
+    }>;
+    expect(fileMessages.length).toBe(1);
+    expect(fileMessages[0].message.file).toBe('transcript.jsonl');
+
+    const completeMsg = findOne(posted, 'SESSION_SYNC_COMPLETE') as {
+      files: Array<{ file: string; status: string }>;
+    };
+    expect(completeMsg.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: 'global/settings.json', status: 'unchanged' }),
+        expect.objectContaining({ file: 'transcript.jsonl', status: 'downloaded' }),
+      ]),
+    );
+  });
+
+  it('completes immediately with unchanged status when all files match knownHashes', async () => {
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+      { scope: 'global', relativePath: 'settings.json', content: '{"env":"prod"}\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-1', manifest, downloads);
+
+    await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    const allHashes = downloads.map((d) => d.hash);
+    worker.handleMessage(syncMessage('sess-1', undefined, { knownHashes: allHashes }));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    const fileMessages = findMessages(posted, 'SESSION_FILE_DOWNLOADED');
+    expect(fileMessages.length).toBe(0);
+
+    const completeMsg = findOne(posted, 'SESSION_SYNC_COMPLETE') as {
+      files: Array<{ file: string; status: string }>;
+    };
+    expect(completeMsg.files.every((f) => f.status === 'unchanged')).toBe(true);
+    expect(completeMsg.files.length).toBe(2);
   });
 
   it('downloads files whose local hash differs from the manifest hash', async () => {
@@ -1130,6 +1190,35 @@ describe('SessionSyncWorker', () => {
 
     const folder = findOne(posted, 'PROJECT_FOLDER_FOUND') as { totalSessions: number };
     expect(folder.totalSessions).toBe(1);
+  });
+
+  it('calls listSessionObjects for targeted sessions when client supports it and bypasses listProjectObjects', async () => {
+    const listSessionObjectsSpy = vi
+      .fn()
+      .mockImplementation(async (projectId: string, sessionId: string) => {
+        return [
+          objectEntry(manifestKey(projectId, sessionId)),
+          objectEntry(sessionFileKey(projectId, sessionId, 'transcript.jsonl')),
+        ];
+      });
+    const { manifest, downloads } = await makeManifest('proj', 'sess-target', [
+      { scope: 'session', relativePath: 'transcript.jsonl', content: 'main line\n' },
+    ]);
+    await uploadProjectFiles(client, 'proj', 'sess-target', manifest, downloads);
+
+    const targetedClient = Object.create(client) as S3Client;
+    targetedClient.listSessionObjects = listSessionObjectsSpy;
+
+    const { worker, posted } = createWorker(targetedClient);
+    worker.handleMessage(startMessage('proj', { targetSessionIds: ['sess-target'] }));
+    await continueSession(worker, posted, 'sess-target');
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+    worker.handleMessage(syncMessage('sess-target', undefined));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    expect(listSessionObjectsSpy).toHaveBeenCalledTimes(1);
+    expect(listSessionObjectsSpy).toHaveBeenCalledWith('proj', 'sess-target', expect.any(Object));
+    expect(client.listProjectObjectsCalls.length).toBe(0);
   });
 
   it('skips a session when SESSION_SYNC has sync:false and exists:false', async () => {

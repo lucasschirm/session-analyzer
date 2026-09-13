@@ -578,6 +578,9 @@ export class DatabaseManager {
     const db = this.requireDb();
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC)');
+    db.exec(
+      'CREATE INDEX IF NOT EXISTS idx_session_files_sha256_status ON session_files(sha256, status)',
+    );
   }
 
   private requireDb(): Database {
@@ -1257,6 +1260,27 @@ export class DatabaseManager {
       sql: 'DELETE FROM session_files WHERE session_id = ?',
       bind: [sessionId],
     });
+  }
+
+  /** Returns the subset of candidate hashes that are already processed in session_files. */
+  getProcessedFileHashes(hashes: string[]): string[] {
+    if (hashes.length === 0) return [];
+    const unique = [...new Set(hashes.map((h) => h.toLowerCase()))];
+    const results: string[] = [];
+    const db = this.requireDb();
+    const CHUNK_SIZE = 500;
+    for (let i = 0; i < unique.length; i += CHUNK_SIZE) {
+      const chunk = unique.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = db.selectObjects(
+        `SELECT DISTINCT LOWER(sha256) AS hash FROM session_files WHERE status = 'processed' AND LOWER(sha256) IN (${placeholders})`,
+        chunk,
+      );
+      for (const row of rows) {
+        if (typeof row.hash === 'string') results.push(row.hash);
+      }
+    }
+    return results;
   }
 
   // ==================== Sync boot reconciliation ====================

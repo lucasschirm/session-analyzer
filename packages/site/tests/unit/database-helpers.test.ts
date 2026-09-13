@@ -1238,6 +1238,57 @@ describe('DatabaseManager', () => {
       mgr.bulkUpsertSessionFiles([]);
       expect(mgr.getSessionFiles('sess-bulk-3')).toHaveLength(0);
     });
+
+    it('returns only processed file hashes normalized to lowercase', () => {
+      const project = makeProject({ id: 'proj-proc-1', name: 'Proc Project 1' });
+      mgr.createProject(project);
+      const stub = makeSessionStub('proj-proc-1', { id: 'sess-proc-1' });
+      mgr.upsertSessionStub(stub);
+
+      const hash1 = 'a'.repeat(64);
+      const hash2 = 'b'.repeat(64);
+      const hash3 = 'c'.repeat(64);
+
+      mgr.bulkUpsertSessionFiles([
+        {
+          id: 'sf-1',
+          project_id: 'proj-proc-1',
+          session_id: 'sess-proc-1',
+          path: 'f1.json',
+          scope: 'session',
+          sha256: hash1.toUpperCase(),
+          size: 10,
+          status: 'processed',
+          updated_at: 1000,
+        },
+        {
+          id: 'sf-2',
+          project_id: 'proj-proc-1',
+          session_id: 'sess-proc-1',
+          path: 'f2.json',
+          scope: 'session',
+          sha256: hash2,
+          size: 20,
+          status: 'downloaded',
+          updated_at: 1000,
+        },
+        {
+          id: 'sf-3',
+          project_id: 'proj-proc-1',
+          session_id: 'sess-proc-1',
+          path: 'f3.json',
+          scope: 'session',
+          sha256: hash3,
+          size: 30,
+          status: 'failed',
+          updated_at: 1000,
+        },
+      ]);
+
+      const found = mgr.getProcessedFileHashes([hash1, hash2, hash3, 'd'.repeat(64)]);
+      expect(found).toEqual([hash1]);
+      expect(mgr.getProcessedFileHashes([])).toEqual([]);
+    });
   });
 
   // ================================================================

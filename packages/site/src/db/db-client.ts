@@ -239,6 +239,11 @@ export class DbClient {
     return this.call({ type: 'getSessionFiles', sessionId }) as Promise<SessionFileRecord[]>;
   }
 
+  /** Returns candidate hashes that already exist in session_files with status='processed'. */
+  getProcessedFileHashes(hashes: string[]): Promise<string[]> {
+    return this.call({ type: 'getProcessedFileHashes', hashes }) as Promise<string[]>;
+  }
+
   /** Inserts or updates a session file record on the (session_id, path) key. */
   upsertSessionFile(file: SessionFileRecord): Promise<void> {
     return this.call({ type: 'upsertSessionFile', file }) as Promise<void>;

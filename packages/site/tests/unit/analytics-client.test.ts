@@ -516,4 +516,19 @@ describe('AnalyticsClient', () => {
       vi.useRealTimers();
     }
   });
+
+  it('hasArtifactBlobs sends request to worker and returns array of present hashes', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const hashes = ['hash-1', 'hash-2'];
+    const promise = client.hasArtifactBlobs(hashes);
+
+    const request = worker.posted[1] as Extract<AnalyticsRequest, { type: 'hasArtifactBlobs' }>;
+    expect(request.type).toBe('hasArtifactBlobs');
+    expect(request.hashes).toEqual(hashes);
+
+    worker.respond({ id: request.id, ok: true, result: ['hash-1'] });
+    await expect(promise).resolves.toEqual(['hash-1']);
+  });
 });
