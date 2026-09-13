@@ -103,6 +103,11 @@ export interface SessionSyncMessage {
    * unchanged files. When absent, the worker downloads all in-scope files.
    */
   localFileHashes?: Record<string, LocalFileHash>;
+  /**
+   * Set of SHA-256 hashes already present and processed in the local DB or blob store.
+   * Any manifest artifact whose sha256 is in this list is skipped from download.
+   */
+  knownHashes?: string[];
 }
 
 /** Main→Worker: abort the sync and release resources. */

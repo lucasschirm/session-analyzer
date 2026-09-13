@@ -129,6 +129,8 @@ export interface SyncManagerOptions {
   onRunSummary?: (summary: RunSummary) => void;
   /** Optional consumer fired each time a warning is added to a run. */
   onWarning?: (warning: string) => void;
+  /** Async seam for checking which artifact blobs exist in the blob store. */
+  hasArtifactBlobs?: (hashes: readonly string[]) => Promise<string[]>;
   /** Event target for `offline` events; defaults to `globalThis`. */
   eventTarget?: EventTarget;
 }
@@ -309,6 +311,7 @@ export class SyncManager extends EventTarget {
   private readonly onPasskeyRequired?: () => Promise<boolean>;
   private readonly onRunSummary?: (summary: RunSummary) => void;
   private readonly onWarning?: (warning: string) => void;
+  private readonly hasArtifactBlobs?: (hashes: readonly string[]) => Promise<string[]>;
   private readonly eventTarget: EventTarget;
 
   private broadcastChannel: BroadcastChannel | null = null;
@@ -346,6 +349,8 @@ export class SyncManager extends EventTarget {
     this.onPasskeyRequired = options.onPasskeyRequired;
     this.onRunSummary = options.onRunSummary;
     this.onWarning = options.onWarning;
+    this.hasArtifactBlobs =
+      options.hasArtifactBlobs ?? ((hashes) => analyticsClient.hasArtifactBlobs(hashes));
     this.eventTarget = options.eventTarget ?? globalThis;
   }
 
@@ -1223,16 +1228,18 @@ export class SyncManager extends EventTarget {
     sessionState: SessionSyncState,
     localSessionId: string,
     worker: Worker,
-    ctx: { remoteSessionId: string; existing: DashboardSession | null },
+    ctx: { remoteSessionId: string; existing: DashboardSession | null; manifest?: SyncManifest },
   ): Promise<void> {
     sessionState.syncStatus = 'pending';
     await this.db.setSessionSyncStatus(localSessionId, 'pending');
     const localFileHashes = await this.buildLocalFileHashes(localSessionId);
+    const knownHashes = await this.buildKnownHashes(ctx.manifest);
     const msg = this.buildSyncMessage(
       ctx.remoteSessionId,
       true,
       ctx.existing !== null,
       localFileHashes,
+      knownHashes,
     );
     worker.postMessage(msg);
     this.emitChange();
@@ -1502,6 +1509,7 @@ export class SyncManager extends EventTarget {
     sync: boolean,
     exists: boolean,
     localFileHashes?: Record<string, LocalFileHash>,
+    knownHashes?: string[],
   ): SessionSyncMessage {
     return {
       type: 'SESSION_SYNC',
@@ -1509,7 +1517,25 @@ export class SyncManager extends EventTarget {
       sync,
       exists,
       localFileHashes,
+      knownHashes,
     };
+  }
+
+  private async buildKnownHashes(
+    manifest: SyncManifest | undefined,
+  ): Promise<string[] | undefined> {
+    if (!manifest?.artifacts || manifest.artifacts.length === 0) return undefined;
+    const candidateHashes = manifest.artifacts
+      .map((a) => a.sha256?.toLowerCase())
+      .filter((h): h is string => Boolean(h) && h.length === 64);
+    if (candidateHashes.length === 0) return undefined;
+    const dbHashes = (await this.db.getProcessedFileHashes?.(candidateHashes)) ?? [];
+    let blobHashes: string[] = [];
+    if (this.hasArtifactBlobs) {
+      blobHashes = await this.hasArtifactBlobs(candidateHashes).catch(() => []);
+    }
+    const merged = new Set([...dbHashes, ...blobHashes]);
+    return merged.size > 0 ? [...merged] : undefined;
   }
 
   /** Build a path→{sha256,etag,status} map for locally stored files, used by
@@ -2262,6 +2288,38 @@ export class SyncManager extends EventTarget {
       lastModified: meta.lastModified,
       modifiedTimestamp: meta.timestamp,
       synced,
+    };
+  }
+
+  /**
+   * Refreshes the local sync status and title of existing storage session items
+   * directly from SQLite without issuing any remote S3 requests.
+   */
+  async refreshStorageSessionStatuses(items: StorageSessionItem[]): Promise<StorageSessionItem[]> {
+    if (items.length === 0) return [];
+    const projectCache = new Map<string, Project | null>();
+    const updated: StorageSessionItem[] = [];
+    for (const item of items) {
+      const updatedItem = await this.refreshSingleSessionStatus(item, projectCache);
+      updated.push(updatedItem);
+    }
+    return updated;
+  }
+
+  private async refreshSingleSessionStatus(
+    item: StorageSessionItem,
+    projectCache: Map<string, Project | null>,
+  ): Promise<StorageSessionItem> {
+    if (!projectCache.has(item.projectId)) {
+      projectCache.set(item.projectId, await this.db.getProjectByReadableId(item.projectId));
+    }
+    const localProj = projectCache.get(item.projectId);
+    if (!localProj) return item;
+    const localSess = await this.db.getSessionBySyncId(localProj.id, item.sessionId);
+    return {
+      ...item,
+      synced: localSess?.sync_status === 'in_sync',
+      title: localSess?.title ? localSess.title : item.title,
     };
   }
 

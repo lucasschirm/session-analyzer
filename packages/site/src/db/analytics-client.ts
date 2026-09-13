@@ -337,6 +337,21 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
   }
 
   /**
+   * Check which of the requested sha256 hashes exist in the blob store or sync cache.
+   */
+  async hasArtifactBlobs(hashes: readonly string[]): Promise<string[]> {
+    if (hashes.length === 0) return [];
+    const response = await this.call({
+      type: 'hasArtifactBlobs',
+      hashes,
+    });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+    return (response.result as string[]) ?? [];
+  }
+
+  /**
    * Ingest a sync manifest bundle into the analytics pipeline. Artifacts must
    * have been previously retained via `retainSyncArtifact` so the worker can
    * resolve them from the blob store or sync cache.

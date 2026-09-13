@@ -37,6 +37,10 @@ const mockSessions: StorageSessionItem[] = [
 const mockSyncManager = vi.hoisted(() => {
   const listeners: Record<string, EventListener[]> = {};
   return {
+    listeners,
+    emit: (type: string, event: Event = new CustomEvent(type)) => {
+      for (const l of listeners[type] ?? []) l(event);
+    },
     addEventListener: vi.fn((type: string, listener: EventListener) => {
       listeners[type] = listeners[type] ?? [];
       listeners[type].push(listener);
@@ -47,6 +51,7 @@ const mockSyncManager = vi.hoisted(() => {
     }),
     getConnection: vi.fn(),
     listStorageSessions: vi.fn(),
+    refreshStorageSessionStatuses: vi.fn(),
     requestRun: vi.fn(),
   };
 });
@@ -95,6 +100,7 @@ beforeEach(() => {
     sync_only_new: false,
   });
   mockSyncManager.listStorageSessions.mockResolvedValue([...mockSessions]);
+  mockSyncManager.refreshStorageSessionStatuses.mockResolvedValue([...mockSessions]);
 });
 
 describe('storage-sessions-page', () => {
@@ -364,5 +370,33 @@ describe('storage-sessions-page', () => {
     await flush(page);
     expect(root.querySelector('.selection-count')?.textContent).toContain('0 selected');
     expect((root.querySelector('.sync-selected-btn') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('refreshes sync statuses via refreshStorageSessionStatuses on syncManager change event', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    expect(mockSyncManager.listStorageSessions).toHaveBeenCalledTimes(1);
+
+    const updatedSessions = mockSessions.map((s) =>
+      s.sessionId === 'sess-102' ? { ...s, synced: true } : s,
+    );
+    mockSyncManager.refreshStorageSessionStatuses.mockResolvedValueOnce(updatedSessions);
+
+    // Trigger syncManager change listener
+    mockSyncManager.emit('change');
+    await flush(page);
+
+    expect(mockSyncManager.refreshStorageSessionStatuses).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ sessionId: 'sess-101' })]),
+    );
+    // listStorageSessions should NOT have been called again
+    expect(mockSyncManager.listStorageSessions).toHaveBeenCalledTimes(1);
+
+    const root = shadow(page);
+    const badges = root.querySelectorAll('.badge-synced');
+    expect(badges.length).toBe(2);
   });
 });

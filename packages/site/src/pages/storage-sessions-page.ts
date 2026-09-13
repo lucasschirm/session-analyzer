@@ -1,5 +1,6 @@
 import { css, html, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { formatDateTime } from '../lib/format';
 import { type StorageSessionItem, syncManager } from '../sync/sync-manager';
@@ -333,6 +334,8 @@ export class StorageSessionsPage extends PageLitElement {
 
   @state() private filteredSessions: StorageSessionItem[] = [];
 
+  @state() private availableProjects: Array<{ id: string; name: string }> = [];
+
   @state() private selectedSessionKeys: Set<string> = new Set();
 
   @state() private projectFilter: string = 'all';
@@ -348,6 +351,8 @@ export class StorageSessionsPage extends PageLitElement {
   @state() private syncFeedback: string | null = null;
 
   private loadGeneration: number = 0;
+  private isRefreshingStatuses: boolean = false;
+  private pendingRefresh: boolean = false;
 
   connectedCallback(): void {
     super.connectedCallback();
@@ -364,6 +369,9 @@ export class StorageSessionsPage extends PageLitElement {
     if (changed.has('storage') && this.storage) {
       void this.loadData();
     }
+    if (changed.has('sessions')) {
+      this.computeAvailableProjects();
+    }
     if (
       changed.has('sessions') ||
       changed.has('projectFilter') ||
@@ -372,6 +380,14 @@ export class StorageSessionsPage extends PageLitElement {
     ) {
       this.computeFilteredSessions();
     }
+  }
+
+  private computeAvailableProjects(): void {
+    const seen = new Map<string, string>();
+    for (const s of this.sessions) {
+      if (!seen.has(s.projectId)) seen.set(s.projectId, s.projectName);
+    }
+    this.availableProjects = Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
   }
 
   private computeFilteredSessions(): void {
@@ -391,22 +407,33 @@ export class StorageSessionsPage extends PageLitElement {
   async loadData(): Promise<void> {
     if (!this.storage) return;
     const generation = ++this.loadGeneration;
-    this.loading = true;
-    this.error = null;
+    this.prepareForLoad();
     try {
-      const connection = await syncManager.getConnection(this.storage);
-      const sessions = await syncManager.listStorageSessions(this.storage);
-      if (this.loadGeneration !== generation || !this.isConnected) return;
-      this.connection = connection;
-      this.sessions = sessions;
+      const conn = await syncManager.getConnection(this.storage);
+      const items = await syncManager.listStorageSessions(this.storage);
+      this.applyLoadResult(generation, conn, items);
     } catch (err) {
-      if (this.loadGeneration !== generation || !this.isConnected) return;
-      this.error = err instanceof Error ? err.message : String(err);
+      if (this.loadGeneration === generation && this.isConnected) {
+        this.error = err instanceof Error ? err.message : String(err);
+      }
     } finally {
       if (this.loadGeneration === generation && this.isConnected) {
         this.loading = false;
       }
     }
+  }
+
+  private prepareForLoad(): void {
+    this.loading = true;
+    this.error = null;
+    this.selectedSessionKeys = new Set();
+    this.syncFeedback = null;
+  }
+
+  private applyLoadResult(gen: number, conn: Connection | null, items: StorageSessionItem[]): void {
+    if (this.loadGeneration !== gen || !this.isConnected) return;
+    this.connection = conn;
+    this.sessions = items;
   }
 
   private handleSyncChange = (): void => {
@@ -415,23 +442,28 @@ export class StorageSessionsPage extends PageLitElement {
 
   private async refreshStatuses(): Promise<void> {
     if (this.sessions.length === 0 || !this.storage) return;
+    if (this.isRefreshingStatuses) {
+      this.pendingRefresh = true;
+      return;
+    }
+    this.isRefreshingStatuses = true;
     const generation = this.loadGeneration;
     try {
-      const sessions = await syncManager.listStorageSessions(this.storage);
-      if (this.loadGeneration === generation && this.isConnected) {
-        this.sessions = sessions;
-      }
+      const updated = await syncManager.refreshStorageSessionStatuses(this.sessions);
+      if (this.loadGeneration === generation && this.isConnected) this.sessions = updated;
     } catch {
       // non-fatal background refresh
+    } finally {
+      this.finishRefresh();
     }
   }
 
-  private get availableProjects(): Array<{ id: string; name: string }> {
-    const seen = new Map<string, string>();
-    for (const s of this.sessions) {
-      if (!seen.has(s.projectId)) seen.set(s.projectId, s.projectName);
+  private finishRefresh(): void {
+    this.isRefreshingStatuses = false;
+    if (this.pendingRefresh) {
+      this.pendingRefresh = false;
+      void this.refreshStatuses();
     }
-    return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
   }
 
   private handleProjectFilterChange(event: Event): void {
@@ -446,8 +478,7 @@ export class StorageSessionsPage extends PageLitElement {
     this.hideSynced = (event.target as HTMLInputElement).checked;
   }
 
-  private handleToggleSession(projectId: string, sessionId: string): void {
-    const key = `${projectId}:${sessionId}`;
+  private toggleSessionByKey(key: string): void {
     const next = new Set(this.selectedSessionKeys);
     if (next.has(key)) {
       next.delete(key);
@@ -456,6 +487,24 @@ export class StorageSessionsPage extends PageLitElement {
     }
     this.selectedSessionKeys = next;
   }
+
+  private handleRowClick = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement;
+    if (target instanceof HTMLInputElement && target.type === 'checkbox') return;
+    const tr = (event.currentTarget as HTMLElement).closest('tr');
+    const key = tr?.getAttribute('data-key');
+    if (key) this.toggleSessionByKey(key);
+  };
+
+  private handleCheckboxChange = (event: Event): void => {
+    const target = event.currentTarget as HTMLInputElement;
+    const key = target.getAttribute('data-key');
+    if (key) this.toggleSessionByKey(key);
+  };
+
+  private handleCellClick = (event: Event): void => {
+    event.stopPropagation();
+  };
 
   private handleSelectAllVisible(): void {
     const next = new Set(this.selectedSessionKeys);
@@ -486,6 +535,7 @@ export class StorageSessionsPage extends PageLitElement {
     }));
     syncManager.requestRun(connId, { targetSessions });
     const count = selected.length;
+    this.selectedSessionKeys = new Set();
     this.syncFeedback = `Sync queued for ${count} session${count === 1 ? '' : 's'}.`;
   }
 
@@ -496,18 +546,22 @@ export class StorageSessionsPage extends PageLitElement {
     return `Session from ${formatDateTime(session.lastModified)}`;
   }
 
+  private get storageLabel(): string {
+    return this.connection?.name ?? (this.loading ? 'Remote Storage' : 'Storage');
+  }
+
   private renderHeader(): TemplateResult {
-    const storageLabel = this.connection?.name || this.storage || 'Storage';
+    const label = this.storageLabel;
     return html`
       <div class="breadcrumbs">
-        <a href="#/settings/data-sources" class="back-link">← Data Sources</a>
+        <a class="back-link" href="#/settings/data-sources">← Data Sources</a>
         <span>/</span>
-        <span>${storageLabel}</span>
+        <span>${label}</span>
       </div>
       <div class="header-title-row">
         <div>
           <h1>Cherry-pick Sessions</h1>
-          <p class="subtitle">Select sessions from ${storageLabel} to sync to your local workspace.</p>
+          <p class="subtitle">Select sessions from ${label} to sync to your local workspace.</p>
         </div>
       </div>
     `;
@@ -518,8 +572,8 @@ export class StorageSessionsPage extends PageLitElement {
       <label class="filter-control">
         Project:
         <select
-          id="project-filter"
           .value=${this.projectFilter}
+          id="project-filter"
           @change=${this.handleProjectFilterChange}
         >
           <option value="all">All projects</option>
@@ -538,8 +592,8 @@ export class StorageSessionsPage extends PageLitElement {
       <label class="filter-control">
         Sort:
         <select
-          id="sort-order"
           .value=${this.sortOrder}
+          id="sort-order"
           @change=${this.handleSortOrderChange}
         >
           <option value="desc">Modified date: Newest first</option>
@@ -553,9 +607,10 @@ export class StorageSessionsPage extends PageLitElement {
     return html`
       <label class="checkbox-label">
         <input
-          type="checkbox"
-          id="hide-synced"
+          ?checked=${this.hideSynced}
           .checked=${this.hideSynced}
+          id="hide-synced"
+          type="checkbox"
           @change=${this.handleHideSyncedChange}
         />
         Hide already synced
@@ -573,25 +628,31 @@ export class StorageSessionsPage extends PageLitElement {
     `;
   }
 
+  private renderSyncButton(count: number): TemplateResult {
+    return html`
+      <button
+        ?disabled=${count === 0}
+        class="primary sync-selected-btn"
+        type="button"
+        @click=${this.handleSyncSelected}
+      >
+        Sync ${count > 0 ? `(${count})` : ''} Selected
+      </button>
+    `;
+  }
+
   private renderSelectionActions(): TemplateResult {
     const count = this.selectedSessionKeys.size;
     return html`
       <div class="actions-group">
         <span class="selection-count">${count} selected</span>
-        <button type="button" class="secondary" @click=${this.handleSelectAllVisible}>
+        <button class="secondary" type="button" @click=${this.handleSelectAllVisible}>
           Select visible
         </button>
-        <button type="button" class="secondary" @click=${this.handleDeselectAll}>
+        <button class="secondary" type="button" @click=${this.handleDeselectAll}>
           Clear
         </button>
-        <button
-          type="button"
-          class="primary sync-selected-btn"
-          ?disabled=${count === 0}
-          @click=${this.handleSyncSelected}
-        >
-          Sync ${count > 0 ? `(${count})` : ''} Selected
-        </button>
+        ${this.renderSyncButton(count)}
       </div>
     `;
   }
@@ -605,62 +666,94 @@ export class StorageSessionsPage extends PageLitElement {
     `;
   }
 
+  private renderStatusBadge(synced: boolean): TemplateResult {
+    return html`
+      <span
+        class=${classMap({
+          badge: true,
+          'badge-synced': synced,
+          'badge-unsynced': !synced,
+        })}
+      >
+        ${synced ? 'Synced' : 'Not synced'}
+      </span>
+    `;
+  }
+
+  private renderSessionCheckbox(key: string, selected: boolean, title: string): TemplateResult {
+    return html`
+      <td class="col-checkbox" @click=${this.handleCellClick}>
+        <input
+          ?checked=${selected}
+          .checked=${selected}
+          class="session-checkbox"
+          data-key=${key}
+          type="checkbox"
+          aria-label="Select session ${title}"
+          @change=${this.handleCheckboxChange}
+        />
+      </td>
+    `;
+  }
+
   private renderRow(session: StorageSessionItem): TemplateResult {
     const key = `${session.projectId}:${session.sessionId}`;
     const selected = this.selectedSessionKeys.has(key);
     const title = this.formatSessionTitle(session);
     return html`
       <tr
-        class=${selected ? 'selected' : ''}
-        @click=${() => this.handleToggleSession(session.projectId, session.sessionId)}
+        class=${classMap({ selected })}
+        data-key=${key}
+        @click=${this.handleRowClick}
       >
-        <td class="col-checkbox" @click=${(e: Event) => e.stopPropagation()}>
-          <input
-            type="checkbox"
-            .checked=${selected}
-            aria-label="Select session ${title}"
-            @change=${() => this.handleToggleSession(session.projectId, session.sessionId)}
-          />
-        </td>
+        ${this.renderSessionCheckbox(key, selected, title)}
         <td class="col-session">
           <span class="session-title" title="Session ID: ${session.sessionId}">${title}</span>
         </td>
-        <td class="col-project">
-          <span class="project-badge">${session.projectName}</span>
-        </td>
+        <td class="col-project"><span class="project-badge">${session.projectName}</span></td>
         <td class="col-date">${formatDateTime(session.lastModified)}</td>
-        <td class="col-status">
-          <span class="badge ${session.synced ? 'badge-synced' : 'badge-unsynced'}">
-            ${session.synced ? 'Synced' : 'Not synced'}
-          </span>
-        </td>
+        <td class="col-status">${this.renderStatusBadge(session.synced)}</td>
       </tr>
+    `;
+  }
+
+  private renderTableHeader(): TemplateResult {
+    return html`
+      <thead>
+        <tr>
+          <th class="col-checkbox"></th>
+          <th class="col-session">Session</th>
+          <th class="col-project">Project</th>
+          <th class="col-date">Modified Date</th>
+          <th class="col-status">Status</th>
+        </tr>
+      </thead>
+    `;
+  }
+
+  private renderEmptyFilterState(): TemplateResult {
+    return html`
+      <div class="state-box">
+        <p>No sessions match the current filter criteria.</p>
+        <button
+          class="secondary"
+          type="button"
+          @click=${this.handleResetFilters}
+        >
+          Reset filters
+        </button>
+      </div>
     `;
   }
 
   private renderTable(): TemplateResult {
     if (this.filteredSessions.length === 0) {
-      return html`
-        <div class="state-box">
-          <p>No sessions match the current filter criteria.</p>
-          <button type="button" class="secondary" @click=${this.handleResetFilters}>
-            Reset filters
-          </button>
-        </div>
-      `;
+      return this.renderEmptyFilterState();
     }
     return html`
       <div class="table-container">
         <table>
-          <thead>
-            <tr>
-              <th class="col-checkbox"></th>
-              <th class="col-session">Session</th>
-              <th class="col-project">Project</th>
-              <th class="col-date">Modified Date</th>
-              <th class="col-status">Status</th>
-            </tr>
-          </thead>
+          ${this.renderTableHeader()}
           <tbody>
             ${repeat(
               this.filteredSessions,
@@ -673,22 +766,36 @@ export class StorageSessionsPage extends PageLitElement {
     `;
   }
 
+  private renderErrorState(): TemplateResult {
+    return html`
+      <div class="error-banner" role="alert">
+        <span>${this.error}</span>
+        <button
+          class="secondary"
+          type="button"
+          @click=${this.loadData}
+        >
+          Retry
+        </button>
+      </div>
+    `;
+  }
+
+  private renderLoadingState(): TemplateResult {
+    return html`
+      <div
+        class="state-box"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="spinner"></span> Loading sessions from storage...
+      </div>
+    `;
+  }
+
   private renderContent(): TemplateResult {
-    if (this.error) {
-      return html`
-        <div class="error-banner" role="alert">
-          <span>${this.error}</span>
-          <button type="button" class="secondary" @click=${this.loadData}>Retry</button>
-        </div>
-      `;
-    }
-    if (this.loading) {
-      return html`
-        <div class="state-box" role="status" aria-live="polite">
-          <span class="spinner"></span> Loading sessions from storage...
-        </div>
-      `;
-    }
+    if (this.error) return this.renderErrorState();
+    if (this.loading) return this.renderLoadingState();
     if (this.sessions.length === 0) {
       return html`<div class="state-box">No sessions found in this storage.</div>`;
     }

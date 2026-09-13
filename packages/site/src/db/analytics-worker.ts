@@ -536,6 +536,27 @@ async function handleRetainSyncArtifact(
   }
 }
 
+export async function handleHasArtifactBlobs(
+  state: AnalyticsWorkerState,
+  request: Extract<AnalyticsRequest, { type: 'hasArtifactBlobs' }>,
+): Promise<AnalyticsResponse> {
+  try {
+    const present: string[] = [];
+    const unique = [...new Set(request.hashes.map((h) => h.toLowerCase()))];
+    for (const hash of unique) {
+      if (state.syncCache.get(hash)) {
+        present.push(hash);
+        continue;
+      }
+      const blob = await DbArtifactBlobStore.getBySha256(state.executor, hash);
+      if (blob) present.push(hash);
+    }
+    return { id: 0, ok: true, result: present };
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
 async function handleResolveProjectId(
   state: AnalyticsWorkerState,
   request: Extract<AnalyticsRequest, { type: 'resolveProjectId' }>,
@@ -703,6 +724,8 @@ export async function handleAnalyticsRequest(
         return await handleQuery(state, request);
       case 'retainSyncArtifact':
         return await handleRetainSyncArtifact(state, request);
+      case 'hasArtifactBlobs':
+        return await handleHasArtifactBlobs(state, request);
       case 'detectManualHarness':
         return await handleDetectManualHarness(state, request);
       case 'ingestManualBundle':

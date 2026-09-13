@@ -486,4 +486,16 @@ describe('DbClient', () => {
     revokeObjectURL.mockRestore();
     createElementSpy.mockRestore();
   });
+
+  it('posts getProcessedFileHashes and returns the worker response', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, storage: 'memory' });
+
+    const hashes = ['hash1', 'hash2'];
+    const promise = client.getProcessedFileHashes(hashes);
+    expect(worker.posted[1]).toMatchObject({ type: 'getProcessedFileHashes', hashes });
+
+    worker.respond({ id: worker.posted[1].id, ok: true, result: ['hash1'] });
+    await expect(promise).resolves.toEqual(['hash1']);
+  });
 });

@@ -97,6 +97,11 @@ export interface RetainSyncArtifactRequest extends BaseRequest {
   readonly artifact: ResolvedArtifact;
 }
 
+export interface HasArtifactBlobsRequest extends BaseRequest {
+  readonly type: 'hasArtifactBlobs';
+  readonly hashes: readonly string[];
+}
+
 export interface DetectManualHarnessRequest extends BaseRequest {
   readonly type: 'detectManualHarness';
   readonly artifacts: readonly ManualArtifactPayload[];
@@ -172,6 +177,7 @@ export type AnalyticsRequest =
   | GetBackendRequest
   | QueryRequest
   | RetainSyncArtifactRequest
+  | HasArtifactBlobsRequest
   | DetectManualHarnessRequest
   | IngestManualBundleRequest
   | ResolveManualConflictRequest
@@ -190,6 +196,7 @@ export type AnalyticsRequestPayload =
   | Omit<GetBackendRequest, 'id'>
   | Omit<QueryRequest, 'id'>
   | Omit<RetainSyncArtifactRequest, 'id'>
+  | Omit<HasArtifactBlobsRequest, 'id'>
   | Omit<DetectManualHarnessRequest, 'id'>
   | Omit<IngestManualBundleRequest, 'id'>
   | Omit<ResolveManualConflictRequest, 'id'>
