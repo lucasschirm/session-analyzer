@@ -595,6 +595,11 @@ describe('ClaudeCodeTransformer', () => {
       expect(tools.some((t) => ['Skill', 'Agent', 'Task'].includes(t.identity.nativeId))).toBe(
         false,
       );
+      // Session-scoped: excluded from environment lifecycle diffing and
+      // pinned to a stable, transcript-hash-independent version.
+      for (const tool of tools) {
+        expect(tool.sessionScoped).toBe(true);
+      }
 
       // The Read invocation links to the Read tool component.
       const readComponent = tools.find((t) => t.identity.nativeId === 'Read');

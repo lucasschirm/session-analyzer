@@ -163,6 +163,11 @@ describe('DevinTransformer session components (DS-F11 #288)', () => {
         (c) => c.kind === 'tool' && ['skill', 'run_subagent'].includes(c.identity.nativeId),
       ),
     ).toBe(false);
+    // Session-scoped: a per-session runtime observation, excluded from
+    // environment lifecycle diffing and pinned to a stable version.
+    for (const tool of componentsByKind(result, 'tool')) {
+      expect(tool.sessionScoped).toBe(true);
+    }
   });
 
   it('labels an ATIF tool_definitions-only snapshot pre_session, not capture_only', () => {
