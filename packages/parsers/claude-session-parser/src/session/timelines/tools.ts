@@ -184,6 +184,11 @@ export function deriveToolTimeline(
       const att = (entry as AttachmentEntry).attachment as DeferredToolsRecordAttachment;
       for (const def of att.entries) {
         if (!def.name) continue;
+        // A deferred_tools_record entry names a tool that required a
+        // ToolSearch load — it belongs to the deferred pool even when it
+        // never appeared in a deferred_tools_delta, so it must not count as
+        // always-available.
+        everDeferredNames.add(def.name);
         getOrCreate(records, def.name).availability.push(eventFrom(entry, 'undeferred'));
       }
     }

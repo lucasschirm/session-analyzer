@@ -37,6 +37,12 @@ const MCP_WRAPPER_TOOL_NAMES: ReadonlySet<string> = new Set([
  */
 const NON_GENERIC_TOOL_NAMES: ReadonlySet<string> = new Set(['skill', 'run_subagent']);
 
+/** True when the ATIF tool_definitions list contains at least one generic
+ *  tool name (i.e. something beyond the skill/run_subagent dispatchers). */
+export function hasModelSentToolDefinitions(toolDefinitions: readonly string[]): boolean {
+  return toolDefinitions.some((n) => n.length > 0 && !NON_GENERIC_TOOL_NAMES.has(n));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -116,6 +122,9 @@ export function extractMcpToolComponents(
       kind: 'tool',
       identity: componentIdentity(componentId, name, 'mcp'),
       sourceArtifactIds: [rootArtifactId],
+      // The cogs allowlist is a session line — declared availability for this
+      // session, not a durable environment declaration.
+      sessionScoped: true,
     };
   });
 }
@@ -145,6 +154,9 @@ export function extractToolDefinitionComponents(
           MCP_WRAPPER_TOOL_NAMES.has(name) ? 'mcp' : undefined,
         ),
         sourceArtifactIds: [rootArtifactId],
+        // agent.tool_definitions is this session's model-sent tool list —
+        // a runtime observation, not an environment-level declaration.
+        sessionScoped: true,
       };
     });
 }
@@ -201,8 +213,9 @@ export function deriveDevinSessionComponents(
 ): ComponentSummary[] {
   const { cogs } = parseDevinCogsJson(cogsJson ?? null);
   // Prefer the model-sent tool schema list (ATIF agent.tool_definitions).
-  // When no ATIF transcript exists (JSONL-only sessions), fall back to the
-  // declared cogs allowlist so tool availability isn't lost entirely.
+  // When ATIF carries no tool_definitions — JSONL-only sessions, or older
+  // ATIF that predates the field — fall back to the declared cogs allowlist
+  // so tool availability isn't lost entirely.
   const toolComponents =
     toolDefinitions.length > 0
       ? extractToolDefinitionComponents(sourceId, toolDefinitions, rootArtifactId)

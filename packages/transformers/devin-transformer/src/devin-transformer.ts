@@ -26,7 +26,7 @@ import {
   deriveDevinMetrics,
 } from './metrics/index.js';
 import { parseDevinBundle } from './parse-bundle.js';
-import { deriveDevinSessionComponents } from './session-components.js';
+import { deriveDevinSessionComponents, hasModelSentToolDefinitions } from './session-components.js';
 import { buildSessionSpine, deriveSessionId, resolveSourceIdentity } from './session-spine.js';
 import { buildDevinSubagentEvidence } from './subagent-evidence.js';
 import { buildTokenUsageRecords } from './token-usage.js';
@@ -469,7 +469,7 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       classification,
       sessionComponents,
       toolResult.records,
-      (parsed.atif?.toolDefinitions.length ?? 0) > 0,
+      hasModelSentToolDefinitions(parsed.atif?.toolDefinitions ?? []),
     );
 
     const allEvidence: NormalizedEvidenceRecord[] = [

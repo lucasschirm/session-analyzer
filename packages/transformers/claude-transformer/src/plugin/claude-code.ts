@@ -641,8 +641,8 @@ function extractComponents(
 
 /**
  * `kind: 'tool'` components derived from the transcript's own
- * tool-availability record — the tool names actually sent to the model —
- * rather than config-file inference. `session.tools` is built from
+ * tool-availability record — the tool names the model could call — rather
+ * than config-file inference. `session.tools` is built from
  * `prompt_snapshot` attachments (loaded tool schemas), `deferred_tools_delta`
  * (the `ToolSearch`-loadable pool), and `tool_use` blocks, so a loaded-but-
  * never-invoked tool is still counted. `Skill`/`Agent`/`Task` are domain
@@ -651,6 +651,11 @@ function extractComponents(
  * `provider: 'mcp'` so they link to MCP-server components downstream.
  * Component identity is keyed on the ingestion source (never the session)
  * so the same built-in tool resolves to one identity across sessions.
+ *
+ * These are `sessionScoped`: the tool list is this session's runtime
+ * observation, not a durable environment declaration — the DB layer
+ * excludes them from lifecycle diffing and pins their component version so
+ * per-session transcript-hash churn can't mint spurious 'updated' events.
  */
 function extractModelSentToolComponents(
   session: ClaudeCodeSession,
@@ -658,25 +663,25 @@ function extractModelSentToolComponents(
   rootArtifactId: string,
 ): ComponentSummary[] {
   const names = new Set<string>();
+  const mcpProvider = new Map<string, string>();
   for (const record of session.tools ?? []) {
     const name = record.tool;
     if (!name || isSkillTool(name) || isAgentTool(name)) continue;
     names.add(name);
+    if (record.mcpServer !== undefined) mcpProvider.set(name, record.mcpServer);
   }
-  const mcpProvider = new Map(
-    (session.tools ?? [])
-      .filter((r) => r.mcpServer !== undefined)
-      .map((r) => [r.tool, r.mcpServer]),
-  );
   return [...names].sort().map((name) => {
     const componentId = stableId('tool', { source: sourceId, name });
-    return makeComponent(
-      componentId,
-      'tool',
-      componentIdentity(componentId, name, name, mcpProvider.has(name) ? 'mcp' : undefined),
-      [rootArtifactId],
-      sourcePointerForArtifact(rootArtifactId),
-    );
+    return {
+      ...makeComponent(
+        componentId,
+        'tool',
+        componentIdentity(componentId, name, name, mcpProvider.has(name) ? 'mcp' : undefined),
+        [rootArtifactId],
+        sourcePointerForArtifact(rootArtifactId),
+      ),
+      sessionScoped: true,
+    };
   });
 }
 

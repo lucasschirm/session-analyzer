@@ -1340,5 +1340,14 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
       configComponentsBundle,
       ['root', 'file-components', 'skill', 'agent', 'rule', 'deterministic'],
     ),
+    fixture(
+      'tool-definitions',
+      'A session whose ATIF transcript carries agent.tool_definitions — the model-sent ' +
+        'tool schema list — exercising tool components derived from real availability ' +
+        'evidence (builtin tools + MCP wrappers, with skill/run_subagent dispatchers ' +
+        'excluded) and the pre_session temporalRole they earn.',
+      toolDefinitionsBundle,
+      ['root', 'components', 'deterministic'],
+    ),
   ],
 };

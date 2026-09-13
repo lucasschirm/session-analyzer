@@ -857,6 +857,26 @@ export class RebuildFrontierEngine {
       const present = new Set<string>();
 
       for (const component of components) {
+        // Session-scoped components (model-sent tool lists, cog-declared
+        // availability) are per-session observations — they still produce
+        // exposures, but are excluded from lifecycle/availability/context
+        // diffing and removal detection, matching the ingest path.
+        if (component.sessionScoped) {
+          await this.closeOpenExposure(tx, session.id, component.componentId, snapshot);
+          await SessionComponentExposureStore.insert(tx, {
+            sessionId: session.id,
+            componentId: component.componentId,
+            environmentId,
+            status: 'loaded',
+            startSequence: snapshot.ordering,
+            endSequence: null,
+            startTime: snapshot.captureTime,
+            endTime: null,
+            snapshotId: snapshot.id,
+            generationId: snapshot.generationId,
+          });
+          continue;
+        }
         present.add(component.componentId);
         const previousVersion = versionMap.get(component.componentId);
         let eventType: 'baseline' | 'added' | 'updated';
@@ -969,19 +989,36 @@ export class RebuildFrontierEngine {
   private async loadSnapshotComponents(
     tx: SqliteTransaction,
     snapshotId: string,
-  ): Promise<readonly { componentId: string; componentVersionId: string }[]> {
+  ): Promise<
+    readonly { componentId: string; componentVersionId: string; sessionScoped: boolean }[]
+  > {
     const { rows } = await tx.exec(
-      `SELECT sc.component_version_id, cv.component_id
+      `SELECT sc.component_version_id, cv.component_id, cv.safe_metadata
        FROM snapshot_components sc
        JOIN component_versions cv ON cv.id = sc.component_version_id
        WHERE sc.snapshot_id = ?
        ORDER BY cv.component_id`,
       [snapshotId],
     );
-    return rows.map((r) => ({
-      componentVersionId: asString(r.component_version_id),
-      componentId: asString(r.component_id),
-    }));
+    return rows.map((r) => {
+      let sessionScoped = false;
+      if (typeof r.safe_metadata === 'string' && r.safe_metadata.length > 0) {
+        try {
+          const meta: unknown = JSON.parse(r.safe_metadata);
+          sessionScoped =
+            typeof meta === 'object' &&
+            meta !== null &&
+            (meta as { sessionScoped?: unknown }).sessionScoped === true;
+        } catch {
+          sessionScoped = false;
+        }
+      }
+      return {
+        componentVersionId: asString(r.component_version_id),
+        componentId: asString(r.component_id),
+        sessionScoped,
+      };
+    });
   }
 
   private async closeOpenExposure(
