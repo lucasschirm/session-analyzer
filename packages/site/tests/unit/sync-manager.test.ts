@@ -1089,4 +1089,160 @@ describe('SyncManager cherry pick and storage sessions', () => {
       }),
     );
   });
+
+  describe('reprocessSession and downloadRawSessionFile', () => {
+    it('reprocessSession resets local metrics, marks status pending, and queues target run', async () => {
+      const mockDb = {
+        getConnections: vi.fn().mockResolvedValue([{ id: 'storage-1', name: 'My S3' }]),
+        getProjectByReadableId: vi.fn().mockResolvedValue({ id: 'local-p1', name: 'proj-1' }),
+        getSessionBySyncId: vi.fn().mockResolvedValue({ id: 'sess-row-1', sync_status: 'in_sync' }),
+        setSessionSyncStatus: vi.fn().mockResolvedValue(undefined),
+      } as unknown as DbClient;
+
+      const deleteSpy = vi
+        .spyOn(analyticsClient, 'deleteSessionMetrics')
+        .mockResolvedValue(undefined);
+
+      const manager = createManager({ dbClient: mockDb });
+      const requestRunSpy = vi.spyOn(manager, 'requestRun').mockResolvedValue('run-1' as never);
+
+      await manager.reprocessSession('storage-1', 'proj-1', 'sess-1');
+
+      expect(mockDb.getProjectByReadableId).toHaveBeenCalledWith('proj-1');
+      expect(mockDb.getSessionBySyncId).toHaveBeenCalledWith('local-p1', 'sess-1');
+      expect(deleteSpy).toHaveBeenCalledWith('sess-row-1');
+      expect(mockDb.setSessionSyncStatus).toHaveBeenCalledWith('sess-row-1', 'pending');
+      expect(requestRunSpy).toHaveBeenCalledWith('storage-1', {
+        targetSessions: [{ projectId: 'proj-1', sessionId: 'sess-1' }],
+      });
+    });
+
+    it('reprocessSession throws when storage is not found', async () => {
+      const mockDb = {
+        getConnections: vi.fn().mockResolvedValue([]),
+      } as unknown as DbClient;
+
+      const manager = createManager({ dbClient: mockDb });
+      await expect(manager.reprocessSession('unknown', 'proj-1', 'sess-1')).rejects.toThrow(
+        'Storage not found: unknown',
+      );
+    });
+
+    it('downloadRawSessionFile downloads main transcript from manifest.json', async () => {
+      const manifestJson = JSON.stringify({
+        schemaVersion: 2,
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        harness: 'claude-code',
+        harnessVersion: '0.1.0',
+        syncVersion: '0.1.0',
+        pluginVersion: '0.1.0',
+        transcriptsCaptured: true,
+        mainTranscriptRelativePath: 'transcript.jsonl',
+        artifacts: [
+          {
+            projectId: 'proj-1',
+            sessionId: 'sess-1',
+            scope: 'session',
+            relativePath: 'transcript.jsonl',
+            sha256: 'abc',
+            size: 10,
+            status: 'uploaded',
+          },
+        ],
+        syncRuns: [],
+        syncRunsCount: 0,
+      });
+
+      const enc = new TextEncoder();
+      const mockS3: S3Client = {
+        listProjectFolders: async () => ['proj-1'],
+        listSessionFolders: async () => ['sess-1'],
+        getObject: vi.fn().mockImplementation(async (key: string) => {
+          if (key === 'proj-1/sess-1/manifest.json') {
+            return enc.encode(manifestJson).buffer;
+          }
+          if (key === 'proj-1/sess-1/transcript.jsonl') {
+            return enc.encode('{"step": 1}\n{"step": 2}').buffer;
+          }
+          throw new Error('NotFound');
+        }),
+        putObject: async () => ({ etag: '1' }),
+      };
+
+      const mockDb = {
+        getConnections: vi.fn().mockResolvedValue([{ id: 'storage-1', name: 'My S3' }]),
+      } as unknown as DbClient;
+
+      const manager = createManager({
+        dbClient: mockDb,
+        createS3Client: () => mockS3,
+      });
+      manager.registerEphemeralConnection(
+        {
+          id: 'storage-1',
+          name: 'My S3',
+          storage_type: 's3',
+          created_at: 1000,
+          updated_at: 1000,
+          sync_only_new: false,
+        },
+        {
+          accessKeyId: 'a',
+          secretAccessKey: 'b',
+          region: 'r',
+          bucket: 'b',
+        },
+      );
+
+      const result = await manager.downloadRawSessionFile('storage-1', 'proj-1', 'sess-1');
+      expect(result.filename).toBe('transcript.jsonl');
+      expect(result.content).toBe('{"step": 1}\n{"step": 2}');
+    });
+
+    it('downloadRawSessionFile falls back to listProjectObjects when manifest is absent', async () => {
+      const enc = new TextEncoder();
+      const mockS3: S3Client = {
+        listProjectFolders: async () => ['proj-1'],
+        listSessionFolders: async () => ['sess-1'],
+        listProjectObjects: async () => [{ key: 'proj-1/sess-1/session.raw.json', size: 100 }],
+        getObject: vi.fn().mockImplementation(async (key: string) => {
+          if (key === 'proj-1/sess-1/session.raw.json') {
+            return enc.encode('raw json content').buffer;
+          }
+          throw new Error('NotFound');
+        }),
+        putObject: async () => ({ etag: '1' }),
+      };
+
+      const mockDb = {
+        getConnections: vi.fn().mockResolvedValue([{ id: 'storage-1', name: 'My S3' }]),
+      } as unknown as DbClient;
+
+      const manager = createManager({
+        dbClient: mockDb,
+        createS3Client: () => mockS3,
+      });
+      manager.registerEphemeralConnection(
+        {
+          id: 'storage-1',
+          name: 'My S3',
+          storage_type: 's3',
+          created_at: 1000,
+          updated_at: 1000,
+          sync_only_new: false,
+        },
+        {
+          accessKeyId: 'a',
+          secretAccessKey: 'b',
+          region: 'r',
+          bucket: 'b',
+        },
+      );
+
+      const result = await manager.downloadRawSessionFile('storage-1', 'proj-1', 'sess-1');
+      expect(result.filename).toBe('session.raw.json');
+      expect(result.content).toBe('raw json content');
+    });
+  });
 });

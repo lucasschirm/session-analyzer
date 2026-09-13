@@ -143,6 +143,11 @@ export interface DeleteProjectRequest extends BaseRequest {
   readonly projectId: string;
 }
 
+export interface DeleteSessionMetricsRequest extends BaseRequest {
+  readonly type: 'deleteSessionMetrics';
+  readonly sessionId: string;
+}
+
 export interface ExportAnalyticsDatabaseRequest extends BaseRequest {
   readonly type: 'exportAnalyticsDatabase';
 }
@@ -184,6 +189,7 @@ export type AnalyticsRequest =
   | IngestSyncManifestRequest
   | ResolveProjectIdRequest
   | DeleteProjectRequest
+  | DeleteSessionMetricsRequest
   | ExportAnalyticsDatabaseRequest
   | VacuumAnalyticsDatabaseRequest
   | CheckpointAnalyticsDatabaseRequest
@@ -203,6 +209,7 @@ export type AnalyticsRequestPayload =
   | Omit<IngestSyncManifestRequest, 'id'>
   | Omit<ResolveProjectIdRequest, 'id'>
   | Omit<DeleteProjectRequest, 'id'>
+  | Omit<DeleteSessionMetricsRequest, 'id'>
   | Omit<ExportAnalyticsDatabaseRequest, 'id'>
   | Omit<VacuumAnalyticsDatabaseRequest, 'id'>
   | Omit<CheckpointAnalyticsDatabaseRequest, 'id'>

@@ -29,6 +29,8 @@ import {
 import {
   ANALYTICS_SCHEMA_NAME,
   ArtifactBlobStore as DbArtifactBlobStore,
+  deleteSessionMetrics,
+  findSessionRef,
   MIGRATIONS,
   MigrationRunner,
 } from '@lucasschirm/sal-db-core';
@@ -628,6 +630,24 @@ async function handleDeleteProject(
   }
 }
 
+async function handleDeleteSessionMetrics(
+  state: AnalyticsWorkerState,
+  request: Extract<AnalyticsRequest, { type: 'deleteSessionMetrics' }>,
+): Promise<AnalyticsResponse> {
+  try {
+    const ref = await findSessionRef(state.executor, request.sessionId);
+    if (ref) {
+      await state.reprocessing.deleteSession(ref.sessionId, ref.projectId, ref.portfolioId);
+    } else {
+      await deleteSessionMetrics(state.executor, request.sessionId);
+    }
+    postDataChanged();
+    return { id: 0, ok: true };
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
 async function handleVacuumAnalyticsDatabase(
   state: AnalyticsWorkerState,
 ): Promise<AnalyticsResponse> {
@@ -738,6 +758,8 @@ export async function handleAnalyticsRequest(
         return await handleResolveProjectId(state, request);
       case 'deleteProject':
         return await handleDeleteProject(state, request);
+      case 'deleteSessionMetrics':
+        return await handleDeleteSessionMetrics(state, request);
       case 'exportAnalyticsDatabase':
         try {
           const bytes = state.executor.exportDatabase();

@@ -53,6 +53,8 @@ const mockSyncManager = vi.hoisted(() => {
     listStorageSessions: vi.fn(),
     refreshStorageSessionStatuses: vi.fn(),
     requestRun: vi.fn(),
+    reprocessSession: vi.fn(),
+    downloadRawSessionFile: vi.fn(),
   };
 });
 
@@ -398,5 +400,100 @@ describe('storage-sessions-page', () => {
     const root = shadow(page);
     const badges = root.querySelectorAll('.badge-synced');
     expect(badges.length).toBe(2);
+  });
+
+  it('renders View and Reprocess buttons for synced sessions, and View raw for unsynced sessions', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const viewButtons = root.querySelectorAll('.view-btn');
+    const reprocessButtons = root.querySelectorAll('.reprocess-btn');
+    const viewRawButtons = root.querySelectorAll('.view-raw-btn');
+
+    // sess-101 is synced (1 synced session)
+    expect(viewButtons.length).toBe(1);
+    expect(reprocessButtons.length).toBe(1);
+    expect(viewButtons[0].getAttribute('data-session-id')).toBe('sess-101');
+    expect(reprocessButtons[0].getAttribute('data-session-id')).toBe('sess-101');
+
+    // sess-102 and sess-201 are unsynced (2 unsynced sessions)
+    expect(viewRawButtons.length).toBe(2);
+    expect(viewRawButtons[0].getAttribute('data-session-id')).toBe('sess-102');
+    expect(viewRawButtons[1].getAttribute('data-session-id')).toBe('sess-201');
+  });
+
+  it('navigates to session page when View button is clicked', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const viewBtn = root.querySelector('.view-btn') as HTMLButtonElement;
+    expect(viewBtn).not.toBeNull();
+
+    window.location.hash = '';
+    viewBtn.click();
+    expect(window.location.hash).toBe('#/sessions/sess-101');
+  });
+
+  it('calls reprocessSession and shows feedback when Reprocess is clicked', async () => {
+    mockSyncManager.reprocessSession.mockResolvedValue(undefined);
+
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const reprocessBtn = root.querySelector('.reprocess-btn') as HTMLButtonElement;
+    expect(reprocessBtn).not.toBeNull();
+
+    reprocessBtn.click();
+    await flush(page);
+
+    expect(mockSyncManager.reprocessSession).toHaveBeenCalledWith('s3-main', 'proj-1', 'sess-101');
+    expect(root.querySelector('.feedback-banner')?.textContent).toContain(
+      'Reprocessing started for "Fix Authentication Flow"',
+    );
+  });
+
+  it('calls downloadRawSessionFile and opens tab when View raw is clicked', async () => {
+    mockSyncManager.downloadRawSessionFile.mockResolvedValue({
+      filename: 'transcript.jsonl',
+      content: '{"type":"message"}',
+    });
+
+    const mockTab = {
+      location: { href: '' },
+      document: { body: { innerText: '' } },
+      closed: false,
+    } as unknown as Window;
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(mockTab);
+
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const viewRawBtn = root.querySelector('.view-raw-btn') as HTMLButtonElement;
+    expect(viewRawBtn).not.toBeNull();
+
+    viewRawBtn.click();
+    await flush(page);
+
+    expect(mockSyncManager.downloadRawSessionFile).toHaveBeenCalledWith(
+      's3-main',
+      'proj-1',
+      'sess-102',
+    );
+    expect(openSpy).toHaveBeenCalledWith('about:blank', '_blank');
+    expect(mockTab.location.href).toContain('blob:');
+
+    openSpy.mockRestore();
   });
 });

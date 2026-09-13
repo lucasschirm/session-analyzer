@@ -279,6 +279,43 @@ export class StorageSessionsPage extends PageLitElement {
         border: 1px solid var(--md-sys-color-outline, #2a303c);
       }
 
+      .col-actions {
+        width: 170px;
+        white-space: nowrap;
+      }
+
+      .row-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .action-btn {
+        padding: 4px 10px;
+        font-size: 12px;
+        font-weight: 500;
+        border-radius: 4px;
+        cursor: pointer;
+        background: var(--md-sys-color-surface-container, #1f242e);
+        color: var(--md-sys-color-on-surface, #e6e9ef);
+        border: 1px solid var(--md-sys-color-outline, #2a303c);
+        transition: background-color 0.15s ease, border-color 0.15s ease;
+      }
+
+      .action-btn:hover:not(:disabled) {
+        background: var(--md-sys-color-surface-container-hover, #262d3a);
+        border-color: var(--md-sys-color-primary, #4f8cff);
+      }
+
+      .action-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .view-btn {
+        color: var(--md-sys-color-primary, #4f8cff);
+      }
+
       .state-box {
         text-align: center;
         padding: 48px 24px;
@@ -349,6 +386,7 @@ export class StorageSessionsPage extends PageLitElement {
   @state() private error: string | null = null;
 
   @state() private syncFeedback: string | null = null;
+  @state() private processingSessionIds: Set<string> = new Set();
 
   private loadGeneration: number = 0;
   private isRefreshingStatuses: boolean = false;
@@ -488,23 +526,23 @@ export class StorageSessionsPage extends PageLitElement {
     this.selectedSessionKeys = next;
   }
 
-  private handleRowClick = (event: MouseEvent): void => {
+  private handleRowClick(event: MouseEvent): void {
     const target = event.target as HTMLElement;
     if (target instanceof HTMLInputElement && target.type === 'checkbox') return;
     const tr = (event.currentTarget as HTMLElement).closest('tr');
     const key = tr?.getAttribute('data-key');
     if (key) this.toggleSessionByKey(key);
-  };
+  }
 
-  private handleCheckboxChange = (event: Event): void => {
+  private handleCheckboxChange(event: Event): void {
     const target = event.currentTarget as HTMLInputElement;
     const key = target.getAttribute('data-key');
     if (key) this.toggleSessionByKey(key);
-  };
+  }
 
-  private handleCellClick = (event: Event): void => {
+  private handleCellClick(event: Event): void {
     event.stopPropagation();
-  };
+  }
 
   private handleSelectAllVisible(): void {
     const next = new Set(this.selectedSessionKeys);
@@ -539,6 +577,98 @@ export class StorageSessionsPage extends PageLitElement {
     this.syncFeedback = `Sync queued for ${count} session${count === 1 ? '' : 's'}.`;
   }
 
+  private isProcessingSession(sessionId: string): boolean {
+    return this.processingSessionIds.has(sessionId);
+  }
+
+  private addProcessingSession(sessionId: string): void {
+    const next = new Set(this.processingSessionIds);
+    next.add(sessionId);
+    this.processingSessionIds = next;
+  }
+
+  private removeProcessingSession(sessionId: string): void {
+    const next = new Set(this.processingSessionIds);
+    next.delete(sessionId);
+    this.processingSessionIds = next;
+  }
+
+  private findSessionTitle(sessionId: string): string {
+    const item = this.sessions.find((s) => s.sessionId === sessionId);
+    return item ? this.formatSessionTitle(item) : 'session';
+  }
+
+  private handleViewClick(event: MouseEvent): void {
+    const btn = (event.currentTarget as HTMLElement).closest('button');
+    const sessionId = btn?.getAttribute('data-session-id');
+    if (sessionId) window.location.hash = `#/sessions/${sessionId}`;
+  }
+
+  private handleReprocessClick(event: MouseEvent): void {
+    const btn = (event.currentTarget as HTMLElement).closest('button');
+    const sessionId = btn?.getAttribute('data-session-id');
+    const projectId = btn?.getAttribute('data-project-id');
+    if (!sessionId || !projectId) return;
+    void this.reprocessSession(projectId, sessionId);
+  }
+
+  private async reprocessSession(projectId: string, sessionId: string): Promise<void> {
+    this.addProcessingSession(sessionId);
+    try {
+      await syncManager.reprocessSession(this.storage, projectId, sessionId);
+      const title = this.findSessionTitle(sessionId);
+      this.syncFeedback = `Reprocessing started for "${title}".`;
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.removeProcessingSession(sessionId);
+    }
+  }
+
+  private handleViewRawClick(event: MouseEvent): void {
+    const btn = (event.currentTarget as HTMLElement).closest('button');
+    const sessionId = btn?.getAttribute('data-session-id');
+    const projectId = btn?.getAttribute('data-project-id');
+    if (!sessionId || !projectId) return;
+    const tab = window.open('about:blank', '_blank');
+    void this.viewRawSession(projectId, sessionId, tab);
+  }
+
+  private async viewRawSession(
+    projectId: string,
+    sessionId: string,
+    tab: Window | null,
+  ): Promise<void> {
+    this.addProcessingSession(sessionId);
+    try {
+      const file = await syncManager.downloadRawSessionFile(this.storage, projectId, sessionId);
+      this.openRawContentInTab(tab, file.content);
+    } catch (err) {
+      this.handleViewRawError(tab, err);
+    } finally {
+      this.removeProcessingSession(sessionId);
+    }
+  }
+
+  private openRawContentInTab(tab: Window | null, content: string): void {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    if (tab && !tab.closed) {
+      tab.location.href = url;
+    } else {
+      window.open(url, '_blank');
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  }
+
+  private handleViewRawError(tab: Window | null, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    if (tab && !tab.closed) {
+      tab.document.body.innerText = `Failed to load raw session file: ${message}`;
+    }
+    this.error = `Could not view raw session: ${message}`;
+  }
+
   private formatSessionTitle(session: StorageSessionItem): string {
     if (session.title?.trim()) {
       return session.title.trim();
@@ -554,7 +684,12 @@ export class StorageSessionsPage extends PageLitElement {
     const label = this.storageLabel;
     return html`
       <div class="breadcrumbs">
-        <a class="back-link" href="#/settings/data-sources">← Data Sources</a>
+        <a
+          class="back-link"
+          href="#/settings/data-sources"
+        >
+          ← Data Sources
+        </a>
         <span>/</span>
         <span>${label}</span>
       </div>
@@ -607,7 +742,6 @@ export class StorageSessionsPage extends PageLitElement {
     return html`
       <label class="checkbox-label">
         <input
-          ?checked=${this.hideSynced}
           .checked=${this.hideSynced}
           id="hide-synced"
           type="checkbox"
@@ -646,10 +780,18 @@ export class StorageSessionsPage extends PageLitElement {
     return html`
       <div class="actions-group">
         <span class="selection-count">${count} selected</span>
-        <button class="secondary" type="button" @click=${this.handleSelectAllVisible}>
+        <button
+          class="secondary"
+          type="button"
+          @click=${this.handleSelectAllVisible}
+        >
           Select visible
         </button>
-        <button class="secondary" type="button" @click=${this.handleDeselectAll}>
+        <button
+          class="secondary"
+          type="button"
+          @click=${this.handleDeselectAll}
+        >
           Clear
         </button>
         ${this.renderSyncButton(count)}
@@ -682,9 +824,11 @@ export class StorageSessionsPage extends PageLitElement {
 
   private renderSessionCheckbox(key: string, selected: boolean, title: string): TemplateResult {
     return html`
-      <td class="col-checkbox" @click=${this.handleCellClick}>
+      <td
+        class="col-checkbox"
+        @click=${this.handleCellClick}
+      >
         <input
-          ?checked=${selected}
           .checked=${selected}
           class="session-checkbox"
           data-key=${key}
@@ -696,23 +840,90 @@ export class StorageSessionsPage extends PageLitElement {
     `;
   }
 
+  private renderViewButton(sessionId: string): TemplateResult {
+    return html`
+      <button
+        class="action-btn view-btn"
+        data-session-id=${sessionId}
+        type="button"
+        @click=${this.handleViewClick}
+      >
+        View
+      </button>
+    `;
+  }
+
+  private renderReprocessButton(projectId: string, sessionId: string): TemplateResult {
+    const busy = this.isProcessingSession(sessionId);
+    return html`
+      <button
+        ?disabled=${busy}
+        class="action-btn reprocess-btn"
+        data-project-id=${projectId}
+        data-session-id=${sessionId}
+        type="button"
+        @click=${this.handleReprocessClick}
+      >
+        ${busy ? 'Reprocessing...' : 'Reprocess'}
+      </button>
+    `;
+  }
+
+  private renderViewRawButton(projectId: string, sessionId: string): TemplateResult {
+    const busy = this.isProcessingSession(sessionId);
+    return html`
+      <button
+        ?disabled=${busy}
+        class="action-btn view-raw-btn"
+        data-project-id=${projectId}
+        data-session-id=${sessionId}
+        type="button"
+        @click=${this.handleViewRawClick}
+      >
+        ${busy ? 'Loading...' : 'View raw'}
+      </button>
+    `;
+  }
+
+  private renderRowActions(session: StorageSessionItem): TemplateResult {
+    return html`
+      <div class="row-actions">
+        ${
+          session.synced
+            ? html`${this.renderViewButton(session.sessionId)}${this.renderReprocessButton(session.projectId, session.sessionId)}`
+            : this.renderViewRawButton(session.projectId, session.sessionId)
+        }
+      </div>
+    `;
+  }
+
+  private renderSessionTitleCell(session: StorageSessionItem, title: string): TemplateResult {
+    return html`
+      <td class="col-session">
+        <span
+          class="session-title"
+          title="Session ID: ${session.sessionId}"
+        >
+          ${title}
+        </span>
+      </td>
+    `;
+  }
+
   private renderRow(session: StorageSessionItem): TemplateResult {
     const key = `${session.projectId}:${session.sessionId}`;
     const selected = this.selectedSessionKeys.has(key);
     const title = this.formatSessionTitle(session);
     return html`
-      <tr
-        class=${classMap({ selected })}
-        data-key=${key}
-        @click=${this.handleRowClick}
-      >
+      <tr class=${classMap({ selected })} data-key=${key} @click=${this.handleRowClick}>
         ${this.renderSessionCheckbox(key, selected, title)}
-        <td class="col-session">
-          <span class="session-title" title="Session ID: ${session.sessionId}">${title}</span>
-        </td>
+        ${this.renderSessionTitleCell(session, title)}
         <td class="col-project"><span class="project-badge">${session.projectName}</span></td>
         <td class="col-date">${formatDateTime(session.lastModified)}</td>
         <td class="col-status">${this.renderStatusBadge(session.synced)}</td>
+        <td class="col-actions" @click=${this.handleCellClick}>
+          ${this.renderRowActions(session)}
+        </td>
       </tr>
     `;
   }
@@ -726,6 +937,7 @@ export class StorageSessionsPage extends PageLitElement {
           <th class="col-project">Project</th>
           <th class="col-date">Modified Date</th>
           <th class="col-status">Status</th>
+          <th class="col-actions">Actions</th>
         </tr>
       </thead>
     `;
@@ -734,13 +946,28 @@ export class StorageSessionsPage extends PageLitElement {
   private renderEmptyFilterState(): TemplateResult {
     return html`
       <div class="state-box">
-        <p>No sessions match the current filter criteria.</p>
+        <p>No sessions match the current filter.</p>
         <button
           class="secondary"
           type="button"
           @click=${this.handleResetFilters}
         >
           Reset filters
+        </button>
+      </div>
+    `;
+  }
+
+  private renderEmptyStorageState(): TemplateResult {
+    return html`
+      <div class="state-box">
+        <p>No sessions found in this storage.</p>
+        <button
+          class="secondary"
+          type="button"
+          @click=${this.loadData}
+        >
+          Check again
         </button>
       </div>
     `;
@@ -768,7 +995,10 @@ export class StorageSessionsPage extends PageLitElement {
 
   private renderErrorState(): TemplateResult {
     return html`
-      <div class="error-banner" role="alert">
+      <div
+        class="error-banner"
+        role="alert"
+      >
         <span>${this.error}</span>
         <button
           class="secondary"
@@ -796,9 +1026,7 @@ export class StorageSessionsPage extends PageLitElement {
   private renderContent(): TemplateResult {
     if (this.error) return this.renderErrorState();
     if (this.loading) return this.renderLoadingState();
-    if (this.sessions.length === 0) {
-      return html`<div class="state-box">No sessions found in this storage.</div>`;
-    }
+    if (this.sessions.length === 0) return this.renderEmptyStorageState();
     return html`
       ${this.renderToolbar()}
       ${this.renderTable()}

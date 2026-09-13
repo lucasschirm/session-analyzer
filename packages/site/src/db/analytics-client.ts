@@ -408,6 +408,20 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
   }
 
   /**
+   * Delete a session's derived metrics and contributions from the analytics DB
+   * so it can be cleanly reprocessed.
+   */
+  async deleteSessionMetrics(sessionId: string): Promise<void> {
+    const response = await this.call({
+      type: 'deleteSessionMetrics',
+      sessionId,
+    });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+  }
+
+  /**
    * Serializes the analytics SQLite database as bytes (a valid SQLite file)
    * for download/backup from the Storage settings page.
    */

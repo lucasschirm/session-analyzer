@@ -744,6 +744,44 @@ export class SessionStore {
   }
 }
 
+export interface SessionRef {
+  readonly sessionId: string;
+  readonly projectId: string;
+  readonly portfolioId: string;
+}
+
+export async function findSessionRef(
+  queryable: Queryable,
+  sessionId: string,
+): Promise<SessionRef | undefined> {
+  const { rows } = await queryable.exec(
+    `SELECT s.id AS session_id, s.project_id, p.portfolio_id
+     FROM sessions s
+     JOIN projects p ON p.id = s.project_id
+     WHERE s.id = ? OR s.native_session_id = ?
+     LIMIT 1`,
+    [sessionId, sessionId],
+  );
+  if (rows.length === 0) return undefined;
+  const row = rows[0];
+  return {
+    sessionId: String(row.session_id),
+    projectId: String(row.project_id),
+    portfolioId: String(row.portfolio_id),
+  };
+}
+
+export async function deleteSessionMetrics(queryable: Queryable, sessionId: string): Promise<void> {
+  await queryable.exec('DELETE FROM metric_values WHERE session_id = ?', [sessionId]);
+  await queryable.exec('DELETE FROM session_summaries WHERE session_id = ?', [sessionId]);
+  await queryable.exec('DELETE FROM session_context_series WHERE session_id = ?', [sessionId]);
+  await queryable.exec('DELETE FROM message_effort WHERE session_id = ?', [sessionId]);
+  await queryable.exec('DELETE FROM rollup_contributions WHERE session_id = ?', [sessionId]);
+  await queryable.exec('UPDATE sessions SET current_generation_id = NULL WHERE id = ?', [
+    sessionId,
+  ]);
+}
+
 // Turns
 
 const TURN_COLUMNS: readonly Column[] = [

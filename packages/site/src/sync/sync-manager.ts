@@ -10,12 +10,14 @@
  */
 
 import {
+  buildObjectKey,
   buildProjectManifest,
   CAS_NAMESPACE_ROOT,
   encodeKeySegment,
   type ManifestArtifact,
   parseObjectKey,
   parseProjectManifest,
+  parseSyncManifest,
   type S3ClientConfig,
   S3FetchClient,
   type S3ListObjectEntry,
@@ -2205,13 +2207,25 @@ export class SyncManager extends EventTarget {
     const folders = (await s3Client.listProjectFolders()).filter((f) => f !== CAS_NAMESPACE_ROOT);
     const items: StorageSessionItem[] = [];
     for (const folder of folders) {
-      const projectName = await this.resolveProjectDisplayName(s3Client, folder);
-      const sessionMap = await this.listProjectSessionEntries(s3Client, folder);
-      for (const [sessionId, meta] of sessionMap) {
-        items.push(await this.buildStorageSessionItem(folder, projectName, sessionId, meta));
-      }
+      const folderItems = await this.listFolderStorageSessions(s3Client, folder);
+      items.push(...folderItems);
     }
     return items;
+  }
+
+  private async listFolderStorageSessions(
+    s3Client: S3Client,
+    folder: string,
+  ): Promise<StorageSessionItem[]> {
+    const projectName = await this.resolveProjectDisplayName(s3Client, folder);
+    const sessionMap = await this.listProjectSessionEntries(s3Client, folder);
+    const localProj = await this.db.getProjectByReadableId(folder);
+    const entries = Array.from(sessionMap.entries());
+    return Promise.all(
+      entries.map(([sessionId, meta]) =>
+        this.buildStorageSessionItem(folder, projectName, sessionId, meta, localProj),
+      ),
+    );
   }
 
   private async findConnectionByIdOrName(storageIdOrName: string): Promise<Connection | null> {
@@ -2271,8 +2285,8 @@ export class SyncManager extends EventTarget {
     projectName: string,
     sessionId: string,
     meta: { lastModified?: string; timestamp: number },
+    localProj?: Project | null,
   ): Promise<StorageSessionItem> {
-    const localProj = await this.db.getProjectByReadableId(folder);
     let synced = false;
     let title: string | undefined;
     if (localProj) {
@@ -2296,14 +2310,17 @@ export class SyncManager extends EventTarget {
    * directly from SQLite without issuing any remote S3 requests.
    */
   async refreshStorageSessionStatuses(items: StorageSessionItem[]): Promise<StorageSessionItem[]> {
-    if (items.length === 0) return [];
+    if (items.length === 0) return items;
     const projectCache = new Map<string, Project | null>();
-    const updated: StorageSessionItem[] = [];
-    for (const item of items) {
-      const updatedItem = await this.refreshSingleSessionStatus(item, projectCache);
-      updated.push(updatedItem);
-    }
-    return updated;
+    let hasChanges = false;
+    const updated = await Promise.all(
+      items.map(async (item) => {
+        const next = await this.refreshSingleSessionStatus(item, projectCache);
+        if (next !== item) hasChanges = true;
+        return next;
+      }),
+    );
+    return hasChanges ? updated : items;
   }
 
   private async refreshSingleSessionStatus(
@@ -2316,10 +2333,137 @@ export class SyncManager extends EventTarget {
     const localProj = projectCache.get(item.projectId);
     if (!localProj) return item;
     const localSess = await this.db.getSessionBySyncId(localProj.id, item.sessionId);
+    const synced = localSess?.sync_status === 'in_sync';
+    const title = localSess?.title ? localSess.title : item.title;
+    if (synced === item.synced && title === item.title) return item;
+    return { ...item, synced, title };
+  }
+
+  /**
+   * Clears a session's derived metrics and contributions from the local database,
+   * marks its sync status as pending, and queues a targeted sync run.
+   */
+  async reprocessSession(
+    storageIdOrName: string,
+    projectId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const connection = await this.findConnectionByIdOrName(storageIdOrName);
+    if (!connection) throw new Error(`Storage not found: ${storageIdOrName}`);
+    await this.resetLocalSessionMetrics(projectId, sessionId);
+    this.requestRun(connection.id, {
+      targetSessions: [{ projectId, sessionId }],
+    });
+  }
+
+  private async resetLocalSessionMetrics(projectId: string, sessionId: string): Promise<void> {
+    const localProj = await this.db.getProjectByReadableId(projectId);
+    if (!localProj) return;
+    const localSess = await this.db.getSessionBySyncId(localProj.id, sessionId);
+    if (!localSess) return;
+    await analyticsClient.deleteSessionMetrics(localSess.id);
+    await this.db.setSessionSyncStatus(localSess.id, 'pending');
+  }
+
+  /**
+   * Fetches the raw session file (JSONL transcript or session payload) directly
+   * from remote storage for display or preview in the browser.
+   */
+  async downloadRawSessionFile(
+    storageIdOrName: string,
+    projectId: string,
+    sessionId: string,
+  ): Promise<{ filename: string; content: string }> {
+    const connection = await this.findConnectionByIdOrName(storageIdOrName);
+    if (!connection) throw new Error(`Storage not found: ${storageIdOrName}`);
+    const credentials = await this.resolveS3Credentials(connection.id);
+    if (!credentials) throw new Error('Could not unlock storage credentials');
+    const s3Client = this.createS3Client(credentials);
+    return this.fetchRawSessionContent(s3Client, projectId, sessionId);
+  }
+
+  private async fetchRawSessionContent(
+    s3Client: S3Client,
+    projectId: string,
+    sessionId: string,
+  ): Promise<{ filename: string; content: string }> {
+    const manifestResult = await this.fetchRawFromManifest(s3Client, projectId, sessionId);
+    if (manifestResult) return manifestResult;
+    return this.fetchRawSessionFromListing(s3Client, projectId, sessionId);
+  }
+
+  private async fetchRawFromManifest(
+    s3Client: S3Client,
+    projectId: string,
+    sessionId: string,
+  ): Promise<{ filename: string; content: string } | null> {
+    try {
+      const input = {
+        projectId,
+        sessionId,
+        scope: 'manifest' as const,
+        relativePath: 'manifest.json',
+      };
+      const mBuf = await s3Client.getObject(buildObjectKey(input));
+      const manifest = parseSyncManifest(JSON.parse(this.textFromBuffer(mBuf)));
+      const artifact = this.selectRawArtifact(manifest);
+      if (!artifact) return null;
+      return this.fetchArtifactContent(s3Client, projectId, sessionId, artifact);
+    } catch {
+      return null;
+    }
+  }
+
+  private async fetchArtifactContent(
+    s3Client: S3Client,
+    projectId: string,
+    sessionId: string,
+    artifact: ManifestArtifact,
+  ): Promise<{ filename: string; content: string }> {
+    const fKey = buildObjectKey({
+      projectId,
+      sessionId,
+      scope: artifact.scope,
+      relativePath: artifact.relativePath,
+      contentSha256: artifact.sha256,
+    });
+    const buf = await s3Client.getObject(fKey);
+    return { filename: artifact.relativePath, content: this.textFromBuffer(buf) };
+  }
+
+  private selectRawArtifact(manifest: SyncManifest): ManifestArtifact | undefined {
+    const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
+    const mainArt = manifest.artifacts.find((a) => a.relativePath === mainPath);
+    if (mainArt) return mainArt;
+    return manifest.artifacts.find((a) => a.scope === 'session');
+  }
+
+  private findRawSessionObject(
+    objects: S3ListObjectEntry[],
+    sessionId: string,
+  ): S3ListObjectEntry | undefined {
+    return objects.find((obj) => {
+      const parsed = parseObjectKey(obj.key);
+      return parsed?.sessionId === sessionId && parsed.relativePath !== 'manifest.json';
+    });
+  }
+
+  private async fetchRawSessionFromListing(
+    s3Client: S3Client,
+    projectId: string,
+    sessionId: string,
+  ): Promise<{ filename: string; content: string }> {
+    if (typeof s3Client.listProjectObjects !== 'function') {
+      throw new Error(`Raw session file not found for ${sessionId}`);
+    }
+    const objects = await s3Client.listProjectObjects(projectId);
+    const match = this.findRawSessionObject(objects, sessionId);
+    if (!match) throw new Error(`Raw session file not found for ${sessionId}`);
+    const buf = await s3Client.getObject(match.key);
+    const parsed = parseObjectKey(match.key);
     return {
-      ...item,
-      synced: localSess?.sync_status === 'in_sync',
-      title: localSess?.title ? localSess.title : item.title,
+      filename: parsed?.relativePath ?? `${sessionId}.jsonl`,
+      content: this.textFromBuffer(buf),
     };
   }
 
