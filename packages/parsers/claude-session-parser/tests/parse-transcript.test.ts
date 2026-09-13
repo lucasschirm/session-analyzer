@@ -1155,3 +1155,74 @@ describe('accumulateUsage — non-numeric usage fields', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tool-availability attachments: the real wire shapes are snake_case
+// (`defer_loading`, `tool` entries carry name/description/schema only).
+// ---------------------------------------------------------------------------
+
+describe('parseSessionTranscript — prompt_snapshot and deferred_tools_record', () => {
+  const lines = [
+    JSON.stringify({
+      type: 'attachment',
+      uuid: 'att-snap',
+      timestamp: '2026-08-01T10:00:00.000Z',
+      sessionId: 'sess-tools',
+      attachment: {
+        type: 'prompt_snapshot',
+        systemPrompt: ['You are Claude Code.'],
+        tools: [
+          { name: 'Read', description: 'Read a file', schema: {} },
+          { name: 'Write', description: 'Write a file', schema: {} },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: 'attachment',
+      uuid: 'att-record',
+      timestamp: '2026-08-01T10:00:01.000Z',
+      sessionId: 'sess-tools',
+      attachment: {
+        type: 'deferred_tools_record',
+        entries: [
+          {
+            name: 'WebFetch',
+            description: 'Fetch a URL',
+            input_schema: {},
+            eager_input_streaming: false,
+            defer_loading: true,
+          },
+        ],
+      },
+    }),
+  ];
+  const session = parseSessionTranscript(lines.join('\n'));
+  const attachments = session.entries
+    .filter((e): e is AttachmentEntry => e.type === 'attachment')
+    .map((e) => e.attachment);
+
+  it('parses prompt_snapshot tools (name only) and tolerates a missing tools array', () => {
+    const snapshot = attachments.find((a) => a.type === 'prompt_snapshot');
+    if (snapshot?.type !== 'prompt_snapshot') throw new Error('expected prompt_snapshot');
+    expect(snapshot.tools).toEqual([{ name: 'Read' }, { name: 'Write' }]);
+
+    const noTools = parseSessionTranscript(
+      JSON.stringify({
+        type: 'attachment',
+        uuid: 'att-snap-2',
+        timestamp: '2026-08-01T10:00:00.000Z',
+        sessionId: 'sess-tools',
+        attachment: { type: 'prompt_snapshot', systemPrompt: ['x'] },
+      }),
+    );
+    const att = (noTools.entries[0] as AttachmentEntry).attachment;
+    if (att.type !== 'prompt_snapshot') throw new Error('expected prompt_snapshot');
+    expect(att.tools).toEqual([]);
+  });
+
+  it('parses deferred_tools_record entries and maps snake_case defer_loading', () => {
+    const record = attachments.find((a) => a.type === 'deferred_tools_record');
+    if (record?.type !== 'deferred_tools_record') throw new Error('expected deferred_tools_record');
+    expect(record.entries).toEqual([{ name: 'WebFetch', deferLoading: true }]);
+  });
+});

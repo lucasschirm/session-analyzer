@@ -1486,6 +1486,14 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
   ): Promise<void> {
     const seen = new Set<string>();
     for (const record of result.evidence) {
+      // component_evidence_link records are emitted for the write-batch
+      // contract, but nothing reads them back from normalized_events and the
+      // skeleton above strips every link field (componentId/grain/applicability
+      // aren't pointer keys), so each row would persist an empty payload.
+      // The dedicated component_evidence_links table is the intended target
+      // once the typed grain tables it references are populated; until then,
+      // writing these rows is pure bloat on large sessions.
+      if (record.recordType === 'component_evidence_link') continue;
       if (seen.has(record.recordId)) continue;
       seen.add(record.recordId);
       await NormalizedEventStore.upsert(tx, {

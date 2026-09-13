@@ -26,7 +26,7 @@ import {
   deriveDevinMetrics,
 } from './metrics/index.js';
 import { parseDevinBundle } from './parse-bundle.js';
-import { deriveDevinSessionComponents } from './session-components.js';
+import { deriveDevinSessionComponents, hasModelSentToolDefinitions } from './session-components.js';
 import { buildSessionSpine, deriveSessionId, resolveSourceIdentity } from './session-spine.js';
 import { buildDevinSubagentEvidence } from './subagent-evidence.js';
 import { buildTokenUsageRecords } from './token-usage.js';
@@ -266,6 +266,7 @@ function mergeSessionComponents(
   classification: ArtifactClassificationResult,
   sessionComponents: readonly ComponentSummary[],
   invocationRecords: readonly NormalizedEvidenceRecord[],
+  hasModelSentTools = false,
 ): { components: ComponentSummary[]; configurationSnapshot: ConfigurationSnapshot } {
   const components = [...classification.components, ...sessionComponents];
   const unclassifiedCount = classification.artifacts.filter(
@@ -274,9 +275,13 @@ function mergeSessionComponents(
   const hasConfirmedRuntimeComponent = sessionComponents.some((c) =>
     isConfirmedRuntimeComponent(c, invocationRecords),
   );
+  // ATIF `agent.tool_definitions` is the recorded tool schema list actually
+  // sent to the model — a real pre-session availability fact, not merely a
+  // captured declaration, so its presence earns 'pre_session' even without a
+  // confirmed invocation or file-backed component.
   const temporalRole = hasConfirmedRuntimeComponent
     ? 'runtime'
-    : classification.components.length > 0
+    : classification.components.length > 0 || hasModelSentTools
       ? 'pre_session'
       : 'capture_only';
   return {
@@ -458,8 +463,14 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       parsed.sessionLine?.cogsJson,
       parsed.toolCalls,
       rootArtifactId,
+      parsed.atif?.toolDefinitions ?? [],
     );
-    const merged = mergeSessionComponents(classification, sessionComponents, toolResult.records);
+    const merged = mergeSessionComponents(
+      classification,
+      sessionComponents,
+      toolResult.records,
+      hasModelSentToolDefinitions(parsed.atif?.toolDefinitions ?? []),
+    );
 
     const allEvidence: NormalizedEvidenceRecord[] = [
       ...spine.records,

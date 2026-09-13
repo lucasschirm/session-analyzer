@@ -27,7 +27,7 @@ declare const console:
  * the stored version is older, runs {@link rebuildAnalyticsDerivedData}
  * before serving queries.
  */
-export const ANALYTICS_PROCESSING_VERSION = 5;
+export const ANALYTICS_PROCESSING_VERSION = 9;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.
@@ -263,6 +263,11 @@ export async function rebuildAnalyticsDerivedData(
   executor: SqliteExecutor,
   onProgress?: RebuildProgressCallback,
 ): Promise<void> {
+  // Drop component_evidence_link rows written before version 8: the skeleton
+  // persistence stripped every link field, so those rows are empty-payload
+  // bloat that no read path queries. New generations no longer write them.
+  await executor.exec(`DELETE FROM normalized_events WHERE event_type = 'component_evidence_link'`);
+
   const sessions = await listSessionsForRebuild(executor);
   if (sessions.length === 0) {
     await setStoredProcessingVersion(executor, ANALYTICS_PROCESSING_VERSION);

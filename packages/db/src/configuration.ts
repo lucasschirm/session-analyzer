@@ -238,6 +238,12 @@ function computeContentHash(
   component: ComponentSummary,
   manifestArtifacts: readonly ManifestArtifactReference[],
 ): string {
+  // Session-scoped components (e.g. a model-sent tool list) are observed
+  // per-session runtime data: their source artifact is the transcript
+  // itself, whose hash changes every session. Keying the version on it
+  // would mint a new component_version — and an environment-level
+  // 'updated' lifecycle event — per session for identical tools.
+  if (component.sessionScoped) return component.componentId;
   for (const id of component.sourceArtifactIds ?? []) {
     if (id.startsWith('sha256:')) {
       return id.slice(7);
@@ -547,7 +553,10 @@ export class ConfigurationSnapshotEngine {
       configHash,
       schemaHash,
       sourcePointer,
-      safeMetadata: JSON.stringify({ nativeId: component.identity.nativeId }),
+      safeMetadata: JSON.stringify({
+        nativeId: component.identity.nativeId,
+        ...(component.sessionScoped ? { sessionScoped: true } : {}),
+      }),
     });
   }
 
@@ -575,6 +584,13 @@ export class ConfigurationSnapshotEngine {
 
       const previous = await this.findPreviousCompleteSnapshot(tx, input, kind, snapshotId);
       const currentMap = await this.loadSnapshotVersionMap(tx, snapshotId, kind);
+      // Session-scoped components (model-sent tool lists, cog-declared
+      // availability) are per-session observations, not durable environment
+      // declarations — a varying session toolset must not mint
+      // 'added'/'updated'/'removed' events.
+      for (const [id, info] of currentMap) {
+        if (info.sessionScoped) currentMap.delete(id);
+      }
 
       if (!previous) {
         if (currentStatus !== 'complete') continue;
@@ -596,6 +612,9 @@ export class ConfigurationSnapshotEngine {
       }
 
       const previousMap = await this.loadSnapshotVersionMap(tx, previous.id, kind);
+      for (const [id, info] of previousMap) {
+        if (info.sessionScoped) previousMap.delete(id);
+      }
       const previousHandled = new Set<string>();
       const currentHandled = new Set<string>();
 
@@ -770,12 +789,19 @@ export class ConfigurationSnapshotEngine {
   ): Promise<
     Map<
       string,
-      { componentId: string; versionId: string; nativeId: string; canonicalSourceIdentity: string }
+      {
+        componentId: string;
+        versionId: string;
+        nativeId: string;
+        canonicalSourceIdentity: string;
+        sessionScoped: boolean;
+      }
     >
   > {
     const { rows } = await tx.exec(
       `SELECT sc.component_version_id, sc.source_scope, sc.source_pointer,
-              cv.component_id, ci.kind, ci.native_id, ci.canonical_source_identity
+              cv.component_id, cv.safe_metadata,
+              ci.kind, ci.native_id, ci.canonical_source_identity
        FROM snapshot_components sc
        JOIN component_versions cv ON cv.id = sc.component_version_id
        JOIN component_identities ci ON ci.id = cv.component_id
@@ -785,15 +811,34 @@ export class ConfigurationSnapshotEngine {
 
     const map = new Map<
       string,
-      { componentId: string; versionId: string; nativeId: string; canonicalSourceIdentity: string }
+      {
+        componentId: string;
+        versionId: string;
+        nativeId: string;
+        canonicalSourceIdentity: string;
+        sessionScoped: boolean;
+      }
     >();
     for (const row of rows) {
       const componentId = String(row.component_id);
+      let sessionScoped = false;
+      if (typeof row.safe_metadata === 'string' && row.safe_metadata.length > 0) {
+        try {
+          const meta: unknown = JSON.parse(row.safe_metadata);
+          sessionScoped =
+            typeof meta === 'object' &&
+            meta !== null &&
+            (meta as { sessionScoped?: unknown }).sessionScoped === true;
+        } catch {
+          sessionScoped = false;
+        }
+      }
       map.set(componentId, {
         componentId,
         versionId: String(row.component_version_id),
         nativeId: String(row.native_id ?? ''),
         canonicalSourceIdentity: String(row.canonical_source_identity ?? ''),
+        sessionScoped,
       });
     }
     return map;
