@@ -21,6 +21,7 @@ import './component-ecosystem/component-ecosystem-view';
 import './artifact-diff/artifact-diff-view';
 import './settings/data-sources-page';
 import './settings/storage-page';
+import './storage-sessions-page';
 import './tbd-page';
 
 /**
@@ -528,6 +529,13 @@ export class AppRoot extends LitElement {
         path: '/settings/storage',
         render: () => html`<storage-page></storage-page>`,
       },
+      {
+        path: '/storage/:storage/sessions',
+        render: (params) =>
+          html`<storage-sessions-page
+            .storage=${decodeRouteParam(params.storage)}
+          ></storage-sessions-page>`,
+      },
     ],
     {
       render: () => html`
@@ -768,6 +776,7 @@ export class AppRoot extends LitElement {
       this.currentPath.startsWith('/projects') ||
       this.currentPath.startsWith('/sessions') ||
       this.currentPath.startsWith('/settings') ||
+      this.currentPath.startsWith('/storage') ||
       this.currentPath.startsWith('/agents') ||
       this.currentPath.startsWith('/skills') ||
       this.currentPath.startsWith('/tools') ||

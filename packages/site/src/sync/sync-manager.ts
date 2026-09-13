@@ -14,15 +14,19 @@ import {
   CAS_NAMESPACE_ROOT,
   encodeKeySegment,
   type ManifestArtifact,
+  parseObjectKey,
   parseProjectManifest,
   type S3ClientConfig,
   S3FetchClient,
+  type S3ListObjectEntry,
+  type S3ListObjectsOptions,
   type S3ListOptions,
   type SyncManifest,
 } from '@lucasschirm/sal-sync-core';
 import { toastManager } from '../components/toast-container';
 import { analyticsClient } from '../db/analytics-client';
 import { type DbClient, dbClient } from '../db/db-client';
+import { formatSessionTitle } from '../lib/format';
 import { generateId } from '../lib/id';
 import { describeS3Error } from '../lib/s3-errors';
 import type {
@@ -133,8 +137,22 @@ export interface SyncManagerOptions {
 export interface S3Client {
   listProjectFolders(options?: S3ListOptions): Promise<string[]>;
   listSessionFolders(projectId: string, options?: S3ListOptions): Promise<string[]>;
+  listProjectObjects?(
+    projectId: string,
+    options?: S3ListObjectsOptions,
+  ): Promise<S3ListObjectEntry[]>;
   getObject(key: string): Promise<ArrayBuffer>;
   putObject(key: string, body: ArrayBuffer | Uint8Array): Promise<{ etag?: string }>;
+}
+
+export interface StorageSessionItem {
+  projectId: string;
+  projectName: string;
+  sessionId: string;
+  title?: string;
+  lastModified?: string;
+  modifiedTimestamp: number;
+  synced: boolean;
 }
 
 interface SessionProgressState {
@@ -206,6 +224,8 @@ interface SyncRun {
   /** When set, overrides the connection's sync-only-new setting with the value
    * chosen by the user in the per-sync confirmation modal. */
   overrideSyncOnlyNew?: boolean;
+  /** When set, restricts sync to these specific projects and session ids. */
+  targetSessions?: Map<string, string[]>;
 }
 
 interface BroadcastMessage {
@@ -357,15 +377,38 @@ export class SyncManager extends EventTarget {
    * Only one run is active at a time; duplicates for the same connection are
    * ignored.
    */
-  requestRun(connectionId: string, options?: { syncOnlyNew?: boolean }): void {
+  requestRun(
+    connectionId: string,
+    options?: {
+      syncOnlyNew?: boolean;
+      targetSessions?: Array<{ projectId: string; sessionId: string }>;
+    },
+  ): void {
     if (this.readOnly) return;
     if (this.findRunForConnection(connectionId)) return;
     const run = this.createRun(connectionId);
     if (options?.syncOnlyNew !== undefined) {
       run.overrideSyncOnlyNew = options.syncOnlyNew;
     }
+    if (options?.targetSessions && options.targetSessions.length > 0) {
+      this.applyTargetSessionsToRun(run, options.targetSessions);
+    }
     this.runQueue.push(run);
     this.processQueue();
+  }
+
+  private applyTargetSessionsToRun(
+    run: SyncRun,
+    targetSessions: Array<{ projectId: string; sessionId: string }>,
+  ): void {
+    run.bypassSyncOnlyNew = true;
+    const targetMap = new Map<string, string[]>();
+    for (const item of targetSessions) {
+      const list = targetMap.get(item.projectId) ?? [];
+      list.push(item.sessionId);
+      targetMap.set(item.projectId, list);
+    }
+    run.targetSessions = targetMap;
   }
 
   /**
@@ -585,7 +628,9 @@ export class SyncManager extends EventTarget {
       return;
     }
     if (!run.s3Client) return;
-    const folders = await run.s3Client.listProjectFolders();
+    const folders = run.targetSessions
+      ? Array.from(run.targetSessions.keys())
+      : await run.s3Client.listProjectFolders();
     await this.checkGlobalConflict(run);
     for (const folder of folders) {
       if (run.cancelled) break;
@@ -720,6 +765,7 @@ export class SyncManager extends EventTarget {
     targetSessionIds?: string[],
     isNew = false,
   ): void {
+    const targets = targetSessionIds ?? run.targetSessions?.get(projectId);
     const state: ProjectSyncState = {
       projectId,
       localProjectId,
@@ -734,7 +780,7 @@ export class SyncManager extends EventTarget {
       filesFailed: 0,
       bytesReceived: 0,
       isNew,
-      targetSessionIds,
+      targetSessionIds: targets,
     };
     run.projects.set(projectId, state);
     run.projectQueue.push(projectId);
@@ -2117,11 +2163,106 @@ export class SyncManager extends EventTarget {
     return new TextEncoder().encode(text).buffer;
   }
 
-  private async getConnection(connectionId: string): Promise<Connection | null> {
+  async getConnection(connectionId: string): Promise<Connection | null> {
     const ephemeral = this.ephemeralConnections.get(connectionId);
     if (ephemeral) return ephemeral.connection;
     const connections = await this.db.getConnections();
     return connections.find((c) => c.id === connectionId) ?? null;
+  }
+
+  async listStorageSessions(storageIdOrName: string): Promise<StorageSessionItem[]> {
+    const connection = await this.findConnectionByIdOrName(storageIdOrName);
+    if (!connection) throw new Error(`Storage not found: ${storageIdOrName}`);
+    const credentials = await this.resolveS3Credentials(connection.id);
+    if (!credentials) throw new Error('Could not unlock storage credentials');
+    const s3Client = this.createS3Client(credentials);
+    const folders = (await s3Client.listProjectFolders()).filter((f) => f !== CAS_NAMESPACE_ROOT);
+    const items: StorageSessionItem[] = [];
+    for (const folder of folders) {
+      const projectName = await this.resolveProjectDisplayName(s3Client, folder);
+      const sessionMap = await this.listProjectSessionEntries(s3Client, folder);
+      for (const [sessionId, meta] of sessionMap) {
+        items.push(await this.buildStorageSessionItem(folder, projectName, sessionId, meta));
+      }
+    }
+    return items;
+  }
+
+  private async findConnectionByIdOrName(storageIdOrName: string): Promise<Connection | null> {
+    const fromId = await this.getConnection(storageIdOrName);
+    if (fromId) return fromId;
+    const all = await this.db.getConnections();
+    return all.find((c) => c.id === storageIdOrName || c.name === storageIdOrName) ?? null;
+  }
+
+  private async resolveProjectDisplayName(s3Client: S3Client, folder: string): Promise<string> {
+    const local = await this.db.getProjectByReadableId(folder);
+    if (local?.name) return local.name;
+    try {
+      const buf = await s3Client.getObject(`${encodeKeySegment(folder)}/manifest.json`);
+      const manifest = parseProjectManifest(JSON.parse(this.textFromBuffer(buf)));
+      if (manifest?.name) return manifest.name;
+    } catch {
+      // Manifest missing or invalid
+    }
+    return folder;
+  }
+
+  private async listProjectSessionEntries(
+    s3Client: S3Client,
+    folder: string,
+  ): Promise<Map<string, { lastModified?: string; timestamp: number }>> {
+    const sessions = new Map<string, { lastModified?: string; timestamp: number }>();
+    if (typeof s3Client.listProjectObjects === 'function') {
+      const entries = await s3Client.listProjectObjects(folder);
+      for (const entry of entries) {
+        const parsed = parseObjectKey(entry.key);
+        if (parsed?.sessionId) {
+          this.updateSessionEntryMeta(sessions, parsed.sessionId, entry.lastModified);
+        }
+      }
+    } else {
+      const ids = await s3Client.listSessionFolders(folder);
+      for (const id of ids) sessions.set(id, { timestamp: 0 });
+    }
+    return sessions;
+  }
+
+  private updateSessionEntryMeta(
+    sessions: Map<string, { lastModified?: string; timestamp: number }>,
+    sessionId: string,
+    lastModified?: string,
+  ): void {
+    const ts = lastModified ? Date.parse(lastModified) : 0;
+    const existing = sessions.get(sessionId);
+    if (!existing || (!Number.isNaN(ts) && ts > existing.timestamp)) {
+      sessions.set(sessionId, { lastModified, timestamp: Number.isNaN(ts) ? 0 : ts });
+    }
+  }
+
+  private async buildStorageSessionItem(
+    folder: string,
+    projectName: string,
+    sessionId: string,
+    meta: { lastModified?: string; timestamp: number },
+  ): Promise<StorageSessionItem> {
+    const localProj = await this.db.getProjectByReadableId(folder);
+    let synced = false;
+    let title: string | undefined;
+    if (localProj) {
+      const localSess = await this.db.getSessionBySyncId(localProj.id, sessionId);
+      synced = localSess?.sync_status === 'in_sync';
+      title = localSess?.title ?? undefined;
+    }
+    return {
+      projectId: folder,
+      projectName,
+      sessionId,
+      title: formatSessionTitle(title, meta.lastModified),
+      lastModified: meta.lastModified,
+      modifiedTimestamp: meta.timestamp,
+      synced,
+    };
   }
 
   private isNotFoundError(error: unknown): boolean {

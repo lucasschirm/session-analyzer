@@ -681,7 +681,7 @@ export class LeftNav extends LitElement {
     ) {
       return this.renderDashboardNav();
     }
-    if (this.path.startsWith('/settings')) {
+    if (this.path.startsWith('/settings') || this.path.startsWith('/storage')) {
       return this.renderSettingsNav();
     }
     // No left nav on other routes.

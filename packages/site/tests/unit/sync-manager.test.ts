@@ -828,3 +828,136 @@ describe('SyncManager session failure isolation', () => {
     expect(project.sessionsFailed).toBe(1);
   });
 });
+
+describe('SyncManager cherry pick and storage sessions', () => {
+  it('listStorageSessions lists projects, session metadata, and resolves sync status', async () => {
+    const mockDb = {
+      getConnections: vi.fn().mockResolvedValue([
+        {
+          id: 'conn-s3-1',
+          name: 'Main S3',
+          storage_type: 's3',
+          created_at: 1000,
+          updated_at: 1000,
+          sync_only_new: false,
+        },
+      ]),
+      getS3Credentials: vi.fn().mockResolvedValue(null),
+      getProjectByReadableId: vi.fn().mockImplementation((folder: string) => {
+        if (folder === 'proj-a') {
+          return Promise.resolve({ id: 'local-proj-a', name: 'Alpha Project' });
+        }
+        return Promise.resolve(null);
+      }),
+      getSessionBySyncId: vi.fn().mockImplementation((projId: string, sessId: string) => {
+        if (projId === 'local-proj-a' && sessId === 'sess-1') {
+          return Promise.resolve({
+            id: 'local-sess-1',
+            sync_status: 'in_sync',
+            title: 'Session One',
+          });
+        }
+        return Promise.resolve(null);
+      }),
+    } as unknown as DbClient;
+
+    const mockS3 = {
+      listProjectFolders: vi.fn().mockResolvedValue(['proj-a']),
+      listSessionFolders: vi.fn().mockResolvedValue([]),
+      listProjectObjects: vi.fn().mockResolvedValue([
+        {
+          key: 'proj-a/sess-1/transcript.jsonl',
+          lastModified: '2026-09-12T10:00:00.000Z',
+          size: 100,
+        },
+        {
+          key: 'proj-a/sess-2/transcript.jsonl',
+          lastModified: '2026-09-13T10:00:00.000Z',
+          size: 200,
+        },
+      ]),
+      getObject: vi.fn().mockRejectedValue(new Error('no manifest')),
+      putObject: vi.fn(),
+    };
+
+    const manager = createManager({
+      dbClient: mockDb,
+      createS3Client: () => mockS3,
+    });
+
+    // Register ephemeral connection so credentials unlock without passkey
+    manager.registerEphemeralConnection(
+      {
+        id: 'conn-s3-1',
+        name: 'Main S3',
+        storage_type: 's3',
+        created_at: 1000,
+        updated_at: 1000,
+        sync_only_new: false,
+      },
+      {
+        accessKeyId: 'ak',
+        secretAccessKey: 'sk',
+        bucket: 'my-bucket',
+        region: 'us-east-1',
+      },
+    );
+
+    const items = await manager.listStorageSessions('conn-s3-1');
+    expect(items.length).toBe(2);
+
+    const s1 = items.find((i) => i.sessionId === 'sess-1');
+    const s2 = items.find((i) => i.sessionId === 'sess-2');
+
+    expect(s1).toMatchObject({
+      projectId: 'proj-a',
+      projectName: 'Alpha Project',
+      sessionId: 'sess-1',
+      title: 'Session One',
+      synced: true,
+    });
+
+    expect(s2).toMatchObject({
+      projectId: 'proj-a',
+      projectName: 'Alpha Project',
+      sessionId: 'sess-2',
+      synced: false,
+    });
+  });
+
+  it('requestRun with targetSessions restricts sync run to specific sessions', async () => {
+    const mockDb = {
+      getConnections: vi.fn().mockResolvedValue([]),
+      getS3Credentials: vi.fn().mockResolvedValue(null),
+    } as unknown as DbClient;
+
+    const manager = createManager({ dbClient: mockDb });
+
+    manager.registerEphemeralConnection(
+      {
+        id: 'conn-target',
+        name: 'Target S3',
+        storage_type: 's3',
+        created_at: 1000,
+        updated_at: 1000,
+        sync_only_new: true,
+      },
+      {
+        accessKeyId: 'ak',
+        secretAccessKey: 'sk',
+        bucket: 'target-bucket',
+        region: 'us-east-1',
+      },
+    );
+
+    manager.requestRun('conn-target', {
+      targetSessions: [
+        { projectId: 'proj-1', sessionId: 'sess-a' },
+        { projectId: 'proj-2', sessionId: 'sess-b' },
+      ],
+    });
+
+    const snapshot = manager.getSnapshot();
+    expect(snapshot.activeRun?.connectionId).toBe('conn-target');
+  });
+});
