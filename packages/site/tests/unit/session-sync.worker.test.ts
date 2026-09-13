@@ -909,6 +909,55 @@ describe('SessionSyncWorker', () => {
     expect(done.failed).toBe(0);
   });
 
+  it('reconciles main transcript and completes sync when hash mismatches but content is parsable', async () => {
+    const { worker, posted } = createWorker(client);
+    const { manifest, downloads } = await makeManifest('proj', 'sess-1', [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: '{"type":"user","uuid":"u1"}\n',
+      },
+    ]);
+    client.putBuffer(
+      manifestKey('proj', 'sess-1'),
+      encoder.encode(JSON.stringify(manifest)).buffer,
+    );
+    const main = downloads.find((f) => f.isMainTranscript) as FileToDownload & { content: string };
+    const appendedContent = '{"type":"user","uuid":"u1"}\n{"type":"assistant","uuid":"a1"}\n';
+    const appendedHash = await sha256Hex(new Uint8Array(encoder.encode(appendedContent).buffer));
+
+    client.putBuffer(
+      buildObjectKey({
+        projectId: 'proj',
+        sessionId: 'sess-1',
+        scope: 'session',
+        relativePath: main.relativePath,
+        contentSha256: main.hash,
+      }),
+      encoder.encode(appendedContent).buffer,
+    );
+
+    await worker.handleMessage(startMessage('proj'));
+    await continueSession(worker, posted, 'sess-1');
+    await vi.waitUntil(() => findMessages(posted, 'SESSION_MANIFEST_READY').length > 0);
+
+    worker.handleMessage(syncMessage('sess-1', undefined));
+    await vi.waitUntil(() => findMessages(posted, 'WORKER_DONE').length > 0);
+
+    expect(findMessages(posted, 'SESSION_SYNC_FAILED').length).toBe(0);
+    const complete = findOne(posted, 'SESSION_SYNC_COMPLETE') as SessionSyncCompleteMessage;
+    expect(complete).toBeDefined();
+    const mainSummary = complete.files.find((f) => f.file === 'transcript.jsonl');
+    expect(mainSummary?.status).toBe('downloaded');
+    expect(mainSummary?.hash).toBe(appendedHash);
+
+    const fileDownloaded = findOne(
+      posted,
+      'SESSION_FILE_DOWNLOADED',
+    ) as unknown as SessionFileDownloadedMessage;
+    expect(fileDownloaded.hash).toBe(appendedHash);
+  });
+
   it('emits MANIFEST_NOT_FOUND and fingerprint:undefined for a manifest-less session folder', async () => {
     client.setObjectPages([
       {

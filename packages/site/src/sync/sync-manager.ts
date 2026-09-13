@@ -1165,7 +1165,7 @@ export class SyncManager extends EventTarget {
 
   private async requestSessionFiles(
     sessionState: SessionSyncState,
-    project: ProjectSyncState,
+    _project: ProjectSyncState,
     localSession: DashboardSession,
     worker: Worker,
     ctx: SessionFilesContext,
@@ -1675,6 +1675,7 @@ export class SyncManager extends EventTarget {
     session.completeReceived = true;
 
     this.reconcileSessionFilesList(project, session, message.files);
+    this.reconcileManifestArtifactHashes(session, message.files);
     await this.settleRetainPromises(session);
 
     if (session.syncStatus === 'transcript_unavailable' || session.syncStatus === 'failed') {
@@ -1695,6 +1696,26 @@ export class SyncManager extends EventTarget {
     this.markSessionDone(project, session);
     await this.maybeCompleteSession(session);
     this.emitChange();
+  }
+
+  private reconcileManifestArtifactHashes(session: SessionSyncState, files: FileSummary[]): void {
+    if (!session.manifest?.artifacts) return;
+    for (const file of files) {
+      if (file.status === 'downloaded' && file.hash) {
+        const artifact = session.manifest.artifacts.find(
+          (a) =>
+            (a.scope === 'session' ? a.relativePath : `${a.scope}/${a.relativePath}`) ===
+              file.file || a.relativePath === file.file,
+        );
+        if (artifact && artifact.sha256.toLowerCase() !== file.hash.toLowerCase()) {
+          console.warn(
+            `Reconciled hash mismatch for artifact ${file.file} in session ${session.sessionId}: manifest ${artifact.sha256} -> actual ${file.hash}`,
+          );
+          artifact.sha256 = file.hash;
+          artifact.size = file.size;
+        }
+      }
+    }
   }
 
   private async bulkPersistSessionFiles(session: SessionSyncState): Promise<void> {

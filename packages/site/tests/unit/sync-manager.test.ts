@@ -367,6 +367,72 @@ describe('SyncManager session failure isolation', () => {
     expect(mockWorker.terminate).not.toHaveBeenCalled();
   });
 
+  it('handleSessionSyncComplete reconciles artifact hashes in session.manifest when files have been reconciled', async () => {
+    const mockDb = createMockDb();
+    const onSyncComplete = vi.fn().mockResolvedValue(undefined);
+    const manager = createManager({ onSyncComplete, dbClient: mockDb });
+    const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;
+    const project = createTestProject(mockWorker);
+
+    // @ts-expect-error — accessing private method for test setup
+    const session = manager.getOrCreateSessionState(project, 'sess-reconcile', 'local-sess-rec');
+    session.manifest = {
+      schemaVersion: 2,
+      projectId: 'proj-1',
+      sessionId: 'sess-reconcile',
+      harness: 'claude',
+      harnessVersion: '1',
+      syncVersion: '0.1.0',
+      pluginVersion: '1',
+      transcriptsCaptured: true,
+      artifacts: [
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-reconcile',
+          scope: 'session',
+          relativePath: 'transcript.jsonl',
+          sha256: 'old-hash-111',
+          size: 10,
+          status: 'uploaded',
+        },
+      ],
+      syncRuns: [],
+      syncRunsCount: 0,
+    };
+
+    // @ts-expect-error — testing private method
+    await manager.handleSessionSyncComplete(project, {
+      type: 'SESSION_SYNC_COMPLETE',
+      connectionId: 'c1',
+      projectId: 'proj-1',
+      sessionId: 'sess-reconcile',
+      files: [
+        {
+          file: 'transcript.jsonl',
+          hash: 'reconciled-actual-hash-222',
+          size: 25,
+          status: 'downloaded',
+        },
+      ],
+    });
+
+    expect(project.sessionsFailed).toBe(0);
+    expect(project.sessionsDone).toBe(1);
+    expect(onSyncComplete).toHaveBeenCalledWith(
+      'local-sess-rec',
+      expect.objectContaining({
+        artifacts: [
+          expect.objectContaining({
+            relativePath: 'transcript.jsonl',
+            sha256: 'reconciled-actual-hash-222',
+            size: 25,
+          }),
+        ],
+      }),
+      'proj-1',
+    );
+  });
+
   it('handleSessionManifestReady unblocks worker on failure and isolates error', async () => {
     const mockDb = createMockDb();
     // @ts-expect-error — mock failure in DB

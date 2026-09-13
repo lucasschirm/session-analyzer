@@ -583,15 +583,16 @@ test('failed session can be retried after the remote file is fixed', async ({ pa
   // name, exactly as real uploads guarantee (the folder is derived from the
   // same id) - substitute it so the sync pipeline's external-id matching
   // resolves to the same session row instead of creating an unrelated one.
+  const validTranscript = Buffer.from(
+    fixtureBuffer('claude-session.jsonl')
+      .toString('utf8')
+      .replaceAll('e2e-claude-session', 'e2e-retry'),
+  );
   const files = [
     {
       scope: 'session' as const,
       relativePath: 'transcript.jsonl',
-      content: Buffer.from(
-        fixtureBuffer('claude-session.jsonl')
-          .toString('utf8')
-          .replaceAll('e2e-claude-session', 'e2e-retry'),
-      ),
+      content: Buffer.from('invalid non-jsonl corrupted transcript content\n'),
       sha256: '0'.repeat(64),
     },
   ];
@@ -609,13 +610,16 @@ test('failed session can be retried after the remote file is fixed', async ({ pa
   await modal.getByRole('button', { name: 'Close' }).click();
   await waitForSyncIdle(page);
 
-  // Fix the manifest in the bucket so the hash matches the actual file.
-  const fixed = buildSessionManifest(
-    'retry-proj',
-    'e2e-retry',
-    files.map((f) => ({ ...f, sha256: undefined })),
-    true,
-  );
+  // Fix the remote file and manifest in the bucket so the hash matches the actual file.
+  const validFiles = [
+    {
+      scope: 'session' as const,
+      relativePath: 'transcript.jsonl',
+      content: validTranscript,
+    },
+  ];
+  bucket.setObjectContent('retry-proj/e2e-retry/transcript.jsonl', validTranscript);
+  const fixed = buildSessionManifest('retry-proj', 'e2e-retry', validFiles, true);
   bucket.setManifestContent('retry-proj', 'e2e-retry', Buffer.from(JSON.stringify(fixed)));
 
   // Re-sync from the Data Sources page. The session is in 'failed' state, so
@@ -629,6 +633,40 @@ test('failed session can be retried after the remote file is fixed', async ({ pa
   // Verify via the sync status modal that the session is in_sync.
   modal = await openSyncStatusModal(page);
   const sessionItem = modalSessionItem(modal, 'e2e-retry');
+  await expect(sessionItem).toBeVisible({ timeout: 5000 });
+  await expect(sessionItem.locator('.state-in_sync')).toBeVisible({ timeout: 10000 });
+  await modal.getByRole('button', { name: 'Close' }).click();
+});
+
+// =============================================================================
+// Scenario 11b: Transcript with mismatched hash still syncs if parsable
+// (lenient parsability fallback on hash mismatch).
+// =============================================================================
+
+test('transcript with mismatched hash still syncs if parsable', async ({ page }) => {
+  const bucket = new FixtureBucket();
+  bucket.addProject('hash-fallback-proj', 'Hash Fallback Project', '');
+  const files = [
+    {
+      scope: 'session' as const,
+      relativePath: 'transcript.jsonl',
+      content: Buffer.from(
+        fixtureBuffer('claude-session.jsonl')
+          .toString('utf8')
+          .replaceAll('e2e-claude-session', 'e2e-hash-fallback'),
+      ),
+      sha256: '0'.repeat(64),
+    },
+  ];
+  bucket.addSession('hash-fallback-proj', 'e2e-hash-fallback', { files });
+  attachLoggers(page);
+
+  await startSyncFromHome(page, bucket);
+  await waitForSyncCompleted(page);
+
+  // Verify the session succeeded despite the hash mismatch because it was parsable.
+  const modal = await openSyncStatusModal(page);
+  const sessionItem = modalSessionItem(modal, 'e2e-hash-fallback');
   await expect(sessionItem).toBeVisible({ timeout: 5000 });
   await expect(sessionItem.locator('.state-in_sync')).toBeVisible({ timeout: 10000 });
   await modal.getByRole('button', { name: 'Close' }).click();
