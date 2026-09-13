@@ -1,4 +1,4 @@
-import { css, html, type PropertyValues, type TemplateResult } from 'lit';
+import { css, html, nothing, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
@@ -280,7 +280,7 @@ export class StorageSessionsPage extends PageLitElement {
       }
 
       .col-actions {
-        width: 170px;
+        width: 220px;
         white-space: nowrap;
       }
 
@@ -874,13 +874,13 @@ export class StorageSessionsPage extends PageLitElement {
     return html`
       <button
         ?disabled=${busy}
-        class="action-btn view-raw-btn"
+        class="action-btn raw-btn view-raw-btn"
         data-project-id=${projectId}
         data-session-id=${sessionId}
         type="button"
         @click=${this.handleViewRawClick}
       >
-        ${busy ? 'Loading...' : 'View raw'}
+        ${busy ? 'Loading...' : 'raw'}
       </button>
     `;
   }
@@ -891,8 +891,9 @@ export class StorageSessionsPage extends PageLitElement {
         ${
           session.synced
             ? html`${this.renderViewButton(session.sessionId)}${this.renderReprocessButton(session.projectId, session.sessionId)}`
-            : this.renderViewRawButton(session.projectId, session.sessionId)
+            : nothing
         }
+        ${this.renderViewRawButton(session.projectId, session.sessionId)}
       </div>
     `;
   }
