@@ -531,4 +531,17 @@ describe('AnalyticsClient', () => {
     worker.respond({ id: request.id, ok: true, result: ['hash-1'] });
     await expect(promise).resolves.toEqual(['hash-1']);
   });
+
+  it('deleteSessionMetrics posts deleteSessionMetrics request to worker', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.deleteSessionMetrics('session-123');
+    const request = worker.posted[1] as Extract<AnalyticsRequest, { type: 'deleteSessionMetrics' }>;
+    expect(request.type).toBe('deleteSessionMetrics');
+    expect(request.sessionId).toBe('session-123');
+
+    worker.respond({ id: request.id, ok: true });
+    await expect(promise).resolves.toBeUndefined();
+  });
 });

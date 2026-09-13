@@ -13,7 +13,9 @@ import { FRESH_SCHEMA_SQL } from '../../src/schema.js';
 import {
   CommandExecutionStore,
   ComponentEvidenceLinkStore,
+  deleteSessionMetrics,
   FileOperationStore,
+  findSessionRef,
   INVOCATION_KINDS,
   type InsertSessionInput,
   type InvocationKind,
@@ -884,6 +886,39 @@ describe('session evidence schema and stores', () => {
       expect(
         await SessionRelationStore.getById(executor, 'session-child', relationId),
       ).toBeUndefined();
+    });
+
+    it('findSessionRef finds session by canonical or native id', async () => {
+      const { executor, projectId, portfolioId } = await createSeededExecutor();
+      const byCanonical = await findSessionRef(executor, 'session-1');
+      expect(byCanonical).toEqual({
+        sessionId: 'session-1',
+        projectId,
+        portfolioId,
+      });
+
+      const byNative = await findSessionRef(executor, 'native-session-1');
+      expect(byNative).toEqual({
+        sessionId: 'session-1',
+        projectId,
+        portfolioId,
+      });
+
+      const notFound = await findSessionRef(executor, 'non-existent');
+      expect(notFound).toBeUndefined();
+    });
+
+    it('deleteSessionMetrics removes derived tables and clears current_generation_id', async () => {
+      const { executor, generationId } = await createSeededExecutor();
+      await executor.exec(`UPDATE sessions SET current_generation_id = ? WHERE id = 'session-1'`, [
+        generationId,
+      ]);
+      await deleteSessionMetrics(executor, 'session-1');
+
+      const { rows } = await executor.exec(
+        `SELECT current_generation_id FROM sessions WHERE id = 'session-1'`,
+      );
+      expect(rows[0].current_generation_id).toBeNull();
     });
   });
 });
