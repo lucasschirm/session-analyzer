@@ -592,9 +592,13 @@ describe('ClaudeCodeTransformer', () => {
         result.componentSummaries.find((c) => c.identity.nativeId === 'mcp__acme__search')?.identity
           .provider,
       ).toBe('mcp');
-      expect(tools.some((t) => ['Skill', 'Agent', 'Task'].includes(t.identity.nativeId))).toBe(
-        false,
-      );
+      expect(
+        tools.some(
+          (t) =>
+            t.identity.nativeId !== undefined &&
+            ['Skill', 'Agent', 'Task'].includes(t.identity.nativeId),
+        ),
+      ).toBe(false);
       // Session-scoped: excluded from environment lifecycle diffing and
       // pinned to a stable, transcript-hash-independent version.
       for (const tool of tools) {

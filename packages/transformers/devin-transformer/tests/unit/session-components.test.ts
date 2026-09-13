@@ -160,7 +160,10 @@ describe('DevinTransformer session components (DS-F11 #288)', () => {
     // never generic tools.
     expect(
       result.componentSummaries.some(
-        (c) => c.kind === 'tool' && ['skill', 'run_subagent'].includes(c.identity.nativeId),
+        (c) =>
+          c.kind === 'tool' &&
+          c.identity.nativeId !== undefined &&
+          ['skill', 'run_subagent'].includes(c.identity.nativeId),
       ),
     ).toBe(false);
     // Session-scoped: a per-session runtime observation, excluded from
