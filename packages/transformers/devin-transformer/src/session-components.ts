@@ -29,6 +29,14 @@ const MCP_WRAPPER_TOOL_NAMES: ReadonlySet<string> = new Set([
   'mcp_read_resource',
 ]);
 
+/**
+ * Domain-dispatching tool names excluded from the generic `tool` component
+ * pool per `.agents/rules/analytics-domain-distinctions.md`: `skill` and
+ * `run_subagent` invocations are `skill`/`agent` domain records, never
+ * generic tools — matching `invocationKindAndName` in tool-invocations.ts.
+ */
+const NON_GENERIC_TOOL_NAMES: ReadonlySet<string> = new Set(['skill', 'run_subagent']);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -112,6 +120,35 @@ export function extractMcpToolComponents(
   });
 }
 
+/**
+ * One `kind: 'tool'` component per distinct name in the ATIF transcript's
+ * `agent.tool_definitions` — the authoritative list of tool schemas actually
+ * sent to the model. Domain dispatchers (`skill`, `run_subagent`) are
+ * excluded; MCP wrapper names keep `provider: 'mcp'`.
+ */
+export function extractToolDefinitionComponents(
+  sourceId: string,
+  toolDefinitions: readonly string[],
+  rootArtifactId: string,
+): ComponentSummary[] {
+  const names = new Set(toolDefinitions);
+  return [...names]
+    .filter((name) => name.length > 0 && !NON_GENERIC_TOOL_NAMES.has(name))
+    .map((name) => {
+      const componentId = stableId('tool', { source: sourceId, name });
+      return {
+        componentId,
+        kind: 'tool' as const,
+        identity: componentIdentity(
+          componentId,
+          name,
+          MCP_WRAPPER_TOOL_NAMES.has(name) ? 'mcp' : undefined,
+        ),
+        sourceArtifactIds: [rootArtifactId],
+      };
+    });
+}
+
 function subagentProfile(call: DevinToolCallLine): string | null {
   const rawInput = call.call?.rawInput;
   if (!isRecord(rawInput) || typeof rawInput.profile !== 'string') return null;
@@ -160,11 +197,19 @@ export function deriveDevinSessionComponents(
   cogsJson: string | null | undefined,
   toolCalls: readonly DevinToolCallLine[],
   rootArtifactId: string,
+  toolDefinitions: readonly string[] = [],
 ): ComponentSummary[] {
   const { cogs } = parseDevinCogsJson(cogsJson ?? null);
+  // Prefer the model-sent tool schema list (ATIF agent.tool_definitions).
+  // When no ATIF transcript exists (JSONL-only sessions), fall back to the
+  // declared cogs allowlist so tool availability isn't lost entirely.
+  const toolComponents =
+    toolDefinitions.length > 0
+      ? extractToolDefinitionComponents(sourceId, toolDefinitions, rootArtifactId)
+      : extractMcpToolComponents(sourceId, cogs, rootArtifactId);
   return [
     ...extractSkillComponents(sourceId, cogs, rootArtifactId),
-    ...extractMcpToolComponents(sourceId, cogs, rootArtifactId),
+    ...toolComponents,
     ...extractAgentComponents(sourceId, toolCalls, rootArtifactId),
   ];
 }

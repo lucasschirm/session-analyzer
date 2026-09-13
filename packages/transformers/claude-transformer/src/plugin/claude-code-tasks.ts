@@ -1892,6 +1892,16 @@ function componentsForSkillName(
   return exact.filter((c) => c.kind === 'skill');
 }
 
+function componentsForToolName(
+  index: ComponentIndex,
+  name: string | undefined,
+): ComponentSummary[] {
+  if (!name) return [];
+  const lower = name.toLowerCase();
+  const exact = index.byNativeId.get(lower) ?? index.byDisplayName.get(lower) ?? [];
+  return exact.filter((c) => c.kind === 'tool');
+}
+
 function componentsForAgentType(
   index: ComponentIndex,
   agentType: string | undefined,
@@ -2024,8 +2034,15 @@ function toolUseComponents(
 
   const mcpSplit = splitMcpToolName(name);
   if (mcpSplit) {
+    // Link both the MCP-server component (existing) and the model-sent tool
+    // component for the full `mcp__server__tool` name, when one exists.
+    const matched = [
+      ...componentsForMcpServer(index, mcpSplit.server),
+      ...componentsForToolName(index, name),
+    ];
+    const seen = new Set<string>();
     return {
-      components: componentsForMcpServer(index, mcpSplit.server),
+      components: matched.filter((c) => !seen.has(c.componentId) && seen.add(c.componentId)),
       applicability: 'tool_use:mcp',
     };
   }
@@ -2035,6 +2052,13 @@ function toolUseComponents(
   const directSkill = componentsForSkillName(index, name);
   if (directSkill.length > 0)
     return { components: directSkill, applicability: 'tool_use:skill_name' };
+
+  // Generic built-in tool — link to the model-sent `tool` component when one
+  // was derived from prompt_snapshot/deferred-tools records.
+  const toolComponents = componentsForToolName(index, name);
+  if (toolComponents.length > 0) {
+    return { components: toolComponents, applicability: 'tool_use:tool' };
+  }
 
   return { components: [], applicability: 'none' };
 }
@@ -2140,6 +2164,7 @@ function componentsForEvidenceRecord(
   session: ClaudeCodeSession,
   index: ComponentIndex,
   toolUseIndex: Map<string, ToolUseContext>,
+  entryByUuid: Map<string, ClaudeCodeEntry>,
 ): { component: ComponentSummary; applicability: string }[] {
   const matches: { component: ComponentSummary; applicability: string }[] = [];
   const seen = new Set<string>();
@@ -2166,7 +2191,6 @@ function componentsForEvidenceRecord(
 
   // 2. Turn / message attribution by entry uuid (parent turn first, then
   //    the source entry itself when it is a turn uuid).
-  const entryByUuid = buildEntryByUuid(session);
   const turnId = record.parentId ?? sourceEventId;
   const turnEntry = entryByUuid.get(turnId);
   const sourceEntry = entryByUuid.get(sourceEventId);
@@ -2240,6 +2264,9 @@ export function normalizeComponentEvidenceLinks(
 
   const index = buildComponentIndex(components);
   const toolUseIndex = buildToolUseIndex(session, context);
+  // Built once, not per record — rebuilding this map inside
+  // componentsForEvidenceRecord made linking O(records × entries).
+  const entryByUuid = buildEntryByUuid(session);
 
   const grainTypeForRecordType = (recordType: string): string | undefined => {
     switch (recordType) {
@@ -2271,7 +2298,7 @@ export function normalizeComponentEvidenceLinks(
     const grainType = grainTypeForRecordType(record.recordType);
     if (!grainType) continue;
 
-    const matched = componentsForEvidenceRecord(record, session, index, toolUseIndex);
+    const matched = componentsForEvidenceRecord(record, session, index, toolUseIndex, entryByUuid);
     for (const { component, applicability } of matched) {
       const linkId = stableId('component_link', {
         session: context.sessionId,

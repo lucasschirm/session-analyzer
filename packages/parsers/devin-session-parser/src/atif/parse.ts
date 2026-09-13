@@ -43,6 +43,13 @@ export interface AtifFinalMetrics {
 export interface AtifTranscript {
   schemaVersion: typeof ATIF_SCHEMA_VERSION;
   agentModelName: string | null;
+  /**
+   * Tool names from `agent.tool_definitions[].function.name` — the complete
+   * tool schema list sent to the model (loaded tools; ATIF does not
+   * distinguish deferred tools). `[]` when `agent.tool_definitions` is
+   * absent or not an array.
+   */
+  toolDefinitions: string[];
   steps: AtifStep[];
   finalMetrics: AtifFinalMetrics;
 }
@@ -122,6 +129,17 @@ function parseAgentModelName(raw: unknown): string | null {
   return typeof raw.model_name === 'string' ? raw.model_name : null;
 }
 
+function parseToolDefinitions(raw: unknown): string[] {
+  if (!isRecord(raw) || !Array.isArray(raw.tool_definitions)) return [];
+  const names: string[] = [];
+  for (const def of raw.tool_definitions) {
+    if (!isRecord(def) || !isRecord(def.function)) continue;
+    const name = def.function.name;
+    if (typeof name === 'string' && name.length > 0) names.push(name);
+  }
+  return names;
+}
+
 /**
  * Validates and parses an ATIF v1.7 transcript. Returns `{ ok: false }`
  * (never throws) when `schema_version` is missing or not `"ATIF-v1.7"`, or
@@ -140,6 +158,7 @@ export function parseAtifTranscript(input: unknown): ParseAtifResult {
     transcript: {
       schemaVersion: ATIF_SCHEMA_VERSION,
       agentModelName: parseAgentModelName(input.agent),
+      toolDefinitions: parseToolDefinitions(input.agent),
       steps,
       finalMetrics: parseFinalMetrics(input.final_metrics),
     },

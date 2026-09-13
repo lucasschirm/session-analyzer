@@ -8,6 +8,7 @@ import {
   mcpDeclaredOnlyBundle,
   skillCogOnlyBundle,
   skillInvocationOnlyBundle,
+  toolDefinitionsBundle,
 } from '../conformance/fixtures/index.js';
 
 function componentsByKind(result: ReturnType<typeof DevinTransformer.transform>, kind: string) {
@@ -142,6 +143,33 @@ describe('DevinTransformer session components (DS-F11 #288)', () => {
     const result = DevinTransformer.transform(mcpDeclaredOnlyBundle, defaultContext);
     expect(componentsByKind(result, 'tool')).toHaveLength(4);
     expect(result.configurationSnapshot.temporalRole).toBe('capture_only');
+  });
+
+  it('derives tool components from ATIF agent.tool_definitions, excluding skill/run_subagent dispatchers', () => {
+    const result = DevinTransformer.transform(toolDefinitionsBundle, defaultContext);
+    const nativeIds = componentsByKind(result, 'tool')
+      .map((t) => t.identity.nativeId)
+      .sort();
+    expect(nativeIds).toEqual(['exec', 'mcp_call_tool', 'mcp_list_servers', 'write_to_process']);
+    // MCP wrapper names keep provider 'mcp'; builtins get none.
+    const execTool = result.componentSummaries.find((c) => c.identity.nativeId === 'exec');
+    const mcpTool = result.componentSummaries.find((c) => c.identity.nativeId === 'mcp_call_tool');
+    expect(execTool?.identity.provider).toBeUndefined();
+    expect(mcpTool?.identity.provider).toBe('mcp');
+    // skill/run_subagent were sent to the model but are domain dispatchers,
+    // never generic tools.
+    expect(
+      result.componentSummaries.some(
+        (c) => c.kind === 'tool' && ['skill', 'run_subagent'].includes(c.identity.nativeId),
+      ),
+    ).toBe(false);
+  });
+
+  it('labels an ATIF tool_definitions-only snapshot pre_session, not capture_only', () => {
+    // No invocations and no config artifacts — but tool_definitions is a
+    // recorded fact about what the model was sent, not a mere declaration.
+    const result = DevinTransformer.transform(toolDefinitionsBundle, defaultContext);
+    expect(result.configurationSnapshot.temporalRole).toBe('pre_session');
   });
 
   it('reports complete completeness for skill/tool/agent when components are present', () => {

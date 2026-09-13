@@ -146,6 +146,43 @@ describe('parseAtifTranscript — agent.model_name', () => {
   });
 });
 
+describe('parseAtifTranscript — agent.tool_definitions', () => {
+  it('extracts tool names from agent.tool_definitions[].function.name', () => {
+    const result = parseAtifTranscript(
+      baseTranscript({
+        agent: {
+          model_name: 'devin-model-1',
+          tool_definitions: [
+            { type: 'function', function: { name: 'exec', description: 'Run a command' } },
+            { type: 'function', function: { name: 'mcp_call_tool' } },
+          ],
+        },
+      }),
+    );
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.transcript.toolDefinitions).toEqual(['exec', 'mcp_call_tool']);
+  });
+
+  it('returns [] when tool_definitions is absent, not an array, or has no name entries', () => {
+    const absent = parseAtifTranscript(baseTranscript());
+    const notArray = parseAtifTranscript(
+      baseTranscript({ agent: { model_name: 'm', tool_definitions: 'exec' } }),
+    );
+    const noNames = parseAtifTranscript(
+      baseTranscript({
+        agent: {
+          model_name: 'm',
+          tool_definitions: [{ type: 'function' }, { function: { name: 7 } }, 'junk'],
+        },
+      }),
+    );
+    if (!absent.ok || !notArray.ok || !noNames.ok) throw new Error('expected ok');
+    expect(absent.transcript.toolDefinitions).toEqual([]);
+    expect(notArray.transcript.toolDefinitions).toEqual([]);
+    expect(noNames.transcript.toolDefinitions).toEqual([]);
+  });
+});
+
 describe('parseAtifTranscript — final_metrics', () => {
   it('parses all four fields when present', () => {
     const result = parseAtifTranscript(baseTranscript());

@@ -14,7 +14,13 @@ import type { CompactMetadata } from './session.js';
 // Tools
 // ---------------------------------------------------------------------------
 
-export type ToolAvailabilityAction = 'deferred' | 'undeferred' | 'removed' | 'readded' | 'invoked';
+export type ToolAvailabilityAction =
+  | 'loaded'
+  | 'deferred'
+  | 'undeferred'
+  | 'removed'
+  | 'readded'
+  | 'invoked';
 
 export interface ToolAvailabilityRecord {
   tool: string;
@@ -22,8 +28,10 @@ export interface ToolAvailabilityRecord {
    *  description beyond the bare name (rare but real). */
   description?: string;
   availability: AvailabilityEvent<ToolAvailabilityAction>[];
-  /** Invoked but never appears in any deferred_tools_delta — was in the
-   *  always-loaded base toolset. Computed per-session. */
+  /** Present in a `prompt_snapshot` tools array (sent to the model as a
+   *  loaded tool), or invoked but never appearing in any
+   *  `deferred_tools_delta` — i.e. part of the always-loaded base toolset.
+   *  Computed per-session. */
   alwaysAvailable: boolean;
   /** Parsed from `mcp__<server>__<tool>`. */
   mcpServer?: string;

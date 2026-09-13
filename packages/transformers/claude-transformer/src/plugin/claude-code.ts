@@ -9,6 +9,8 @@ import type {
 } from '@lucasschirm/sal-claude-session-parser';
 import {
   detectClaudeCodeArtifact,
+  isAgentTool,
+  isSkillTool,
   parseAgentDefinition,
   parseMcp,
   parseRuleDefinition,
@@ -635,6 +637,47 @@ function extractComponents(
       ],
     };
   }
+}
+
+/**
+ * `kind: 'tool'` components derived from the transcript's own
+ * tool-availability record — the tool names actually sent to the model —
+ * rather than config-file inference. `session.tools` is built from
+ * `prompt_snapshot` attachments (loaded tool schemas), `deferred_tools_delta`
+ * (the `ToolSearch`-loadable pool), and `tool_use` blocks, so a loaded-but-
+ * never-invoked tool is still counted. `Skill`/`Agent`/`Task` are domain
+ * dispatchers excluded from the generic tool pool per
+ * `.agents/rules/analytics-domain-distinctions.md`; `mcp__*` names get
+ * `provider: 'mcp'` so they link to MCP-server components downstream.
+ * Component identity is keyed on the ingestion source (never the session)
+ * so the same built-in tool resolves to one identity across sessions.
+ */
+function extractModelSentToolComponents(
+  session: ClaudeCodeSession,
+  sourceId: string,
+  rootArtifactId: string,
+): ComponentSummary[] {
+  const names = new Set<string>();
+  for (const record of session.tools ?? []) {
+    const name = record.tool;
+    if (!name || isSkillTool(name) || isAgentTool(name)) continue;
+    names.add(name);
+  }
+  const mcpProvider = new Map(
+    (session.tools ?? [])
+      .filter((r) => r.mcpServer !== undefined)
+      .map((r) => [r.tool, r.mcpServer]),
+  );
+  return [...names].sort().map((name) => {
+    const componentId = stableId('tool', { source: sourceId, name });
+    return makeComponent(
+      componentId,
+      'tool',
+      componentIdentity(componentId, name, name, mcpProvider.has(name) ? 'mcp' : undefined),
+      [rootArtifactId],
+      sourcePointerForArtifact(rootArtifactId),
+    );
+  });
 }
 
 function completenessFromComponents(
@@ -1290,6 +1333,22 @@ export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = 
       warnings.push(...spine.warnings);
 
       const rootSessionId = deriveRootSessionId(bundle, context, session.sessionId ?? 'unknown');
+      const source = sourceIdentityFor(bundle, context);
+      const seenComponentIds = new Set(classification.components.map((c) => c.componentId));
+      const modelSentTools = extractModelSentToolComponents(
+        session,
+        source.ingestionSourceId,
+        rootArtifactId,
+      ).filter((c) => !seenComponentIds.has(c.componentId));
+      const componentSummaries = [...classification.components, ...modelSentTools];
+      const unclassifiedCount = classification.artifacts.filter(
+        (a) => a.kind === 'unclassified',
+      ).length;
+      const configurationSnapshot: ConfigurationSnapshot = {
+        ...classification.configurationSnapshot,
+        completeness: completenessFromComponents(componentSummaries, unclassifiedCount),
+        components: componentSummaries,
+      };
       const evidenceContext: ClaudeCodeEvidenceContext = {
         ...context,
         sessionId: rootSessionId,
@@ -1318,7 +1377,7 @@ export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = 
       ];
       const evidenceLinkRecords = normalizeComponentEvidenceLinks(
         session,
-        classification.components,
+        componentSummaries,
         [...spine.records, ...usageRecords, ...taskRecords],
         evidenceContext,
       );
@@ -1389,10 +1448,10 @@ export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = 
         metricDefinitionVersion: CLAUDE_CODE_METRIC_DEFINITION_VERSION,
         evidence: allEvidence,
         sessionSummaries: spine.summaries,
-        componentSummaries: classification.components,
+        componentSummaries,
         metricValues: allMetricValues,
         distributions: [],
-        configurationSnapshot: classification.configurationSnapshot,
+        configurationSnapshot,
         capabilities: allCapabilities,
         unavailableReasons: allUnavailableReasons,
         provenance: allProvenance,
