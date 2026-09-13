@@ -29,8 +29,9 @@ export interface ToolAvailabilityRecord {
   description?: string;
   availability: AvailabilityEvent<ToolAvailabilityAction>[];
   /** Present in a `prompt_snapshot` tools array (sent to the model as a
-   *  loaded tool), or invoked but never appearing in any
-   *  `deferred_tools_delta` — i.e. part of the always-loaded base toolset.
+   *  loaded tool), or invoked, and never appearing in any
+   *  `deferred_tools_delta` or `deferred_tools_record` — i.e. part of the
+   *  always-loaded base toolset, not the ToolSearch-loadable pool.
    *  Computed per-session. */
   alwaysAvailable: boolean;
   /** Parsed from `mcp__<server>__<tool>`. */

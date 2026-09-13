@@ -88,6 +88,9 @@ export function extractSkillComponents(
       kind: 'skill',
       identity: componentIdentity(componentId, name),
       sourceArtifactIds: [rootArtifactId],
+      // cogs_json is a session line — declared availability for this
+      // session, not a durable environment declaration.
+      sessionScoped: true,
     };
   });
 }
@@ -194,6 +197,9 @@ export function extractAgentComponents(
       kind: 'agent',
       identity: componentIdentity(componentId, profile),
       sourceArtifactIds: [rootArtifactId],
+      // tool_call_state is session runtime data — a per-session
+      // observation, not a durable environment declaration.
+      sessionScoped: true,
     };
   });
 }
