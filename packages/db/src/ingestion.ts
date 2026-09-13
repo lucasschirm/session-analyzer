@@ -24,6 +24,9 @@ import {
   NormalizedEventStore,
   PortfolioStore,
   ProjectStore,
+  ROLLUP_COMPONENT_KINDS,
+  type RollupComponentKind,
+  SessionComponentStatStore,
   SessionContextSeriesStore,
   SessionStore,
   SessionSummaryStore,
@@ -688,6 +691,11 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         // 6b. Apply the configuration snapshot (components, lifecycle events,
         //     exposures) so component ecosystem and utilization views have data.
         await this.upsertConfigurationSnapshot(tx, canonical, commit, result);
+        // 6c. Aggregate component_evidence_link records into
+        //     session_component_stats so utilization views can distinguish
+        //     offered-but-unused components from actually-invoked ones. Runs
+        //     after the snapshot so component_identities exist to resolve.
+        await this.upsertSessionComponentStats(tx, canonical, commit, result);
 
         // 7. Commit the generation: supersede previous, set session current_generation_id.
         //    Capture the previous generation ID first so rollup contributions can
@@ -1736,6 +1744,98 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       components: snapshot.components,
       completeness: snapshot.completeness,
     });
+  }
+
+  /**
+   * Aggregates `component_evidence_link` records into `session_component_stats`
+   * rows — the "was this component actually used in this session" signal that
+   * utilization views join against exposures. Link payloads carry the
+   * transformer's componentId, which is the component's canonical source
+   * identity; resolution goes through component_identities so aliases and
+   * environment-vs-session component ids collapse to the persisted row.
+   *
+   * `invocationCount` counts direct-use grains (invocation); every other link
+   * grain (file, command, event, …) counts toward `payloadCount`. Both feed
+   * the used/unused determination in the utilization reports.
+   */
+  private async upsertSessionComponentStats(
+    tx: SqliteTransaction,
+    canonical: CanonicalIdentity,
+    commit: AtomicGenerationCommit,
+    result: TransformResult,
+  ): Promise<void> {
+    interface Usage {
+      invocations: number;
+      touches: number;
+    }
+    const usageBySession = new Map<string, Map<string, Usage>>();
+    for (const record of result.evidence) {
+      if (record.recordType !== 'component_evidence_link') continue;
+      const payload = record.payload;
+      if (typeof payload !== 'object' || payload === null) continue;
+      const componentId = (payload as { componentId?: unknown }).componentId;
+      if (typeof componentId !== 'string' || componentId.length === 0) continue;
+      const isInvocation = (payload as { grainType?: unknown }).grainType === 'invocation';
+      let perComponent = usageBySession.get(record.sessionId);
+      if (!perComponent) {
+        perComponent = new Map();
+        usageBySession.set(record.sessionId, perComponent);
+      }
+      const usage = perComponent.get(componentId) ?? { invocations: 0, touches: 0 };
+      if (isInvocation) usage.invocations += 1;
+      else usage.touches += 1;
+      perComponent.set(componentId, usage);
+    }
+    if (usageBySession.size === 0) return;
+
+    const resolved = new Map<string, { id: string; kind: string | null }>();
+    for (const perComponent of usageBySession.values()) {
+      for (const canonicalId of perComponent.keys()) {
+        if (resolved.has(canonicalId)) continue;
+        const { rows } = await tx.exec(
+          `SELECT id, kind FROM component_identities
+           WHERE portfolio_id = ? AND canonical_source_identity = ?`,
+          [canonical.portfolioId, canonicalId],
+        );
+        if (rows.length === 0) continue;
+        resolved.set(canonicalId, {
+          id: String(rows[0].id),
+          kind: rows[0].kind === null ? null : String(rows[0].kind),
+        });
+      }
+    }
+
+    const validKinds = new Set<string>(ROLLUP_COMPONENT_KINDS);
+    const rollupKind = (kind: string | null): RollupComponentKind | null =>
+      kind !== null && validKinds.has(kind) ? (kind as RollupComponentKind) : null;
+    for (const [sessionId, perComponent] of usageBySession) {
+      for (const [canonicalId, usage] of perComponent) {
+        const identity = resolved.get(canonicalId);
+        if (!identity) continue;
+        await SessionComponentStatStore.insert(tx, {
+          id: `scs-${deterministicId(
+            'session-component-stat',
+            commit.generationId,
+            sessionId,
+            identity.id,
+          )}`,
+          sessionId,
+          generationId: commit.generationId,
+          componentId: identity.id,
+          componentVersionId: null,
+          kind: rollupKind(identity.kind),
+          availability: '{}',
+          context: '{}',
+          invocationCount: usage.invocations,
+          payloadCount: usage.touches,
+          payloadBytes: 0,
+          statusCounts: '{}',
+          outcomeState: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+    }
   }
 
   private mapFinality(finality?: string): 'open' | 'final' | 'censored' {
