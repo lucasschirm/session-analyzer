@@ -62,6 +62,7 @@ import {
 } from './claude-code-optimization-metrics.js';
 import {
   type ClaudeCodeEvidenceContext,
+  disambiguateEvidenceRecords,
   normalizeCommandExecutions,
   normalizeComponentEvidenceLinks,
   normalizeFileOperations,
@@ -1387,12 +1388,12 @@ export const ClaudeCodeTransformer: SessionTransformer<UnknownArtifactBundle> = 
         evidenceContext,
       );
 
-      const allEvidence = [
+      const allEvidence = disambiguateEvidenceRecords([
         ...spine.records,
         ...usageRecords,
         ...taskRecords,
         ...evidenceLinkRecords,
-      ];
+      ]);
 
       const metrics = deriveClaudeCodeMetrics(
         session,

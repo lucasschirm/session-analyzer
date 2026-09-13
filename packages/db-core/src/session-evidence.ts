@@ -116,6 +116,16 @@ function buildInsertSql(table: string, columns: readonly Column[]): string {
   return `INSERT INTO ${table} (${insertColumns.join(', ')}) VALUES (${placeholders})`;
 }
 
+function buildUpsertSql(table: string, columns: readonly Column[]): string {
+  const pkeyCol = columns.find((c) => c.pkey)?.name ?? 'id';
+  const insertColumns = columns.map((c) => c.name);
+  const placeholders = insertColumns.map(() => '?').join(', ');
+  const updateSets = columns
+    .filter((c) => !c.pkey && c.name !== 'created_at')
+    .map((c) => `${c.name} = excluded.${c.name}`);
+  return `INSERT INTO ${table} (${insertColumns.join(', ')}) VALUES (${placeholders}) ON CONFLICT (${pkeyCol}) DO UPDATE SET ${updateSets.join(', ')}`;
+}
+
 function valueToSql(value: unknown, column: Column): SqliteValue {
   if (value === null || value === undefined) return null;
   if (column.isBoolean) return value ? 1 : 0;
@@ -213,6 +223,7 @@ function buildUpdate<Update>(
 
 export interface ParentedStore<Row, Insert, Update> {
   readonly insert: (queryable: Queryable, input: Insert) => Promise<string>;
+  readonly upsert: (queryable: Queryable, input: Insert) => Promise<string>;
   readonly getById: (
     queryable: Queryable,
     parentId: string,
@@ -244,6 +255,7 @@ function createParentedStore<Row, Insert, Update>(
   config: ParentedStoreConfig<Insert>,
 ): ParentedStore<Row, Insert, Update> {
   const insertSql = buildInsertSql(config.table, config.columns);
+  const upsertSql = buildUpsertSql(config.table, config.columns);
   const selectColumns = config.columns.map((c) => c.name).join(', ');
   const orderBy = config.listOrderBy ?? 'created_at';
   return {
@@ -256,6 +268,17 @@ function createParentedStore<Row, Insert, Update>(
         (record.id as string | undefined) ?? `se-${deterministicId(config.table, ...idParts)}`;
       const params = toInsertParams<Insert>(config.columns, input, id, now);
       await queryable.exec(insertSql, params);
+      return id;
+    },
+    upsert: async (queryable: Queryable, input: Insert): Promise<string> => {
+      const now = Date.now();
+      const record = input as unknown as Record<string, unknown>;
+      const idParts: string[] = config.idFrom.map((field) => String(record[field as string] ?? ''));
+      idParts.push(String(now));
+      const id =
+        (record.id as string | undefined) ?? `se-${deterministicId(config.table, ...idParts)}`;
+      const params = toInsertParams<Insert>(config.columns, input, id, now);
+      await queryable.exec(upsertSql, params);
       return id;
     },
     getById: async (
@@ -319,6 +342,7 @@ function createSessionScopedStore<Row, Insert, Update>(
 
 export interface GlobalStore<Row, Insert, Update> {
   readonly insert: (queryable: Queryable, input: Insert) => Promise<string>;
+  readonly upsert: (queryable: Queryable, input: Insert) => Promise<string>;
   readonly getById: (queryable: Queryable, id: string) => Promise<Row | undefined>;
   readonly listAll: (queryable: Queryable) => Promise<readonly Row[]>;
   readonly update: (queryable: Queryable, id: string, input: Update) => Promise<void>;
@@ -336,6 +360,7 @@ function createGlobalStore<Row, Insert, Update>(
   config: GlobalStoreConfig<Insert>,
 ): GlobalStore<Row, Insert, Update> {
   const insertSql = buildInsertSql(config.table, config.columns);
+  const upsertSql = buildUpsertSql(config.table, config.columns);
   const selectColumns = config.columns.map((c) => c.name).join(', ');
   const orderBy = config.listOrderBy ?? 'created_at';
   return {
@@ -348,6 +373,17 @@ function createGlobalStore<Row, Insert, Update>(
         (record.id as string | undefined) ?? `se-${deterministicId(config.table, ...idParts)}`;
       const params = toInsertParams<Insert>(config.columns, input, id, now);
       await queryable.exec(insertSql, params);
+      return id;
+    },
+    upsert: async (queryable: Queryable, input: Insert): Promise<string> => {
+      const now = Date.now();
+      const record = input as unknown as Record<string, unknown>;
+      const idParts: string[] = config.idFrom.map((field) => String(record[field as string] ?? ''));
+      idParts.push(String(now));
+      const id =
+        (record.id as string | undefined) ?? `se-${deterministicId(config.table, ...idParts)}`;
+      const params = toInsertParams<Insert>(config.columns, input, id, now);
+      await queryable.exec(upsertSql, params);
       return id;
     },
     getById: async (queryable: Queryable, id: string): Promise<Row | undefined> => {

@@ -1261,11 +1261,25 @@ export class ConnectModal extends ModalBase {
     `;
   }
 
+  private renderHiddenUsername(): TemplateResult {
+    return html`
+      <input
+        type="text"
+        name="username"
+        autocomplete="username"
+        style="display:none"
+        aria-hidden="true"
+        tabindex="-1"
+      />
+    `;
+  }
+
   private renderForm(): TemplateResult {
     const errors = this.fieldErrors();
     return html`
       <h2>${this.isNew() ? 'New Connection' : 'Edit Connection'}</h2>
       <form @submit=${(event: Event) => event.preventDefault()}>
+        ${this.renderHiddenUsername()}
         ${this.renderNameField(errors)} ${this.renderStorageField()}
         ${this.renderS3Fields(errors)} ${this.renderAdvancedField()}
         ${this.renderCheckboxes()} ${this.renderFormError()} ${this.renderTestResult()}

@@ -696,6 +696,40 @@ describe('session evidence schema and stores', () => {
       const event = await NormalizedEventStore.getById(executor, 'session-1', eventId);
       expect(event?.rawDetails).toBe('{"ok":true}');
     });
+
+    it('supports upsert without crashing on primary key collision', async () => {
+      const { executor, generationId } = await createSeededExecutor();
+      const id = 'event-fixed-id';
+      await NormalizedEventStore.upsert(executor, {
+        id,
+        sessionId: 'session-1',
+        generationId,
+        eventType: 'mode',
+        eventVersion: 1,
+        rawDetails: '{"first":true}',
+        retainRaw: true,
+        createdAt: 100,
+        updatedAt: 100,
+      });
+
+      // Upserting with same id should update rather than throw SQLITE_CONSTRAINT_PRIMARYKEY
+      await NormalizedEventStore.upsert(executor, {
+        id,
+        sessionId: 'session-1',
+        generationId,
+        eventType: 'mode_updated',
+        eventVersion: 2,
+        rawDetails: '{"second":true}',
+        retainRaw: true,
+        createdAt: 200,
+        updatedAt: 300,
+      });
+
+      const event = await NormalizedEventStore.getById(executor, 'session-1', id);
+      expect(event?.eventType).toBe('mode_updated');
+      expect(event?.rawDetails).toBe('{"second":true}');
+      expect(event?.createdAt).toBe(100);
+    });
   });
 
   describe('component evidence links', () => {

@@ -440,11 +440,15 @@ describe('DefaultIngestionOrchestrator', () => {
 
     const brokenResult = {
       ...result,
-      evidence: [
-        ...result.evidence,
+      metricValues: [
+        ...result.metricValues,
         {
-          ...result.evidence[0],
-          recordId: result.evidence[0].recordId,
+          metricId: 'missing-metric-definition-fails-atomic-commit',
+          value: 1,
+          exact: true,
+          class: 'exact' as const,
+          rootScope: true,
+          definition: { valueType: 'integer' as const },
         },
       ],
     };
@@ -730,5 +734,33 @@ describe('DefaultIngestionOrchestrator', () => {
     }
 
     expect(capturedBlobStore).toBe(blobStore);
+  });
+
+  it('gracefully handles evidence with duplicate recordIds without throwing primary key collision', async () => {
+    const content = readFixture('t2-happy-path.jsonl');
+    const hasher = createSha256ContentHasher();
+    const sha256 = await hasher.hash(content);
+    const executor = await createExecutor();
+    const registry = createDefaultRegistry();
+    const transformer = registry.resolve('claude-code');
+    const originalTransform = transformer.transform.bind(transformer);
+
+    vi.spyOn(transformer, 'transform').mockImplementation((bundle, context) => {
+      const res = originalTransform(bundle, context);
+      if (res.evidence.length > 0) {
+        const duplicated = { ...res.evidence[0] };
+        return {
+          ...res,
+          evidence: [res.evidence[0], duplicated, ...res.evidence.slice(1)],
+        };
+      }
+      return res;
+    });
+
+    const orchestrator = await setupIngestion(executor, registry);
+    const { bundle } = createManifestFixture(content, sha256, 'session/transcript.jsonl');
+
+    const receipt = await orchestrator.ingestManifest(bundle);
+    expect(receipt.status).toBe('committed');
   });
 });

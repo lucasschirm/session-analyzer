@@ -337,11 +337,25 @@ export class PasskeyModal extends ModalBase {
     return this.webauthnSupported && !this.hasWebauthnCredential && !this.deviceUnlockFailed;
   }
 
+  private renderHiddenUsername(): TemplateResult {
+    return html`
+      <input
+        type="text"
+        name="username"
+        autocomplete="username"
+        style="display:none"
+        aria-hidden="true"
+        tabindex="-1"
+      />
+    `;
+  }
+
   private renderCreate(): TemplateResult {
     return html`
       <h2>Create passkey</h2>
       <p>Choose a passkey to protect saved connection secrets.</p>
       <form @submit=${this.handleCreateSubmit}>
+        ${this.renderHiddenUsername()}
         <label for="passkey-input">Passkey</label>
         <input
           id="passkey-input"
@@ -403,6 +417,7 @@ export class PasskeyModal extends ModalBase {
       }
 
       <form @submit=${this.handleUnlockSubmit}>
+        ${this.renderHiddenUsername()}
         <label for="passkey-input">Passkey</label>
         <input
           id="passkey-input"

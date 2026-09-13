@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type ClaudeCodeEvidenceContext,
   type CommandExecutionRecordPayload,
+  disambiguateEvidenceRecords,
   type FileOperationRecordPayload,
   normalizeCommandExecutions,
   normalizeComponentEvidenceLinks,
@@ -299,6 +300,31 @@ describe('claude-code-tasks normalization', () => {
       expect(recordIds(normalizeNormalizedEvents(session, ctx))).toEqual(
         recordIds(normalizeNormalizedEvents(session, ctx)),
       );
+    });
+
+    it('guarantees unique recordIds across all emitted normalized events', () => {
+      const session = parseFixture('c1-attachment-zoo.jsonl');
+      const records = normalizeNormalizedEvents(session, context());
+      const ids = records.map((r) => r.recordId);
+      const uniqueIds = new Set(ids);
+      expect(uniqueIds.size).toBe(ids.length);
+    });
+  });
+
+  describe('disambiguateEvidenceRecords', () => {
+    it('disambiguates duplicate recordIds with numbered suffixes', () => {
+      const records: NormalizedEvidenceRecord[] = [1, 2, 3].map((count) => ({
+        recordId: 'rec-1',
+        recordType: 'normalized_event',
+        sessionId: 's-1',
+        sourceEventId: `evt-${count}`,
+        provenance: {},
+        payload: { eventId: 'rec-1', count },
+      }));
+      const disambiguated = disambiguateEvidenceRecords(records);
+      expect(disambiguated.map((r) => r.recordId)).toEqual(['rec-1', 'rec-1#1', 'rec-1#2']);
+      expect((disambiguated[1].payload as { eventId: string }).eventId).toBe('rec-1#1');
+      expect((disambiguated[2].payload as { eventId: string }).eventId).toBe('rec-1#2');
     });
   });
 

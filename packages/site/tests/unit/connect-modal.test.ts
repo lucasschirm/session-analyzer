@@ -168,6 +168,20 @@ describe('connect-modal', () => {
     expect(root.querySelector('input#connection-name')).not.toBeNull();
   });
 
+  it('renders a hidden username field in the form for accessibility', async () => {
+    const modal = await mount(document.createElement('connect-modal') as ConnectModal);
+    modal.open = true;
+    await flush(modal);
+
+    const root = shadow(modal);
+    (root.querySelector('.primary') as HTMLButtonElement).click();
+    await modal.updateComplete;
+
+    const usernameInput = root.querySelector('input[name="username"]') as HTMLInputElement;
+    expect(usernameInput).not.toBeNull();
+    expect(usernameInput.autocomplete).toBe('username');
+  });
+
   it('saves an in-memory connection when "Save to local storage" is unchecked', async () => {
     const modal = await mount(document.createElement('connect-modal') as ConnectModal);
     modal.open = true;

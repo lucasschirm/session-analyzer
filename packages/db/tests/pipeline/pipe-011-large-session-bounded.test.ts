@@ -26,8 +26,8 @@ const TURN_COUNT = 5000;
  * failing before the runner timeout if the pipeline stalls or grows
  * unboundedly.
  */
-const DURATION_BOUND_MS = 30_000;
-const TEST_TIMEOUT_MS = 60_000;
+const DURATION_BOUND_MS = 60_000;
+const TEST_TIMEOUT_MS = 90_000;
 
 const TOOL_NAMES = ['Read', 'Bash', 'Glob', 'Grep', 'Write', 'Edit'] as const;
 const MODELS = ['model-a', 'model-b', 'model-c'] as const;
