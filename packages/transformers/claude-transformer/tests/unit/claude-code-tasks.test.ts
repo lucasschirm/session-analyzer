@@ -313,26 +313,14 @@ describe('claude-code-tasks normalization', () => {
 
   describe('disambiguateEvidenceRecords', () => {
     it('disambiguates duplicate recordIds with numbered suffixes', () => {
-      const records: NormalizedEvidenceRecord[] = [
-        {
-          recordId: 'rec-1',
-          recordType: 'normalized_event',
-          sessionId: 's-1',
-          payload: { eventId: 'rec-1', count: 1 },
-        },
-        {
-          recordId: 'rec-1',
-          recordType: 'normalized_event',
-          sessionId: 's-1',
-          payload: { eventId: 'rec-1', count: 2 },
-        },
-        {
-          recordId: 'rec-1',
-          recordType: 'normalized_event',
-          sessionId: 's-1',
-          payload: { eventId: 'rec-1', count: 3 },
-        },
-      ];
+      const records: NormalizedEvidenceRecord[] = [1, 2, 3].map((count) => ({
+        recordId: 'rec-1',
+        recordType: 'normalized_event',
+        sessionId: 's-1',
+        sourceEventId: `evt-${count}`,
+        provenance: {},
+        payload: { eventId: 'rec-1', count },
+      }));
       const disambiguated = disambiguateEvidenceRecords(records);
       expect(disambiguated.map((r) => r.recordId)).toEqual(['rec-1', 'rec-1#1', 'rec-1#2']);
       expect((disambiguated[1].payload as { eventId: string }).eventId).toBe('rec-1#1');
