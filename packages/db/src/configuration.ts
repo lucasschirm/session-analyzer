@@ -877,7 +877,15 @@ export class ConfigurationSnapshotEngine {
     snapshotId: string,
     input: ApplyConfigurationSnapshotInput,
   ): Promise<string[]> {
-    if (input.temporalRole !== 'pre_session' && input.temporalRole !== 'runtime') {
+    // `post_session` snapshots describe end state, not availability during
+    // the session — they never create exposures. `capture_only` (manual
+    // imports) does: the observed components were genuinely present in that
+    // session, and suppressing exposures would leave session-level
+    // utilization views with zero available tools/skills/agents.
+    // Environment-level claims stay suppressed for capture_only via the
+    // completeness downgrade (no lifecycle baselines), matching the rebuild
+    // frontier which also creates exposures for capture_only snapshots.
+    if (input.temporalRole === 'post_session') {
       return [];
     }
     if (!input.sessionId) return [];

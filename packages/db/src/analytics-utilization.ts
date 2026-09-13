@@ -163,9 +163,8 @@ export async function getSessionUtilizationReport(
        ON inv.session_id = sce.session_id AND inv.component_id = sce.component_id
      WHERE sce.session_id = ?
        AND (
-         COALESCE(scs.invocation_count, 0) > 0
+         COALESCE(scs.invocation_count, 0) + COALESCE(scs.payload_count, 0) > 0
          OR inv.id IS NOT NULL
-         OR sce.status = 'loaded'
        )`,
     [sessionId],
   );
@@ -396,9 +395,8 @@ export async function getProjectUtilizationReport(
       ci.display_name,
       COUNT(DISTINCT sce.session_id) AS offered_sessions,
       COUNT(DISTINCT CASE
-        WHEN COALESCE(scs.invocation_count, 0) > 0
+        WHEN COALESCE(scs.invocation_count, 0) + COALESCE(scs.payload_count, 0) > 0
              OR inv.id IS NOT NULL
-             OR sce.status = 'loaded'
         THEN sce.session_id
       END) AS used_sessions
     FROM session_component_exposures sce
@@ -464,9 +462,8 @@ export async function getHarnessUtilizationReport(
        ci.display_name,
        COUNT(DISTINCT sce.session_id) AS offered_sessions,
        COUNT(DISTINCT CASE
-         WHEN COALESCE(scs.invocation_count, 0) > 0
+         WHEN COALESCE(scs.invocation_count, 0) + COALESCE(scs.payload_count, 0) > 0
               OR inv.id IS NOT NULL
-              OR sce.status = 'loaded'
          THEN sce.session_id
        END) AS used_sessions
      FROM session_component_exposures sce
@@ -533,9 +530,8 @@ export async function getPortfolioUtilizationReport(
       ci.display_name,
       COUNT(DISTINCT sce.session_id) AS offered_sessions,
       COUNT(DISTINCT CASE
-        WHEN COALESCE(scs.invocation_count, 0) > 0
+        WHEN COALESCE(scs.invocation_count, 0) + COALESCE(scs.payload_count, 0) > 0
              OR inv.id IS NOT NULL
-             OR sce.status = 'loaded'
         THEN sce.session_id
       END) AS used_sessions
     FROM session_component_exposures sce

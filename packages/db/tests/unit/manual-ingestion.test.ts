@@ -402,7 +402,7 @@ describe('ManualIngestionOrchestrator', () => {
     }
   });
 
-  it('does not fabricate lifecycle events or exposure denominators', async () => {
+  it('does not fabricate lifecycle events, but records per-session exposures', async () => {
     const executor = await createExecutor();
     const context = createIngestionContext(executor);
     const orchestrator = new ManualIngestionOrchestrator(context);
@@ -415,7 +415,7 @@ describe('ManualIngestionOrchestrator', () => {
       },
     ]);
 
-    await orchestrator.ingestManual(bundle);
+    const receipt = await orchestrator.ingestManual(bundle);
 
     const { rows: lifecycle } = await executor.exec(
       'SELECT COUNT(*) AS c FROM component_lifecycle_events',
@@ -427,18 +427,61 @@ describe('ManualIngestionOrchestrator', () => {
     );
     expect(availability[0]?.c).toBe(0);
 
-    const { rows: exposure } = await executor.exec(
-      'SELECT COUNT(*) AS c FROM session_component_exposures',
-    );
-    expect(exposure[0]?.c).toBe(0);
-
-    // Transcript-derived tool components produce a capture_only snapshot —
-    // a record of what was observed, with no lifecycle/availability events
-    // and no exposure denominators (asserted to 0 above).
+    // Transcript-derived tool components produce a capture_only snapshot — a
+    // record of what was observed with no lifecycle/availability events. But
+    // the observed components were present in this session, so per-session
+    // exposures ARE recorded (the rebuild frontier already creates them on
+    // replay; ingest must match or freshly imported sessions show zero
+    // available tools/skills/agents).
     const { rows: snapshots } = await executor.exec(
       'SELECT temporal_role FROM configuration_snapshots',
     );
     expect(snapshots.map((s) => s.temporal_role)).toEqual(['capture_only']);
+
+    const { rows: exposure } = await executor.exec(
+      `SELECT ci.kind, ci.native_id FROM session_component_exposures sce
+       JOIN component_identities ci ON ci.id = sce.component_id
+       WHERE sce.session_id = ?`,
+      [receipt.sessionId],
+    );
+    expect(exposure.length).toBeGreaterThan(0);
+    for (const row of exposure) {
+      expect(row.kind).toBe('tool');
+    }
+  });
+
+  it('populates session_component_stats so invoked tools count as used', async () => {
+    const executor = await createExecutor();
+    const context = createIngestionContext(executor);
+    const orchestrator = new ManualIngestionOrchestrator(context);
+
+    const bundle = createManualBundle([
+      {
+        relativePath: 'session/transcript.jsonl',
+        mediaType: 'application/jsonl',
+        content: readFixture('t2-happy-path.jsonl'),
+      },
+    ]);
+
+    const receipt = await orchestrator.ingestManual(bundle);
+    expect(receipt.status).toBe('committed');
+
+    const { rows: stats } = await executor.exec(
+      `SELECT scs.invocation_count, scs.payload_count, ci.native_id
+       FROM session_component_stats scs
+       JOIN component_identities ci ON ci.id = scs.component_id
+       WHERE scs.session_id = ?`,
+      [receipt.sessionId],
+    );
+    expect(stats.length).toBeGreaterThan(0);
+    expect(stats.some((s) => Number(s.invocation_count) > 0)).toBe(true);
+
+    const ds = createAnalyticsDataSource(executor);
+    const report = await ds.session.getUtilizationReport(receipt.sessionId);
+    const tools = report.sessionDomains.tool;
+    expect(tools.availableCount).toBeGreaterThan(0);
+    expect(tools.usedCount).toBeGreaterThan(0);
+    expect(tools.usedCount + tools.unusedCount).toBe(tools.availableCount);
   });
 
   it('rejects an ambiguous or unmatched manual detection', async () => {

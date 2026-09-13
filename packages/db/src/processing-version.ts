@@ -27,7 +27,7 @@ declare const console:
  * the stored version is older, runs {@link rebuildAnalyticsDerivedData}
  * before serving queries.
  */
-export const ANALYTICS_PROCESSING_VERSION = 9;
+export const ANALYTICS_PROCESSING_VERSION = 10;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.
