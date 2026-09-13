@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import {
   DeleteObjectsCommand,
   type DeleteObjectsCommandOutput,
@@ -58,6 +59,14 @@ interface AwsErrorLike {
 function toAwsErrorLike(err: unknown): AwsErrorLike {
   return err as AwsErrorLike;
 }
+
+/**
+ * User-metadata marker written alongside `ContentEncoding: 'gzip'` so readers
+ * can detect compressed objects even when a storage backend drops or does not
+ * surface the system `Content-Encoding` property.
+ */
+export const GZIP_METADATA_KEY = 'sal-content-encoding';
+const GZIP_METADATA_VALUE = 'gzip';
 
 /**
  * Build the `<projectId>/` or `<projectId>/<sessionId>/` prefix shared by
@@ -132,6 +141,7 @@ export class S3StorageAdapter implements StorageAdapter {
   private readonly client: S3Client;
   private readonly bucket: string;
   private readonly retryOptions: RetryPolicyOptions;
+  private readonly gzip: boolean;
 
   constructor(config: StorageConfig, options?: StorageAdapterOptions) {
     if (!config.bucket) {
@@ -144,6 +154,7 @@ export class S3StorageAdapter implements StorageAdapter {
 
     this.bucket = config.bucket;
     this.retryOptions = resolveRetryOptions(options);
+    this.gzip = config.gzip !== false;
 
     const credentials =
       config.accessKeyId && config.secretAccessKey
@@ -170,16 +181,7 @@ export class S3StorageAdapter implements StorageAdapter {
       throw mapS3Error(err);
     }
 
-    const sha256 = input.contentSha256 ?? sha256Hex(input.body);
-    const metadata: Record<string, string> = { sha256, ...(input.metadata ?? {}) };
-
-    const command = new PutObjectCommand({
-      Bucket: this.bucket,
-      Key: key,
-      Body: input.body,
-      ...(input.contentType ? { ContentType: input.contentType } : {}),
-      Metadata: metadata,
-    });
+    const command = this.buildPutCommand(key, input);
 
     try {
       const output = await withRetry<PutObjectCommandOutput>(
@@ -192,11 +194,33 @@ export class S3StorageAdapter implements StorageAdapter {
         key,
         etag: output.ETag,
         versionId: output.VersionId,
-        sha256,
+        sha256: input.contentSha256 ?? sha256Hex(input.body),
       };
     } catch (err) {
       throw mapS3Error(err);
     }
+  }
+
+  /**
+   * Build the PutObjectCommand. When gzip is enabled the wire body is
+   * compressed and marked via `ContentEncoding` plus the
+   * `sal-content-encoding` user metadata; the sha256 metadata always covers
+   * the UNCOMPRESSED body so content addressing is unaffected by compression.
+   */
+  private buildPutCommand(key: string, input: PutObjectInput): PutObjectCommand {
+    const metadata: Record<string, string> = {
+      sha256: input.contentSha256 ?? sha256Hex(input.body),
+      ...(input.metadata ?? {}),
+      ...(this.gzip ? { [GZIP_METADATA_KEY]: GZIP_METADATA_VALUE } : {}),
+    };
+    return new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: this.gzip ? gzipSync(input.body) : input.body,
+      ...(input.contentType ? { ContentType: input.contentType } : {}),
+      ...(this.gzip ? { ContentEncoding: GZIP_METADATA_VALUE } : {}),
+      Metadata: metadata,
+    });
   }
 
   async getObject(input: GetObjectInput): Promise<GetObjectResult | undefined> {
@@ -222,14 +246,42 @@ export class S3StorageAdapter implements StorageAdapter {
       return undefined;
     }
 
-    const body = await output.Body.transformToByteArray();
+    const raw = new Uint8Array(await output.Body.transformToByteArray());
+    const metadata = output.Metadata as Record<string, string> | undefined;
     return {
-      body: new Uint8Array(body),
+      body: this.decodeBody(raw, output.ContentEncoding, metadata),
       contentType: output.ContentType,
       etag: output.ETag,
       lastModified: output.LastModified,
-      metadata: output.Metadata as Record<string, string> | undefined,
+      metadata,
     };
+  }
+
+  /**
+   * Return the object's plaintext bytes, decompressing when the object was
+   * stored gzip-encoded (detected via `Content-Encoding` or the
+   * `sal-content-encoding` user metadata marker). A marked body that fails to
+   * decompress is a non-retryable storage error.
+   */
+  private decodeBody(
+    raw: Uint8Array,
+    contentEncoding: string | undefined,
+    metadata: Record<string, string> | undefined,
+  ): Uint8Array {
+    const compressed =
+      contentEncoding === GZIP_METADATA_VALUE ||
+      metadata?.[GZIP_METADATA_KEY] === GZIP_METADATA_VALUE;
+    if (!compressed) return raw;
+    try {
+      return new Uint8Array(gunzipSync(raw));
+    } catch (err) {
+      throw new StorageError(
+        'SYNC_STORAGE_ERROR',
+        `${SYNC_ERROR_CATALOG.SYNC_STORAGE_ERROR.description} (object is marked gzip but failed to decompress)`,
+        false,
+        err,
+      );
+    }
   }
 
   async headObject(input: HeadObjectInput): Promise<HeadObjectResult | undefined> {
@@ -260,6 +312,12 @@ export class S3StorageAdapter implements StorageAdapter {
     };
   }
 
+  /**
+   * List objects under the project/session prefix. `size` is the STORED byte
+   * count — for gzip-encoded uploads (the default) that is the compressed
+   * size; the listing API cannot report the uncompressed size without a HEAD
+   * per object.
+   */
   async listObjects(input: ListObjectsInput): Promise<ListObjectsResult> {
     const prefix = buildScopePrefix(input);
     const entries: ListObjectEntry[] = [];

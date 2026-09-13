@@ -555,4 +555,83 @@ describe('S3FetchClient', () => {
     expect(new Uint8Array(result)).toEqual(chunk);
     expect(mock).toHaveBeenCalledTimes(2);
   });
+
+  it('decodes a gzipped body when the transport did not decode it', async () => {
+    const plain = new TextEncoder().encode('{"ok":true}');
+    const { gzipSync } = await import('node:zlib');
+    const gzipped = gzipSync(Buffer.from(plain));
+    // An endpoint that stored the Content-Encoding metadata but a client/mock
+    // that surfaces the raw stored bytes (header may or may not be present).
+    const mock = vi.fn(
+      createMockFetch([
+        () =>
+          new Response(gzipped, {
+            status: 200,
+            headers: { 'Content-Encoding': 'gzip' },
+          }),
+      ]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.getObject('p/s/manifest.json');
+    expect(new Uint8Array(result)).toEqual(plain);
+  });
+
+  it('decodes a gzipped body by magic bytes when no Content-Encoding header is present', async () => {
+    const plain = new TextEncoder().encode('{"a":1}\n{"b":2}\n');
+    const { gzipSync } = await import('node:zlib');
+    const gzipped = gzipSync(Buffer.from(plain));
+    const mock = vi.fn(createMockFetch([() => new Response(gzipped, { status: 200 })]));
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.getObject('p/s/transcript.jsonl');
+    expect(new Uint8Array(result)).toEqual(plain);
+  });
+
+  it('decodes gzipped streaming downloads', async () => {
+    const plain = new TextEncoder().encode('streamed gzip content');
+    const { gzipSync } = await import('node:zlib');
+    const gzipped = gzipSync(Buffer.from(plain));
+    const mid = Math.floor(gzipped.length / 2);
+    const chunkA = gzipped.subarray(0, mid);
+    const chunkB = gzipped.subarray(mid);
+    let pullCount = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pullCount++;
+        if (pullCount === 1) {
+          controller.enqueue(new Uint8Array(chunkA));
+        } else if (pullCount === 2) {
+          controller.enqueue(new Uint8Array(chunkB));
+          controller.close();
+        }
+      },
+    });
+    const mock = vi.fn(createMockFetch([() => new Response(stream, { status: 200 })]));
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.getObject('p/s/transcript.jsonl', { streaming: true });
+    expect(new Uint8Array(result)).toEqual(plain);
+  });
+
+  it('passes through non-gzip bodies unchanged', async () => {
+    const plain = new TextEncoder().encode('{"plain":true}');
+    const mock = vi.fn(
+      createMockFetch([
+        () =>
+          new Response(plain, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      ]),
+    );
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.getObject('p/s/manifest.json');
+    expect(new Uint8Array(result)).toEqual(plain);
+  });
+
+  it('returns bytes with gzip magic but an invalid payload unchanged', async () => {
+    const bogus = new Uint8Array([0x1f, 0x8b, 0x00, 0x01, 0x02, 0x03]);
+    const mock = vi.fn(createMockFetch([() => new Response(bogus, { status: 200 })]));
+    const client = setupClient(BASE_CONFIG, mock);
+    const result = await client.getObject('p/s/blob.bin');
+    expect(new Uint8Array(result)).toEqual(bogus);
+  });
 });
