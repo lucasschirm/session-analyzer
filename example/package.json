@@ -1,0 +1,28 @@
+{
+  "name": "claude-session-parser-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Drop-in viewer example for @lucasschirm/sal-claude-session-parser - parse a Claude Code JSONL transcript and inspect the parsed session object.",
+  "scripts": {
+    "build:deps": "pnpm --filter @lucasschirm/sal-claude-session-parser build",
+    "dev": "pnpm build:deps && vite",
+    "build": "pnpm build:deps && vite build",
+    "preview": "pnpm run build && vite preview --open",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src",
+    "verify": "pnpm run typecheck && pnpm run lint",
+    "version:patch": "exit 0",
+    "version:publish": "exit 0"
+  },
+  "dependencies": {
+    "@lucasschirm/sal-claude-session-parser": "workspace:*"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "daisyui": "^5.0.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^7.0.2",
+    "vite": "^6.0.0"
+  }
+}

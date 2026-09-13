@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Claude Session Parser - Example</title>
+    <meta
+      name="description"
+      content="Drop a Claude Code JSONL transcript to parse it and inspect the parsed session object."
+    />
+  </head>
+  <body class="min-h-screen bg-base-200 text-base-content">
+    <div class="navbar bg-base-100 shadow-md px-6">
+      <div class="flex-1">
+        <span class="text-xl font-bold">Claude Session Parser</span>
+        <span class="badge badge-primary badge-outline ml-3">example</span>
+      </div>
+      <div class="flex-none text-sm opacity-60">@lucasschirm/sal-claude-session-parser</div>
+    </div>
+
+    <main class="container mx-auto max-w-6xl p-6 flex flex-col gap-6">
+      <div
+        id="dropzone"
+        class="card bg-base-100 border-2 border-dashed border-base-300 hover:border-primary transition-colors cursor-pointer"
+      >
+        <div class="card-body items-center text-center py-14">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-12 w-12 opacity-50"
+            role="img"
+            aria-hidden="true"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="1.5"
+              d="M7 16a4 4 0 01-.88-7.9A5 5 0 1115.9 6h.1a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+            />
+          </svg>
+          <p class="text-lg font-semibold">Drop a Claude Code <code>.jsonl</code> transcript here</p>
+          <p class="text-sm opacity-60">or click to browse - everything is parsed locally in your browser</p>
+          <p id="file-name" class="text-sm text-primary font-mono hidden"></p>
+        </div>
+        <input id="file-input" type="file" accept=".jsonl,.json,.txt" class="hidden" />
+      </div>
+
+      <div id="error-alert" class="alert alert-error hidden">
+        <span id="error-text"></span>
+      </div>
+
+      <div id="results" class="hidden">
+        <div role="tablist" class="tabs tabs-box mb-4">
+          <button id="tab-pretty" type="button" role="tab" class="tab tab-active">Session View</button>
+          <button id="tab-json" type="button" role="tab" class="tab">Raw JSON</button>
+        </div>
+        <div id="pretty-view" role="tabpanel" class="flex flex-col gap-6"></div>
+        <div id="json-view" role="tabpanel" class="hidden">
+          <div class="card bg-base-100">
+            <div class="card-body">
+              <div class="flex gap-2 mb-2">
+                <button id="json-expand" type="button" class="btn btn-xs btn-outline">Expand all</button>
+                <button id="json-collapse" type="button" class="btn btn-xs btn-outline">Collapse all</button>
+              </div>
+              <div id="json-tree" class="font-mono text-sm overflow-x-auto"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
