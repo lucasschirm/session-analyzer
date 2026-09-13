@@ -402,7 +402,7 @@ describe('storage-sessions-page', () => {
     expect(badges.length).toBe(2);
   });
 
-  it('renders View and Reprocess buttons for synced sessions, and View raw for unsynced sessions', async () => {
+  it('renders View and Reprocess buttons for synced sessions, and raw button for all sessions', async () => {
     const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
     page.storage = 's3-main';
     await mount(page);
@@ -411,7 +411,7 @@ describe('storage-sessions-page', () => {
     const root = shadow(page);
     const viewButtons = root.querySelectorAll('.view-btn');
     const reprocessButtons = root.querySelectorAll('.reprocess-btn');
-    const viewRawButtons = root.querySelectorAll('.view-raw-btn');
+    const rawButtons = root.querySelectorAll('.raw-btn');
 
     // sess-101 is synced (1 synced session)
     expect(viewButtons.length).toBe(1);
@@ -419,10 +419,12 @@ describe('storage-sessions-page', () => {
     expect(viewButtons[0].getAttribute('data-session-id')).toBe('sess-101');
     expect(reprocessButtons[0].getAttribute('data-session-id')).toBe('sess-101');
 
-    // sess-102 and sess-201 are unsynced (2 unsynced sessions)
-    expect(viewRawButtons.length).toBe(2);
-    expect(viewRawButtons[0].getAttribute('data-session-id')).toBe('sess-102');
-    expect(viewRawButtons[1].getAttribute('data-session-id')).toBe('sess-201');
+    // All sessions (synced and unsynced) have a raw button
+    expect(rawButtons.length).toBe(3);
+    expect(rawButtons[0].textContent?.trim()).toBe('raw');
+    expect(rawButtons[0].getAttribute('data-session-id')).toBe('sess-102');
+    expect(rawButtons[1].getAttribute('data-session-id')).toBe('sess-201');
+    expect(rawButtons[2].getAttribute('data-session-id')).toBe('sess-101');
   });
 
   it('navigates to session page when View button is clicked', async () => {
@@ -461,7 +463,7 @@ describe('storage-sessions-page', () => {
     );
   });
 
-  it('calls downloadRawSessionFile and opens tab when View raw is clicked', async () => {
+  it('calls downloadRawSessionFile and opens tab when raw is clicked on an imported session', async () => {
     mockSyncManager.downloadRawSessionFile.mockResolvedValue({
       filename: 'transcript.jsonl',
       content: '{"type":"message"}',
@@ -480,16 +482,17 @@ describe('storage-sessions-page', () => {
     await flush(page);
 
     const root = shadow(page);
-    const viewRawBtn = root.querySelector('.view-raw-btn') as HTMLButtonElement;
-    expect(viewRawBtn).not.toBeNull();
+    const rawBtn = root.querySelector('.raw-btn[data-session-id="sess-101"]') as HTMLButtonElement;
+    expect(rawBtn).not.toBeNull();
+    expect(rawBtn.textContent?.trim()).toBe('raw');
 
-    viewRawBtn.click();
+    rawBtn.click();
     await flush(page);
 
     expect(mockSyncManager.downloadRawSessionFile).toHaveBeenCalledWith(
       's3-main',
       'proj-1',
-      'sess-102',
+      'sess-101',
     );
     expect(openSpy).toHaveBeenCalledWith('about:blank', '_blank');
     expect(mockTab.location.href).toContain('blob:');
