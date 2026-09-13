@@ -251,6 +251,20 @@ describe('benchmark fixtures', () => {
     }
   });
 
+  it('serves context timing from session_context_series without reading normalized_events', async () => {
+    const dataSource = createAnalyticsDataSource(executor, createSha256ContentHasher());
+    const { rows } = await executor.exec('SELECT session_id FROM session_context_series LIMIT 1');
+    const sessionId = rows[0]?.session_id;
+    expect(sessionId).toBeTruthy();
+
+    executor.resetLog();
+    const series = await dataSource.session.getContextTimingSeries(String(sessionId));
+    const statements = executor.logged.map((l) => l.sql);
+    expect(statements.some((s) => s.includes('session_context_series'))).toBe(true);
+    expect(statements.some((s) => s.includes('normalized_events'))).toBe(false);
+    expect(series.points.length).toBeGreaterThan(0);
+  });
+
   it('honors the session-open read budget', async () => {
     const dataSource = createAnalyticsDataSource(executor, createSha256ContentHasher());
     const sample = fixture.rootSessions.slice(0, Math.min(50, fixture.rootSessions.length));

@@ -6,7 +6,9 @@ import type {
 } from '@lucasschirm/sal-db-core';
 import {
   ComponentIdentityStore,
+  listNormalizedTimingEventRows,
   SessionComponentStatStore,
+  SessionContextSeriesStore,
   SourceTombstoneStore,
   ValidationStore,
 } from '@lucasschirm/sal-db-core';
@@ -56,6 +58,11 @@ import type {
 import { componentDisplayName } from './analytics-portfolio.js';
 import { getSessionUtilizationReport } from './analytics-utilization.js';
 import { ArtifactDiffRepository } from './artifact-diff.js';
+import {
+  computeContextTimingPoints,
+  decodeContextSeries,
+  timingRecordFromNormalizedRow,
+} from './context-timing.js';
 import type {
   AnalyticsToken,
   Coverage,
@@ -507,382 +514,9 @@ async function getSessionEvidenceSummary(
   };
 }
 
-function formatToolResultContent(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return JSON.stringify(content, null, 2);
-  return content
-    .map((sub: unknown) =>
-      typeof sub === 'object' && sub !== null && 'text' in (sub as Record<string, unknown>)
-        ? String((sub as Record<string, unknown>).text)
-        : JSON.stringify(sub),
-    )
-    .join('\n');
-}
-
-function formatContentBlock(block: unknown): string {
-  if (typeof block === 'string') return block;
-  if (typeof block !== 'object' || block === null) return '';
-  const b = block as Record<string, unknown>;
-  if (b.type === 'text' && typeof b.text === 'string') return b.text;
-  if (b.type === 'tool_use') {
-    const name = typeof b.name === 'string' ? b.name : 'tool';
-    const inputStr = b.input ? JSON.stringify(b.input, null, 2) : '';
-    return `**Tool Call: \`${name}\`**\n\`\`\`json\n${inputStr}\n\`\`\``;
-  }
-  if (b.type === 'tool_result') {
-    const errSuffix = b.is_error === true ? ' *(error)*' : '';
-    return `**Tool Result${errSuffix}:**\n${formatToolResultContent(b.content)}`;
-  }
-  return '';
-}
-
-function formatMessageContent(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content.map(formatContentBlock).filter(Boolean).join('\n\n');
-}
-
-interface TimingTurn {
-  ordinal?: number;
-  role?: string;
-  timestamp?: string;
-  sourceEventId?: string;
-}
-
-interface TimingRequest {
-  model?: string | null;
-  inputTokens?: number | null;
-  outputTokens?: number | null;
-  cacheCreationTokens?: number | null;
-  cacheReadTokens?: number | null;
-  thinkingTokens?: number | null;
-  effort?: string | null;
-  normalizedEffort?: string | null;
-  timestamp?: string;
-  requestOrder?: number | null;
-}
-
-interface TimingMessage {
-  id: string;
-  turnId?: string;
-  sourceEventId?: string;
-  role: string;
-  timestamp?: string;
-  content: string;
-  model?: string;
-  turnOrdinal?: number;
-}
-
-interface RawTimingPoint {
-  msg: TimingMessage;
-  req?: TimingRequest;
-  contextTokens: number | null;
-  generationTokens: number | null;
-  totalTokens: number | null;
-  compactedTokens?: number | null;
-}
-
-function parseTimingTurn(
-  recordId: string,
-  payload: Record<string, unknown>,
-  sourceEventId: string | null | undefined,
-): [string, TimingTurn] {
-  return [
-    recordId,
-    {
-      ordinal: typeof payload.ordinal === 'number' ? payload.ordinal : undefined,
-      role: typeof payload.role === 'string' ? payload.role : undefined,
-      timestamp:
-        typeof payload.timestamp === 'string'
-          ? payload.timestamp
-          : formatTimestamp(payload.timestamp),
-      sourceEventId: sourceEventId ?? undefined,
-    },
-  ];
-}
-
-function parseTimingRequest(payload: Record<string, unknown>): TimingRequest {
-  return {
-    model: asOptionalString(payload.model),
-    inputTokens: asOptionalNumber(payload.inputTokens),
-    outputTokens: asOptionalNumber(payload.outputTokens),
-    cacheCreationTokens: asOptionalNumber(payload.cacheCreationTokens),
-    cacheReadTokens: asOptionalNumber(payload.cacheReadTokens),
-    thinkingTokens: asOptionalNumber(payload.thinkingTokens),
-    effort: asOptionalString(payload.effort),
-    normalizedEffort: asOptionalString(payload.normalizedEffort),
-    timestamp:
-      typeof payload.timestamp === 'string'
-        ? payload.timestamp
-        : formatTimestamp(payload.timestamp),
-    requestOrder:
-      typeof payload.requestOrder === 'number'
-        ? payload.requestOrder
-        : asOptionalNumber(payload.requestOrder),
-  };
-}
-
-function parseTimingMessage(
-  recordId: string,
-  parentId: string | null | undefined,
-  sourceEventId: string | null | undefined,
-  payload: Record<string, unknown>,
-  turnsMap: Map<string, TimingTurn>,
-): TimingMessage {
-  const turn = parentId ? turnsMap.get(parentId) : undefined;
-  const rawRole = typeof payload.role === 'string' ? payload.role : (turn?.role ?? 'unknown');
-  const role = rawRole === 'human' ? 'user' : rawRole;
-  const ts =
-    typeof payload.timestamp === 'string'
-      ? payload.timestamp
-      : (formatTimestamp(payload.timestamp) ?? turn?.timestamp);
-  return {
-    id: recordId,
-    turnId: parentId ?? undefined,
-    sourceEventId: sourceEventId ?? undefined,
-    role,
-    timestamp: ts,
-    content: formatMessageContent(payload.content),
-    model: asOptionalString(payload.model) ?? undefined,
-    turnOrdinal:
-      turn?.ordinal ?? (typeof payload.ordinal === 'number' ? payload.ordinal : undefined),
-  };
-}
-
-function sortTimingMessages(messagesList: TimingMessage[]): void {
-  messagesList.sort((a, b) => {
-    if (a.turnOrdinal !== undefined && b.turnOrdinal !== undefined) {
-      return a.turnOrdinal - b.turnOrdinal;
-    }
-    if (a.timestamp && b.timestamp) {
-      const cmp = a.timestamp.localeCompare(b.timestamp);
-      if (cmp !== 0) return cmp;
-    }
-    return a.id.localeCompare(b.id);
-  });
-}
-
-function resolveMessageRequest(
-  m: TimingMessage,
-  byTurn: Map<string, TimingRequest>,
-  byEvent: Map<string, TimingRequest>,
-  byOrder: Map<number, TimingRequest>,
-): TimingRequest | undefined {
-  if (m.turnId && byTurn.has(m.turnId)) return byTurn.get(m.turnId);
-  if (m.sourceEventId && byEvent.has(m.sourceEventId)) return byEvent.get(m.sourceEventId);
-  if (m.turnOrdinal !== undefined && byOrder.has(m.turnOrdinal)) return byOrder.get(m.turnOrdinal);
-  return undefined;
-}
-
-function createRawTimingPoint(msg: TimingMessage, req?: TimingRequest): RawTimingPoint {
-  if (!req) {
-    return {
-      msg,
-      req,
-      contextTokens: null,
-      generationTokens: null,
-      totalTokens: null,
-      compactedTokens: null,
-    };
-  }
-  const hasContext =
-    req.inputTokens != null || req.cacheReadTokens != null || req.cacheCreationTokens != null;
-  const contextTokens = hasContext
-    ? asNumber(req.inputTokens) + asNumber(req.cacheReadTokens) + asNumber(req.cacheCreationTokens)
-    : null;
-  const generationTokens = asOptionalNumber(req.outputTokens) ?? null;
-  const totalTokens =
-    contextTokens !== null ? contextTokens + (generationTokens ?? 0) : generationTokens;
-  return { msg, req, contextTokens, generationTokens, totalTokens, compactedTokens: null };
-}
-
-function fillForwardContextTokens(rawPoints: RawTimingPoint[]): void {
-  for (let i = 0; i < rawPoints.length; i++) {
-    if (rawPoints[i].contextTokens === null) {
-      let forwardContext: number | null = null;
-      for (let j = i + 1; j < rawPoints.length; j++) {
-        if (rawPoints[j].contextTokens !== null) {
-          forwardContext = rawPoints[j].contextTokens;
-          break;
-        }
-      }
-      const inherited = forwardContext ?? (i > 0 ? rawPoints[i - 1].contextTokens : null);
-      rawPoints[i].contextTokens = inherited;
-      rawPoints[i].totalTokens = inherited;
-      rawPoints[i].generationTokens = null;
-    }
-  }
-}
-
-function toContextTimingPoint(raw: RawTimingPoint, index: number): ContextTimingPoint {
-  const { msg, req, contextTokens, generationTokens, totalTokens, compactedTokens } = raw;
-  return {
-    turnNumber: msg.turnOrdinal ?? index + 1,
-    messageIndex: index + 1,
-    messageId: msg.id,
-    role: msg.role,
-    model: (req ? asOptionalString(req.model) : msg.model) ?? undefined,
-    timestamp: msg.timestamp,
-    totalTokens,
-    contextTokens,
-    generationTokens,
-    compactedTokens: compactedTokens ?? undefined,
-    removedTokens: compactedTokens ?? undefined,
-    inputTokens: req ? asOptionalNumber(req.inputTokens) : contextTokens,
-    outputTokens: req ? asOptionalNumber(req.outputTokens) : generationTokens,
-    cacheCreationTokens: req ? asOptionalNumber(req.cacheCreationTokens) : null,
-    cacheReadTokens: req ? asOptionalNumber(req.cacheReadTokens) : null,
-    thinkingTokens: req ? asOptionalNumber(req.thinkingTokens) : null,
-    effort: req ? asOptionalString(req.effort) : null,
-    normalizedEffort: req ? asOptionalString(req.normalizedEffort) : null,
-    content: msg.content,
-  };
-}
-
-interface TimingCompaction {
-  id: string;
-  timestampMs?: number;
-  timestamp?: string;
-  sourceEventId?: string;
-  preTokens?: number;
-  postTokens?: number;
-  droppedTokens?: number;
-}
-
-interface ParsedTimingData {
-  messages: TimingMessage[];
-  reqByTurn: Map<string, TimingRequest>;
-  reqByEvent: Map<string, TimingRequest>;
-  reqByOrder: Map<number, TimingRequest>;
-  compactions: TimingCompaction[];
-}
-
-function parseNormalizedTimingEvents(rows: readonly Record<string, unknown>[]): ParsedTimingData {
-  const turnsMap = new Map<string, TimingTurn>();
-  const messages: TimingMessage[] = [];
-  const reqByTurn = new Map<string, TimingRequest>();
-  const reqByEvent = new Map<string, TimingRequest>();
-  const reqByOrder = new Map<number, TimingRequest>();
-  const compactions: TimingCompaction[] = [];
-
-  for (const row of rows) {
-    const record = parseJsonRecord(asString(row.raw_details));
-    const eventType = asString(row.event_type);
-    const payload = (record.payload as Record<string, unknown>) ?? {};
-    const recordId = asString(record.recordId || row.id);
-    const parentId = asOptionalString(record.parentId);
-    const sourceEventId = asOptionalString(record.sourceEventId);
-
-    if (eventType === 'turn') {
-      const [id, turn] = parseTimingTurn(recordId, payload, sourceEventId);
-      turnsMap.set(id, turn);
-    } else if (eventType === 'model_request' || eventType === 'model_usage') {
-      const req = parseTimingRequest(payload);
-      if (parentId) reqByTurn.set(parentId, req);
-      if (sourceEventId) reqByEvent.set(sourceEventId, req);
-      if (typeof req.requestOrder === 'number') reqByOrder.set(req.requestOrder, req);
-    } else if (eventType === 'message') {
-      messages.push(parseTimingMessage(recordId, parentId, sourceEventId, payload, turnsMap));
-    } else if (
-      eventType === 'compaction' ||
-      (eventType === 'normalized_event' && payload.category === 'compaction')
-    ) {
-      const tsMs =
-        typeof payload.timestampMs === 'number'
-          ? payload.timestampMs
-          : typeof payload.timestamp === 'string'
-            ? Date.parse(payload.timestamp)
-            : undefined;
-      const preTokens = asOptionalNumber(payload.preTokens);
-      const postTokens = asOptionalNumber(payload.postTokens);
-      const droppedTokens =
-        asOptionalNumber(payload.cumulativeDroppedTokens) ??
-        asOptionalNumber(payload.droppedTokens) ??
-        asOptionalNumber(payload.tokens_saved) ??
-        (preTokens != null && postTokens != null ? preTokens - postTokens : undefined);
-      compactions.push({
-        id: recordId,
-        timestampMs: Number.isNaN(tsMs) ? undefined : tsMs,
-        timestamp:
-          typeof payload.timestamp === 'string'
-            ? payload.timestamp
-            : tsMs
-              ? new Date(tsMs).toISOString()
-              : undefined,
-        sourceEventId: sourceEventId ?? undefined,
-        preTokens: preTokens ?? undefined,
-        postTokens: postTokens ?? undefined,
-        droppedTokens: droppedTokens ?? undefined,
-      });
-    }
-  }
-  return { messages, reqByTurn, reqByEvent, reqByOrder, compactions };
-}
-
-async function extractPointsFromNormalizedEvents(
-  queryable: Queryable,
-  sessionId: string,
-  generationId: string,
-): Promise<ContextTimingPoint[]> {
-  const { rows } = await queryable.exec(
-    `SELECT id, event_type, raw_details
-     FROM normalized_events
-     WHERE session_id = ? AND ( ? IS NULL OR ? = '' OR generation_id = ? )
-       AND (
-         event_type IN ('turn', 'message', 'model_request', 'model_usage', 'compaction')
-         OR (event_type = 'normalized_event' AND raw_details LIKE '%"category":"compaction"%')
-       )
-     ORDER BY id`,
-    [sessionId, generationId, generationId, generationId],
-  );
-  if (rows.length === 0) return [];
-
-  const { messages, reqByTurn, reqByEvent, reqByOrder, compactions } =
-    parseNormalizedTimingEvents(rows);
-  if (messages.length === 0) return [];
-  sortTimingMessages(messages);
-
-  const rawPoints = messages.map((m) =>
-    createRawTimingPoint(m, resolveMessageRequest(m, reqByTurn, reqByEvent, reqByOrder)),
-  );
-  fillForwardContextTokens(rawPoints);
-
-  if (compactions.length > 0) {
-    compactions.sort((a, b) => (a.timestampMs ?? 0) - (b.timestampMs ?? 0));
-    for (const c of compactions) {
-      let targetPoint: RawTimingPoint | undefined;
-      const cTs = c.timestampMs;
-      if (cTs !== undefined) {
-        targetPoint = rawPoints.find((p) => {
-          const pTs = p.msg.timestamp ? Date.parse(p.msg.timestamp) : undefined;
-          return pTs !== undefined && pTs >= cTs;
-        });
-      }
-      if (!targetPoint && c.sourceEventId) {
-        targetPoint = rawPoints.find(
-          (p) => p.msg.sourceEventId === c.sourceEventId || p.msg.id === c.sourceEventId,
-        );
-      }
-      if (targetPoint) {
-        const dropped =
-          c.droppedTokens ??
-          (c.preTokens != null && c.postTokens != null ? c.preTokens - c.postTokens : null);
-        targetPoint.compactedTokens = dropped ?? null;
-      }
-    }
-  }
-
-  // Fallback: detect context drop between consecutive points if compactedTokens is not set
-  for (let i = 1; i < rawPoints.length; i++) {
-    const prev = rawPoints[i - 1].contextTokens;
-    const curr = rawPoints[i].contextTokens;
-    if (rawPoints[i].compactedTokens == null && prev !== null && curr !== null && prev > curr) {
-      rawPoints[i].compactedTokens = prev - curr;
-    }
-  }
-
-  return rawPoints.map(toContextTimingPoint);
-}
+// Context-growth timing computation lives in ./context-timing.ts and is shared
+// between the ingest-time series writer, the legacy normalized_events read
+// fallback, and the processing-version backfill.
 
 interface BucketSeriesPoint {
   total: number | null;
@@ -961,7 +595,21 @@ async function fetchContextTimingPoints(
   sessionId: string,
   generationId: string,
 ): Promise<ContextTimingPoint[]> {
-  const points = await extractPointsFromNormalizedEvents(queryable, sessionId, generationId);
+  // Preferred path: the ingest-materialized series row — no normalized_events
+  // read at all.
+  const series = await SessionContextSeriesStore.getBySessionAndGeneration(
+    queryable,
+    sessionId,
+    generationId,
+  );
+  if (series) {
+    return decodeContextSeries(series);
+  }
+
+  // Legacy fallback for generations committed before the series table existed
+  // (their raw_details still carry the full timing payload).
+  const rows = await listNormalizedTimingEventRows(queryable, sessionId, generationId);
+  const points = computeContextTimingPoints(rows.map(timingRecordFromNormalizedRow));
   return points.length > 0
     ? points
     : extractPointsFromChartSeriesFallback(queryable, sessionId, generationId);

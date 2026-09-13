@@ -197,6 +197,15 @@ export interface ContextTimingPoint {
   readonly effort?: string | null;
   readonly normalizedEffort?: string | null;
   readonly content?: string;
+  /**
+   * 1-based position of this point in the session's transcript pages (the
+   * chat-message ordering produced by `getTranscriptPages`). Used to hydrate
+   * message content on demand from the retained transcript artifact.
+   */
+  readonly transcriptIndex?: number;
+  /** The harness-native event id for this message (e.g. Claude `uuid`,
+   * Devin `message_id`/`node-<id>`), for evidence-link correlation. */
+  readonly sourceEventId?: string;
 }
 
 export interface ContextTimingSeries {

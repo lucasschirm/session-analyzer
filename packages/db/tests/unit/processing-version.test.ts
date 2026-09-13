@@ -1,4 +1,4 @@
-import { FRESH_SCHEMA_SQL } from '@lucasschirm/sal-db-core';
+import { FRESH_SCHEMA_SQL, SessionContextSeriesStore } from '@lucasschirm/sal-db-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
 import {
@@ -76,37 +76,53 @@ describe('processing-version', () => {
 
     expect(await getStoredProcessingVersion(executor)).toBe(ANALYTICS_PROCESSING_VERSION);
     expect(await needsRebuild(executor)).toBe(false);
-    expect(progressSpy).toHaveBeenCalledTimes(4);
+    expect(progressSpy).toHaveBeenCalledTimes(6);
     expect(progressSpy).toHaveBeenNthCalledWith(1, {
-      step: 'Rebuilding session rollups',
+      step: 'Backfilling context series',
       completed: 0,
       total: 1,
       phase: 1,
-      totalPhases: 2,
+      totalPhases: 3,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(2, {
-      step: 'Rebuilding session rollups',
+      step: 'Backfilling context series',
       completed: 1,
       total: 1,
       phase: 1,
-      totalPhases: 2,
+      totalPhases: 3,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(3, {
-      step: 'Recomputing project rollups',
+      step: 'Rebuilding session rollups',
       completed: 0,
       total: 1,
       phase: 2,
-      totalPhases: 2,
-      unit: 'analytics calculations',
+      totalPhases: 3,
+      unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(4, {
-      step: 'Recomputing project rollups',
+      step: 'Rebuilding session rollups',
       completed: 1,
       total: 1,
       phase: 2,
-      totalPhases: 2,
+      totalPhases: 3,
+      unit: 'sessions processed',
+    });
+    expect(progressSpy).toHaveBeenNthCalledWith(5, {
+      step: 'Recomputing project rollups',
+      completed: 0,
+      total: 1,
+      phase: 3,
+      totalPhases: 3,
+      unit: 'analytics calculations',
+    });
+    expect(progressSpy).toHaveBeenNthCalledWith(6, {
+      step: 'Recomputing project rollups',
+      completed: 1,
+      total: 1,
+      phase: 3,
+      totalPhases: 3,
       unit: 'analytics calculations',
     });
   });
@@ -144,5 +160,98 @@ describe('processing-version', () => {
     expect(await needsRebuild(executor)).toBe(false);
 
     applySpy.mockRestore();
+  });
+
+  it('backfills session_context_series for current generations missing a series row', async () => {
+    const now = Date.now();
+    await executor.exec(`
+      INSERT INTO tenants (id, name, created_at, updated_at) VALUES ('tenant-3', 'T3', ${now}, ${now});
+      INSERT INTO portfolios (id, tenant_id, name, created_at, updated_at) VALUES ('port-3', 'tenant-3', 'P3', ${now}, ${now});
+      INSERT INTO ingestion_sources (id, portfolio_id, native_source_id, display_name, type, authority, created_at, updated_at)
+        VALUES ('src-3', 'port-3', 'native-3', 'Source 3', 'test', 'local', ${now}, ${now});
+      INSERT INTO projects (id, portfolio_id, name, created_at, updated_at) VALUES ('proj-3', 'port-3', 'Proj 3', ${now}, ${now});
+      INSERT INTO analysis_releases (id, ontology_version, metric_registry_version, statistical_policy_version, rollup_policy_version, mapping_version, created_at, is_default)
+        VALUES ('rel-3', '1.0', '1.0', '1.0', '1.0', '1.0', ${now}, 0);
+      INSERT INTO sessions (id, project_id, ingestion_source_id, harness, native_session_id, current_generation_id, occurrence_time, finality, created_at, updated_at)
+        VALUES ('sess-3', 'proj-3', 'src-3', 'claude-code', 'native-s3', NULL, ${now}, 'final', ${now}, ${now});
+      INSERT INTO transformation_generations (id, session_id, analysis_release_id, parser_version, transformer_version, ontology_version, metric_version, schema_version, status, source_availability, created_at)
+        VALUES ('gen-3', 'sess-3', 'rel-3', '1.0', '1.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now});
+      UPDATE sessions SET current_generation_id = 'gen-3' WHERE id = 'sess-3';
+    `);
+
+    // Legacy-generation normalized events carrying full pre-skeleton payloads.
+    const payload = (overrides: Record<string, unknown>) => JSON.stringify(overrides);
+    await executor.exec(
+      `INSERT INTO normalized_events (id, session_id, generation_id, event_type, event_version, raw_details, retain_raw, created_at, updated_at)
+       VALUES (?, 'sess-3', 'gen-3', 'message', 1, ?, 1, ${now}, ${now})`,
+      [
+        'evt-msg-a',
+        payload({
+          recordId: 'evt-msg-a',
+          recordType: 'message',
+          sessionId: 'sess-3',
+          sourceEventId: 'u-a',
+          payload: { role: 'user', timestamp: '2026-08-11T10:00:00.000Z' },
+        }),
+      ],
+    );
+    await executor.exec(
+      `INSERT INTO normalized_events (id, session_id, generation_id, event_type, event_version, raw_details, retain_raw, created_at, updated_at)
+       VALUES (?, 'sess-3', 'gen-3', 'message', 1, ?, 1, ${now}, ${now})`,
+      [
+        'evt-msg-b',
+        payload({
+          recordId: 'evt-msg-b',
+          recordType: 'message',
+          sessionId: 'sess-3',
+          sourceEventId: 'a-b',
+          payload: { role: 'assistant', timestamp: '2026-08-11T10:00:01.000Z' },
+        }),
+      ],
+    );
+    await executor.exec(
+      `INSERT INTO normalized_events (id, session_id, generation_id, event_type, event_version, raw_details, retain_raw, created_at, updated_at)
+       VALUES (?, 'sess-3', 'gen-3', 'model_request', 1, ?, 1, ${now}, ${now})`,
+      [
+        'evt-req-b',
+        payload({
+          recordId: 'evt-req-b',
+          recordType: 'model_request',
+          sessionId: 'sess-3',
+          sourceEventId: 'a-b',
+          payload: {
+            model: 'claude-3-7',
+            inputTokens: 400,
+            outputTokens: 40,
+            timestamp: '2026-08-11T10:00:01.000Z',
+          },
+        }),
+      ],
+    );
+
+    // Sanity: no series row before the rebuild.
+    const before = await SessionContextSeriesStore.getBySessionAndGeneration(
+      executor,
+      'sess-3',
+      'gen-3',
+    );
+    expect(before).toBeUndefined();
+
+    await setStoredProcessingVersion(executor, 0);
+    await rebuildAnalyticsDerivedData(executor, () => {});
+
+    const row = await SessionContextSeriesStore.getBySessionAndGeneration(
+      executor,
+      'sess-3',
+      'gen-3',
+    );
+    if (!row) throw new Error('session_context_series row missing after rebuild');
+    expect(row.messageCount).toBe(2);
+    const contextTokens = JSON.parse(row.contextTokens) as (number | null)[];
+    expect(contextTokens).toEqual([400, 400]);
+    const generationTokens = JSON.parse(row.generationTokens ?? '[]') as (number | null)[];
+    expect(generationTokens).toEqual([null, 40]);
+    const models = JSON.parse(row.models ?? '[]') as string[];
+    expect(models).toEqual(['claude-3-7']);
   });
 });

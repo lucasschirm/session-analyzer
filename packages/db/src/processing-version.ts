@@ -1,4 +1,11 @@
 import type { RollupPolicy, SqliteExecutor, SqliteTransaction } from '@lucasschirm/sal-db-core';
+import { listNormalizedTimingEventRows, SessionContextSeriesStore } from '@lucasschirm/sal-db-core';
+import {
+  collectSeriesModels,
+  computeRawTimingPoints,
+  encodeContextSeries,
+  timingRecordFromNormalizedRow,
+} from './context-timing.js';
 import {
   applySessionRollupContributions,
   loadOrDefaultRollupPolicy,
@@ -20,7 +27,7 @@ declare const console:
  * the stored version is older, runs {@link rebuildAnalyticsDerivedData}
  * before serving queries.
  */
-export const ANALYTICS_PROCESSING_VERSION = 4;
+export const ANALYTICS_PROCESSING_VERSION = 5;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.
@@ -179,6 +186,70 @@ async function rebuildSessionBatchWithFallback(
 }
 
 /**
+ * Materializes `session_context_series` rows for sessions whose current
+ * generation predates the series table. Computes from the existing
+ * `normalized_events` rows (which still carry full timing payloads for
+ * pre-skeleton generations). Failures are isolated per session — a session
+ * that cannot be backfilled simply has no series row and falls back to the
+ * legacy normalized-events read path.
+ */
+async function backfillContextSeries(
+  executor: SqliteExecutor,
+  onProgress?: RebuildProgressCallback,
+): Promise<void> {
+  const missing = await SessionContextSeriesStore.listMissingCurrentGeneration(executor);
+  const total = missing.length;
+  onProgress?.({
+    step: 'Backfilling context series',
+    completed: 0,
+    total,
+    phase: 1,
+    totalPhases: 3,
+    unit: 'sessions processed',
+  });
+  let completed = 0;
+  for (const target of missing) {
+    try {
+      const rows = await listNormalizedTimingEventRows(
+        executor,
+        target.sessionId,
+        target.generationId,
+      );
+      const records = rows.map(timingRecordFromNormalizedRow);
+      const rawPoints = computeRawTimingPoints(records);
+      if (rawPoints.length > 0) {
+        const encoded = encodeContextSeries(rawPoints);
+        await SessionContextSeriesStore.upsert(executor, {
+          sessionId: target.sessionId,
+          generationId: target.generationId,
+          messageCount: encoded.messageCount,
+          contextTokens: encoded.contextTokensJson,
+          generationTokens: encoded.generationTokensJson,
+          pointMeta: encoded.pointMetaJson,
+          models: JSON.stringify(collectSeriesModels(records)),
+        });
+      }
+    } catch (err) {
+      console?.warn?.(
+        `[rebuildAnalyticsDerivedData] Failed to backfill context series for session ${target.sessionId}:`,
+        err,
+      );
+    }
+    completed += 1;
+    if (completed % 50 === 0 || completed === total) {
+      onProgress?.({
+        step: 'Backfilling context series',
+        completed,
+        total,
+        phase: 1,
+        totalPhases: 3,
+        unit: 'sessions processed',
+      });
+    }
+  }
+}
+
+/**
  * Rebuilds all analytics-derived data (rollup contributions, daily/dimension
  * rollups) for every committed session in the database. Idempotent: deleting
  * and re-applying contributions for the current generation yields the same
@@ -197,6 +268,11 @@ export async function rebuildAnalyticsDerivedData(
     await setStoredProcessingVersion(executor, ANALYTICS_PROCESSING_VERSION);
     return;
   }
+
+  // Step 1: materialize context-growth series for sessions whose current
+  // generation predates the table, so the context chart reads
+  // session_context_series instead of normalized_events.
+  await backfillContextSeries(executor, onProgress);
 
   // Group sessions by (portfolioId, projectId, analysisReleaseId) so we can
   // rebuild rollups once per project+release after re-applying all session
@@ -221,9 +297,9 @@ export async function rebuildAnalyticsDerivedData(
     return policy;
   }
 
-  // Step 1: re-apply rollup contributions per session. This repopulates the
+  // Step 2: re-apply rollup contributions per session. This repopulates the
   // model dimension from model_requests and is the bulk of the work.
-  // We pass skipBucketRecompute: true because Step 2 recomputes all project and
+  // We pass skipBucketRecompute: true because Step 3 recomputes all project and
   // portfolio rollups in bulk in a single efficient pass.
   // Sessions are processed in batches per transaction to eliminate thousands of
   // intermediate OPFS disk sync flushes while preserving Session Failure Isolation.
@@ -233,8 +309,8 @@ export async function rebuildAnalyticsDerivedData(
     step: 'Rebuilding session rollups',
     completed: 0,
     total: totalSessions,
-    phase: 1,
-    totalPhases: 2,
+    phase: 2,
+    totalPhases: 3,
     unit: 'sessions processed',
   });
 
@@ -247,13 +323,13 @@ export async function rebuildAnalyticsDerivedData(
       step: 'Rebuilding session rollups',
       completed,
       total: totalSessions,
-      phase: 1,
-      totalPhases: 2,
+      phase: 2,
+      totalPhases: 3,
       unit: 'sessions processed',
     });
   }
 
-  // Step 2: recompute daily/dimension rollup buckets per project+portfolio.
+  // Step 3: recompute daily/dimension rollup buckets per project+portfolio.
   const groupList = [...projectGroups.values()];
   const totalGroups = groupList.length;
   let groupsCompleted = 0;
@@ -261,8 +337,8 @@ export async function rebuildAnalyticsDerivedData(
     step: 'Recomputing project rollups',
     completed: 0,
     total: totalGroups,
-    phase: 2,
-    totalPhases: 2,
+    phase: 3,
+    totalPhases: 3,
     unit: 'analytics calculations',
   });
   for (const group of groupList) {
@@ -289,13 +365,13 @@ export async function rebuildAnalyticsDerivedData(
       step: 'Recomputing project rollups',
       completed: groupsCompleted,
       total: totalGroups,
-      phase: 2,
-      totalPhases: 2,
+      phase: 3,
+      totalPhases: 3,
       unit: 'analytics calculations',
     });
   }
 
-  // Step 3: persist the new processing version so the rebuild does not run
+  // Step 4: persist the new processing version so the rebuild does not run
   // again on the next boot.
   await setStoredProcessingVersion(executor, ANALYTICS_PROCESSING_VERSION);
 }

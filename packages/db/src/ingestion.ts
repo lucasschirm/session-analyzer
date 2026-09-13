@@ -24,6 +24,7 @@ import {
   NormalizedEventStore,
   PortfolioStore,
   ProjectStore,
+  SessionContextSeriesStore,
   SessionStore,
   SessionSummaryStore,
   SourceManifestStore,
@@ -53,6 +54,13 @@ import type {
 import type { ArtifactCanonicalizationInput, ArtifactDiffRecordContext } from './artifact-diff.js';
 import { ArtifactDiffRepository } from './artifact-diff.js';
 import { ComponentLifecycleEngine } from './component-lifecycle.js';
+import {
+  collectSeriesModels,
+  computeRawTimingPoints,
+  encodeContextSeries,
+  type TimingSourceRecord,
+  timingRecordFromEvidence,
+} from './context-timing.js';
 import { rebuildAffectedDistributions } from './distributions.js';
 import type { ManualIngestionBundle, VerifiedManifestBundle } from './manifest.js';
 import type {
@@ -63,6 +71,12 @@ import type {
   ResolvedArtifact,
 } from './ports.js';
 import { applySessionRollupContributions } from './rollup-reconciliation.js';
+
+declare const console:
+  | {
+      warn?: (...args: unknown[]) => void;
+    }
+  | undefined;
 
 export interface IngestionIssue {
   readonly code: string;
@@ -658,6 +672,11 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         await this.pruneEvidenceForSessions(tx, result);
         await this.upsertEvidence(tx, commit.generationId, result);
         await this.upsertMessageEffort(tx, commit.generationId, result);
+        // Materialize the context-growth series per session from the same
+        // in-memory evidence — the read path no longer needs the full
+        // normalized_events payloads (which upsertEvidence now stores as
+        // pointer-only skeletons).
+        await this.upsertContextSeries(tx, commit.generationId, result);
         await this.upsertSessionSummaries(
           tx,
           commit.sessionId,
@@ -1411,13 +1430,53 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     }
     for (const sessionId of sessionIds) {
       await tx.exec('DELETE FROM normalized_events WHERE session_id = ?', [sessionId]);
-      // Mirrors the normalized_events prune above: stale message_effort rows
-      // for a touched session must not survive into a reprocessed
-      // generation (schema-change-tests.md / #289's own reprocess
-      // acceptance criterion) — the new generation's upsertMessageEffort
-      // pass (below) fully repopulates them from its own evidence.
+      // Mirrors the normalized_events prune above: stale message_effort and
+      // context-series rows for a touched session must not survive into a
+      // reprocessed generation (schema-change-tests.md / #289's own reprocess
+      // acceptance criterion) — the new generation's upsertMessageEffort and
+      // upsertContextSeries passes (below) fully repopulate them from its own
+      // evidence.
       await tx.exec('DELETE FROM message_effort WHERE session_id = ?', [sessionId]);
+      await SessionContextSeriesStore.deleteBySession(tx, sessionId);
     }
+  }
+
+  /**
+   * Builds the pointer-only `raw_details` skeleton persisted in
+   * normalized_events. Everything readers need post-ingest is either
+   * derived up front (context timing → `session_context_series`, effort →
+   * `message_effort`) or resolved through the retained artifact blob
+   * (`payload.storage`/`payload.path` → `ArtifactBlobStore`), so the full
+   * record JSON — tool args, usage objects, sub-agent payloads, message
+   * bodies — never reaches SQLite. Only pointer/provenance fields are kept:
+   * `storage`/`path` (blob resolution), `timestamp`/`role`/`ordinal`/
+   * `category` (ordering + record discrimination for legacy fallbacks).
+   */
+  private toEvidenceSkeleton(record: NormalizedEvidenceRecord): Record<string, unknown> {
+    const source =
+      record.payload && typeof record.payload === 'object'
+        ? (record.payload as Record<string, unknown>)
+        : {};
+    const payload: Record<string, unknown> = {};
+    for (const key of ['storage', 'path', 'timestamp', 'role', 'ordinal', 'category']) {
+      if (source[key] !== undefined) payload[key] = source[key];
+    }
+    if (record.recordType === 'message') {
+      // Transcript bodies resolve through the blob pointer; guarantee the
+      // pointer fields exist even when the transformer did not set them.
+      if (!payload.storage) payload.storage = 'artifact-blob';
+      if (!payload.path && record.provenance?.path) payload.path = record.provenance.path;
+    }
+    return {
+      recordId: record.recordId,
+      recordType: record.recordType,
+      sessionId: record.sessionId,
+      parentId: record.parentId,
+      sourceEventId: record.sourceEventId,
+      sourceField: record.sourceField,
+      provenance: record.provenance,
+      payload,
+    };
   }
 
   private async upsertEvidence(
@@ -1426,29 +1485,63 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     result: TransformResult,
   ): Promise<void> {
     for (const record of result.evidence) {
-      let recordToStore = record;
-      if (record.recordType === 'message' && record.payload && typeof record.payload === 'object') {
-        const payload = { ...(record.payload as Record<string, unknown>) };
-        if ('content' in payload) {
-          delete payload.content;
-          if (!payload.storage) {
-            payload.storage = 'artifact-blob';
-          }
-          if (!payload.path && record.provenance?.path) {
-            payload.path = record.provenance.path;
-          }
-          recordToStore = { ...record, payload };
-        }
-      }
       await NormalizedEventStore.insert(tx, {
-        id: recordToStore.recordId,
-        sessionId: recordToStore.sessionId,
+        id: record.recordId,
+        sessionId: record.sessionId,
         generationId,
-        eventType: recordToStore.recordType,
+        eventType: record.recordType,
         eventVersion: 1,
-        rawDetails: JSON.stringify(recordToStore),
+        rawDetails: JSON.stringify(this.toEvidenceSkeleton(record)),
         retainRaw: true,
       });
+    }
+  }
+
+  /**
+   * Computes the context-growth series for every session touched by this
+   * commit (root sessions and sub-sessions — each evidence record carries its
+   * own sessionId) and upserts one `session_context_series` row per
+   * (session, generation). Computation is isolated per session: a failure
+   * degrades that session to "no series row" — the context chart shows its
+   * explicit empty affordance — and never aborts the commit for other
+   * sessions.
+   */
+  private async upsertContextSeries(
+    tx: SqliteTransaction,
+    generationId: string,
+    result: TransformResult,
+  ): Promise<void> {
+    const recordsBySession = new Map<string, TimingSourceRecord[]>();
+    for (const record of result.evidence) {
+      const sessionId = record.sessionId;
+      const list = recordsBySession.get(sessionId);
+      if (list) {
+        list.push(timingRecordFromEvidence(record));
+      } else {
+        recordsBySession.set(sessionId, [timingRecordFromEvidence(record)]);
+      }
+    }
+    for (const [sessionId, records] of recordsBySession) {
+      try {
+        const rawPoints = computeRawTimingPoints(records);
+        if (rawPoints.length === 0) continue;
+        const encoded = encodeContextSeries(rawPoints);
+        await SessionContextSeriesStore.upsert(tx, {
+          sessionId,
+          generationId,
+          messageCount: encoded.messageCount,
+          contextTokens: encoded.contextTokensJson,
+          generationTokens: encoded.generationTokensJson,
+          pointMeta: encoded.pointMetaJson,
+          models: JSON.stringify(collectSeriesModels(records)),
+        });
+      } catch (error) {
+        console?.warn?.(
+          `[ingestion] context-series computation failed for session ${sessionId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
   }
 
