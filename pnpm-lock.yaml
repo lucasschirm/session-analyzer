@@ -18,28 +18,6 @@ importers:
         specifier: ^17.3.0
         version: 17.3.0
 
-  example:
-    dependencies:
-      '@lucasschirm/sal-claude-session-parser':
-        specifier: workspace:*
-        version: link:../packages/parsers/claude-session-parser
-    devDependencies:
-      '@tailwindcss/vite':
-        specifier: ^4.1.0
-        version: 4.3.3(vite@6.4.3(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0))
-      daisyui:
-        specifier: ^5.0.0
-        version: 5.7.37
-      tailwindcss:
-        specifier: ^4.1.0
-        version: 4.3.3
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-      vite:
-        specifier: ^6.0.0
-        version: 6.4.3(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0)
-
   packages/db:
     dependencies:
       '@lucasschirm/sal-db-core':
@@ -109,6 +87,28 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.2)(jsdom@30.0.1)(vite@6.4.3(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/parsers/claude-session-parser/example:
+    dependencies:
+      '@lucasschirm/sal-claude-session-parser':
+        specifier: workspace:*
+        version: link:..
+    devDependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.1.0
+        version: 4.3.3(vite@6.4.3(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0))
+      daisyui:
+        specifier: ^5.0.0
+        version: 5.7.37
+      tailwindcss:
+        specifier: ^4.1.0
+        version: 4.3.3
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vite:
+        specifier: ^6.0.0
+        version: 6.4.3(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.12)(yaml@2.9.0)
 
   packages/parsers/devin-session-parser:
     devDependencies:
