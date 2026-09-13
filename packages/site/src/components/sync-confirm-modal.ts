@@ -1,5 +1,6 @@
 import { css, html, type PropertyValues, type TemplateResult } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { navigateTo } from '../router';
 import { ModalBase, type ModalStyles } from './modal-base';
 
 /**
@@ -94,7 +95,7 @@ export class SyncConfirmModal extends ModalBase {
 
   @property({ type: String }) connectionName = '';
 
-  @state() private syncOnlyNew = false;
+  @state() private syncOnlyNew: boolean = false;
 
   private localStorageKey(): string {
     return `sal-sync-only-new:${this.connectionId}`;
@@ -117,12 +118,22 @@ export class SyncConfirmModal extends ModalBase {
         composed: true,
       }),
     );
-    this.open = false;
   }
 
   private handleClose(): void {
     this.close();
-    this.open = false;
+  }
+
+  private handleCherryPick(): void {
+    const storage = encodeURIComponent(this.connectionId);
+    this.dispatchEvent(
+      new CustomEvent('cherry-pick', {
+        detail: { connectionId: this.connectionId },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    navigateTo(`/storage/${storage}/sessions`);
   }
 
   private handleCheckboxChange(event: Event): void {
@@ -142,6 +153,13 @@ export class SyncConfirmModal extends ModalBase {
       </label>
       <div class="actions">
         <button type="button" class="secondary" @click=${this.handleClose}>Cancel</button>
+        <button
+          type="button"
+          class="secondary cherry-pick-btn"
+          @click=${this.handleCherryPick}
+        >
+          Cherry pick
+        </button>
         <button type="button" class="primary" @click=${this.handleConfirm}>Start Sync</button>
       </div>
     `;

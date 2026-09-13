@@ -1,0 +1,368 @@
+import type { LitElement } from 'lit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { StorageSessionsPage } from '../../src/pages/storage-sessions-page';
+import '../../src/pages/storage-sessions-page';
+import type { StorageSessionItem } from '../../src/sync/sync-manager';
+
+const mockSessions: StorageSessionItem[] = [
+  {
+    projectId: 'proj-1',
+    projectName: 'Alpha Project',
+    sessionId: 'sess-101',
+    title: 'Fix Authentication Flow',
+    lastModified: '2026-09-10T10:00:00.000Z',
+    modifiedTimestamp: new Date('2026-09-10T10:00:00.000Z').getTime(),
+    synced: true,
+  },
+  {
+    projectId: 'proj-1',
+    projectName: 'Alpha Project',
+    sessionId: 'sess-102',
+    title: 'Update Database Migrations',
+    lastModified: '2026-09-12T14:00:00.000Z',
+    modifiedTimestamp: new Date('2026-09-12T14:00:00.000Z').getTime(),
+    synced: false,
+  },
+  {
+    projectId: 'proj-2',
+    projectName: 'Beta Service',
+    sessionId: 'sess-201',
+    title: 'Add S3 Integration',
+    lastModified: '2026-09-11T09:00:00.000Z',
+    modifiedTimestamp: new Date('2026-09-11T09:00:00.000Z').getTime(),
+    synced: false,
+  },
+];
+
+const mockSyncManager = vi.hoisted(() => {
+  const listeners: Record<string, EventListener[]> = {};
+  return {
+    addEventListener: vi.fn((type: string, listener: EventListener) => {
+      listeners[type] = listeners[type] ?? [];
+      listeners[type].push(listener);
+    }),
+    removeEventListener: vi.fn((type: string, listener: EventListener) => {
+      if (!listeners[type]) return;
+      listeners[type] = listeners[type].filter((l) => l !== listener);
+    }),
+    getConnection: vi.fn(),
+    listStorageSessions: vi.fn(),
+    requestRun: vi.fn(),
+  };
+});
+
+vi.mock('../../src/sync/sync-manager', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/sync/sync-manager')>();
+  return { ...actual, syncManager: mockSyncManager };
+});
+
+async function mount<T extends LitElement>(element: T): Promise<T> {
+  document.body.appendChild(element);
+  await element.updateComplete;
+  return element;
+}
+
+async function flush(element: LitElement): Promise<void> {
+  await element.updateComplete;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await element.updateComplete;
+}
+
+function shadow(element: LitElement): ShadowRoot {
+  expect(element.shadowRoot).not.toBeNull();
+  return element.shadowRoot as ShadowRoot;
+}
+
+function clickButtonByText(root: ShadowRoot, text: string): void {
+  const button = Array.from(root.querySelectorAll('button')).find((b) =>
+    b.textContent?.trim().includes(text),
+  );
+  button?.click();
+}
+
+afterEach(() => {
+  document.body.innerHTML = '';
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockSyncManager.getConnection.mockResolvedValue({
+    id: 's3-main',
+    name: 'Main S3 Storage',
+    storage_type: 's3',
+    created_at: 1000,
+    updated_at: 1000,
+    sync_only_new: false,
+  });
+  mockSyncManager.listStorageSessions.mockResolvedValue([...mockSessions]);
+});
+
+describe('storage-sessions-page', () => {
+  it('renders loading state initially', async () => {
+    let resolveSessions: (val: StorageSessionItem[]) => void = () => {};
+    mockSyncManager.listStorageSessions.mockReturnValue(
+      new Promise((res) => {
+        resolveSessions = res;
+      }),
+    );
+
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    document.body.appendChild(page);
+    await page.updateComplete;
+
+    const root = shadow(page);
+    expect(root.textContent).toContain('Loading sessions from storage...');
+
+    resolveSessions?.(mockSessions);
+    await flush(page);
+    expect(root.textContent).not.toContain('Loading sessions from storage...');
+  });
+
+  it('renders error banner when loading fails and allows retry', async () => {
+    mockSyncManager.listStorageSessions.mockRejectedValueOnce(
+      new Error('Failed to connect to storage bucket'),
+    );
+
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    expect(root.textContent).toContain('Failed to connect to storage bucket');
+    expect(root.querySelector('.error-banner')).not.toBeNull();
+
+    // Clicking retry loads sessions successfully
+    mockSyncManager.listStorageSessions.mockResolvedValueOnce([...mockSessions]);
+    clickButtonByText(root, 'Retry');
+    await flush(page);
+
+    expect(root.querySelector('.error-banner')).toBeNull();
+    expect(root.textContent).toContain('Fix Authentication Flow');
+  });
+
+  it('renders empty state when storage has zero sessions', async () => {
+    mockSyncManager.listStorageSessions.mockResolvedValueOnce([]);
+
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    expect(root.textContent).toContain('No sessions found in this storage.');
+  });
+
+  it('renders session rows with titles, projects, dates, and status badges', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    expect(root.textContent).toContain('Fix Authentication Flow');
+    expect(root.textContent).toContain('Alpha Project');
+    expect(root.textContent).toContain('Add S3 Integration');
+    expect(root.textContent).toContain('Beta Service');
+
+    const rows = root.querySelectorAll('tbody tr');
+    expect(rows.length).toBe(3);
+
+    const badges = root.querySelectorAll('.badge');
+    expect(badges[0].textContent?.trim()).toBe('Not synced'); // latest is sess-102 (Sep 12, not synced)
+  });
+
+  it('filters by project', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const select = root.querySelector('#project-filter') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+
+    // Change filter to proj-2
+    select.value = 'proj-2';
+    select.dispatchEvent(new Event('change'));
+    await flush(page);
+
+    const rows = root.querySelectorAll('tbody tr');
+    expect(rows.length).toBe(1);
+    expect(rows[0].textContent).toContain('Add S3 Integration');
+    expect(rows[0].textContent).toContain('Beta Service');
+    expect(root.textContent).not.toContain('Fix Authentication Flow');
+  });
+
+  it('orders by modified date ASC and DESC', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const sortSelect = root.querySelector('#sort-order') as HTMLSelectElement;
+
+    // Default is desc: newest first (sess-102 on Sep 12, then sess-201 on Sep 11, then sess-101 on Sep 10)
+    let rows = root.querySelectorAll('tbody tr');
+    expect(rows[0].textContent).toContain('Update Database Migrations');
+    expect(rows[2].textContent).toContain('Fix Authentication Flow');
+
+    // Switch to asc
+    sortSelect.value = 'asc';
+    sortSelect.dispatchEvent(new Event('change'));
+    await flush(page);
+
+    rows = root.querySelectorAll('tbody tr');
+    expect(rows[0].textContent).toContain('Fix Authentication Flow'); // oldest first (Sep 10)
+    expect(rows[2].textContent).toContain('Update Database Migrations'); // newest last (Sep 12)
+  });
+
+  it('hides already synced sessions when checkbox is checked', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const hideCheckbox = root.querySelector('#hide-synced') as HTMLInputElement;
+
+    expect(root.querySelectorAll('tbody tr').length).toBe(3);
+
+    hideCheckbox.checked = true;
+    hideCheckbox.dispatchEvent(new Event('change'));
+    await flush(page);
+
+    const rows = root.querySelectorAll('tbody tr');
+    expect(rows.length).toBe(2);
+    expect(root.textContent).not.toContain('Fix Authentication Flow'); // sess-101 was synced
+    expect(root.textContent).toContain('Update Database Migrations');
+    expect(root.textContent).toContain('Add S3 Integration');
+  });
+
+  it('changing filter should not unselect already picked sessions (Critical Invariant)', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    let rows = root.querySelectorAll('tbody tr');
+
+    // Select sess-101 (synced, proj-1) and sess-201 (not synced, proj-2)
+    // rows currently (desc): [0] sess-102, [1] sess-201, [2] sess-101
+    const checkbox201 = rows[1].querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const checkbox101 = rows[2].querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    checkbox201.click();
+    checkbox101.click();
+    await flush(page);
+
+    expect(root.querySelector('.selection-count')?.textContent).toContain('2 selected');
+
+    // Now filter by project: proj-1 only (sess-201 is now hidden from the table)
+    const projectSelect = root.querySelector('#project-filter') as HTMLSelectElement;
+    projectSelect.value = 'proj-1';
+    projectSelect.dispatchEvent(new Event('change'));
+    await flush(page);
+
+    // Filtered rows should only be proj-1 (sess-102 and sess-101)
+    expect(root.querySelectorAll('tbody tr').length).toBe(2);
+    // CRITICAL: Total selection count MUST still be 2!
+    expect(root.querySelector('.selection-count')?.textContent).toContain('2 selected');
+
+    // Toggle "Hide already synced" (sess-101 is now hidden too!)
+    const hideCheckbox = root.querySelector('#hide-synced') as HTMLInputElement;
+    hideCheckbox.checked = true;
+    hideCheckbox.dispatchEvent(new Event('change'));
+    await flush(page);
+
+    // Only sess-102 is visible now (not selected)
+    expect(root.querySelectorAll('tbody tr').length).toBe(1);
+    expect(root.querySelector('.selection-count')?.textContent).toContain('2 selected');
+
+    // Change sort order to asc
+    const sortSelect = root.querySelector('#sort-order') as HTMLSelectElement;
+    sortSelect.value = 'asc';
+    sortSelect.dispatchEvent(new Event('change'));
+    await flush(page);
+
+    expect(root.querySelector('.selection-count')?.textContent).toContain('2 selected');
+
+    // Reset filters back to all
+    projectSelect.value = 'all';
+    projectSelect.dispatchEvent(new Event('change'));
+    hideCheckbox.checked = false;
+    hideCheckbox.dispatchEvent(new Event('change'));
+    await flush(page);
+
+    rows = root.querySelectorAll('tbody tr');
+    expect(rows.length).toBe(3);
+    expect(root.querySelector('.selection-count')?.textContent).toContain('2 selected');
+
+    // Check that the checkboxes for sess-101 and sess-201 are still checked!
+    // in asc order: [0] sess-101, [1] sess-201, [2] sess-102
+    expect((rows[0].querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect((rows[1].querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect((rows[2].querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(
+      false,
+    );
+  });
+
+  it('selects multiple sessions and triggers sync for selected target sessions', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const syncButton = root.querySelector('.sync-selected-btn') as HTMLButtonElement;
+    expect(syncButton.disabled).toBe(true);
+
+    // Select all visible sessions
+    clickButtonByText(root, 'Select visible');
+    await flush(page);
+
+    expect(root.querySelector('.selection-count')?.textContent).toContain('3 selected');
+    expect(syncButton.disabled).toBe(false);
+    expect(syncButton.textContent).toContain('Sync (3) Selected');
+
+    // Click sync button
+    syncButton.click();
+    await flush(page);
+
+    expect(mockSyncManager.requestRun).toHaveBeenCalledWith('s3-main', {
+      targetSessions: [
+        { projectId: 'proj-1', sessionId: 'sess-101' },
+        { projectId: 'proj-1', sessionId: 'sess-102' },
+        { projectId: 'proj-2', sessionId: 'sess-201' },
+      ],
+    });
+
+    expect(root.querySelector('.feedback-banner')?.textContent).toContain(
+      'Sync queued for 3 sessions',
+    );
+  });
+
+  it('clears selection when Clear is clicked', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    clickButtonByText(root, 'Select visible');
+    await flush(page);
+    expect(root.querySelector('.selection-count')?.textContent).toContain('3 selected');
+
+    clickButtonByText(root, 'Clear');
+    await flush(page);
+    expect(root.querySelector('.selection-count')?.textContent).toContain('0 selected');
+    expect((root.querySelector('.sync-selected-btn') as HTMLButtonElement).disabled).toBe(true);
+  });
+});

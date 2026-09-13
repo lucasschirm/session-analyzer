@@ -1025,23 +1025,6 @@ export class ConnectModal extends ModalBase {
     return encryptField(value);
   }
 
-  private startSync(connectionId: string): void {
-    // New unsaved connections and in-memory connections haven't been saved
-    // to localStorage, so there is no preference to pre-select; use the
-    // form value directly and start syncing immediately.
-    if (this.editingInMemory || !this.editingId) {
-      this.registerEphemeralIfNeeded(connectionId);
-      syncManager.requestRun(connectionId, { syncOnlyNew: this.form.syncOnlyNew });
-      this.close();
-      return;
-    }
-    // Saved connections go through the per-sync confirmation modal so the
-    // user can confirm/change the "sync only new" choice each time.
-    const item = this.items.find((i) => i.id === connectionId);
-    this.syncConfirmConnectionId = connectionId;
-    this.syncConfirmConnectionName = item?.name ?? (this.form.name.trim() || connectionId);
-  }
-
   private handleDelete(event: Event, id: string): void {
     const item = this.items.find((i) => i.id === id);
     if (!item) return;
@@ -1082,7 +1065,7 @@ export class ConnectModal extends ModalBase {
     if (this.isRowSyncDisabled(id)) return;
     const item = this.items.find((i) => i.id === id);
     this.syncConfirmConnectionId = id;
-    this.syncConfirmConnectionName = item?.name ?? id;
+    this.syncConfirmConnectionName = item?.name || 'Connection';
   }
 
   private handleSyncConfirmed(
@@ -1099,6 +1082,14 @@ export class ConnectModal extends ModalBase {
   private handleSyncConfirmClose(): void {
     this.syncConfirmConnectionId = '';
     this.syncConfirmConnectionName = '';
+  }
+
+  private handleCherryPick(event: CustomEvent<{ connectionId: string }>): void {
+    const { connectionId } = event.detail;
+    this.registerEphemeralIfNeeded(connectionId);
+    this.syncConfirmConnectionId = '';
+    this.syncConfirmConnectionName = '';
+    this.close();
   }
 
   /**
@@ -1183,6 +1174,7 @@ export class ConnectModal extends ModalBase {
         .connectionId=${this.syncConfirmConnectionId}
         .connectionName=${this.syncConfirmConnectionName}
         @sync-confirmed=${this.handleSyncConfirmed}
+        @cherry-pick=${this.handleCherryPick}
         @modal-close=${this.handleSyncConfirmClose}
       ></sync-confirm-modal>
     `;
@@ -1200,8 +1192,13 @@ export class ConnectModal extends ModalBase {
           + New connection
         </button>
       </div>
-      ${this.loadError ? html`<p class="form-error">${this.loadError}</p>` : ''}
-      ${this.items.length === 0 ? this.renderEmptyList() : this.renderConnectionRows()}
+      ${
+        this.loadError
+          ? html`<p class="form-error">${this.loadError}</p>`
+          : this.items.length === 0
+            ? this.renderEmptyList()
+            : this.renderConnectionRows()
+      }
     `;
   }
 
@@ -1233,7 +1230,9 @@ export class ConnectModal extends ModalBase {
         <div class="connection-info">
           <div class="connection-name">${item.name}</div>
           <div class="connection-meta">
-            <span class="badge ${classMap({ memory: item.inMemory })}">${item.inMemory ? 'In-Memory' : 'S3'}</span>
+            <span class=${classMap({ badge: true, memory: item.inMemory })}>
+              ${item.inMemory ? 'In-Memory' : 'S3'}
+            </span>
             ${item.bucket ? ` • ${item.bucket}` : ''} • Last sync: ${formatLastSync(item.lastSyncAt)}
           </div>
         </div>
