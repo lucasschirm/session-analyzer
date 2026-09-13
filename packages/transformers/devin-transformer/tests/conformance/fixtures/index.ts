@@ -172,11 +172,22 @@ function atifTranscript(
     totalCachedTokens: number;
     totalSteps: number;
   },
+  toolDefinitions?: string[],
 ): string {
   return JSON.stringify(
     {
       schema_version: 'ATIF-v1.7',
-      agent: { model_name: 'devin-default' },
+      agent: {
+        model_name: 'devin-default',
+        ...(toolDefinitions
+          ? {
+              tool_definitions: toolDefinitions.map((name) => ({
+                type: 'function',
+                function: { name },
+              })),
+            }
+          : {}),
+      },
       steps: steps.map((step, index) => ({ ...step, step_id: index + 1 })),
       final_metrics: {
         total_prompt_tokens: finalMetrics.totalPromptTokens,
@@ -801,6 +812,29 @@ export const mcpDeclaredOnlyBundle: UnknownArtifactBundle = bundle([
   artifact('native/models.json', modelsJson(), 'application/json'),
 ]);
 
+// An ATIF transcript whose `agent.tool_definitions` records the real
+// model-sent tool schema list: builtin tools, the 4 MCP wrappers, plus the
+// `skill`/`run_subagent` domain dispatchers (which must NOT become generic
+// 'tool' components). No matching tool_call_state invocations — the tool
+// definitions alone are a real pre-session availability fact and must earn
+// temporalRole 'pre_session', not 'capture_only'.
+const toolDefinitionsTranscript = [
+  sessionLine(sessionId, 1),
+  messageLine(sessionId, 1, null, 'user', 'Hello'),
+].join('\n');
+
+const toolDefinitionsAtif = atifTranscript(
+  [{ timestamp: '2026-08-01T12:00:00.000Z', role: 'user', text: 'Hello' }],
+  { totalPromptTokens: 100, totalCompletionTokens: 50, totalCachedTokens: 10, totalSteps: 1 },
+  ['exec', 'write_to_process', 'mcp_call_tool', 'mcp_list_servers', 'skill', 'run_subagent'],
+);
+
+export const toolDefinitionsBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', toolDefinitionsTranscript, 'application/jsonl'),
+  artifact('native/atif-transcript.json', toolDefinitionsAtif, 'application/json'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
 // A functions.skill call interrupted before its tool_call_update_json
 // arrived — no `update` record exists at all, only `call`. The call's own
 // `_meta["cognition.ai/inferenceToolName"]` must still resolve this as
@@ -1305,6 +1339,15 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
         'for skill/agent/rule reports complete rather than partial.',
       configComponentsBundle,
       ['root', 'file-components', 'skill', 'agent', 'rule', 'deterministic'],
+    ),
+    fixture(
+      'tool-definitions',
+      'A session whose ATIF transcript carries agent.tool_definitions — the model-sent ' +
+        'tool schema list — exercising tool components derived from real availability ' +
+        'evidence (builtin tools + MCP wrappers, with skill/run_subagent dispatchers ' +
+        'excluded) and the pre_session temporalRole they earn.',
+      toolDefinitionsBundle,
+      ['root', 'components', 'deterministic'],
     ),
   ],
 };

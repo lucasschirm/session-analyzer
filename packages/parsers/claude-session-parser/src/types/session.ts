@@ -364,6 +364,8 @@ export interface AttachmentEntry extends ClaudeCodeEntryBase {
 
 export type ClaudeAttachment =
   | DeferredToolsDeltaAttachment
+  | DeferredToolsRecordAttachment
+  | PromptSnapshotAttachment
   | AgentListingDeltaAttachment
   | SkillListingAttachment
   | DynamicSkillAttachment
@@ -401,6 +403,35 @@ export interface DeferredToolsDeltaAttachment {
   readdedNames?: string[];
   pendingMcpServers?: string[];
   needsAuthMcpServers?: string[];
+}
+
+/**
+ * A tool schema the harness made loadable mid-session via `ToolSearch`
+ * (`defer_loading: true`). `description`/`input_schema` are dropped — only
+ * identity is needed downstream.
+ */
+export interface DeferredToolRecordEntry {
+  name: string;
+  deferLoading: boolean;
+}
+
+export interface DeferredToolsRecordAttachment {
+  type: 'deferred_tools_record';
+  entries: DeferredToolRecordEntry[];
+}
+
+/**
+ * A tool the harness sent to the model in this request, taken from the
+ * `prompt_snapshot` attachment's `tools` array. Only the name is retained;
+ * the full JSON schema lives in the raw line.
+ */
+export interface PromptSnapshotTool {
+  name: string;
+}
+
+export interface PromptSnapshotAttachment {
+  type: 'prompt_snapshot';
+  tools: PromptSnapshotTool[];
 }
 
 export interface AgentListingDeltaAttachment {

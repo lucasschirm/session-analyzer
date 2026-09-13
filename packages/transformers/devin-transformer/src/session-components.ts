@@ -29,6 +29,20 @@ const MCP_WRAPPER_TOOL_NAMES: ReadonlySet<string> = new Set([
   'mcp_read_resource',
 ]);
 
+/**
+ * Domain-dispatching tool names excluded from the generic `tool` component
+ * pool per `.agents/rules/analytics-domain-distinctions.md`: `skill` and
+ * `run_subagent` invocations are `skill`/`agent` domain records, never
+ * generic tools — matching `invocationKindAndName` in tool-invocations.ts.
+ */
+const NON_GENERIC_TOOL_NAMES: ReadonlySet<string> = new Set(['skill', 'run_subagent']);
+
+/** True when the ATIF tool_definitions list contains at least one generic
+ *  tool name (i.e. something beyond the skill/run_subagent dispatchers). */
+export function hasModelSentToolDefinitions(toolDefinitions: readonly string[]): boolean {
+  return toolDefinitions.some((n) => n.length > 0 && !NON_GENERIC_TOOL_NAMES.has(n));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -74,6 +88,9 @@ export function extractSkillComponents(
       kind: 'skill',
       identity: componentIdentity(componentId, name),
       sourceArtifactIds: [rootArtifactId],
+      // cogs_json is a session line — declared availability for this
+      // session, not a durable environment declaration.
+      sessionScoped: true,
     };
   });
 }
@@ -108,8 +125,43 @@ export function extractMcpToolComponents(
       kind: 'tool',
       identity: componentIdentity(componentId, name, 'mcp'),
       sourceArtifactIds: [rootArtifactId],
+      // The cogs allowlist is a session line — declared availability for this
+      // session, not a durable environment declaration.
+      sessionScoped: true,
     };
   });
+}
+
+/**
+ * One `kind: 'tool'` component per distinct name in the ATIF transcript's
+ * `agent.tool_definitions` — the authoritative list of tool schemas actually
+ * sent to the model. Domain dispatchers (`skill`, `run_subagent`) are
+ * excluded; MCP wrapper names keep `provider: 'mcp'`.
+ */
+export function extractToolDefinitionComponents(
+  sourceId: string,
+  toolDefinitions: readonly string[],
+  rootArtifactId: string,
+): ComponentSummary[] {
+  const names = new Set(toolDefinitions);
+  return [...names]
+    .filter((name) => name.length > 0 && !NON_GENERIC_TOOL_NAMES.has(name))
+    .map((name) => {
+      const componentId = stableId('tool', { source: sourceId, name });
+      return {
+        componentId,
+        kind: 'tool' as const,
+        identity: componentIdentity(
+          componentId,
+          name,
+          MCP_WRAPPER_TOOL_NAMES.has(name) ? 'mcp' : undefined,
+        ),
+        sourceArtifactIds: [rootArtifactId],
+        // agent.tool_definitions is this session's model-sent tool list —
+        // a runtime observation, not an environment-level declaration.
+        sessionScoped: true,
+      };
+    });
 }
 
 function subagentProfile(call: DevinToolCallLine): string | null {
@@ -145,6 +197,9 @@ export function extractAgentComponents(
       kind: 'agent',
       identity: componentIdentity(componentId, profile),
       sourceArtifactIds: [rootArtifactId],
+      // tool_call_state is session runtime data — a per-session
+      // observation, not a durable environment declaration.
+      sessionScoped: true,
     };
   });
 }
@@ -160,11 +215,20 @@ export function deriveDevinSessionComponents(
   cogsJson: string | null | undefined,
   toolCalls: readonly DevinToolCallLine[],
   rootArtifactId: string,
+  toolDefinitions: readonly string[] = [],
 ): ComponentSummary[] {
   const { cogs } = parseDevinCogsJson(cogsJson ?? null);
+  // Prefer the model-sent tool schema list (ATIF agent.tool_definitions).
+  // When ATIF carries no tool_definitions — JSONL-only sessions, or older
+  // ATIF that predates the field — fall back to the declared cogs allowlist
+  // so tool availability isn't lost entirely.
+  const toolComponents =
+    toolDefinitions.length > 0
+      ? extractToolDefinitionComponents(sourceId, toolDefinitions, rootArtifactId)
+      : extractMcpToolComponents(sourceId, cogs, rootArtifactId);
   return [
     ...extractSkillComponents(sourceId, cogs, rootArtifactId),
-    ...extractMcpToolComponents(sourceId, cogs, rootArtifactId),
+    ...toolComponents,
     ...extractAgentComponents(sourceId, toolCalls, rootArtifactId),
   ];
 }

@@ -33,6 +33,7 @@ import type {
   ContentBlock,
   DateChangeAttachment,
   DeferredToolsDeltaAttachment,
+  DeferredToolsRecordAttachment,
   DiagnosticsAttachment,
   DynamicSkillAttachment,
   EditedTextFileAttachment,
@@ -54,6 +55,7 @@ import type {
   PlanModeAttachment,
   PlanModeExitAttachment,
   PrLinkEntry,
+  PromptSnapshotAttachment,
   QueuedCommandAttachment,
   QueueOperationEntry,
   ReadTruncationNoticeAttachment,
@@ -610,6 +612,23 @@ function parseAttachment(
       if (pendingMcpServers !== undefined) attachment.pendingMcpServers = pendingMcpServers;
       const needsAuthMcpServers = strArr(raw, 'needsAuthMcpServers');
       if (needsAuthMcpServers !== undefined) attachment.needsAuthMcpServers = needsAuthMcpServers;
+      return { attachment };
+    }
+    case 'deferred_tools_record': {
+      const entries = Array.isArray(raw.entries)
+        ? raw.entries.filter(isRecord).map((e) => ({
+            name: str(e, 'name') ?? '',
+            deferLoading: bool(e, 'defer_loading') ?? false,
+          }))
+        : [];
+      const attachment: DeferredToolsRecordAttachment = { type, entries };
+      return { attachment };
+    }
+    case 'prompt_snapshot': {
+      const tools = Array.isArray(raw.tools)
+        ? raw.tools.filter(isRecord).map((t) => ({ name: str(t, 'name') ?? '' }))
+        : [];
+      const attachment: PromptSnapshotAttachment = { type, tools };
       return { attachment };
     }
     case 'agent_listing_delta': {

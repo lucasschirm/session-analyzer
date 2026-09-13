@@ -17,6 +17,8 @@ import type {
   AttachmentEntry,
   ClaudeCodeEntry,
   DeferredToolsDeltaAttachment,
+  DeferredToolsRecordAttachment,
+  PromptSnapshotAttachment,
 } from '../../types/session.js';
 import type { ToolAvailabilityAction, ToolAvailabilityRecord } from '../../types/timeline.js';
 import { splitMcpToolName } from '../../utils/mcp-names.js';
@@ -113,6 +115,10 @@ export function deriveToolTimeline(
   void options; // no blob-size-sensitive fields in this record type
 
   const records = new Map<string, ToolAvailabilityRecord>();
+  /** Names that appeared in a `prompt_snapshot` tools array — the loaded
+   *  toolset actually sent to the model. Drives `alwaysAvailable` for tools
+   *  that were loaded but never invoked. */
+  const loadedNames = new Set<string>();
   /** Union, across the whole session, of every name that ever appeared in
    *  ANY `deferred_tools_delta` array (added/removed/readded). Used to
    *  compute `alwaysAvailable` per spec's resolved decision: "invoked but
@@ -158,6 +164,35 @@ export function deriveToolTimeline(
       }
     }
 
+    if (
+      entry.type === 'attachment' &&
+      (entry as AttachmentEntry).attachment.type === 'prompt_snapshot'
+    ) {
+      const att = (entry as AttachmentEntry).attachment as PromptSnapshotAttachment;
+      for (const tool of att.tools) {
+        if (!tool.name) continue;
+        loadedNames.add(tool.name);
+        const record = getOrCreate(records, tool.name);
+        record.availability.push(eventFrom(entry, 'loaded'));
+      }
+    }
+
+    if (
+      entry.type === 'attachment' &&
+      (entry as AttachmentEntry).attachment.type === 'deferred_tools_record'
+    ) {
+      const att = (entry as AttachmentEntry).attachment as DeferredToolsRecordAttachment;
+      for (const def of att.entries) {
+        if (!def.name) continue;
+        // A deferred_tools_record entry names a tool that required a
+        // ToolSearch load — it belongs to the deferred pool even when it
+        // never appeared in a deferred_tools_delta, so it must not count as
+        // always-available.
+        everDeferredNames.add(def.name);
+        getOrCreate(records, def.name).availability.push(eventFrom(entry, 'undeferred'));
+      }
+    }
+
     if (entry.type === 'assistant') {
       const assistant = entry as AssistantEntry;
       for (const rawBlock of assistant.message.content) {
@@ -193,7 +228,9 @@ export function deriveToolTimeline(
   }
 
   for (const record of records.values()) {
-    record.alwaysAvailable = record.invocationCount > 0 && !everDeferredNames.has(record.tool);
+    record.alwaysAvailable =
+      (loadedNames.has(record.tool) || record.invocationCount > 0) &&
+      !everDeferredNames.has(record.tool);
   }
 
   return Array.from(records.values());

@@ -432,10 +432,13 @@ describe('ManualIngestionOrchestrator', () => {
     );
     expect(exposure[0]?.c).toBe(0);
 
+    // Transcript-derived tool components produce a capture_only snapshot —
+    // a record of what was observed, with no lifecycle/availability events
+    // and no exposure denominators (asserted to 0 above).
     const { rows: snapshots } = await executor.exec(
-      'SELECT COUNT(*) AS c FROM configuration_snapshots',
+      'SELECT temporal_role FROM configuration_snapshots',
     );
-    expect(snapshots[0]?.c).toBe(0);
+    expect(snapshots.map((s) => s.temporal_role)).toEqual(['capture_only']);
   });
 
   it('rejects an ambiguous or unmatched manual detection', async () => {

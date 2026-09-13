@@ -254,4 +254,38 @@ describe('processing-version', () => {
     const models = JSON.parse(row.models ?? '[]') as string[];
     expect(models).toEqual(['claude-3-7']);
   });
+
+  it('drops empty-payload component_evidence_link rows during rebuild', async () => {
+    const now = Date.now();
+    await executor.exec(`
+      INSERT INTO tenants (id, name, created_at, updated_at) VALUES ('tenant-4', 'T4', ${now}, ${now});
+      INSERT INTO portfolios (id, tenant_id, name, created_at, updated_at) VALUES ('port-4', 'tenant-4', 'P4', ${now}, ${now});
+      INSERT INTO ingestion_sources (id, portfolio_id, native_source_id, display_name, type, authority, created_at, updated_at)
+        VALUES ('src-4', 'port-4', 'native-4', 'Source 4', 'test', 'local', ${now}, ${now});
+      INSERT INTO projects (id, portfolio_id, name, created_at, updated_at) VALUES ('proj-4', 'port-4', 'Proj 4', ${now}, ${now});
+      INSERT INTO analysis_releases (id, ontology_version, metric_registry_version, statistical_policy_version, rollup_policy_version, mapping_version, created_at, is_default)
+        VALUES ('rel-4', '1.0', '1.0', '1.0', '1.0', '1.0', ${now}, 0);
+      INSERT INTO sessions (id, project_id, ingestion_source_id, harness, native_session_id, current_generation_id, occurrence_time, finality, created_at, updated_at)
+        VALUES ('sess-4', 'proj-4', 'src-4', 'claude-code', 'native-s4', NULL, ${now}, 'final', ${now}, ${now});
+      INSERT INTO transformation_generations (id, session_id, analysis_release_id, parser_version, transformer_version, ontology_version, metric_version, schema_version, status, source_availability, created_at)
+        VALUES ('gen-4', 'sess-4', 'rel-4', '1.0', '1.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now});
+      UPDATE sessions SET current_generation_id = 'gen-4' WHERE id = 'sess-4';
+    `);
+    await executor.exec(
+      `INSERT INTO normalized_events (id, session_id, generation_id, event_type, event_version, raw_details, retain_raw, created_at, updated_at)
+       VALUES
+         ('evt-link-1', 'sess-4', 'gen-4', 'component_evidence_link', 1, '{}', 1, ${now}, ${now}),
+         ('evt-link-2', 'sess-4', 'gen-4', 'component_evidence_link', 1, '{}', 1, ${now}, ${now}),
+         ('evt-msg-1', 'sess-4', 'gen-4', 'message', 1, '{}', 1, ${now}, ${now})`,
+    );
+
+    await rebuildAnalyticsDerivedData(executor, () => {});
+
+    const { rows } = await executor.exec(
+      `SELECT event_type, COUNT(*) AS c FROM normalized_events WHERE session_id = 'sess-4' GROUP BY event_type`,
+    );
+    const counts = Object.fromEntries(rows.map((r) => [String(r.event_type), Number(r.c)]));
+    expect(counts['component_evidence_link']).toBeUndefined();
+    expect(counts['message']).toBe(1);
+  });
 });

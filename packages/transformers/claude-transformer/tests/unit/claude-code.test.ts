@@ -516,5 +516,108 @@ describe('ClaudeCodeTransformer', () => {
         expect(payload.content).toBeUndefined();
       }
     });
+
+    it('derives kind:tool components from the model-sent tool lists (prompt_snapshot + deferred_tools_delta)', () => {
+      // prompt_snapshot.tools = the loaded toolset sent to the model;
+      // deferred_tools_delta = the ToolSearch-loadable pool. Both are
+      // "available" and must become tool components. Skill/Agent are domain
+      // dispatchers and are excluded.
+      const lines = [
+        JSON.stringify({
+          type: 'permission-mode',
+          permissionMode: 'normal',
+          sessionId: 'tools-1',
+        }),
+        JSON.stringify({
+          type: 'attachment',
+          uuid: 'att-snap',
+          timestamp: '2026-08-01T10:00:00.000Z',
+          sessionId: 'tools-1',
+          attachment: {
+            type: 'prompt_snapshot',
+            tools: [
+              { name: 'Read' },
+              { name: 'Write' },
+              { name: 'Skill' },
+              { name: 'Agent' },
+              { name: 'mcp__acme__search' },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: 'attachment',
+          uuid: 'att-delta',
+          timestamp: '2026-08-01T10:00:01.000Z',
+          sessionId: 'tools-1',
+          attachment: {
+            type: 'deferred_tools_delta',
+            addedNames: ['WebFetch'],
+            addedLines: ['WebFetch'],
+            removedNames: [],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u-1',
+          timestamp: '2026-08-01T10:00:02.000Z',
+          sessionId: 'tools-1',
+          message: { role: 'user', content: 'read a file' },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          uuid: 'a-1',
+          parentUuid: 'u-1',
+          timestamp: '2026-08-01T10:00:03.000Z',
+          sessionId: 'tools-1',
+          message: {
+            role: 'assistant',
+            model: 'model-a',
+            content: [
+              { type: 'tool_use', id: 'toolu-1', name: 'Read', input: { file_path: 'x.ts' } },
+            ],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }),
+      ];
+      const b = bundle([artifact('transcript.jsonl', lines.join('\n'), 'application/jsonl')]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      expect(result.errors).toEqual([]);
+
+      const tools = result.componentSummaries.filter((c) => c.kind === 'tool');
+      const names = tools.map((t) => t.identity.nativeId).sort();
+      // Read (loaded+invoked), Write (loaded only), WebFetch (deferred pool),
+      // mcp__acme__search (loaded MCP tool) — Skill/Agent excluded.
+      expect(names).toEqual(['Read', 'WebFetch', 'Write', 'mcp__acme__search']);
+      expect(
+        result.componentSummaries.find((c) => c.identity.nativeId === 'mcp__acme__search')?.identity
+          .provider,
+      ).toBe('mcp');
+      expect(
+        tools.some(
+          (t) =>
+            t.identity.nativeId !== undefined &&
+            ['Skill', 'Agent', 'Task'].includes(t.identity.nativeId),
+        ),
+      ).toBe(false);
+      // Session-scoped: excluded from environment lifecycle diffing and
+      // pinned to a stable, transcript-hash-independent version.
+      for (const tool of tools) {
+        expect(tool.sessionScoped).toBe(true);
+      }
+
+      // The Read invocation links to the Read tool component.
+      const readComponent = tools.find((t) => t.identity.nativeId === 'Read');
+      const links = result.evidence.filter(
+        (r) =>
+          r.recordType === 'component_evidence_link' &&
+          (r.payload as { componentId?: string }).componentId === readComponent?.componentId,
+      );
+      expect(links.length).toBeGreaterThan(0);
+      expect(
+        links.some(
+          (l) => (l.payload as { applicability?: string }).applicability === 'tool_use:tool',
+        ),
+      ).toBe(true);
+    });
   });
 });

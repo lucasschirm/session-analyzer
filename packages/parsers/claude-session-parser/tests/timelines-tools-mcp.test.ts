@@ -292,6 +292,54 @@ describe('deriveToolTimeline', () => {
     expect(toolSearch?.availability.every((e) => e.action === 'invoked')).toBe(true);
     expect(records.some((r) => r.availability.some((e) => e.action === 'undeferred'))).toBe(false);
   });
+
+  it('marks prompt_snapshot tools as loaded and alwaysAvailable even when never invoked', () => {
+    // Distilled from a real transcript: `prompt_snapshot.tools` carries the
+    // full loaded toolset sent to the model — most of which is never invoked.
+    const snapshot = attachmentEntry(5, BASE_MS, {
+      type: 'prompt_snapshot',
+      tools: [{ name: 'Read' }, { name: 'Write' }, { name: 'Glob' }],
+    });
+    const delta = attachmentEntry(6, BASE_MS + 1000, {
+      type: 'deferred_tools_delta',
+      addedNames: ['WebFetch'],
+      addedLines: ['WebFetch'],
+      removedNames: [],
+    });
+
+    const records = deriveToolTimeline([snapshot, delta]);
+
+    const read = records.find((r) => r.tool === 'Read');
+    expect(read?.alwaysAvailable).toBe(true);
+    expect(read?.invocationCount).toBe(0);
+    expect(read?.availability).toEqual([
+      expect.objectContaining({ action: 'loaded', lineNumber: 5 }),
+    ]);
+
+    // Deferred-but-never-loaded tools stay not-always-available.
+    const webFetch = records.find((r) => r.tool === 'WebFetch');
+    expect(webFetch?.alwaysAvailable).toBe(false);
+  });
+
+  it('records deferred_tools_record entries as undeferred (schema loaded via ToolSearch)', () => {
+    const delta = attachmentEntry(3, BASE_MS, {
+      type: 'deferred_tools_delta',
+      addedNames: ['WebFetch'],
+      addedLines: ['WebFetch'],
+      removedNames: [],
+    });
+    const record = attachmentEntry(40, BASE_MS + 2000, {
+      type: 'deferred_tools_record',
+      entries: [{ name: 'WebFetch', deferLoading: true }],
+    });
+
+    const records = deriveToolTimeline([delta, record]);
+    const webFetch = records.find((r) => r.tool === 'WebFetch');
+    expect(webFetch?.availability).toEqual([
+      expect.objectContaining({ action: 'deferred', lineNumber: 3 }),
+      expect.objectContaining({ action: 'undeferred', lineNumber: 40 }),
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

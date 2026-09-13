@@ -630,4 +630,100 @@ describe('ComponentLifecycleEngine', () => {
     );
     expect(context.some((r) => r.event_type === 'loaded')).toBe(true);
   });
+
+  it('excludes session-scoped components from lifecycle diffing and pins their version', async () => {
+    const executor = await setupExecutor();
+    await seedIdentity(executor);
+    const engine = new ComponentLifecycleEngine(PORTFOLIO_ID);
+
+    // A session-scoped tool component: observed from this session's own
+    // runtime data (e.g. the model-sent tool list), sourced from the
+    // transcript artifact whose sha changes every session.
+    const sessionTool = (name: string, transcriptSha: string): ComponentSummary => ({
+      componentId: `tool:{"name":"${name}","source":"default"}`,
+      kind: 'tool',
+      identity: {
+        canonicalId: `tool:{"name":"${name}","source":"default"}`,
+        nativeId: name,
+        displayName: name,
+        integration: 'claude-code',
+      },
+      sourceArtifactIds: [`sha256:${transcriptSha}`],
+      sessionScoped: true,
+    });
+
+    // Session 1: tools Read + Write.
+    const first = await executor.transaction(async (tx) =>
+      engine.apply(tx, {
+        ...baseInput(),
+        ordering: 1,
+        captureTime: 1000,
+        temporalRole: 'pre_session',
+        manifestArtifacts: [makeArtifact('transcript.jsonl', 'transcript-a')],
+        components: [sessionTool('Read', 'transcript-a'), sessionTool('Write', 'transcript-a')],
+        completeness: { tool: 'complete' },
+      }),
+    );
+
+    // Even on the baseline snapshot, session-scoped tools mint no lifecycle
+    // events — but they still get exposures.
+    const { rows: firstEvents } = await executor.exec(
+      'SELECT event_type FROM component_lifecycle_events WHERE snapshot_id = ?',
+      [first.snapshotId],
+    );
+    expect(firstEvents).toEqual([]);
+
+    const { rows: firstExposures } = await executor.exec(
+      'SELECT COUNT(*) AS c FROM session_component_exposures WHERE session_id = ?',
+      [SESSION_ID],
+    );
+    expect(firstExposures[0].c).toBe(2);
+
+    // Session 2 (same environment): tools Read + Glob, different transcript
+    // hash. Without the sessionScoped guard this would mint an 'updated'
+    // per surviving tool (new artifact sha → new version) plus a 'removed'
+    // for Write and an 'added' for Glob.
+    await executor.exec(
+      'INSERT INTO sessions (id, project_id, ingestion_source_id, environment_id, harness, native_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        SESSION_AFTER,
+        PROJECT_ID,
+        'src-lifecycle',
+        ENVIRONMENT_ID,
+        'claude-code',
+        SESSION_AFTER,
+        0,
+        0,
+      ],
+    );
+
+    const second = await executor.transaction(async (tx) =>
+      engine.apply(tx, {
+        ...baseInput(),
+        sessionId: SESSION_AFTER,
+        ordering: 2,
+        captureTime: 2000,
+        temporalRole: 'pre_session',
+        manifestArtifacts: [makeArtifact('transcript.jsonl', 'transcript-b')],
+        components: [sessionTool('Read', 'transcript-b'), sessionTool('Glob', 'transcript-b')],
+        completeness: { tool: 'complete' },
+      }),
+    );
+
+    const { rows: secondEvents } = await executor.exec(
+      'SELECT event_type FROM component_lifecycle_events WHERE snapshot_id = ?',
+      [second.snapshotId],
+    );
+    expect(secondEvents).toEqual([]);
+
+    // One stable component_version per tool — the transcript hash never
+    // factors into the content hash.
+    const { rows: versions } = await executor.exec(
+      `SELECT COUNT(DISTINCT cv.id) AS c
+       FROM component_versions cv
+       JOIN component_identities ci ON ci.id = cv.component_id
+       WHERE ci.kind = 'tool'`,
+    );
+    expect(versions[0].c).toBe(3); // Read, Write, Glob — one version each
+  });
 });
