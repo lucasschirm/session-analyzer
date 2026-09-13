@@ -1484,8 +1484,11 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     generationId: string,
     result: TransformResult,
   ): Promise<void> {
+    const seen = new Set<string>();
     for (const record of result.evidence) {
-      await NormalizedEventStore.insert(tx, {
+      if (seen.has(record.recordId)) continue;
+      seen.add(record.recordId);
+      await NormalizedEventStore.upsert(tx, {
         id: record.recordId,
         sessionId: record.sessionId,
         generationId,
@@ -1588,21 +1591,35 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     generationId: string,
     result: TransformResult,
   ): Promise<void> {
+    const seen = new Set<string>();
     for (const record of result.evidence) {
       const effort = this.extractMessageEffort(record);
       if (!effort) continue;
       const id = `meff-${deterministicId('message_effort', record.sessionId, String(effort.requestOrder))}`;
-      await MessageEffortStore.insert(tx, {
-        id,
-        sessionId: record.sessionId,
-        generationId,
-        requestOrder: effort.requestOrder,
-        rawEffort: effort.rawEffort,
-        normalizedEffort: effort.normalizedEffort,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
+      if (seen.has(id)) continue;
+      seen.add(id);
+      await this.insertSingleMessageEffort(tx, id, record.sessionId, generationId, effort);
     }
+  }
+
+  private async insertSingleMessageEffort(
+    tx: SqliteTransaction,
+    id: string,
+    sessionId: string,
+    generationId: string,
+    effort: { requestOrder: number; rawEffort: string | null; normalizedEffort: string | null },
+  ): Promise<void> {
+    const now = Date.now();
+    await MessageEffortStore.upsert(tx, {
+      id,
+      sessionId,
+      generationId,
+      requestOrder: effort.requestOrder,
+      rawEffort: effort.rawEffort,
+      normalizedEffort: effort.normalizedEffort,
+      createdAt: now,
+      updatedAt: now,
+    });
   }
 
   private async upsertSessionSummaries(

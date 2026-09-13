@@ -78,6 +78,25 @@ describe('passkey-modal', () => {
     expect(shadow(modal).querySelector('.passkey-modal')).toBeNull();
   });
 
+  it('renders a hidden username field in create and unlock forms for accessibility', async () => {
+    const modal = await mount(
+      Object.assign(document.createElement('passkey-modal'), {
+        open: true,
+        mode: 'create',
+      }) as PasskeyModal,
+    );
+    const root = shadow(modal);
+    const createUsernameInput = root.querySelector('input[name="username"]') as HTMLInputElement;
+    expect(createUsernameInput).not.toBeNull();
+    expect(createUsernameInput.autocomplete).toBe('username');
+
+    modal.mode = 'unlock';
+    await modal.updateComplete;
+    const unlockUsernameInput = root.querySelector('input[name="username"]') as HTMLInputElement;
+    expect(unlockUsernameInput).not.toBeNull();
+    expect(unlockUsernameInput.autocomplete).toBe('username');
+  });
+
   it('create mode shows a too-short inline error', async () => {
     const modal = await mount(
       Object.assign(document.createElement('passkey-modal'), {

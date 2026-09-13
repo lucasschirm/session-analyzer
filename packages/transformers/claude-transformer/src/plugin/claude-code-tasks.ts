@@ -725,6 +725,7 @@ export function normalizeTasks(
       state.completedAtMs = timestampMs;
   }
 
+  const taskEventCounts = new Map<string, number>();
   function emitTaskEvent(
     state: TaskState,
     eventType: string,
@@ -733,14 +734,18 @@ export function normalizeTasks(
     sourceEventId: string,
     sourceField: string,
   ): void {
+    const baseId = stableId('task_event', {
+      session: context.sessionId,
+      task: state.recordId,
+      type: eventType,
+      timestamp: timestampMs,
+      source: sourceEventId,
+    });
+    const count = taskEventCounts.get(baseId) ?? 0;
+    taskEventCounts.set(baseId, count + 1);
+    const recordId = count > 0 ? `${baseId}#${count}` : baseId;
     records.push({
-      recordId: stableId('task_event', {
-        session: context.sessionId,
-        task: state.recordId,
-        type: eventType,
-        timestamp: timestampMs,
-        source: sourceEventId,
-      }),
+      recordId,
       recordType: 'task_event',
       sessionId: context.sessionId,
       parentId: state.recordId,
@@ -1351,7 +1356,9 @@ function normalizedEventPayload(
   const recordId = stableId('normalized_event', {
     session: context.sessionId,
     category,
+    type: eventType,
     source: sourceEventId,
+    line: lineNumber || undefined,
   });
   const payload: NormalizedEventRecordPayload = {
     eventId: recordId,
@@ -1836,7 +1843,28 @@ export function normalizeNormalizedEvents(
     );
   }
 
-  return records;
+  return disambiguateEvidenceRecords(records);
+}
+
+export function disambiguateEvidenceRecords(
+  records: readonly NormalizedEvidenceRecord[],
+): NormalizedEvidenceRecord[] {
+  const seenIds = new Map<string, number>();
+  const out: NormalizedEvidenceRecord[] = [];
+  for (const record of records) {
+    const count = seenIds.get(record.recordId) ?? 0;
+    seenIds.set(record.recordId, count + 1);
+    if (count > 0) {
+      const disambiguatedId = `${record.recordId}#${count}`;
+      const payload = isRecord(record.payload)
+        ? { ...record.payload, eventId: disambiguatedId }
+        : record.payload;
+      out.push({ ...record, recordId: disambiguatedId, payload });
+    } else {
+      out.push(record);
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
