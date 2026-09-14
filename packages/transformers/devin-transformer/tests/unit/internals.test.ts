@@ -20,7 +20,7 @@ describe('Internal token usage', () => {
       }),
       model: 'devin-default',
     } as unknown as Parameters<typeof buildTokenUsageRecords>[1];
-    const result = buildTokenUsageRecords('s1', session, undefined, [], 'artifact-1');
+    const result = buildTokenUsageRecords('s1', session, undefined, [], 'artifact-1', []);
     expect(result.prompt).toBe(30);
     expect(result.completion).toBe(15);
     expect(result.cached).toBe(3);
@@ -33,7 +33,7 @@ describe('Internal token usage', () => {
       metadata: 'not-json',
       model: null,
     } as unknown as Parameters<typeof buildTokenUsageRecords>[1];
-    const result = buildTokenUsageRecords('s1', session, undefined, [], 'artifact-1');
+    const result = buildTokenUsageRecords('s1', session, undefined, [], 'artifact-1', []);
     expect(result.prompt).toBeNull();
     expect(result.exact).toBe(false);
   });
@@ -47,7 +47,7 @@ describe('Internal token usage', () => {
     const models = [{ modelUid: 'devin-default', label: 'Devin Default' }] as unknown as Parameters<
       typeof buildTokenUsageRecords
     >[3];
-    const result = buildTokenUsageRecords('s1', session, undefined, models, 'artifact-1');
+    const result = buildTokenUsageRecords('s1', session, undefined, models, 'artifact-1', []);
     expect(result.records[0]?.payload).toMatchObject({ model: 'devin-default' });
   });
 
@@ -94,7 +94,20 @@ describe('Internal token usage', () => {
       { modelUid: 'glm-5-2', label: 'GLM-5.2 High' },
       { modelUid: 'swe-1-7', label: 'SWE-1.7 Max' },
     ] as unknown as Parameters<typeof buildTokenUsageRecords>[3];
-    const result = buildTokenUsageRecords('s1', session, atif, models, 'artifact-1');
+    // Two ordered messages map to the two ATIF steps by index — the step
+    // records' parentId must link to the corresponding turn so the
+    // context-timing computation can attribute usage per message.
+    const orderedMessages = [{ nodeId: 1 }, { nodeId: 2 }] as unknown as Parameters<
+      typeof buildTokenUsageRecords
+    >[5];
+    const result = buildTokenUsageRecords(
+      's1',
+      session,
+      atif,
+      models,
+      'artifact-1',
+      orderedMessages,
+    );
 
     expect(result.records.length).toBe(2);
     expect(result.records[0]?.payload).toMatchObject({
@@ -122,6 +135,10 @@ describe('Internal token usage', () => {
     // claude-code-usage.ts's per-turn `entry.uuid` provenance).
     expect(result.records[0]?.sourceEventId).not.toBe(result.records[1]?.sourceEventId);
     expect(result.records[0]?.provenance.sourceEventId).toBe(result.records[0]?.sourceEventId);
+    // Each step record is linked to its corresponding turn via parentId.
+    expect(result.records[0]?.parentId).toBeDefined();
+    expect(result.records[1]?.parentId).toBeDefined();
+    expect(result.records[0]?.parentId).not.toBe(result.records[1]?.parentId);
     expect(result.prompt).toBe(35104);
     expect(result.completion).toBe(96);
     expect(result.cached).toBe(23010);
@@ -151,7 +168,9 @@ describe('Internal token usage', () => {
         },
       ],
     } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
-    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1');
+    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1', [
+      { nodeId: 1 },
+    ] as unknown as Parameters<typeof buildTokenUsageRecords>[5]);
     expect(result.records[0]?.payload).toMatchObject({ effort: null, normalizedEffort: null });
   });
 
@@ -167,13 +186,19 @@ describe('Internal token usage', () => {
     const models = [{ modelUid: 'glm-5-3-low', label: 'GLM-5.3 Low' }] as unknown as Parameters<
       typeof buildTokenUsageRecords
     >[3];
-    const result = buildTokenUsageRecords('s1', session, undefined, models, 'artifact-1');
+    const result = buildTokenUsageRecords('s1', session, undefined, models, 'artifact-1', [
+      { nodeId: 1 },
+    ] as unknown as Parameters<typeof buildTokenUsageRecords>[5]);
     expect(result.records.length).toBe(1);
     expect(result.records[0]?.payload).toMatchObject({
       model: 'glm-5-3-low',
       effort: 'Low',
       normalizedEffort: 'low',
     });
+    // Tier-2/3 fallback: the single session-level aggregate is linked to
+    // the first message's turn so the context-timing computation can
+    // attribute its usage via byTurn (not only byOrder).
+    expect(result.records[0]?.parentId).toBeDefined();
   });
 
   it('marks a step record inexact when any individual metrics field is missing', () => {
@@ -203,7 +228,9 @@ describe('Internal token usage', () => {
         },
       ],
     } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
-    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1');
+    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1', [
+      { nodeId: 1 },
+    ] as unknown as Parameters<typeof buildTokenUsageRecords>[5]);
 
     expect(result.records.length).toBe(1);
     expect(result.records[0]?.payload).toMatchObject({
@@ -244,7 +271,9 @@ describe('Internal token usage', () => {
         },
       ],
     } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
-    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1');
+    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1', [
+      { nodeId: 1 },
+    ] as unknown as Parameters<typeof buildTokenUsageRecords>[5]);
 
     expect(result.records.length).toBe(1);
     expect(result.records[0]?.payload).toMatchObject({ model: 'devin-default', requestOrder: 1 });
@@ -273,8 +302,81 @@ describe('Internal token usage', () => {
         },
       ],
     } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
-    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1');
+    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1', [
+      { nodeId: 1 },
+    ] as unknown as Parameters<typeof buildTokenUsageRecords>[5]);
     expect(result.records[0]?.payload).toMatchObject({ model: 'compactor' });
+  });
+
+  // Guards the index-alignment assumption in buildStepRecords: when some
+  // ATIF steps lack `metrics` (skipped) and the steps array is longer than
+  // orderedMessages, the step-to-message mapping must degrade gracefully —
+  // steps beyond the messages array get no parentId (fall back to byOrder),
+  // while steps within range still link correctly.
+  it('links parentId by step index even when some steps lack metrics and steps exceed messages', () => {
+    const session = { id: 's1', metadata: null, model: 'glm-5-2' } as unknown as Parameters<
+      typeof buildTokenUsageRecords
+    >[1];
+    const atif = {
+      finalMetrics: {
+        totalPromptTokens: 200,
+        totalCompletionTokens: 80,
+        totalCachedTokens: 50,
+        totalSteps: 4,
+      },
+      steps: [
+        // Step 0: no metrics — skipped entirely.
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 1,
+          generationModel: null,
+          metrics: null,
+        },
+        // Step 1: has metrics — should link to orderedMessages[1].
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 2,
+          generationModel: 'glm-5-2',
+          metrics: { promptTokens: 100, completionTokens: 40, cachedTokens: 25 },
+        },
+        // Step 2: no metrics — skipped.
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 3,
+          generationModel: null,
+          metrics: null,
+        },
+        // Step 3: has metrics — orderedMessages has only 2 entries, so
+        // orderedMessages[3] is undefined → parentId undefined (graceful).
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 4,
+          generationModel: 'swe-1-7',
+          metrics: { promptTokens: 100, completionTokens: 40, cachedTokens: 25 },
+        },
+      ],
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
+    // Only 2 messages — shorter than the 4-step array.
+    const orderedMessages = [{ nodeId: 10 }, { nodeId: 20 }] as unknown as Parameters<
+      typeof buildTokenUsageRecords
+    >[5];
+    const result = buildTokenUsageRecords('s1', session, atif, [], 'artifact-1', orderedMessages);
+
+    expect(result.records.length).toBe(2);
+    // Step 1 (index 1) links to orderedMessages[1] (nodeId 20).
+    expect(result.records[0]?.parentId).toBeDefined();
+    expect(result.records[0]?.payload).toMatchObject({ requestOrder: 2 });
+    // Step 3 (index 3) is beyond orderedMessages length → no parentId.
+    expect(result.records[1]?.parentId).toBeUndefined();
+    expect(result.records[1]?.payload).toMatchObject({ requestOrder: 4 });
   });
 });
 

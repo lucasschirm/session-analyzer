@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { assertNoErrorBoundary, expectRenderedGeometry } from './helpers/chart-content';
+import { devinModelSwitchFiles } from './helpers/devin-fixtures.js';
 import {
   importDevinSession,
   openDevinSessionEvidence,
@@ -7,6 +9,9 @@ import {
 
 const PROJECT_NAME = 'Devin Journey';
 const SESSION_ID = 'test-sess';
+
+const MODEL_SWITCH_PROJECT = 'Devin Model Switch';
+const MODEL_SWITCH_SESSION_ID = 'devin-ms-sess';
 
 test.describe('Devin session upload → drill-down journey', () => {
   test('UX-022: manual upload of a golden Devin bundle reaches the session dashboard', async ({
@@ -88,5 +93,94 @@ test.describe('Devin session upload → drill-down journey', () => {
     // The transcript tab has real data and therefore does not show its empty notice.
     await switchSessionEvidenceTab(page, 'transcript');
     await expect(page.getByText('No transcript messages found.')).not.toBeVisible();
+  });
+});
+
+test.describe('Devin model-switch session: context growth, tools, and drawer', () => {
+  test('UX-037: context-growth chart is non-flat across two model-switch steps', async ({
+    page,
+  }) => {
+    const sessionId = await importDevinSession(
+      page,
+      MODEL_SWITCH_PROJECT,
+      MODEL_SWITCH_SESSION_ID,
+      devinModelSwitchFiles(),
+    );
+    await openDevinSessionEvidence(page, sessionId);
+
+    const contextGrowth = page.locator('session-evidence-view #context-growth');
+    await expect(contextGrowth).toBeVisible({ timeout: 15000 });
+
+    const chart = contextGrowth
+      .locator('analytics-chart')
+      .filter({ has: page.getByRole('heading', { name: 'Context growth across session' }) });
+    await expect(chart).toBeVisible({ timeout: 15000 });
+
+    // Real SVG marks — not a legend-only or empty-state render.
+    await expectRenderedGeometry(chart, { timeout: 15000 });
+    await assertNoErrorBoundary(chart);
+
+    // Data correctness via the accessible table fallback. The modelSwitch
+    // fixture has two ATIF agent-generation steps with per-step metrics:
+    //   step 1 (glm-5-2): prompt 18071 / cached 11874 / completion 59
+    //     -> context = 18071 + 11874 = 29945
+    //   step 2 (swe-1-7): prompt 17033 / cached 11136 / completion 37
+    //     -> context = 17033 + 11136 = 28169
+    // The flat-chart bug produced a single context value for all four
+    // points; the fix links each per-step usage record to its turn via
+    // parentId so the context level changes between the two steps.
+    await chart.locator('summary', { hasText: 'View as table' }).click();
+    const rows = chart.locator('tbody tr');
+    await expect(rows.first()).toBeVisible({ timeout: 10000 });
+
+    // Two distinct context levels must appear (non-flat chart).
+    // Row counts are derived from the modelSwitchBundle fixture: 4 messages
+    // (2 user + 2 assistant) → 2 rows per context level. Editing the
+    // fixture's message count or per-step token values requires updating
+    // these assertions.
+    await expect(chart.locator('tbody tr', { hasText: 'context 29,945 tokens' })).toHaveCount(2);
+    await expect(chart.locator('tbody tr', { hasText: 'context 28,169 tokens' })).toHaveCount(2);
+
+    // Generation tokens are attributed per-step, not session-aggregate.
+    await expect(chart.locator('tbody tr', { hasText: 'generation 59 tokens' })).toHaveCount(1);
+    await expect(chart.locator('tbody tr', { hasText: 'generation 37 tokens' })).toHaveCount(1);
+  });
+
+  test('UX-038: context drawer shows the assistant message body, not "No content recorded"', async ({
+    page,
+  }) => {
+    const sessionId = await importDevinSession(
+      page,
+      MODEL_SWITCH_PROJECT,
+      MODEL_SWITCH_SESSION_ID,
+      devinModelSwitchFiles(),
+    );
+    await openDevinSessionEvidence(page, sessionId);
+
+    const contextGrowth = page.locator('session-evidence-view #context-growth');
+    await expect(contextGrowth).toBeVisible({ timeout: 15000 });
+    const chart = contextGrowth.locator('analytics-chart');
+    await expect(chart).toBeVisible({ timeout: 15000 });
+
+    // Wait for the chart data to load, then open the accessible table.
+    await expect(contextGrowth.locator('.summary-toggle')).toBeVisible({ timeout: 15000 });
+    await chart.locator('summary', { hasText: 'View as table' }).click();
+
+    // The second row is the first assistant message ("Got it, running as GLM-5.2.").
+    const assistantRow = chart.locator('tbody tr').nth(1);
+    await expect(assistantRow).toBeVisible({ timeout: 10000 });
+    await assistantRow.click();
+
+    // The drawer opens.
+    const drawer = page.locator('session-evidence-view session-context-drawer');
+    const drawerPanel = drawer.locator('.drawer-panel');
+    await expect(drawerPanel).toBeVisible({ timeout: 5000 });
+
+    // The Message Content section shows the assistant answer (markdown-rendered),
+    // not the empty-state "No content recorded for this message." notice.
+    const contentSection = drawer.locator('.content-section');
+    await expect(contentSection.getByText('Message Content')).toBeVisible();
+    await expect(contentSection.locator('.empty-text')).not.toBeVisible();
+    await expect(contentSection).toContainText('Got it, running as GLM-5.2.');
   });
 });

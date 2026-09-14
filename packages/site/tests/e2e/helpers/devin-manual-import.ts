@@ -13,14 +13,18 @@ export interface ManualImportSelectionSpec {
  * `manual-files-selected` CustomEvent directly on `<manual-import-upload>`.
  * That keeps the directory-relative paths (`native/...`) intact, which the
  * Devin transformer requires to classify sidecar artifacts.
+ *
+ * Pass `files` to use a bundle other than the default `linearBundle`
+ * (e.g. `devinModelSwitchFiles()` for the per-step model-switch fixture).
  */
-export async function uploadDevinBundleToManualImport(page: Page): Promise<void> {
+export async function uploadDevinBundleToManualImport(
+  page: Page,
+  files: DevinFileSpec[] = devinLinearFiles(),
+): Promise<void> {
   await page.goto('/#/manual-import');
   await expect(page.getByRole('heading', { name: 'Manual Import' })).toBeVisible({
     timeout: 15000,
   });
-
-  const files = devinLinearFiles();
 
   await page.evaluate<void, DevinFileSpec[]>((fileSpecs) => {
     function findInShadows(
@@ -65,13 +69,16 @@ export async function uploadDevinBundleToManualImport(page: Page): Promise<void>
  * Waits for harness detection to finish, chooses a new project, optionally
  * overrides the session id, clicks Import, and waits for the `View session`
  * button. Returns the canonical analytics session id from the receipt.
+ *
+ * Pass `files` to import a bundle other than the default `linearBundle`.
  */
 export async function importDevinSession(
   page: Page,
   projectName: string,
   sessionId?: string,
+  files?: DevinFileSpec[],
 ): Promise<string> {
-  await uploadDevinBundleToManualImport(page);
+  await uploadDevinBundleToManualImport(page, files);
 
   // Wait for the Devin harness detection to surface in the harness selector.
   await expect(page.getByText('Detected harness: devin')).toBeVisible({

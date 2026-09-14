@@ -90,10 +90,14 @@ describe('DevinTransformer.transform', () => {
 
       const nodeOnePayload = messages.find((r) => (r.payload as { nodeId?: number }).nodeId === 1)
         ?.payload as { content?: string; storage?: string; path?: string } | undefined;
-      // Message records omit verbatim content and store artifact-blob pointer
+      // Message records carry the chat_message text (for the context-timing
+      // computation to populate ContextTimingPoint.content without a blob
+      // round-trip) and store the artifact-blob pointer for full hydration.
+      // The replayed fixture's latest content for node_id 1 is the edited
+      // row (last-write-wins), not the original "Hello".
       expect(nodeOnePayload?.storage).toBe('artifact-blob');
       expect(nodeOnePayload?.path).toBeDefined();
-      expect(nodeOnePayload?.content).toBeUndefined();
+      expect(nodeOnePayload?.content).toBe('Run the build (edited)');
 
       // No duplicate recordIds anywhere -- a replayed node_id must never
       // reach ingestion as a PK violation (mirrors the tool-call-replay
@@ -246,7 +250,7 @@ describe('DevinTransformer.transform', () => {
     expect(normal.evidence.map((r) => r.recordId)).toEqual(rev.evidence.map((r) => r.recordId));
   });
 
-  it('emits message evidence with artifact-blob storage pointer and omits verbatim content', () => {
+  it('emits message evidence with artifact-blob storage pointer and chat_message content', () => {
     const result = DevinTransformer.transform(linearBundle, defaultContext);
     const messages = result.evidence.filter((r) => r.recordType === 'message');
     expect(messages.length).toBeGreaterThan(0);
@@ -254,7 +258,9 @@ describe('DevinTransformer.transform', () => {
       const payload = msg.payload as Record<string, unknown>;
       expect(payload.storage).toBe('artifact-blob');
       expect(typeof payload.path).toBe('string');
-      expect(payload.content).toBeUndefined();
+      // Message records carry the chat_message text so the context-timing
+      // computation can populate ContextTimingPoint.content directly.
+      expect(typeof payload.content).toBe('string');
     }
   });
 });
