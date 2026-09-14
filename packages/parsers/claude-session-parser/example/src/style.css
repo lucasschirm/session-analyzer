@@ -1,0 +1,48 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+/* JSON tree */
+#json-tree details > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  user-select: none;
+}
+#json-tree details > summary::-webkit-details-marker {
+  display: none;
+}
+#json-tree details > summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 0.1s;
+  opacity: 0.5;
+}
+#json-tree details[open] > summary::before {
+  content: "▾ ";
+}
+#json-tree details > summary:hover {
+  background: var(--color-base-300);
+}
+#json-tree details > div {
+  margin-left: 0.9rem;
+  padding-left: 0.6rem;
+  border-left: 1px solid var(--color-base-300);
+}
+#json-tree .json-key {
+  color: var(--color-info);
+}
+#json-tree .json-str {
+  color: var(--color-success);
+}
+#json-tree .json-num {
+  color: var(--color-warning);
+}
+#json-tree .json-bool,
+#json-tree .json-null {
+  color: var(--color-error);
+}
+#json-tree .json-meta {
+  opacity: 0.45;
+  font-size: 0.8em;
+}

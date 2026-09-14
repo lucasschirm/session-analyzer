@@ -1,5 +1,6 @@
 packages:
   - 'packages/*'
+  - 'packages/parsers/claude-session-parser/example'
   - 'packages/parsers/*'
   - 'packages/plugins/*'
   - 'packages/transformers/*'
