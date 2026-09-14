@@ -1,7 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import * as fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { main } from '../src/cli.js';
 
 describe('devin-sync CLI dispatch', () => {
+  // The dispatch tests below expect config validation to fail once SAL_* is
+  // stripped from process.env — but `resolveCliEnv` also reads the user-global
+  // `~/.config/devin/config.json` (a trusted tier for Devin). Point
+  // `os.homedir()` at a scratch dir so a real machine config cannot leak in.
+  let tmpHome: string;
+  let homedirSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    tmpHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'devin-cli-home-'));
+    homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmpHome);
+  });
+
+  afterEach(async () => {
+    homedirSpy.mockRestore();
+    await fsp.rm(tmpHome, { recursive: true, force: true });
+  });
+
   it('prints help for no arguments', async () => {
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     const code = await main([]);

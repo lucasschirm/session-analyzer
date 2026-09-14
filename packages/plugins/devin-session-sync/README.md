@@ -87,7 +87,11 @@ devin plugins remove devin-session-sync    # uninstall
 ## Configuration
 
 The plugin and its standalone CLI read configuration from environment variables,
-falling back to `.devin/config.local.json` and `.devin/config.json` `env` keys.
+falling back to the `env` keys of `.devin/config.local.json`, `.devin/config.json`,
+and `~/.config/devin/config.json` (user-global). Credential variables
+(`SAL_STORAGE_ENDPOINT`, `SAL_STORAGE_ACCESS_KEY_ID`,
+`SAL_STORAGE_SECRET_ACCESS_KEY`) are honored from every source except the
+project `.devin/config.json`, which may be committed to git.
 Required variables:
 
 | Variable                    | Description                                      |

@@ -49,7 +49,8 @@ function fillMissing(
  *   process.env                              (real environment variables — always win)
  *   <adapter's local config path>    "env"   (project-local, expected gitignored, no blocklist)
  *   <adapter's project config path>  "env"   (project-wide, may be committed, blocklist applies)
- *   <adapter's user-global config path> "env" (user-global, may be committed, blocklist applies)
+ *   <adapter's user-global config path> "env" (user-global, blocklist applies unless the
+ *                                              adapter overrides it via `userGlobalEnvBlocklist`)
  * ```
  *
  * A variable set in a higher-precedence source is never overwritten by a
@@ -95,9 +96,12 @@ export async function resolveCliEnv(
   const projectEnv = await readConfigEnv(paths.project);
   fillMissing(merged, projectEnv, committedBlocklist);
 
-  // Layer 3: user-global config (may be committed — blocklist applies).
+  // Layer 3: user-global config. Defaults to the same blocklist as the
+  // project tier, but the adapter may declare it a trusted personal file
+  // (`userGlobalEnvBlocklist`, e.g. Devin's `~/.config/devin/config.json`)
+  // and relax or empty the list for this tier only.
   const userEnv = await readConfigEnv(paths.userGlobal);
-  fillMissing(merged, userEnv, committedBlocklist);
+  fillMissing(merged, userEnv, new Set(adapter.userGlobalEnvBlocklist ?? blocklist));
 
   // Layer 4: process.env — always wins, but only for keys that are actually
   // set (undefined values don't override config files).

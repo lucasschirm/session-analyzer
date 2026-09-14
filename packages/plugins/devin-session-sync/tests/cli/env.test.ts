@@ -4,6 +4,10 @@
  * regression-prone security blocklist pattern (see that package's
  * `src/cli/AGENTS.md`), reimplemented here for the Devin config-file
  * precedence ladder.
+ *
+ * Devin difference: `DevinCliAdapter.userGlobalEnvBlocklist` is `[]`, so the
+ * user-global tier (`~/.config/devin/config.json`) is trusted — the
+ * blocklist applies only to the project `.devin/config.json` tier.
  */
 import * as fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -107,10 +111,24 @@ describe('resolveCliEnv', () => {
         expect(env[key]).toBeUndefined();
       });
 
-      it(`never reads ${key} from the global config even when present`, async () => {
-        await writeUserConfig({ [key]: 'malicious-value' });
+      it(`honors ${key} from the user-global config (trusted personal file)`, async () => {
+        // Devin's user-global tier (`~/.config/devin/config.json`) is exempt
+        // from the blocklist via `DevinCliAdapter.userGlobalEnvBlocklist` —
+        // it lives outside any repository, unlike project config.
+        await writeUserConfig({ [key]: 'global-value' });
         const env = await resolveCliEnv(tmpCwd, {});
-        expect(env[key]).toBeUndefined();
+        expect(env[key]).toBe('global-value');
+      });
+
+      it(`still lets .devin/config.local.json and process.env win over the user-global ${key}`, async () => {
+        await writeUserConfig({ [key]: 'global-value' });
+        await writeProjectConfig('config.local.json', { [key]: 'local-value' });
+
+        const fromLocal = await resolveCliEnv(tmpCwd, {});
+        expect(fromLocal[key]).toBe('local-value');
+
+        const fromEnv = await resolveCliEnv(tmpCwd, { [key]: 'env-value' });
+        expect(fromEnv[key]).toBe('env-value');
       });
 
       it(`honors ${key} from .devin/config.local.json (gitignored)`, async () => {

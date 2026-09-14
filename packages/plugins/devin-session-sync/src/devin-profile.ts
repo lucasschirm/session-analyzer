@@ -119,12 +119,14 @@ export const DEVIN_SESSION_LAYOUT: SessionLayoutDescriptor = {
 };
 
 /**
- * `~/.config/devin/config.json` and project `.devin/config.json` are
- * typically committed to git (or at least not gitignored by default),
- * mirroring Claude's `settings.json`. The storage endpoint and credentials
- * must never be sourced from a file anyone with commit/PR access can edit —
- * see `ClaudeHarnessProfile`'s identical rationale. Only `process.env` or a
- * `.devin/config.local.json` override (see `cli/env.ts`) may supply them.
+ * Project `.devin/config.json` is typically committed to git (or at least
+ * not gitignored by default). The storage endpoint and credentials must
+ * never be sourced from a file anyone with commit/PR access can edit — see
+ * `ClaudeHarnessProfile`'s identical rationale. Only `process.env`, a
+ * `.devin/config.local.json` override, or the user-global
+ * `~/.config/devin/config.json` (a personal, machine-local file outside any
+ * repository — see `DevinCliAdapter.userGlobalEnvBlocklist` in
+ * `devin-cli-adapter.ts`) may supply them.
  */
 const DEVIN_SECURITY_BLOCKLIST: readonly string[] = [
   'SAL_STORAGE_ENDPOINT',
