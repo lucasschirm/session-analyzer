@@ -46,7 +46,10 @@ import type {
   TransformResult,
   UnknownArtifactBundle,
 } from '@lucasschirm/sal-transformer-shared';
-import { NORMALIZED_EFFORT_LEVELS } from '@lucasschirm/sal-transformer-shared';
+import {
+  NORMALIZED_EFFORT_LEVELS,
+  truncateSessionTitle,
+} from '@lucasschirm/sal-transformer-shared';
 import {
   deriveClaudeCodeAttributionMetrics,
   getClaudeCodeAttributionMetricCapabilities,
@@ -794,13 +797,6 @@ function sessionStartAndEnd(session: ClaudeCodeSession): { start?: string; end?:
 }
 
 /**
- * Maximum length of a session title derived from the first real user
- * prompt — mirrors the short single-line first-prompt label Claude Code
- * shows in its session picker.
- */
-const MAX_DERIVED_SESSION_TITLE_LENGTH = 50;
-
-/**
  * Extracts the text of the first real user prompt. Skips the same message
  * classes Claude Code's own first-prompt extraction skips: CLI-injected
  * meta entries, compact-continuation summaries, tool_result-only messages,
@@ -818,7 +814,7 @@ function firstUserPromptText(session: ClaudeCodeSession): string | undefined {
               block.type === 'text' && typeof block.text === 'string' ? block.text : '',
             )
             .join(' ');
-    const normalized = text.replace(/\s+/g, ' ').trim();
+    const normalized = text.trim();
     if (!normalized || normalized.startsWith('<')) continue;
     return normalized;
   }
@@ -826,17 +822,15 @@ function firstUserPromptText(session: ClaudeCodeSession): string | undefined {
 }
 
 /**
- * Derives a display title from the first real user prompt, collapsed to a
- * single line and truncated — the first-message-as-title convention Devin
- * CLI uses for its own sessions — for sessions without an `ai-title` event.
- * Emitted as `fallbackTitle`: ingestion only writes it when no better
- * title (ai-title, user rename) exists on the session row.
+ * Derives a display title from the first real user prompt — the
+ * first-message-as-title convention Devin CLI uses for its own sessions —
+ * for sessions without an `ai-title` event. Emitted as `fallbackTitle`:
+ * ingestion only writes it when no better title (ai-title, user rename)
+ * exists on the session row.
  */
 function deriveSessionTitle(session: ClaudeCodeSession): string | undefined {
   const prompt = firstUserPromptText(session);
-  if (!prompt) return undefined;
-  if (prompt.length <= MAX_DERIVED_SESSION_TITLE_LENGTH) return prompt;
-  return `${prompt.slice(0, MAX_DERIVED_SESSION_TITLE_LENGTH).trimEnd()}…`;
+  return prompt ? truncateSessionTitle(prompt) : undefined;
 }
 
 function normalizeSessionSpine(

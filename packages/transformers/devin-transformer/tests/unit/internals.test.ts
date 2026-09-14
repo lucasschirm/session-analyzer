@@ -565,6 +565,41 @@ describe('Internal session spine', () => {
       title: 'Fix the login redirect',
       aiTitle: 'Fix the login redirect',
     });
+    // A persisted harness title suppresses the first-message fallback.
+    expect(
+      (result.records[0]?.payload as Record<string, unknown> | undefined)?.fallbackTitle,
+    ).toBeUndefined();
+  });
+
+  it('derives fallbackTitle from the first user message when sessions.db has no title', () => {
+    const session = {
+      id: 's1',
+      title: null,
+      createdAt: null,
+      lastActivityAt: null,
+      metadata: null,
+    } as unknown as Parameters<typeof buildSessionSpine>[1];
+    const messages = [
+      { nodeId: 1, role: 'system', chatMessage: { role: 'system', content: 'sys' } },
+      {
+        nodeId: 2,
+        role: 'user',
+        chatMessage: {
+          role: 'user',
+          content: 'Triage the flaky pipeline test that fails on CI for no reason at all',
+        },
+      },
+      {
+        nodeId: 3,
+        role: 'assistant',
+        chatMessage: { role: 'assistant', content: 'On it.' },
+      },
+    ] as unknown as Parameters<typeof buildSessionSpine>[2];
+    const result = buildSessionSpine('s1', session, messages, [], 'artifact-1');
+    expect(result.records[0]?.payload).toMatchObject({
+      aiTitle: null,
+      fallbackTitle: 'Triage the flaky pipeline test that fails on CI fo…',
+    });
   });
 });
 
