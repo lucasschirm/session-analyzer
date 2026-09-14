@@ -175,8 +175,12 @@ test.describe('Full user journey', () => {
   test('create project -> manual import -> session evidence view', async ({ page }) => {
     await importAndOpenSession(page, 'Demo Project', ['claude-session.jsonl']);
 
-    // The Session Evidence view renders with the session ID in the heading.
-    await expect(page.getByText(/Session Evidence —/)).toBeVisible();
+    // The Session Evidence view renders the session title in the heading
+    // (the claude-session fixture has no ai-title, so it falls back to
+    // "Unknown" rather than the raw session id).
+    await expect(
+      page.locator('session-evidence-view').getByRole('heading', { name: 'Unknown' }),
+    ).toBeVisible();
 
     // The preview server sends COOP/COEP headers, so the SQLite OPFS backend
     // must be active (not the in-memory fallback). Verify via the Storage
@@ -187,7 +191,9 @@ test.describe('Full user journey', () => {
 
     // Go back to the session evidence view.
     await page.goBack();
-    await expect(page.getByText(/Session Evidence —/)).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.locator('session-evidence-view').getByRole('heading', { level: 1 }),
+    ).toBeVisible({ timeout: 10000 });
 
     // The Evidence section should be present with its tab list.
     await expect(page.getByRole('heading', { name: 'Evidence', exact: true })).toBeVisible();
@@ -217,8 +223,10 @@ test.describe('Rich session dashboard', () => {
   test('surfaces session evidence with ai-title and transcript content', async ({ page }) => {
     await importAndOpenSession(page, 'Rich Panel Project', ['claude-rich-session.jsonl']);
 
-    // The Session Evidence view renders with the session ID in the heading.
-    await expect(page.getByText(/Session Evidence —/)).toBeVisible();
+    // The Session Evidence view renders the session's ai-title in the heading.
+    await expect(
+      page.locator('session-evidence-view').getByRole('heading', { name: 'Rich Session Demo' }),
+    ).toBeVisible();
 
     // The Evidence section should be present.
     await expect(page.getByRole('heading', { name: 'Evidence', exact: true })).toBeVisible();
@@ -280,7 +288,9 @@ test.describe('Subagent folder ingestion', () => {
     ]);
 
     // The Session Evidence view should render with the session data.
-    await expect(page.getByText(/Session Evidence —/)).toBeVisible();
+    await expect(
+      page.locator('session-evidence-view').getByRole('heading', { level: 1 }),
+    ).toBeVisible();
 
     // The Evidence section should be present.
     await expect(page.getByRole('heading', { name: 'Evidence', exact: true })).toBeVisible();
@@ -320,7 +330,9 @@ test.describe('Persistence (OPFS)', () => {
     // Reload the page — the hash route is preserved, so we land back on
     // the Session Evidence view.
     await page.reload();
-    await expect(page.getByText(/Session Evidence —/)).toBeVisible({ timeout: 15000 });
+    await expect(
+      page.locator('session-evidence-view').getByRole('heading', { level: 1 }),
+    ).toBeVisible({ timeout: 15000 });
   });
 });
 
@@ -411,7 +423,10 @@ test.describe('Routing', () => {
     await page.goto('/#/sessions/does-not-exist');
     // The Session Evidence view should render (either with an error message
     // or an empty state), not crash or show the fallback page.
-    await expect(page.getByText(/Session Evidence/)).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('session-evidence-view')).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.locator('session-evidence-view').getByRole('heading', { level: 1 }),
+    ).toBeVisible();
   });
 });
 

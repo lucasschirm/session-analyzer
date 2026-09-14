@@ -4,33 +4,48 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { analyticsClient } from '../db/analytics-client';
 import { dbClient } from '../db/db-client';
-import { formatDate, formatSessionTitle } from '../lib/format';
-import { navigateTo } from '../router';
+import { formatDate } from '../lib/format';
 import { type SyncManagerSnapshot, syncManager } from '../sync/sync-manager';
 import type { Project } from '../types';
 
-function formatRelativeDate(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
+/** Sessions shown in the project/session menus: the 10 most recent. */
+const SESSION_LIST_LIMIT = 10;
+
+/** A project row in the home menu, merged from control + analytics data. */
+interface NavProject {
+  /** Route slug for `#/projects/<slug>` (control readable id, or native id). */
+  slug: string;
+  name: string;
+  sessionCount: number;
+  /** Epoch ms of the most recent session activity, when known. */
+  lastSessionAt: number | null;
+}
+
+function formatLastSession(timestamp: number): string {
+  const diff = Date.now() - timestamp;
   const day = 24 * 60 * 60 * 1000;
-  if (diff < day) return 'Updated today';
-  if (diff < 2 * day) return 'Updated yesterday';
-  if (diff < 7 * day) return `Updated ${Math.floor(diff / day)} days ago`;
+  if (diff < day) return 'today';
+  if (diff < 2 * day) return 'yesterday';
+  if (diff < 7 * day) return `${Math.floor(diff / day)} days ago`;
   return formatDate(timestamp);
 }
 
+function sessionTitle(item: ProjectSessionListItem): string {
+  return item.title?.trim() || 'Unknown';
+}
+
 /**
- * Route-aware left navigation.
+ * Route-aware left navigation. One flat menu per page - no dropdowns:
  *
- * The items shown depend on the current route:
- *
- * - Dashboard (`/`): Projects (expandable, lists real projects), Agents,
- *   Skills, Tools, MCP.
- * - Settings (`/settings*`): Data Sources, Storage.
- * - All other routes: no left nav is rendered.
- *
- * Active items are highlighted. Clicking "Projects" both toggles the
- * expansion and navigates to `/projects`.
+ * - Home (`/`, `/projects`, `/manual-import`, `/agents`, `/skills`, `/tools`,
+ *   `/mcp`): a "Projects" section listing every project with a session-count
+ *   and last-session summary, plus the Agents/Skills/Tools/MCP links.
+ * - Project (`/projects/:slug*`): a "‹ Dashboard" back link and a "Sessions"
+ *   section listing the project's 10 most recent sessions.
+ * - Session (`/sessions/:id`): a "‹ Project" back link to the session's
+ *   project and the same "Sessions" section with the current session
+ *   highlighted.
+ * - Settings (`/settings*`, `/storage*`): Data Sources and Storage links.
  */
 @customElement('left-nav')
 export class LeftNav extends LitElement {
@@ -80,54 +95,15 @@ export class LeftNav extends LitElement {
       font-weight: 600;
     }
 
-    .nav-item .chevron {
-      margin-left: auto;
-      font-size: 10px;
-      transition: transform 0.15s ease;
-    }
-
-    .nav-item.expanded .chevron {
-      transform: rotate(90deg);
-    }
-
-    .nav-children {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      padding: 2px 0 2px 20px;
-    }
-
-    .nav-child {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      padding: 6px 12px;
-      border-radius: 6px;
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-      text-decoration: none;
-      font-size: 13px;
-    }
-
-    .nav-child-name {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-
-    .nav-child-stats {
-      font-size: 11px;
-      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-      opacity: 0.7;
-    }
-
-    .nav-child:hover {
-      background: var(--md-sys-color-surface-container, #1f242e);
+    .nav-back {
+      font-weight: 600;
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
-    .nav-child.active {
-      color: var(--md-sys-color-primary, #4f8cff);
-      font-weight: 600;
+    .nav-back .back-icon {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
     }
 
     .nav-section-label {
@@ -139,80 +115,47 @@ export class LeftNav extends LitElement {
       padding: 12px 12px 4px;
     }
 
-    .nav-project-group {
+    .nav-project {
       display: flex;
       flex-direction: column;
-    }
-
-    .nav-project-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      gap: 2px;
+      padding: 6px 12px;
       border-radius: 6px;
-      transition: background-color 0.15s ease;
-    }
-
-    .nav-project-row:hover {
-      background: var(--md-sys-color-surface-container, #1f242e);
-    }
-
-    .nav-project-row .nav-child {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .nav-project-row:hover .nav-child {
-      background: transparent;
-    }
-
-    .project-chevron-btn {
-      background: transparent;
-      border: none;
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-      padding: 8px 10px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 4px;
-      font-size: 9px;
-      flex-shrink: 0;
-      transition: color 0.15s ease;
+      text-decoration: none;
+      font-size: 13px;
     }
 
-    .project-chevron-btn:hover {
+    .nav-project:hover {
+      background: var(--md-sys-color-surface-container, #1f242e);
       color: var(--md-sys-color-on-surface, #e6e9ef);
-      background: var(--md-sys-color-surface-container-hover, #262d3a);
     }
 
-    .project-chevron-btn .chevron {
-      display: inline-block;
-      transition: transform 0.15s ease;
+    .nav-project.active {
+      color: var(--md-sys-color-primary, #4f8cff);
+      font-weight: 600;
     }
 
-    .project-chevron-btn.expanded .chevron {
-      transform: rotate(90deg);
+    .nav-project-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
-    .nav-sessions-list {
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-      padding: 2px 0 4px 10px;
-      border-left: 1px solid var(--md-sys-color-outline, #2a303c);
-      margin-left: 16px;
-      margin-top: 2px;
-      margin-bottom: 4px;
+    .nav-project-stats {
+      font-size: 11px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      opacity: 0.7;
     }
 
     .nav-session-item {
       display: flex;
       align-items: center;
-      padding: 6px 10px;
+      padding: 6px 12px;
       border-radius: 6px;
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
       text-decoration: none;
-      font-size: 12px;
+      font-size: 13px;
       transition: background-color 0.15s ease, color 0.15s ease;
       cursor: pointer;
     }
@@ -232,91 +175,86 @@ export class LeftNav extends LitElement {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 170px;
     }
 
     .nav-session-loading,
     .nav-session-empty {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-      padding: 4px 8px;
+      padding: 4px 12px;
       font-style: italic;
     }
 
     .nav-session-error {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--md-sys-color-error, #f28b82);
-      padding: 4px 8px;
+      padding: 4px 12px;
       font-style: italic;
     }
   `;
 
-  /** Current hash path (e.g. `/`, `/projects`, `/settings/storage`). */
+  /** Current hash path (e.g. `/`, `/projects/foo`, `/settings/storage`). */
   @property() path = '/';
 
-  @state() private projects: Project[] = [];
+  @state() private projects: NavProject[] = [];
 
-  @state() private projectsExpanded = false;
+  @state() private sessions: ProjectSessionListItem[] = [];
 
-  @state() private projectSessions: Record<string, ProjectSessionListItem[]> = {};
+  @state() private sessionsLoading = false;
 
-  @state() private projectSessionsError: Record<string, string> = {};
+  @state() private sessionsError: string | null = null;
 
-  @state() private expandedProjectSlugs: Set<string> = new Set();
-
-  @state() private sessionsLoading: Record<string, boolean> = {};
+  /** Route slug of the project that owns the currently viewed session. */
+  @state() private sessionProjectSlug: string | null = null;
 
   @state() private syncSnapshot: SyncManagerSnapshot | null = null;
 
-  private loadingLock = false;
+  private sessionsLoadSeq = 0;
 
   connectedCallback(): void {
     super.connectedCallback();
     this.syncSnapshot = syncManager.getSnapshot();
     syncManager.addEventListener('change', this.handleSyncChange);
+    analyticsClient.addEventListener('data-change', this.handleDataChange);
     void this.loadProjects();
-    // Auto-expand when viewing a specific project or session route.
-    this.projectsExpanded = /^\/(projects|sessions)\/[^/]+/.test(this.path);
-    if (/^\/projects\/[^/]+/.test(this.path)) {
-      const match = this.path.match(/^\/projects\/([^/]+)/);
-      if (match) {
-        const slug = decodeURIComponent(match[1]);
-        this.expandedProjectSlugs.add(slug);
-        void this.loadSessionsForProject(slug);
-      }
-    }
+    void this.loadContextSessions();
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     syncManager.removeEventListener('change', this.handleSyncChange);
+    analyticsClient.removeEventListener('data-change', this.handleDataChange);
   }
 
   protected willUpdate(changed: PropertyValues<this>): void {
-    // Keep expansion in sync when navigating between dashboard/projects routes.
-    // Auto-expand when viewing a specific project. Do not auto-collapse when navigating
-    // to the projects route if already expanded.
     if (changed.has('path')) {
-      if (/^\/projects\/[^/]+/.test(this.path)) {
-        this.projectsExpanded = true;
-        const match = this.path.match(/^\/projects\/([^/]+)/);
-        if (match) {
-          const slug = decodeURIComponent(match[1]);
-          const project = this.projects.find(
-            (p) => (p.readable_id || p.id) === slug || p.id === slug || p.name === slug,
-          );
-          const pId = project ? project.id : slug;
-          const next = new Set(this.expandedProjectSlugs);
-          next.add(pId);
-          this.expandedProjectSlugs = next;
-          void this.loadSessionsForProject(pId, slug, project?.name);
-        }
-      } else if (/^\/sessions\/[^/]+/.test(this.path)) {
-        this.projectsExpanded = true;
-      } else if (!this.path.startsWith('/projects') && !this.path.startsWith('/sessions')) {
-        this.projectsExpanded = false;
-      }
+      void this.loadContextSessions();
     }
+  }
+
+  private get projectSlug(): string | null {
+    const match = this.path.match(/^\/projects\/([^/]+)/);
+    if (!match) return null;
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+
+  private get sessionIdParam(): string | null {
+    const match = this.path.match(/^\/sessions\/([^/]+)/);
+    if (!match) return null;
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+
+  private isRunActive(snapshot: SyncManagerSnapshot | null): boolean {
+    if (!snapshot?.activeRun) return false;
+    return snapshot.activeRun.state === 'running' || snapshot.activeRun.state === 'queued';
   }
 
   private handleSyncChange = (event: Event): void => {
@@ -327,182 +265,143 @@ export class LeftNav extends LitElement {
     const runEnded = wasRunning && !this.isRunActive(this.syncSnapshot);
     const hasNewProjects =
       this.syncSnapshot?.projects.some((p) => !prevProjectIds.has(p.localProjectId)) ?? false;
-    const sessionCount = this.syncSnapshot?.sessions.length ?? 0;
-    const hasNewSessions = sessionCount > prevSessionCount;
+    const hasNewSessions = (this.syncSnapshot?.sessions.length ?? 0) > prevSessionCount;
     if (runEnded || hasNewProjects || hasNewSessions) {
       void this.loadProjects();
-      const uniqueProjectIds = new Set<string>();
-      for (const key of this.expandedProjectSlugs) {
-        const match = this.projects.find(
-          (p) => p.id === key || (p.readable_id || p.id) === key || p.name === key,
-        );
-        uniqueProjectIds.add(match ? match.id : key);
-      }
-      for (const pId of uniqueProjectIds) {
-        void this.loadSessionsForProject(pId, undefined, undefined, true);
-      }
+      void this.loadContextSessions();
     }
   };
 
-  private isRunActive(snapshot: SyncManagerSnapshot | null): boolean {
-    if (!snapshot?.activeRun) return false;
-    return snapshot.activeRun.state === 'running' || snapshot.activeRun.state === 'queued';
-  }
+  private handleDataChange = (): void => {
+    void this.loadProjects();
+    void this.loadContextSessions();
+  };
 
+  /**
+   * Loads projects for the home menu. Control-DB projects are merged with the
+   * analytics project list so the session count and last-session summary are
+   * accurate for both synced and manually imported sessions; analytics-only
+   * projects (no control row) are appended.
+   */
   private async loadProjects(): Promise<void> {
-    if (this.loadingLock) return;
-    this.loadingLock = true;
     try {
       await dbClient.ensureReady();
-      this.projects = await dbClient.getProjects();
-      if (/^\/projects\/[^/]+/.test(this.path)) {
-        const match = this.path.match(/^\/projects\/([^/]+)/);
-        if (match) {
-          const slug = decodeURIComponent(match[1]);
-          const project = this.projects.find(
-            (p) => (p.readable_id || p.id) === slug || p.id === slug || p.name === slug,
-          );
-          const pId = project ? project.id : slug;
-          const next = new Set(this.expandedProjectSlugs);
-          next.add(pId);
-          this.expandedProjectSlugs = next;
-          void this.loadSessionsForProject(pId, slug, project?.name);
-        }
+      const [controlProjects, analyticsPage] = await Promise.all([
+        dbClient.getProjects(),
+        analyticsClient.portfolio.getProjectList({ limit: 100 }).catch(() => null),
+      ]);
+
+      const byNativeId = new Map(
+        (analyticsPage?.items ?? []).map((item) => [item.name, item] as const),
+      );
+      const matched = new Set<string>();
+
+      const merged: NavProject[] = controlProjects.map((project: Project) => {
+        const analytics =
+          (project.readable_id ? byNativeId.get(project.readable_id) : undefined) ??
+          byNativeId.get(project.name) ??
+          byNativeId.get(project.id);
+        if (analytics) matched.add(analytics.projectId);
+        const lastSessionAt = analytics?.lastSessionAt
+          ? Date.parse(analytics.lastSessionAt)
+          : project.session_count > 0
+            ? project.updated_at
+            : null;
+        return {
+          slug: project.readable_id || project.id,
+          name: project.name,
+          sessionCount: Math.max(analytics?.sessionCount ?? 0, project.session_count),
+          lastSessionAt,
+        };
+      });
+
+      for (const item of analyticsPage?.items ?? []) {
+        if (matched.has(item.projectId)) continue;
+        merged.push({
+          slug: item.name,
+          name: item.name,
+          sessionCount: item.sessionCount,
+          lastSessionAt: item.lastSessionAt ? Date.parse(item.lastSessionAt) : null,
+        });
       }
+
+      merged.sort((a, b) => (b.lastSessionAt ?? 0) - (a.lastSessionAt ?? 0));
+      this.projects = merged;
     } catch {
       // Non-fatal: the projects list stays empty until the DB is ready.
-    } finally {
-      this.loadingLock = false;
     }
   }
 
-  private handleProjectClick(slug: string, projectId: string, projectName?: string): void {
-    const next = new Set(this.expandedProjectSlugs);
-    next.add(projectId);
-    this.expandedProjectSlugs = next;
-    void this.loadSessionsForProject(projectId, slug, projectName);
-  }
-
-  private toggleProjectSessions(
-    e: Event,
-    projectId: string,
-    slug: string,
-    projectName?: string,
-  ): void {
-    e.preventDefault();
-    e.stopPropagation();
-    const next = new Set(this.expandedProjectSlugs);
-    if (next.has(projectId) || next.has(slug)) {
-      next.delete(projectId);
-      next.delete(slug);
-    } else {
-      next.add(projectId);
-      void this.loadSessionsForProject(projectId, slug, projectName);
-    }
-    this.expandedProjectSlugs = next;
-  }
-
-  private handleSessionClick(e: MouseEvent, sessionId: string): void {
-    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+  /**
+   * Loads the 10 most recent sessions for the project or session menu.
+   * On project routes the slug is resolved to an analytics project id; on
+   * session routes the session's owning project is resolved first so the
+   * "‹ Project" back link can point at it.
+   */
+  private async loadContextSessions(): Promise<void> {
+    const seq = ++this.sessionsLoadSeq;
+    const slug = this.projectSlug;
+    const sessionId = this.sessionIdParam;
+    if (!slug && !sessionId) {
+      this.sessions = [];
+      this.sessionsError = null;
+      this.sessionsLoading = false;
+      this.sessionProjectSlug = null;
       return;
     }
-    e.preventDefault();
-    navigateTo(`/sessions/${encodeURIComponent(sessionId)}`);
-  }
 
-  private shouldSkipSessionLoad(projectId: string, slug?: string, force?: boolean): boolean {
-    if (force) return false;
-    return Boolean(
-      this.sessionsLoading[projectId] ||
-        (slug && this.sessionsLoading[slug]) ||
-        this.projectSessions[projectId] ||
-        (slug && this.projectSessions[slug]),
-    );
-  }
-
-  private setSessionLoading(projectId: string, slug: string | undefined, loading: boolean): void {
-    this.sessionsLoading = {
-      ...this.sessionsLoading,
-      [projectId]: loading,
-      ...(slug ? { [slug]: loading } : {}),
-    };
-  }
-
-  private async resolveTargetProjectId(
-    projectId: string,
-    slug?: string,
-    projectName?: string,
-  ): Promise<string> {
-    const fromId = await analyticsClient?.resolveProjectId?.(projectId);
-    if (fromId) return fromId;
-    if (projectName) {
-      const fromName = await analyticsClient?.resolveProjectId?.(projectName);
-      if (fromName) return fromName;
-    }
-    if (slug) {
-      const fromSlug = await analyticsClient?.resolveProjectId?.(slug);
-      if (fromSlug) return fromSlug;
-    }
-    return projectId;
-  }
-
-  private storeLoadedSessions(keys: (string | undefined)[], items: ProjectSessionListItem[]): void {
-    const next = { ...this.projectSessions };
-    for (const key of keys) {
-      if (key) next[key] = items;
-    }
-    this.projectSessions = next;
-  }
-
-  private storeSessionError(keys: (string | undefined)[], error: unknown): void {
-    const msg = error instanceof Error ? error.message : String(error);
-    const next = { ...this.projectSessionsError };
-    for (const key of keys) {
-      if (key) next[key] = msg;
-    }
-    this.projectSessionsError = next;
-  }
-
-  private clearSessionErrors(keys: (string | undefined)[]): void {
-    const next = { ...this.projectSessionsError };
-    for (const key of keys) {
-      if (key) delete next[key];
-    }
-    this.projectSessionsError = next;
-  }
-
-  private async loadSessionsForProject(
-    projectId: string,
-    slug?: string,
-    projectName?: string,
-    force = false,
-  ): Promise<void> {
-    if (this.shouldSkipSessionLoad(projectId, slug, force)) return;
-    this.setSessionLoading(projectId, slug, true);
-    const keys = [projectId, slug, projectName];
-    this.clearSessionErrors(keys);
-
+    this.sessionsLoading = true;
+    this.sessionsError = null;
     try {
-      const targetId = await this.resolveTargetProjectId(projectId, slug, projectName);
-      const page = await analyticsClient?.search?.getProjectSessionList?.(targetId, { limit: 20 });
-      if (page) {
-        this.storeLoadedSessions([...keys, targetId], [...page.items]);
+      let projectId: string | null = null;
+      if (slug) {
+        projectId = await this.resolveProjectSlug(slug);
+        this.sessionProjectSlug = null;
+      } else if (sessionId) {
+        const ref = await analyticsClient.search.getSessionProjectRef(sessionId);
+        this.sessionProjectSlug = ref?.nativeProjectId ?? ref?.projectId ?? null;
+        projectId = ref?.projectId ?? null;
       }
-    } catch (err) {
-      this.storeSessionError(keys, err);
+      if (seq !== this.sessionsLoadSeq) return;
+
+      if (!projectId) {
+        this.sessions = [];
+        return;
+      }
+      const page = await analyticsClient.search.getProjectSessionList(projectId, {
+        limit: SESSION_LIST_LIMIT,
+      });
+      if (seq !== this.sessionsLoadSeq) return;
+      this.sessions = [...page.items];
+    } catch (error) {
+      if (seq !== this.sessionsLoadSeq) return;
+      this.sessions = [];
+      this.sessionsError = error instanceof Error ? error.message : String(error);
     } finally {
-      this.setSessionLoading(projectId, slug, false);
+      if (seq === this.sessionsLoadSeq) this.sessionsLoading = false;
     }
   }
 
-  private toggleProjects(event: Event): void {
-    event.preventDefault();
-    this.projectsExpanded = !this.projectsExpanded;
-    if (this.projects.length === 0) {
-      void this.loadProjects();
+  /**
+   * Resolves a `/projects/:slug` route param to an analytics project id.
+   * Mirrors the project-behavior-view fallback: try the slug directly (it may
+   * be an analytics id, native project id, or project name), then resolve via
+   * the control-DB project record's name/id when the slug is a readable id
+   * that never reached the analytics DB.
+   */
+  private async resolveProjectSlug(slug: string): Promise<string> {
+    const direct = await analyticsClient.resolveProjectId(slug);
+    if (direct) return direct;
+    const project =
+      (await dbClient.getProjectByReadableId?.(slug)) ?? (await dbClient.getProject?.(slug));
+    if (project) {
+      return (
+        (await analyticsClient.resolveProjectId(project.name)) ??
+        (await analyticsClient.resolveProjectId(project.id)) ??
+        slug
+      );
     }
-    // Navigating to /projects is also part of the click per the spec.
-    window.location.hash = '#/projects';
+    return slug;
   }
 
   private isActive(href: string): boolean {
@@ -511,140 +410,121 @@ export class LeftNav extends LitElement {
     return this.path === target || this.path.startsWith(`${target}/`);
   }
 
-  private renderDashboardNav() {
+  private renderSessionList() {
+    if (this.sessionsLoading) {
+      return html`<div class="nav-session-loading">Loading sessions…</div>`;
+    }
+    if (this.sessionsError) {
+      return html`<div class="nav-session-error">Failed to load sessions</div>`;
+    }
+    if (this.sessions.length === 0) {
+      return html`<div class="nav-session-empty">No sessions</div>`;
+    }
+    const currentSessionId = this.sessionIdParam;
+    return repeat(
+      this.sessions,
+      (session) => session.sessionId,
+      (session) => {
+        const title = sessionTitle(session);
+        return html`
+          <a
+            href="#/sessions/${encodeURIComponent(session.sessionId)}"
+            class="nav-session-item ${session.sessionId === currentSessionId ? 'active' : ''}"
+            title=${title}
+          >
+            <span class="nav-session-title">${title}</span>
+          </a>
+        `;
+      },
+    );
+  }
+
+  private renderHomeNav() {
     return html`
+      <div class="nav-section-label">Projects</div>
+      <nav>
+        ${repeat(
+          this.projects,
+          (project) => project.slug,
+          (project) => {
+            const sessionLabel = `${project.sessionCount} session${project.sessionCount === 1 ? '' : 's'}`;
+            const stats = project.lastSessionAt
+              ? `${sessionLabel} · last session ${formatLastSession(project.lastSessionAt)}`
+              : sessionLabel;
+            return html`
+              <a
+                href="#/projects/${encodeURIComponent(project.slug)}"
+                class="nav-project ${this.path === `/projects/${project.slug}` ? 'active' : ''}"
+              >
+                <span class="nav-project-name">${project.name}</span>
+                <span class="nav-project-stats">${stats}</span>
+              </a>
+            `;
+          },
+        )}
+        ${this.projects.length === 0 ? html`<span class="nav-session-empty">No projects</span>` : ''}
+      </nav>
       <div class="nav-section-label">Dashboard</div>
       <nav>
-        <a
-          href="#/projects"
-          class="nav-item ${this.projectsExpanded ? 'expanded' : ''} ${
-            this.path.startsWith('/projects') ? 'active' : ''
-          }"
-          @click=${this.toggleProjects}
-        >
-          <span>Projects</span>
-          <span class="chevron">▶</span>
-        </a>
-        ${
-          this.projectsExpanded
-            ? html`
-              <div class="nav-children">
-                ${repeat(
-                  this.projects,
-                  (project) => project.id,
-                  (project) => {
-                    const slug = project.readable_id || project.id;
-                    const href = `#/projects/${slug}`;
-                    const sessionLabel = `${project.session_count} session${project.session_count === 1 ? '' : 's'}`;
-                    const isExpanded =
-                      this.expandedProjectSlugs.has(project.id) ||
-                      this.expandedProjectSlugs.has(slug);
-                    const sessions =
-                      this.projectSessions[project.id] ?? this.projectSessions[slug] ?? [];
-                    const isLoading =
-                      this.sessionsLoading[project.id] || this.sessionsLoading[slug];
-
-                    return html`
-                      <div class="nav-project-group">
-                        <div class="nav-project-row">
-                          <a
-                            href=${href}
-                            class="nav-child ${this.path === `/projects/${slug}` ? 'active' : ''}"
-                            @click=${() => this.handleProjectClick(slug, project.id, project.name)}
-                          >
-                            <span class="nav-child-name">${project.name}</span>
-                            <span class="nav-child-stats">${sessionLabel} · ${formatRelativeDate(project.updated_at)}</span>
-                          </a>
-                          <button
-                            type="button"
-                            class="project-chevron-btn ${isExpanded ? 'expanded' : ''}"
-                            aria-label="Toggle sessions for ${project.name}"
-                            aria-expanded=${isExpanded ? 'true' : 'false'}
-                            @click=${(e: Event) => this.toggleProjectSessions(e, project.id, slug, project.name)}
-                          >
-                            <span class="chevron">▶</span>
-                          </button>
-                        </div>
-                        ${
-                          isExpanded
-                            ? html`
-                            <div class="nav-sessions-list">
-                              ${
-                                isLoading
-                                  ? html`<div class="nav-session-loading">Loading sessions...</div>`
-                                  : (
-                                        this.projectSessionsError[project.id] ??
-                                          (slug ? this.projectSessionsError[slug] : undefined)
-                                      )
-                                    ? html`<div class="nav-session-error">Failed to load sessions</div>`
-                                    : sessions.length === 0
-                                      ? html`<div class="nav-session-empty">No sessions</div>`
-                                      : repeat(
-                                          sessions,
-                                          (session) => session.sessionId,
-                                          (session) => {
-                                            const isSessionActive =
-                                              this.path === `/sessions/${session.sessionId}` ||
-                                              this.path ===
-                                                `/sessions/${encodeURIComponent(session.sessionId)}`;
-                                            const displayTitle = formatSessionTitle(
-                                              session.title,
-                                              session.startedAt,
-                                            );
-                                            return html`
-                                              <a
-                                                href="#/sessions/${encodeURIComponent(session.sessionId)}"
-                                                class="nav-session-item ${isSessionActive ? 'active' : ''}"
-                                                title=${displayTitle}
-                                                @click=${(e: MouseEvent) => this.handleSessionClick(e, session.sessionId)}
-                                              >
-                                                <span class="nav-session-title">${displayTitle}</span>
-                                              </a>
-                                            `;
-                                          },
-                                        )
-                              }
-                            </div>
-                          `
-                            : ''
-                        }
-                      </div>
-                    `;
-                  },
-                )}
-                ${
-                  this.projects.length === 0
-                    ? html`<span class="nav-child">No projects yet</span>`
-                    : ''
-                }
-              </div>
-            `
-            : ''
-        }
-        <a
-          href="#/agents"
-          class="nav-item ${this.isActive('/agents') ? 'active' : ''}"
-        >
+        <a href="#/agents" class="nav-item ${this.isActive('/agents') ? 'active' : ''}">
           <span>Agents</span>
         </a>
-        <a
-          href="#/skills"
-          class="nav-item ${this.isActive('/skills') ? 'active' : ''}"
-        >
+        <a href="#/skills" class="nav-item ${this.isActive('/skills') ? 'active' : ''}">
           <span>Skills</span>
         </a>
-        <a
-          href="#/tools"
-          class="nav-item ${this.isActive('/tools') ? 'active' : ''}"
-        >
+        <a href="#/tools" class="nav-item ${this.isActive('/tools') ? 'active' : ''}">
           <span>Tools</span>
         </a>
-        <a
-          href="#/mcp"
-          class="nav-item ${this.isActive('/mcp') ? 'active' : ''}"
-        >
+        <a href="#/mcp" class="nav-item ${this.isActive('/mcp') ? 'active' : ''}">
           <span>MCP</span>
         </a>
+      </nav>
+    `;
+  }
+
+  private renderBackIcon() {
+    return html`
+      <svg
+        class="back-icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M15 18l-6-6 6-6"></path>
+      </svg>
+    `;
+  }
+
+  private renderProjectNav() {
+    return html`
+      <nav>
+        <a href="#/" class="nav-item nav-back">${this.renderBackIcon()}<span>Dashboard</span></a>
+      </nav>
+      <div class="nav-section-label">Sessions</div>
+      <nav>
+        ${this.renderSessionList()}
+      </nav>
+    `;
+  }
+
+  private renderSessionNav() {
+    const backHref = this.sessionProjectSlug
+      ? `#/projects/${encodeURIComponent(this.sessionProjectSlug)}`
+      : '#/';
+    const backLabel = this.sessionProjectSlug ? 'Project' : 'Dashboard';
+    return html`
+      <nav>
+        <a href=${backHref} class="nav-item nav-back"
+          >${this.renderBackIcon()}<span>${backLabel}</span></a
+        >
+      </nav>
+      <div class="nav-section-label">Sessions</div>
+      <nav>
+        ${this.renderSessionList()}
       </nav>
     `;
   }
@@ -670,16 +550,22 @@ export class LeftNav extends LitElement {
   }
 
   render() {
+    if (this.path.startsWith('/projects/')) {
+      return this.renderProjectNav();
+    }
+    if (this.path.startsWith('/sessions/')) {
+      return this.renderSessionNav();
+    }
     if (
       this.path === '/' ||
-      this.path.startsWith('/projects') ||
-      this.path.startsWith('/sessions') ||
+      this.path === '/projects' ||
+      this.path.startsWith('/manual-import') ||
       this.path === '/agents' ||
       this.path === '/skills' ||
       this.path === '/tools' ||
       this.path === '/mcp'
     ) {
-      return this.renderDashboardNav();
+      return this.renderHomeNav();
     }
     if (this.path.startsWith('/settings') || this.path.startsWith('/storage')) {
       return this.renderSettingsNav();

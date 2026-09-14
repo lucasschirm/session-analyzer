@@ -10,8 +10,9 @@ const PASSKEY = 'e2e-passkey';
  *
  * Covered changes:
  * - UX-017: Header nav active state (2px solid white border-bottom)
- * - UX-018: Left-nav Projects collapsed on /projects list, expanded on
- *   specific project routes, with per-project stats
+ * - UX-018: Left-nav shows a flat Projects section on dashboard routes and
+ *   page-specific menus ("‹ Dashboard" + Sessions) on project routes — no
+ *   dropdowns.
  * - UX-019: Sync-confirm modal appears when syncing a saved connection,
  *   and a locked vault prompts for passkey before proceeding
  * - UX-020: Data-sources edit updates the URL hash
@@ -83,40 +84,58 @@ test.describe('Header navigation active state (UX-017)', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Left-nav Projects section (UX-018)', () => {
-  test('Projects section is collapsed on /projects list page', async ({ page }) => {
+  test('Projects section lists projects directly on the home menu (no dropdown)', async ({
+    page,
+  }) => {
+    await createProject(page, 'NavExpandTest');
+    // Reload to ensure the left-nav picks up the new project from the DB.
+    await page.reload();
+    await waitForAppReady(page);
     await page.goto('/#/projects');
     await waitForAppReady(page);
-    const projectsItem = page.locator('left-nav').locator('a.nav-item', { hasText: 'Projects' });
-    await expect(projectsItem).not.toHaveClass(/expanded/);
+
+    const leftNav = page.locator('left-nav');
+    // The Projects section label is present and projects render as links.
+    await expect(leftNav.locator('.nav-section-label', { hasText: 'Projects' })).toBeVisible();
+    const projectLink = leftNav.locator('.nav-project', { hasText: 'NavExpandTest' });
+    await expect(projectLink).toBeVisible({ timeout: 10000 });
+    // No expandable/dropdown affordances remain in the nav.
+    await expect(leftNav.locator('a.expanded')).toHaveCount(0);
+    await expect(leftNav.locator('button')).toHaveCount(0);
   });
 
-  test('Projects section auto-expands on a specific project route', async ({ page }) => {
+  test('project route shows a Dashboard back link and a Sessions section', async ({ page }) => {
     await createProject(page, 'NavExpandTest');
     // Navigate to the project behavior page by clicking the card
     await page.locator('.project-card', { hasText: 'NavExpandTest' }).click();
     await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
       timeout: 15000,
     });
-    const projectsItem = page.locator('left-nav').locator('a.nav-item', { hasText: 'Projects' });
-    await expect(projectsItem).toHaveClass(/expanded/);
+    const leftNav = page.locator('left-nav');
+    await expect(leftNav.locator('a.nav-back', { hasText: 'Dashboard' })).toBeVisible();
+    await expect(leftNav.locator('.nav-section-label', { hasText: 'Sessions' })).toBeVisible();
   });
 
-  test('project child links show session count stats', async ({ page }) => {
+  test('project rows show session count stats', async ({ page }) => {
     await createProject(page, 'NavStatsTest');
     // Reload to ensure the left-nav picks up the new project from the DB.
     await page.reload();
     await waitForAppReady(page);
-    // Navigate to the project behavior page
-    await page.goto('/#/projects');
-    await page.locator('.project-card', { hasText: 'NavStatsTest' }).click();
+    // The Projects section should show project rows with stats.
+    const stats = page.locator('left-nav .nav-project-stats');
+    await expect(stats.first()).toBeVisible({ timeout: 10000 });
+    // Stats should contain "session" text
+    await expect(stats.first()).toContainText(/session/i);
+  });
+
+  test('the Dashboard back link on a project route returns to the home page', async ({ page }) => {
+    await createProject(page, 'NavBackTest');
+    await page.locator('.project-card', { hasText: 'NavBackTest' }).click();
     await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
       timeout: 15000,
     });
-    // The expanded Projects section should show child links with stats
-    const childStats = page.locator('left-nav .nav-child-stats');
-    await expect(childStats.first()).toBeVisible({ timeout: 10000 });
-    // Stats should contain "session" text
-    await expect(childStats.first()).toContainText(/session/i);
+    await page.locator('left-nav').locator('a.nav-back', { hasText: 'Dashboard' }).click();
+    await expect(page).toHaveURL(/#\/$/, { timeout: 10000 });
   });
 });
 

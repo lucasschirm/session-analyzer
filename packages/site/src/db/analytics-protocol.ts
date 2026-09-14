@@ -148,6 +148,13 @@ export interface DeleteSessionMetricsRequest extends BaseRequest {
   readonly sessionId: string;
 }
 
+/** Renames a session: writes the user-supplied title to `sessions.ai_title`. */
+export interface SetSessionTitleRequest extends BaseRequest {
+  readonly type: 'setSessionTitle';
+  readonly sessionId: string;
+  readonly title: string;
+}
+
 export interface ExportAnalyticsDatabaseRequest extends BaseRequest {
   readonly type: 'exportAnalyticsDatabase';
 }
@@ -190,6 +197,7 @@ export type AnalyticsRequest =
   | ResolveProjectIdRequest
   | DeleteProjectRequest
   | DeleteSessionMetricsRequest
+  | SetSessionTitleRequest
   | ExportAnalyticsDatabaseRequest
   | VacuumAnalyticsDatabaseRequest
   | CheckpointAnalyticsDatabaseRequest
@@ -210,6 +218,7 @@ export type AnalyticsRequestPayload =
   | Omit<ResolveProjectIdRequest, 'id'>
   | Omit<DeleteProjectRequest, 'id'>
   | Omit<DeleteSessionMetricsRequest, 'id'>
+  | Omit<SetSessionTitleRequest, 'id'>
   | Omit<ExportAnalyticsDatabaseRequest, 'id'>
   | Omit<VacuumAnalyticsDatabaseRequest, 'id'>
   | Omit<CheckpointAnalyticsDatabaseRequest, 'id'>

@@ -52,8 +52,8 @@ async function importSessionIntoProject(
   return sessionInput.inputValue();
 }
 
-test.describe('Project Sessions Expansion and Navigation (UX-028)', () => {
-  test('left-nav expands project sessions and navigates to session detail', async ({ page }) => {
+test.describe('Page-specific left-nav menus (UX-028)', () => {
+  test('project and session menus navigate without dropdowns', async ({ page }) => {
     const projectName = 'NavSessionExpTest';
     await importSessionIntoProject(page, projectName, ['claude-rich-session.jsonl']);
 
@@ -64,27 +64,86 @@ test.describe('Project Sessions Expansion and Navigation (UX-028)', () => {
     const leftNav = page.locator('left-nav');
     await expect(leftNav).toBeVisible();
 
-    // Click Projects to expand the projects list
-    const projectsItem = leftNav.locator('a.nav-item', { hasText: 'Projects' });
-    await projectsItem.click();
+    // The home menu lists projects directly (no dropdown) with a
+    // session-count summary.
+    const projectLink = leftNav.locator('.nav-project', { hasText: projectName });
+    await expect(projectLink).toBeVisible({ timeout: 15000 });
+    await expect(projectLink.locator('.nav-project-stats')).toContainText(/session/i);
 
-    // Find our project group in the navigation
-    const projectRow = leftNav.locator('.nav-project-row', { hasText: projectName });
-    await expect(projectRow).toBeVisible({ timeout: 10000 });
+    // Clicking a project opens the project menu: "< Dashboard" back link and
+    // a Sessions section with the most recent sessions. The project link uses
+    // the control-DB readable slug (lowercase), so match case-insensitively.
+    await projectLink.click();
+    await expect(page).toHaveURL(new RegExp(`#/projects/${projectName}`, 'i'), {
+      timeout: 10000,
+    });
+    await expect(leftNav.locator('a.nav-back', { hasText: 'Dashboard' })).toBeVisible();
+    await expect(leftNav.locator('.nav-section-label', { hasText: 'Sessions' })).toBeVisible();
 
-    // Toggle chevron to expand sessions
-    const chevronBtn = projectRow.locator('.project-chevron-btn');
-    await chevronBtn.click();
-    await expect(chevronBtn).toHaveAttribute('aria-expanded', 'true');
-
-    // Verify session item is displayed
+    // The rich fixture's ai-title labels the session link.
     const sessionItem = leftNav.locator('.nav-session-item');
-    await expect(sessionItem.first()).toBeVisible({ timeout: 10000 });
+    await expect(sessionItem.first()).toBeVisible({ timeout: 15000 });
+    await expect(sessionItem.first()).toContainText('Rich Session Demo');
 
-    // Click session item to navigate to session evidence page
+    // Clicking a session opens the session menu: "< Project" back link, and
+    // the session page heading shows the session title.
     await sessionItem.first().click();
     await expect(page).toHaveURL(/#\/sessions\//);
-    await expect(page.locator('session-evidence-view')).toBeVisible({ timeout: 15000 });
+
+    const projectBack = leftNav.locator('a.nav-back', { hasText: 'Project' });
+    await expect(projectBack).toBeVisible({ timeout: 15000 });
+    await expect(projectBack).toHaveAttribute('href', new RegExp(`#/projects/${projectName}`));
+    await expect(
+      page.locator('session-evidence-view').getByRole('heading', { name: 'Rich Session Demo' }),
+    ).toBeVisible({ timeout: 15000 });
+
+    // "< Project" returns to the project page; "< Dashboard" returns home.
+    await projectBack.click();
+    await expect(page).toHaveURL(new RegExp(`#/projects/${projectName}`), { timeout: 10000 });
+    await leftNav.locator('a.nav-back', { hasText: 'Dashboard' }).click();
+    await expect(page).toHaveURL(/#\/$/, { timeout: 10000 });
+  });
+
+  test('session page supports renaming the session title', async ({ page }) => {
+    const projectName = 'NavSessionRenameTest';
+    await importSessionIntoProject(page, projectName, ['claude-rich-session.jsonl']);
+
+    await page.goto('/#/');
+    await waitForAppReady(page);
+    const leftNav = page.locator('left-nav');
+    await leftNav.locator('.nav-project', { hasText: projectName }).click();
+    await leftNav.locator('.nav-session-item').first().click();
+    await expect(page).toHaveURL(/#\/sessions\//);
+
+    const evidenceView = page.locator('session-evidence-view');
+    await expect(evidenceView.getByRole('heading', { name: 'Rich Session Demo' })).toBeVisible({
+      timeout: 15000,
+    });
+
+    // Rename via the header edit affordance.
+    await evidenceView.getByRole('button', { name: 'Rename session' }).click();
+    const titleInput = evidenceView.getByLabel('Session title');
+    await titleInput.fill('My Renamed Session');
+    await evidenceView.getByRole('button', { name: 'Save' }).click();
+
+    await expect(evidenceView.getByRole('heading', { name: 'My Renamed Session' })).toBeVisible({
+      timeout: 10000,
+    });
+
+    // The rename propagates to the left-nav session list after the
+    // data-change broadcast.
+    await expect(
+      leftNav.locator('.nav-session-item', { hasText: 'My Renamed Session' }),
+    ).toBeVisible({ timeout: 15000 });
+
+    // The new title survives a reload (persisted in the analytics DB).
+    await page.reload();
+    await waitForAppReady(page);
+    await expect(
+      page.locator('session-evidence-view').getByRole('heading', {
+        name: 'My Renamed Session',
+      }),
+    ).toBeVisible({ timeout: 15000 });
   });
 });
 
@@ -106,7 +165,7 @@ test.describe('Dedicated Project Sessions Page (UX-029)', () => {
     await expect(heading).not.toContainText('proj-');
 
     // Verify breadcrumb links
-    const dashboardLink = sessionsPage.locator('.breadcrumbs a', { hasText: '< Dashboard' });
+    const dashboardLink = sessionsPage.locator('.breadcrumbs a', { hasText: 'Dashboard' });
     await expect(dashboardLink).toBeVisible();
     const behaviorLink = sessionsPage.locator('.breadcrumbs a', { hasText: 'Project Behavior' });
     await expect(behaviorLink).toBeVisible();

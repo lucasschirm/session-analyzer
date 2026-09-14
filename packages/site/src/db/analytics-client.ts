@@ -422,6 +422,22 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
   }
 
   /**
+   * Renames a session by writing `sessions.ai_title` in the analytics DB.
+   * The worker resolves the session by internal or native session id and
+   * broadcasts a `data-change` event so dependent views can refresh.
+   */
+  async setSessionTitle(sessionId: string, title: string): Promise<void> {
+    const response = await this.call({
+      type: 'setSessionTitle',
+      sessionId,
+      title,
+    });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+  }
+
+  /**
    * Serializes the analytics SQLite database as bytes (a valid SQLite file)
    * for download/backup from the Storage settings page.
    */
