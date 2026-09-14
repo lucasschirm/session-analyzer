@@ -1,6 +1,17 @@
-import { FRESH_SCHEMA_SQL, SessionContextSeriesStore } from '@lucasschirm/sal-db-core';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  FRESH_SCHEMA_SQL,
+  SessionContextSeriesStore,
+  type SqliteExecutor,
+} from '@lucasschirm/sal-db-core';
+import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WasmSqliteExecutor } from '../../../db-core/tests/helpers/sqlite-wasm-adapter.js';
+import { createAnalyticsDataSource } from '../../src/analytics.js';
+import { createSha256ContentHasher, type IngestionContext } from '../../src/ingestion.js';
+import { ManualIngestionOrchestrator } from '../../src/manual-ingestion.js';
 import {
   ANALYTICS_PROCESSING_VERSION,
   getStoredProcessingVersion,
@@ -8,7 +19,29 @@ import {
   rebuildAnalyticsDerivedData,
   setStoredProcessingVersion,
 } from '../../src/processing-version.js';
+import { DefaultReprocessingEngine } from '../../src/reprocessing.js';
 import * as rollupReconciliation from '../../src/rollup-reconciliation.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const fixturesDir = join(__dirname, '../../../parsers/claude-session-parser/tests/fixtures');
+
+function readFixture(name: string): string {
+  return readFileSync(join(fixturesDir, name), 'utf8');
+}
+
+function createIngestionContext(executor: SqliteExecutor, content: string): IngestionContext {
+  return {
+    executor,
+    hasher: createSha256ContentHasher(),
+    registry: createDefaultRegistry(),
+    // Resolves retained/reacquirable artifacts to the fixture content so the
+    // re-ingest path can re-transform the session.
+    resolver: {
+      resolve: async (ref) => ({ ...ref, content: new TextEncoder().encode(content) }),
+    },
+    analysisReleaseId: 'ar-default',
+  };
+}
 
 describe('processing-version', () => {
   let executor: WasmSqliteExecutor;
@@ -81,48 +114,48 @@ describe('processing-version', () => {
       step: 'Backfilling context series',
       completed: 0,
       total: 1,
-      phase: 1,
-      totalPhases: 3,
+      phase: 2,
+      totalPhases: 4,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(2, {
       step: 'Backfilling context series',
       completed: 1,
       total: 1,
-      phase: 1,
-      totalPhases: 3,
+      phase: 2,
+      totalPhases: 4,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(3, {
       step: 'Rebuilding session rollups',
       completed: 0,
       total: 1,
-      phase: 2,
-      totalPhases: 3,
+      phase: 3,
+      totalPhases: 4,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(4, {
       step: 'Rebuilding session rollups',
       completed: 1,
       total: 1,
-      phase: 2,
-      totalPhases: 3,
+      phase: 3,
+      totalPhases: 4,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(5, {
       step: 'Recomputing project rollups',
       completed: 0,
       total: 1,
-      phase: 3,
-      totalPhases: 3,
+      phase: 4,
+      totalPhases: 4,
       unit: 'analytics calculations',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(6, {
       step: 'Recomputing project rollups',
       completed: 1,
       total: 1,
-      phase: 3,
-      totalPhases: 3,
+      phase: 4,
+      totalPhases: 4,
       unit: 'analytics calculations',
     });
   });
@@ -287,5 +320,122 @@ describe('processing-version', () => {
     const counts = Object.fromEntries(rows.map((r) => [String(r.event_type), Number(r.c)]));
     expect(counts['component_evidence_link']).toBeUndefined();
     expect(counts['message']).toBe(1);
+  });
+
+  describe('stale component-data regeneration', () => {
+    async function ingestFixtureSession(context: IngestionContext): Promise<string> {
+      const orchestrator = new ManualIngestionOrchestrator(context);
+      const receipt = await orchestrator.ingestManual({
+        projectId: 'project-fixture',
+        sessionId: 'sess-happy-1',
+        source: { sourceId: 'default', environmentId: 'dev' },
+        harness: 'claude-code',
+        artifacts: [
+          {
+            relativePath: 'session/transcript.jsonl',
+            mediaType: 'application/jsonl',
+            content: readFixture('t2-happy-path.jsonl'),
+          },
+        ],
+      });
+      expect(receipt.status).toBe('committed');
+      return receipt.sessionId;
+    }
+
+    async function countRows(table: string, sessionId: string): Promise<number> {
+      const { rows } = await executor.exec(
+        `SELECT COUNT(*) AS c FROM ${table} WHERE session_id = ?`,
+        [sessionId],
+      );
+      return Number(rows[0]?.c ?? 0);
+    }
+
+    it('re-ingests stale sessions from retained artifacts, restoring exposures and stats', async () => {
+      const context = createIngestionContext(executor, readFixture('t2-happy-path.jsonl'));
+      const sessionId = await ingestFixtureSession(context);
+      const { rows: before } = await executor.exec(
+        'SELECT current_generation_id FROM sessions WHERE id = ?',
+        [sessionId],
+      );
+      const originalGenerationId = String(before[0]?.current_generation_id);
+
+      // Simulate the pre-exposures/stats contract: drop the derived rows the
+      // older ingest path never wrote.
+      await executor.exec(`DELETE FROM session_component_exposures WHERE session_id = ?`, [
+        sessionId,
+      ]);
+      await executor.exec(`DELETE FROM session_component_stats WHERE session_id = ?`, [sessionId]);
+
+      // Re-ingest under a different analysis release — the supersession path a
+      // real version bump takes — which must mint a fresh generation.
+      const reprocessing = new DefaultReprocessingEngine({
+        ...context,
+        analysisReleaseId: 'ar-v2',
+      });
+      await rebuildAnalyticsDerivedData(executor, undefined, {
+        regenerateSession: async (id) =>
+          (await reprocessing.reingestSession(id, 'ar-v2')) === 'committed',
+      });
+
+      // The re-ingest commits a fresh generation carrying the new derived rows.
+      const { rows: gens } = await executor.exec(
+        `SELECT current_generation_id FROM sessions WHERE id = ?`,
+        [sessionId],
+      );
+      expect(String(gens[0]?.current_generation_id)).not.toBe(originalGenerationId);
+
+      expect(await countRows('session_component_exposures', sessionId)).toBeGreaterThan(0);
+      expect(await countRows('session_component_stats', sessionId)).toBeGreaterThan(0);
+
+      const ds = createAnalyticsDataSource(executor);
+      const report = await ds.session.getUtilizationReport(sessionId);
+      expect(report.sessionDomains.tool.availableCount).toBeGreaterThan(0);
+      expect(report.sessionDomains.tool.usedCount).toBeGreaterThan(0);
+    });
+
+    it('backfills exposures from snapshot_components when re-ingest is unavailable', async () => {
+      const context = createIngestionContext(executor, readFixture('t2-happy-path.jsonl'));
+      const sessionId = await ingestFixtureSession(context);
+
+      await executor.exec(`DELETE FROM session_component_exposures WHERE session_id = ?`, [
+        sessionId,
+      ]);
+      await executor.exec(`DELETE FROM session_component_stats WHERE session_id = ?`, [sessionId]);
+
+      // No regenerateSession dep — only the snapshot_components fallback runs.
+      await rebuildAnalyticsDerivedData(executor, undefined);
+
+      const expected = await executor.exec(
+        `SELECT COUNT(*) AS c FROM snapshot_components sc
+         JOIN configuration_snapshots cs ON cs.id = sc.snapshot_id
+         WHERE cs.session_id = ?`,
+        [sessionId],
+      );
+      expect(await countRows('session_component_exposures', sessionId)).toBe(
+        Number(expected.rows[0]?.c),
+      );
+
+      const ds = createAnalyticsDataSource(executor);
+      const report = await ds.session.getUtilizationReport(sessionId);
+      expect(report.sessionDomains.tool.availableCount).toBeGreaterThan(0);
+    });
+
+    it('skips regeneration for sessions already on the current contract', async () => {
+      const context = createIngestionContext(executor, readFixture('t2-happy-path.jsonl'));
+      const sessionId = await ingestFixtureSession(context);
+
+      const reprocessing = new DefaultReprocessingEngine(context);
+      // A same-generation re-ingest dedups instead of committing a new one.
+      expect(await reprocessing.reingestSession(sessionId)).toBe('skipped');
+
+      const regen = vi.fn(
+        async (id: string) => (await reprocessing.reingestSession(id)) === 'committed',
+      );
+      await rebuildAnalyticsDerivedData(executor, undefined, { regenerateSession: regen });
+
+      // Session is fully derived — never flagged stale.
+      expect(regen).not.toHaveBeenCalled();
+      expect(await countRows('session_component_exposures', sessionId)).toBeGreaterThan(0);
+    });
   });
 });

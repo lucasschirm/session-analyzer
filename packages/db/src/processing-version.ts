@@ -1,5 +1,9 @@
 import type { RollupPolicy, SqliteExecutor, SqliteTransaction } from '@lucasschirm/sal-db-core';
-import { listNormalizedTimingEventRows, SessionContextSeriesStore } from '@lucasschirm/sal-db-core';
+import {
+  listNormalizedTimingEventRows,
+  SessionComponentExposureStore,
+  SessionContextSeriesStore,
+} from '@lucasschirm/sal-db-core';
 import {
   collectSeriesModels,
   computeRawTimingPoints,
@@ -27,7 +31,7 @@ declare const console:
  * the stored version is older, runs {@link rebuildAnalyticsDerivedData}
  * before serving queries.
  */
-export const ANALYTICS_PROCESSING_VERSION = 10;
+export const ANALYTICS_PROCESSING_VERSION = 11;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.
@@ -52,6 +56,20 @@ export interface RebuildProgress {
 }
 
 export type RebuildProgressCallback = (progress: RebuildProgress) => void;
+
+export interface AnalyticsRebuildDeps {
+  /**
+   * Re-ingests one session from its retained artifacts so the whole
+   * per-session analytics — evidence, metrics, snapshot, exposures, stats —
+   * is regenerated through the normal commit path. Returns true when a new
+   * generation was committed. Optional: when absent (or when a session's
+   * artifacts are no longer resolvable) the rebuild still backfills
+   * session_component_exposures from persisted snapshot_components.
+   */
+  readonly regenerateSession?: (sessionId: string) => Promise<boolean>;
+}
+
+const REBUILD_PHASES = 4;
 
 /**
  * Reads the stored analytics processing version, or `0` when no row exists
@@ -129,6 +147,131 @@ async function listSessionsForRebuild(executor: SqliteExecutor): Promise<readonl
   }));
 }
 
+/**
+ * Sessions ingested before session_component_exposures /
+ * session_component_stats were persisted carry a current generation but no
+ * component-utilization data. Returns ids of sessions whose current
+ * generation has snapshot_components yet no exposures or no stats.
+ */
+async function listSessionsMissingComponentData(
+  executor: SqliteExecutor,
+): Promise<readonly string[]> {
+  const { rows } = await executor.exec(
+    `SELECT DISTINCT s.id
+     FROM sessions s
+     JOIN configuration_snapshots cs
+       ON cs.session_id = s.id
+      AND COALESCE(cs.generation_id, '') = COALESCE(s.current_generation_id, '')
+     JOIN snapshot_components sc ON sc.snapshot_id = cs.id
+     WHERE s.current_generation_id IS NOT NULL
+       AND (
+         NOT EXISTS (SELECT 1 FROM session_component_exposures e WHERE e.session_id = s.id)
+         OR NOT EXISTS (SELECT 1 FROM session_component_stats st WHERE st.session_id = s.id)
+       )`,
+  );
+  return rows.map((row) => String(row.id));
+}
+
+/**
+ * SQL-only fallback that recreates session_component_exposures from the
+ * persisted snapshot_components of each session's current generation — the
+ * same component set the ingest path would have exposed. Only fills
+ * (session, component, generation) triples that are still missing; matching
+ * the ingest path, post_session snapshots never produce exposures.
+ */
+async function backfillSessionComponentExposures(executor: SqliteExecutor): Promise<void> {
+  const { rows } = await executor.exec(
+    `SELECT cs.session_id, cs.id AS snapshot_id, cs.generation_id, cs.ordering,
+            cs.capture_time, cs.environment_id, cv.component_id
+     FROM configuration_snapshots cs
+     JOIN sessions s
+       ON s.id = cs.session_id
+      AND COALESCE(s.current_generation_id, '') = COALESCE(cs.generation_id, '')
+     JOIN snapshot_components sc ON sc.snapshot_id = cs.id
+     JOIN component_versions cv ON cv.id = sc.component_version_id
+     WHERE cs.session_id IS NOT NULL
+       AND cs.temporal_role <> 'post_session'
+       AND NOT EXISTS (
+         SELECT 1 FROM session_component_exposures e
+         WHERE e.session_id = cs.session_id
+           AND e.component_id = cv.component_id
+           AND COALESCE(e.generation_id, '') = COALESCE(cs.generation_id, '')
+       )
+     ORDER BY cs.capture_time, cs.ordering`,
+  );
+  if (rows.length === 0) return;
+
+  await executor.transaction(async (tx) => {
+    for (const row of rows) {
+      try {
+        await SessionComponentExposureStore.insert(tx, {
+          sessionId: String(row.session_id),
+          componentId: String(row.component_id),
+          environmentId: String(row.environment_id ?? ''),
+          status: 'available_not_loaded',
+          startSequence: Number(row.ordering ?? 0),
+          endSequence: null,
+          startTime: Number(row.capture_time ?? 0),
+          endTime: null,
+          snapshotId: String(row.snapshot_id),
+          generationId: row.generation_id === null ? null : String(row.generation_id),
+        });
+      } catch (err) {
+        console?.warn?.(
+          `[rebuildAnalyticsDerivedData] Failed to backfill exposure for session ${String(row.session_id)}:`,
+          err,
+        );
+      }
+    }
+  });
+}
+
+/**
+ * Re-ingests sessions whose persisted component data predates the current
+ * derivation contract, then backfills exposures for any still missing.
+ * Per-session failures are isolated — the rebuild always completes.
+ */
+async function regenerateStaleSessionComponentData(
+  executor: SqliteExecutor,
+  onProgress: RebuildProgressCallback | undefined,
+  deps?: AnalyticsRebuildDeps,
+): Promise<void> {
+  const stale = await listSessionsMissingComponentData(executor);
+  const total = stale.length;
+  if (total > 0) {
+    onProgress?.({
+      step: 'Regenerating session analytics',
+      completed: 0,
+      total,
+      phase: 1,
+      totalPhases: REBUILD_PHASES,
+      unit: 'sessions',
+    });
+    let completed = 0;
+    for (const sessionId of stale) {
+      try {
+        await deps?.regenerateSession?.(sessionId);
+      } catch (err) {
+        console?.warn?.(
+          `[rebuildAnalyticsDerivedData] Failed to regenerate session ${sessionId}:`,
+          err,
+        );
+      }
+      completed += 1;
+      onProgress?.({
+        step: 'Regenerating session analytics',
+        completed,
+        total,
+        phase: 1,
+        totalPhases: REBUILD_PHASES,
+        unit: 'sessions',
+      });
+    }
+  }
+
+  await backfillSessionComponentExposures(executor);
+}
+
 async function rebuildSingleSession(
   executor: SqliteExecutor,
   session: SessionRow,
@@ -203,8 +346,8 @@ async function backfillContextSeries(
     step: 'Backfilling context series',
     completed: 0,
     total,
-    phase: 1,
-    totalPhases: 3,
+    phase: 2,
+    totalPhases: REBUILD_PHASES,
     unit: 'sessions processed',
   });
   let completed = 0;
@@ -241,8 +384,8 @@ async function backfillContextSeries(
         step: 'Backfilling context series',
         completed,
         total,
-        phase: 1,
-        totalPhases: 3,
+        phase: 2,
+        totalPhases: REBUILD_PHASES,
         unit: 'sessions processed',
       });
     }
@@ -262,11 +405,17 @@ async function backfillContextSeries(
 export async function rebuildAnalyticsDerivedData(
   executor: SqliteExecutor,
   onProgress?: RebuildProgressCallback,
+  deps?: AnalyticsRebuildDeps,
 ): Promise<void> {
   // Drop component_evidence_link rows written before version 8: the skeleton
   // persistence stripped every link field, so those rows are empty-payload
   // bloat that no read path queries. New generations no longer write them.
   await executor.exec(`DELETE FROM normalized_events WHERE event_type = 'component_evidence_link'`);
+
+  // Step 1: regenerate sessions whose persisted component data predates the
+  // exposure/stats contract — full re-ingest from retained artifacts where
+  // possible, exposure backfill from snapshot_components otherwise.
+  await regenerateStaleSessionComponentData(executor, onProgress, deps);
 
   const sessions = await listSessionsForRebuild(executor);
   if (sessions.length === 0) {
@@ -314,8 +463,8 @@ export async function rebuildAnalyticsDerivedData(
     step: 'Rebuilding session rollups',
     completed: 0,
     total: totalSessions,
-    phase: 2,
-    totalPhases: 3,
+    phase: 3,
+    totalPhases: REBUILD_PHASES,
     unit: 'sessions processed',
   });
 
@@ -328,8 +477,8 @@ export async function rebuildAnalyticsDerivedData(
       step: 'Rebuilding session rollups',
       completed,
       total: totalSessions,
-      phase: 2,
-      totalPhases: 3,
+      phase: 3,
+      totalPhases: REBUILD_PHASES,
       unit: 'sessions processed',
     });
   }
@@ -342,8 +491,8 @@ export async function rebuildAnalyticsDerivedData(
     step: 'Recomputing project rollups',
     completed: 0,
     total: totalGroups,
-    phase: 3,
-    totalPhases: 3,
+    phase: 4,
+    totalPhases: REBUILD_PHASES,
     unit: 'analytics calculations',
   });
   for (const group of groupList) {
@@ -370,8 +519,8 @@ export async function rebuildAnalyticsDerivedData(
       step: 'Recomputing project rollups',
       completed: groupsCompleted,
       total: totalGroups,
-      phase: 3,
-      totalPhases: 3,
+      phase: 4,
+      totalPhases: REBUILD_PHASES,
       unit: 'analytics calculations',
     });
   }

@@ -4,6 +4,8 @@ import {
   ComparisonCohortStore,
   ComponentAvailabilityEventStore,
   ComponentContextEventStore,
+  deterministicComponentAvailabilityEventId,
+  deterministicComponentContextEventId,
   SessionComponentExposureStore,
 } from '@lucasschirm/sal-db-core';
 
@@ -142,35 +144,63 @@ export class ComponentLifecycleEngine {
       const contextType = lifecycleToContextType(event.event_type);
 
       if (availabilityType) {
-        const id = await ComponentAvailabilityEventStore.insert(tx, {
-          componentId: event.component_id,
-          environmentId: event.environment_id,
-          sessionId,
-          eventType: availabilityType,
-          snapshotId: event.snapshot_id,
-          generationId: event.generation_id,
-          startTime: captureTime,
-          source: 'component-lifecycle',
-          safeMetadata: makeSafeMetadata(event.id, event.before_version_id, event.after_version_id),
-          createdAt: event.created_at,
-        });
+        // Identity-keyed observation: a replacement generation re-observing
+        // the same snapshot re-derives the same event — reuse the row.
+        const id = deterministicComponentAvailabilityEventId(
+          event.component_id,
+          event.environment_id,
+          availabilityType,
+          captureTime,
+        );
+        if (!(await ComponentAvailabilityEventStore.getById(tx, event.component_id, id))) {
+          await ComponentAvailabilityEventStore.insert(tx, {
+            id,
+            componentId: event.component_id,
+            environmentId: event.environment_id,
+            sessionId,
+            eventType: availabilityType,
+            snapshotId: event.snapshot_id,
+            generationId: event.generation_id,
+            startTime: captureTime,
+            source: 'component-lifecycle',
+            safeMetadata: makeSafeMetadata(
+              event.id,
+              event.before_version_id,
+              event.after_version_id,
+            ),
+            createdAt: event.created_at,
+          });
+        }
         availabilityEventIds.push(id);
       }
 
       if (contextType) {
-        const id = await ComponentContextEventStore.insert(tx, {
-          componentId: event.component_id,
-          environmentId: event.environment_id,
-          sessionId,
-          eventType: contextType,
-          snapshotId: event.snapshot_id,
-          generationId: event.generation_id,
-          startTime: captureTime,
-          sourcePointer: '',
-          source: 'component-lifecycle',
-          safeMetadata: makeSafeMetadata(event.id, event.before_version_id, event.after_version_id),
-          createdAt: event.created_at,
-        });
+        const id = deterministicComponentContextEventId(
+          event.component_id,
+          event.environment_id,
+          contextType,
+          captureTime,
+        );
+        if (!(await ComponentContextEventStore.getById(tx, event.component_id, id))) {
+          await ComponentContextEventStore.insert(tx, {
+            id,
+            componentId: event.component_id,
+            environmentId: event.environment_id,
+            sessionId,
+            eventType: contextType,
+            snapshotId: event.snapshot_id,
+            generationId: event.generation_id,
+            startTime: captureTime,
+            sourcePointer: '',
+            source: 'component-lifecycle',
+            safeMetadata: makeSafeMetadata(
+              event.id,
+              event.before_version_id,
+              event.after_version_id,
+            ),
+            createdAt: event.created_at,
+          });
+        }
         contextEventIds.push(id);
       }
     }
