@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import os from 'node:os';
 import type {
   CaptureAllowlist,
@@ -147,8 +148,11 @@ const DEVIN_SECURITY_BLOCKLIST: readonly string[] = [
  * `~/.config/devin/config.json` is expressed as a fixed home-relative
  * pattern instead (see {@link GLOBAL_ALLOWLIST_PATTERNS}).
  */
-export function resolveDevinConfigDir(env: Record<string, string | undefined>): string {
-  return resolveDevinDataRoot({ xdgDataHome: env.XDG_DATA_HOME, home: os.homedir() });
+export function resolveDevinConfigDir(
+  env: Record<string, string | undefined>,
+  existsFn: (path: string) => boolean = existsSync,
+): string {
+  return resolveDevinDataRoot({ xdgDataHome: env.XDG_DATA_HOME, home: os.homedir() }, existsFn);
 }
 
 export type ExecFileSyncLike = (

@@ -28,19 +28,26 @@ describe('DevinHarnessProfile', () => {
 });
 
 describe('resolveDevinConfigDir', () => {
-  it('resolves to ~/.local/share/devin/cli by default', () => {
-    const dir = resolveDevinConfigDir({});
+  it('resolves to ~/.local/share/devin/cli by default when no candidate exists', () => {
+    const dir = resolveDevinConfigDir({}, () => false);
     expect(dir).toBe(path.join(os.homedir(), '.local', 'share', 'devin', 'cli'));
   });
 
-  it('honors XDG_DATA_HOME when set', () => {
-    const dir = resolveDevinConfigDir({ XDG_DATA_HOME: '/custom/data' });
+  it('honors XDG_DATA_HOME when set and sessions.db exists there', () => {
+    const xdgRoot = path.join('/custom/data', 'devin', 'cli', 'sessions.db');
+    const dir = resolveDevinConfigDir({ XDG_DATA_HOME: '/custom/data' }, (p) => p === xdgRoot);
     expect(dir).toBe(path.join('/custom/data', 'devin', 'cli'));
   });
 
-  it('falls back when XDG_DATA_HOME is whitespace-only', () => {
-    const dir = resolveDevinConfigDir({ XDG_DATA_HOME: '   ' });
+  it('falls back when XDG_DATA_HOME is whitespace-only (and no candidate exists)', () => {
+    const dir = resolveDevinConfigDir({ XDG_DATA_HOME: '   ' }, () => false);
     expect(dir).toBe(path.join(os.homedir(), '.local', 'share', 'devin', 'cli'));
+  });
+
+  it('probes ~/.devin-xdg-data when XDG_DATA_HOME is unset and ~/.local/share has no sessions.db', () => {
+    const orcaRoot = path.join(os.homedir(), '.devin-xdg-data', 'devin', 'cli', 'sessions.db');
+    const dir = resolveDevinConfigDir({}, (p) => p === orcaRoot);
+    expect(dir).toBe(path.join(os.homedir(), '.devin-xdg-data', 'devin', 'cli'));
   });
 });
 
