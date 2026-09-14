@@ -26,7 +26,7 @@ export * from './extractor/reader.js';
 export * from './extractor/schema-registry.js';
 export * from './extractor/types.js';
 export { runHook } from './hook.js';
-export { runDevinHookSync } from './hook-common.js';
+export { buildDevinTelemetryRecord, runDevinHookSync } from './hook-common.js';
 export { runSessionEnd } from './session-end.js';
 export { runSessionStart } from './session-start.js';
 export * from './session-sync.js';

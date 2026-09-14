@@ -23,6 +23,7 @@ import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   buildStorageAdapter,
+  emitTelemetry,
   getDataDir,
   type HarnessProfile,
   type StorageAdapter,
@@ -35,6 +36,7 @@ import { DevinHarnessProfile } from './devin-profile.js';
 import { type DevinSnapshot, readDevinSnapshot } from './devin-snapshot.js';
 import { sessionContentHash } from './extractor/session-watermark.js';
 import type { DevinExtractedTables, DevinSessionRow } from './extractor/types.js';
+import { buildDevinTelemetryRecord } from './hook-common.js';
 import { isMainModule } from './is-main-module.js';
 import { captureDevinModels } from './models/capture.js';
 import {
@@ -136,7 +138,7 @@ async function syncChangedSession(
   stdout: NodeJS.WritableStream,
 ): Promise<DevinSessionSyncOutcome> {
   try {
-    return await runDevinSessionSync({
+    const outcome = await runDevinSessionSync({
       tables: snapshot.tables,
       schemaDescriptor: snapshot.schemaDescriptor,
       sessionId: session.id,
@@ -149,10 +151,12 @@ async function syncChangedSession(
       env,
       onProgress: (event) => writeWatcherLine(stdout, event.message),
     });
+    await emitTelemetry(dataDir, buildDevinTelemetryRecord(outcome, 'file-changed', 'watcher'));
+    return outcome;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     writeWatcherLine(stdout, `session ${session.id} failed: ${message}`);
-    return {
+    const failedOutcome: DevinSessionSyncOutcome = {
       sessionId: session.id,
       uploaded: 0,
       skipped: 0,
@@ -160,6 +164,11 @@ async function syncChangedSession(
       errors: [message],
       warnings: [],
     };
+    await emitTelemetry(
+      dataDir,
+      buildDevinTelemetryRecord(failedOutcome, 'file-changed', 'watcher'),
+    );
+    return failedOutcome;
   }
 }
 

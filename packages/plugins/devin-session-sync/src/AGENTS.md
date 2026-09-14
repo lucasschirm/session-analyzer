@@ -71,3 +71,27 @@ append-only, and is read in full and re-emitted every extraction pass.
 No binary `.db` files are checked in. `tests/extractor/fixtures/build-fixture-db.ts`
 builds a real on-disk `node:sqlite` database matching the verified v16 schema
 for every test.
+
+## Telemetry (non-negotiable invariant)
+
+Every sync path in this plugin MUST emit a telemetry record to
+`~/.sal-sync/logs/telemetry.jsonl` via `emitTelemetry()` from
+`@lucasschirm/sal-sync`, regardless of whether the sync succeeded or failed.
+This matches the Claude plugin's `capture.ts` path, which has always
+emitted telemetry. The Devin plugin's three sync paths are:
+
+- **Hook path** (`hook-common.ts`'s `runDevinHookSync`): emits after
+  `runDevinSessionSync` returns (success) and in the `catch` block (failure).
+- **Watcher path** (`watcher.ts`'s `syncChangedSession`): emits after
+  `runDevinSessionSync` returns (success) and in the `catch` block (failure).
+- **Manual sync path** (`cli/sync-command.ts`'s `syncOneSessionSafely`):
+  emits after `runDevinSessionSync` returns (success) and in the `catch`
+  block (failure).
+
+The shared helper `buildDevinTelemetryRecord()` in `hook-common.ts`
+converts a `DevinSessionSyncOutcome` to a `SyncTelemetry` record, filling
+the byte/duration fields the Devin pipeline doesn't track with zeros
+(matching `zeroRun()` in `packages/sync/src/cli/common.ts`). Any new sync
+path added to this plugin MUST call `emitTelemetry` on both success and
+failure — a sync that silently succeeds without a telemetry record is a
+bug, not a feature.
