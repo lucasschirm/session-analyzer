@@ -6,8 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${DEVIN_PLUGIN_ROOT}/bin/session-start"],
+            "command": "node \"$DEVIN_PLUGIN_ROOT/bin/session-start\"",
             "async": true
           }
         ]
@@ -18,8 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${DEVIN_PLUGIN_ROOT}/bin/hook"],
+            "command": "node \"$DEVIN_PLUGIN_ROOT/bin/hook\"",
             "async": true
           }
         ]
@@ -31,8 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${DEVIN_PLUGIN_ROOT}/bin/hook"],
+            "command": "node \"$DEVIN_PLUGIN_ROOT/bin/hook\"",
             "async": true
           }
         ]
@@ -44,8 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${DEVIN_PLUGIN_ROOT}/bin/session-end"],
+            "command": "node \"$DEVIN_PLUGIN_ROOT/bin/session-end\"",
             "timeout": 60
           }
         ]
