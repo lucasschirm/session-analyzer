@@ -771,6 +771,26 @@ export async function findSessionRef(
   };
 }
 
+/**
+ * Resolves a session's stored display title (`ai_title` falling back to
+ * `slug`) by canonical or native session id. Returns null when the session
+ * is unknown or has no stored title.
+ */
+export async function getSessionTitle(
+  queryable: Queryable,
+  sessionId: string,
+): Promise<string | null> {
+  const { rows } = await queryable.exec(
+    `SELECT ai_title, slug FROM sessions WHERE id = ? OR native_session_id = ? LIMIT 1`,
+    [sessionId, sessionId],
+  );
+  if (rows.length === 0) return null;
+  const row = rows[0];
+  const aiTitle = typeof row.ai_title === 'string' ? row.ai_title.trim() : '';
+  const slug = typeof row.slug === 'string' ? row.slug.trim() : '';
+  return aiTitle || slug || null;
+}
+
 export async function deleteSessionMetrics(queryable: Queryable, sessionId: string): Promise<void> {
   await queryable.exec('DELETE FROM metric_values WHERE session_id = ?', [sessionId]);
   await queryable.exec('DELETE FROM session_summaries WHERE session_id = ?', [sessionId]);

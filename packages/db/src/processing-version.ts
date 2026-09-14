@@ -31,7 +31,7 @@ declare const console:
  * the stored version is older, runs {@link rebuildAnalyticsDerivedData}
  * before serving queries.
  */
-export const ANALYTICS_PROCESSING_VERSION = 11;
+export const ANALYTICS_PROCESSING_VERSION = 12;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.
@@ -69,7 +69,7 @@ export interface AnalyticsRebuildDeps {
   readonly regenerateSession?: (sessionId: string) => Promise<boolean>;
 }
 
-const REBUILD_PHASES = 4;
+const REBUILD_PHASES = 5;
 
 /**
  * Reads the stored analytics processing version, or `0` when no row exists
@@ -272,6 +272,51 @@ async function regenerateStaleSessionComponentData(
   await backfillSessionComponentExposures(executor);
 }
 
+/**
+ * Sessions ingested before transformers emitted a first-prompt
+ * `fallbackTitle` carry no `ai_title`. Re-ingesting them fills `ai_title`
+ * only while it is still empty, so user-set titles are never touched.
+ */
+async function listUntitledSessions(executor: SqliteExecutor): Promise<readonly string[]> {
+  const { rows } = await executor.exec(
+    `SELECT id FROM sessions
+     WHERE current_generation_id IS NOT NULL
+       AND (ai_title IS NULL OR TRIM(ai_title) = '')
+     ORDER BY id`,
+    [],
+  );
+  return rows.map((row) => String(row.id));
+}
+
+async function regenerateUntitledSessionTitles(
+  executor: SqliteExecutor,
+  onProgress: RebuildProgressCallback | undefined,
+  deps?: AnalyticsRebuildDeps,
+): Promise<void> {
+  const untitled = await listUntitledSessions(executor);
+  const total = untitled.length;
+  let completed = 0;
+  for (const sessionId of untitled) {
+    try {
+      await deps?.regenerateSession?.(sessionId);
+    } catch (err) {
+      console?.warn?.(
+        `[rebuildAnalyticsDerivedData] Failed to regenerate title for session ${sessionId}:`,
+        err,
+      );
+    }
+    completed += 1;
+    onProgress?.({
+      step: 'Backfilling session titles',
+      completed,
+      total,
+      phase: 2,
+      totalPhases: REBUILD_PHASES,
+      unit: 'sessions',
+    });
+  }
+}
+
 async function rebuildSingleSession(
   executor: SqliteExecutor,
   session: SessionRow,
@@ -346,7 +391,7 @@ async function backfillContextSeries(
     step: 'Backfilling context series',
     completed: 0,
     total,
-    phase: 2,
+    phase: 3,
     totalPhases: REBUILD_PHASES,
     unit: 'sessions processed',
   });
@@ -384,7 +429,7 @@ async function backfillContextSeries(
         step: 'Backfilling context series',
         completed,
         total,
-        phase: 2,
+        phase: 3,
         totalPhases: REBUILD_PHASES,
         unit: 'sessions processed',
       });
@@ -417,13 +462,18 @@ export async function rebuildAnalyticsDerivedData(
   // possible, exposure backfill from snapshot_components otherwise.
   await regenerateStaleSessionComponentData(executor, onProgress, deps);
 
+  // Step 2: regenerate untitled sessions so the first-prompt fallbackTitle
+  // derivation backfills ai_title. Renames and real ai-titles are never
+  // touched — ingestion only fills empty title fields.
+  await regenerateUntitledSessionTitles(executor, onProgress, deps);
+
   const sessions = await listSessionsForRebuild(executor);
   if (sessions.length === 0) {
     await setStoredProcessingVersion(executor, ANALYTICS_PROCESSING_VERSION);
     return;
   }
 
-  // Step 1: materialize context-growth series for sessions whose current
+  // Step 3: materialize context-growth series for sessions whose current
   // generation predates the table, so the context chart reads
   // session_context_series instead of normalized_events.
   await backfillContextSeries(executor, onProgress);
@@ -451,7 +501,7 @@ export async function rebuildAnalyticsDerivedData(
     return policy;
   }
 
-  // Step 2: re-apply rollup contributions per session. This repopulates the
+  // Step 4: re-apply rollup contributions per session. This repopulates the
   // model dimension from model_requests and is the bulk of the work.
   // We pass skipBucketRecompute: true because Step 3 recomputes all project and
   // portfolio rollups in bulk in a single efficient pass.
@@ -463,7 +513,7 @@ export async function rebuildAnalyticsDerivedData(
     step: 'Rebuilding session rollups',
     completed: 0,
     total: totalSessions,
-    phase: 3,
+    phase: 4,
     totalPhases: REBUILD_PHASES,
     unit: 'sessions processed',
   });
@@ -477,13 +527,13 @@ export async function rebuildAnalyticsDerivedData(
       step: 'Rebuilding session rollups',
       completed,
       total: totalSessions,
-      phase: 3,
+      phase: 4,
       totalPhases: REBUILD_PHASES,
       unit: 'sessions processed',
     });
   }
 
-  // Step 3: recompute daily/dimension rollup buckets per project+portfolio.
+  // Step 5: recompute daily/dimension rollup buckets per project+portfolio.
   const groupList = [...projectGroups.values()];
   const totalGroups = groupList.length;
   let groupsCompleted = 0;
@@ -491,7 +541,7 @@ export async function rebuildAnalyticsDerivedData(
     step: 'Recomputing project rollups',
     completed: 0,
     total: totalGroups,
-    phase: 4,
+    phase: 5,
     totalPhases: REBUILD_PHASES,
     unit: 'analytics calculations',
   });
@@ -519,13 +569,13 @@ export async function rebuildAnalyticsDerivedData(
       step: 'Recomputing project rollups',
       completed: groupsCompleted,
       total: totalGroups,
-      phase: 4,
+      phase: 5,
       totalPhases: REBUILD_PHASES,
       unit: 'analytics calculations',
     });
   }
 
-  // Step 4: persist the new processing version so the rebuild does not run
+  // Step 6: persist the new processing version so the rebuild does not run
   // again on the next boot.
   await setStoredProcessingVersion(executor, ANALYTICS_PROCESSING_VERSION);
 }

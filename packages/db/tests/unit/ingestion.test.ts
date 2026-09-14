@@ -187,6 +187,77 @@ describe('DefaultIngestionOrchestrator', () => {
     expect(diff.contentAvailable).toBe(true);
   });
 
+  it('fills ai_title from the first-prompt fallback and never replaces a stored title', async () => {
+    const entry = (obj: Record<string, unknown>) =>
+      JSON.stringify({ sessionId: 'sess-happy-1', ...obj });
+    const assistant = (uuid: string, timestamp: string, text: string) =>
+      entry({
+        type: 'assistant',
+        uuid,
+        timestamp,
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text }],
+          usage: { input_tokens: 5, output_tokens: 2 },
+        },
+      });
+    const baseTranscript = [
+      entry({
+        type: 'user',
+        uuid: 'u-1',
+        timestamp: '2026-08-01T10:00:00.000Z',
+        message: { role: 'user', content: 'Investigate the flaky checkout test' },
+      }),
+      assistant('a-1', '2026-08-01T10:00:05.000Z', 'Looking into it.'),
+    ].join('\n');
+
+    const hasher = createSha256ContentHasher();
+    const executor = await createExecutor();
+    const orchestrator = await setupIngestion(executor);
+    const ingest = async (content: string) => {
+      const sha256 = await hasher.hash(content);
+      const { bundle } = createManifestFixture(content, sha256, 'session/transcript.jsonl');
+      return orchestrator.ingestManifest(bundle);
+    };
+    const readTitle = async (sessionId: string) => {
+      const { rows } = await executor.exec('SELECT ai_title FROM sessions WHERE id = ?', [
+        sessionId,
+      ]);
+      return rows[0]?.ai_title;
+    };
+
+    // Insert: no ai-title in the transcript -> the first user prompt
+    // becomes the stored title.
+    const first = await ingest(baseTranscript);
+    expect(first.status).toBe('committed');
+    expect(await readTitle(first.sessionId)).toBe('Investigate the flaky checkout test');
+
+    // Update: a user-set title survives re-ingestion — the derived
+    // fallback never replaces a stored title.
+    await executor.exec("UPDATE sessions SET ai_title = 'Custom rename' WHERE id = ?", [
+      first.sessionId,
+    ]);
+    const v2 = `${baseTranscript}\n${assistant('a-2', '2026-08-01T10:00:10.000Z', 'Still looking.')}`;
+    const second = await ingest(v2);
+    expect(second.status).toBe('committed');
+    expect(await readTitle(second.sessionId)).toBe('Custom rename');
+
+    // Update: an empty stored title gets filled from the fallback on
+    // re-ingest (the backfill path for pre-feature databases).
+    await executor.exec('UPDATE sessions SET ai_title = NULL WHERE id = ?', [second.sessionId]);
+    const v3 = `${v2}\n${assistant('a-3', '2026-08-01T10:00:15.000Z', 'Done.')}`;
+    const third = await ingest(v3);
+    expect(third.status).toBe('committed');
+    expect(await readTitle(third.sessionId)).toBe('Investigate the flaky checkout test');
+
+    // Update: a real ai-title event in the transcript replaces the
+    // derived title.
+    const v4 = `${v3}\n${entry({ type: 'ai-title', aiTitle: 'Checkout flake RCA' })}`;
+    const fourth = await ingest(v4);
+    expect(fourth.status).toBe('committed');
+    expect(await readTitle(fourth.sessionId)).toBe('Checkout flake RCA');
+  });
+
   it('ingests a manifest with an unresolved artifact without violating the blob_sha256 foreign key', async () => {
     // Regression test for TSK0042: a manifest can declare an artifact that was
     // never actually resolved (its bytes never fetched, present in

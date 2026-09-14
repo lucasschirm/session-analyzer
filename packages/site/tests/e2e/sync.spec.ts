@@ -1388,3 +1388,90 @@ test('UX-026: re-sync re-fetches only a changed session, and a listing 5xx surfa
   await openProjectBehavior(page, projectId);
   await expectChartContains(page, 'Token usage trends', 'Total tokens');
 });
+
+// =============================================================================
+// UX-036: A cherry-picked Claude session renders its parsed ai-title — never
+// the raw remote session id — once the sync completes. Regression coverage for
+// the stub-title propagation bug: sync stubs used to persist the remote
+// session id into the control-DB `sessions.title`, and nothing ever replaced
+// it with the transcript's ai-title after ingestion.
+// =============================================================================
+
+test('UX-036: cherry-picked sessions display resolved titles after sync', async ({ page }) => {
+  const projectId = 'ux036-proj';
+  const titledSessionId = 'e2e-rich-session';
+  const untitledSessionId = 'e2e-claude-session';
+  const bucket = new FixtureBucket();
+  bucket.addProject(projectId, 'UX-036 Project', '');
+  bucket.addSession(projectId, titledSessionId, {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        // Carries {"type":"ai-title","aiTitle":"Rich Session Demo"}.
+        content: fixtureBuffer('claude-rich-session.jsonl'),
+      },
+    ],
+  });
+  bucket.addSession(projectId, untitledSessionId, {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        // No ai-title: the first user prompt ("Fix the bug in app.ts")
+        // becomes the derived fallbackTitle -> ai_title at ingestion.
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+  attachLoggers(page);
+
+  // Save the connection (no sync); vault creation is prompted by the save.
+  await bucket.installRoute(page);
+  await openConnectModal(page);
+  await fillConnectionForm(page);
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: 'Save' }).click();
+  await confirmPasskey(page);
+
+  // Row Sync opens the confirm modal; "Cherry pick" routes to the storage
+  // sessions page instead of starting a run.
+  await panel.getByRole('button', { name: 'Sync' }).click();
+  const syncConfirm = page.getByRole('dialog', { name: 'Confirm sync' });
+  await expect(syncConfirm).toBeVisible({ timeout: 10000 });
+  await syncConfirm.getByRole('button', { name: 'Cherry pick' }).click();
+
+  const sessionsPage = page.locator('storage-sessions-page');
+  await expect(sessionsPage.getByRole('heading', { name: 'Cherry-pick Sessions' })).toBeVisible({
+    timeout: 10000,
+  });
+  const titledRow = sessionsPage.locator(`tr[data-key="${projectId}:${titledSessionId}"]`);
+  const untitledRow = sessionsPage.locator(`tr[data-key="${projectId}:${untitledSessionId}"]`);
+  await expect(titledRow).toBeVisible({ timeout: 15000 });
+  await expect(untitledRow).toBeVisible();
+
+  // Before the sync there is no parsed title yet: rows must show the
+  // date-based fallback, never the raw session id.
+  for (const row of [titledRow, untitledRow]) {
+    await expect(row.locator('.session-title')).not.toContainText('e2e-');
+    await expect(row.locator('.badge')).toContainText('Not synced');
+  }
+
+  // Cherry-pick both sessions and let the targeted run complete.
+  await sessionsPage.getByRole('button', { name: 'Select visible' }).click();
+  await sessionsPage.getByRole('button', { name: /Sync \(2\) Selected/ }).click();
+  await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
+  await waitForSyncCompleted(page);
+
+  // The ai-title session renders its parsed title; the untitled session
+  // renders its first-prompt-derived title. A raw session id in either
+  // title cell is the regression.
+  const titledTitle = titledRow.locator('.session-title');
+  const untitledTitle = untitledRow.locator('.session-title');
+  await expect(titledRow.locator('.badge')).toContainText('Synced', { timeout: 15000 });
+  await expect(untitledRow.locator('.badge')).toContainText('Synced', { timeout: 15000 });
+  await expect(titledTitle).toContainText('Rich Session Demo', { timeout: 15000 });
+  await expect(untitledTitle).toContainText('Fix the bug in app.ts', { timeout: 15000 });
+  await expect(titledTitle).not.toContainText(titledSessionId);
+  await expect(untitledTitle).not.toContainText(untitledSessionId);
+});

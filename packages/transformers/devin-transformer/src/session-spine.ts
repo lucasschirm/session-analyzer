@@ -6,6 +6,7 @@ import type {
   SourceIdentity,
   TransformContext,
 } from '@lucasschirm/sal-transformer-shared';
+import { truncateSessionTitle } from '@lucasschirm/sal-transformer-shared';
 
 export interface DevinSessionSpine {
   readonly records: readonly NormalizedEvidenceRecord[];
@@ -126,6 +127,57 @@ export function messageId(message: DevinMessageLine): string {
   return `node-${message.nodeId}`;
 }
 
+/**
+ * Extracts the text of a `chat_message` payload. The observed shape is a
+ * plain string `content`; tolerate an array of content blocks (text blocks
+ * only) for forward compatibility.
+ */
+function chatMessageText(chatMessage: unknown): string | undefined {
+  if (!chatMessage || typeof chatMessage !== 'object') return undefined;
+  const content = (chatMessage as { content?: unknown }).content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return undefined;
+  const parts = content
+    .map((block) =>
+      block &&
+      typeof block === 'object' &&
+      (block as { type?: unknown }).type === 'text' &&
+      typeof (block as { text?: unknown }).text === 'string'
+        ? (block as { text: string }).text
+        : '',
+    )
+    .join(' ');
+  return parts.trim() ? parts : undefined;
+}
+
+/**
+ * Finds the first real user message in the ordered message nodes. Skips
+ * empty and `<…>`-wrapped system/injected content — mirroring the
+ * first-prompt extraction Claude Code performs for its session picker.
+ */
+function firstUserMessageText(messages: readonly DevinMessageLine[]): string | undefined {
+  for (const message of messages) {
+    if (messageRole(message.chatMessage, message.role) !== 'user') continue;
+    const text = chatMessageText(message.chatMessage);
+    if (!text) continue;
+    const normalized = text.trim();
+    if (!normalized || normalized.startsWith('<')) continue;
+    return normalized;
+  }
+  return undefined;
+}
+
+/**
+ * Derives a display title from the first user message for sessions whose
+ * `sessions.db` row carries no title — the same first-message convention
+ * Devin CLI itself uses. Emitted as `fallbackTitle`: ingestion only writes
+ * it when no better title exists on the session row.
+ */
+function deriveSessionTitle(messages: readonly DevinMessageLine[]): string | undefined {
+  const first = firstUserMessageText(messages);
+  return first ? truncateSessionTitle(first) : undefined;
+}
+
 export function buildSessionSpine(
   sessionId: string,
   session: DevinSessionLine | undefined,
@@ -149,6 +201,14 @@ export function buildSessionSpine(
       model: session?.model,
       agentMode: session?.agentMode,
       title: session?.title,
+      // Devin CLI persists its own per-session title (derived from the
+      // first user message); surface it as the canonical session title
+      // (`ai_title`) for read paths — ingestion reads `aiTitle`.
+      aiTitle: session?.title,
+      // When sessions.db carries no title, derive one from the first user
+      // message — the same convention Devin CLI itself uses. Ingestion
+      // only writes it when the session row is untitled.
+      fallbackTitle: session?.title?.trim() ? undefined : deriveSessionTitle(orderedMessages),
       startTime: start,
       endTime: end,
       finality: 'partial',

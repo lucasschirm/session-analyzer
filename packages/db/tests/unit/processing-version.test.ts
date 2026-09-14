@@ -109,53 +109,61 @@ describe('processing-version', () => {
 
     expect(await getStoredProcessingVersion(executor)).toBe(ANALYTICS_PROCESSING_VERSION);
     expect(await needsRebuild(executor)).toBe(false);
-    expect(progressSpy).toHaveBeenCalledTimes(6);
+    expect(progressSpy).toHaveBeenCalledTimes(7);
     expect(progressSpy).toHaveBeenNthCalledWith(1, {
-      step: 'Backfilling context series',
-      completed: 0,
-      total: 1,
-      phase: 2,
-      totalPhases: 4,
-      unit: 'sessions processed',
-    });
-    expect(progressSpy).toHaveBeenNthCalledWith(2, {
-      step: 'Backfilling context series',
+      step: 'Backfilling session titles',
       completed: 1,
       total: 1,
       phase: 2,
-      totalPhases: 4,
-      unit: 'sessions processed',
+      totalPhases: 5,
+      unit: 'sessions',
     });
-    expect(progressSpy).toHaveBeenNthCalledWith(3, {
-      step: 'Rebuilding session rollups',
+    expect(progressSpy).toHaveBeenNthCalledWith(2, {
+      step: 'Backfilling context series',
       completed: 0,
       total: 1,
       phase: 3,
-      totalPhases: 4,
+      totalPhases: 5,
+      unit: 'sessions processed',
+    });
+    expect(progressSpy).toHaveBeenNthCalledWith(3, {
+      step: 'Backfilling context series',
+      completed: 1,
+      total: 1,
+      phase: 3,
+      totalPhases: 5,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(4, {
       step: 'Rebuilding session rollups',
-      completed: 1,
-      total: 1,
-      phase: 3,
-      totalPhases: 4,
-      unit: 'sessions processed',
-    });
-    expect(progressSpy).toHaveBeenNthCalledWith(5, {
-      step: 'Recomputing project rollups',
       completed: 0,
       total: 1,
       phase: 4,
-      totalPhases: 4,
-      unit: 'analytics calculations',
+      totalPhases: 5,
+      unit: 'sessions processed',
     });
-    expect(progressSpy).toHaveBeenNthCalledWith(6, {
-      step: 'Recomputing project rollups',
+    expect(progressSpy).toHaveBeenNthCalledWith(5, {
+      step: 'Rebuilding session rollups',
       completed: 1,
       total: 1,
       phase: 4,
-      totalPhases: 4,
+      totalPhases: 5,
+      unit: 'sessions processed',
+    });
+    expect(progressSpy).toHaveBeenNthCalledWith(6, {
+      step: 'Recomputing project rollups',
+      completed: 0,
+      total: 1,
+      phase: 5,
+      totalPhases: 5,
+      unit: 'analytics calculations',
+    });
+    expect(progressSpy).toHaveBeenNthCalledWith(7, {
+      step: 'Recomputing project rollups',
+      completed: 1,
+      total: 1,
+      phase: 5,
+      totalPhases: 5,
       unit: 'analytics calculations',
     });
   });

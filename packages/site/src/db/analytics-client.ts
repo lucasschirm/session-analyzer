@@ -423,6 +423,22 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
   }
 
   /**
+   * Reads a session's stored display title (`ai_title` falling back to
+   * `slug`) from the analytics DB, resolved by internal or native session
+   * id. Returns null when the session is unknown or has no stored title.
+   */
+  async getSessionTitle(sessionId: string): Promise<string | null> {
+    const response = await this.call({
+      type: 'getSessionTitle',
+      sessionId,
+    });
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+    return (response.result as string | null) ?? null;
+  }
+
+  /**
    * Renames a session by writing `sessions.ai_title` in the analytics DB.
    * The worker resolves the session by internal or native session id and
    * broadcasts a `data-change` event so dependent views can refresh.

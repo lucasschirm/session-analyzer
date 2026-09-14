@@ -16,6 +16,7 @@ import {
   deleteSessionMetrics,
   FileOperationStore,
   findSessionRef,
+  getSessionTitle,
   INVOCATION_KINDS,
   type InsertSessionInput,
   type InvocationKind,
@@ -906,6 +907,26 @@ describe('session evidence schema and stores', () => {
 
       const notFound = await findSessionRef(executor, 'non-existent');
       expect(notFound).toBeUndefined();
+    });
+
+    it('getSessionTitle resolves ai_title/slug by canonical or native id', async () => {
+      const { executor, projectId } = await createSeededExecutor();
+
+      // Seeded session has neither ai_title nor slug.
+      expect(await getSessionTitle(executor, 'session-1')).toBeNull();
+
+      await SessionStore.update(executor, projectId, 'session-1', {
+        aiTitle: 'Investigate auth bug',
+        slug: 'auth-bug-slug',
+      });
+      expect(await getSessionTitle(executor, 'session-1')).toBe('Investigate auth bug');
+      expect(await getSessionTitle(executor, 'native-session-1')).toBe('Investigate auth bug');
+
+      // slug is the display fallback when ai_title is absent.
+      await SessionStore.update(executor, projectId, 'session-1', { aiTitle: null });
+      expect(await getSessionTitle(executor, 'native-session-1')).toBe('auth-bug-slug');
+
+      expect(await getSessionTitle(executor, 'non-existent')).toBeNull();
     });
 
     it('deleteSessionMetrics removes derived tables and clears current_generation_id', async () => {

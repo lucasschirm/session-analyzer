@@ -996,6 +996,257 @@ describe('SyncManager cherry pick and storage sessions', () => {
     expect(refreshed[0].title).toBe('Session Two Updated');
   });
 
+  /**
+   * Regression: cherry-picked sessions used to display the raw remote session
+   * id as their title — sync stubs persist it into `sessions.title` at stub
+   * creation and nothing ever replaced it with the parsed `ai-title`. The
+   * parsed title lives in the analytics DB; the listing must resolve it via
+   * the `resolveSessionTitle` seam instead.
+   */
+  it('listStorageSessions resolves a synced session title via the resolveSessionTitle seam', async () => {
+    const mockDb = {
+      getConnections: vi.fn().mockResolvedValue([
+        {
+          id: 'conn-s3-1',
+          name: 'Main S3',
+          storage_type: 's3',
+          created_at: 1000,
+          updated_at: 1000,
+          sync_only_new: false,
+        },
+      ]),
+      getS3Credentials: vi.fn().mockResolvedValue(null),
+      getProjectByReadableId: vi.fn().mockImplementation((folder: string) => {
+        if (folder === 'proj-a') {
+          return Promise.resolve({ id: 'local-proj-a', name: 'Alpha Project' });
+        }
+        return Promise.resolve(null);
+      }),
+      getSessionBySyncId: vi.fn().mockImplementation((projId: string, sessId: string) => {
+        if (projId === 'local-proj-a' && sessId === 'sess-1') {
+          return Promise.resolve({
+            id: 'local-sess-1',
+            sync_status: 'in_sync',
+            // Legacy stub artifact: the raw session id stored as the title.
+            title: 'sess-1',
+          });
+        }
+        return Promise.resolve(null);
+      }),
+    } as unknown as DbClient;
+
+    const mockS3 = {
+      listProjectFolders: vi.fn().mockResolvedValue(['proj-a']),
+      listSessionFolders: vi.fn().mockResolvedValue([]),
+      listProjectObjects: vi.fn().mockResolvedValue([
+        {
+          key: 'proj-a/sess-1/transcript.jsonl',
+          lastModified: '2026-09-12T10:00:00.000Z',
+          size: 100,
+        },
+        {
+          key: 'proj-a/sess-2/transcript.jsonl',
+          lastModified: '2026-09-13T10:00:00.000Z',
+          size: 200,
+        },
+      ]),
+      getObject: vi.fn().mockRejectedValue(new Error('no manifest')),
+      putObject: vi.fn(),
+    };
+
+    const resolveSessionTitle = vi.fn().mockResolvedValue('Parsed AI Title');
+    const manager = createManager({
+      dbClient: mockDb,
+      createS3Client: () => mockS3,
+      resolveSessionTitle,
+    });
+
+    manager.registerEphemeralConnection(
+      {
+        id: 'conn-s3-1',
+        name: 'Main S3',
+        storage_type: 's3',
+        created_at: 1000,
+        updated_at: 1000,
+        sync_only_new: false,
+      },
+      {
+        accessKeyId: 'ak',
+        secretAccessKey: 'sk',
+        bucket: 'my-bucket',
+        region: 'us-east-1',
+      },
+    );
+
+    const items = await manager.listStorageSessions('conn-s3-1');
+    const s1 = items.find((i) => i.sessionId === 'sess-1');
+    const s2 = items.find((i) => i.sessionId === 'sess-2');
+
+    expect(s1?.title).toBe('Parsed AI Title');
+    expect(resolveSessionTitle).toHaveBeenCalledTimes(1);
+    expect(resolveSessionTitle).toHaveBeenCalledWith('sess-1');
+    // Sessions with no local row never hit the seam; they keep the
+    // date-based fallback title.
+    expect(s2?.title).not.toBe('sess-2');
+  });
+
+  it('refreshStorageSessionStatuses prefers the parsed title over a stored raw-id title', async () => {
+    const mockDb = {
+      getProjectByReadableId: vi.fn().mockImplementation(async (readableId: string) => {
+        if (readableId === 'proj-a') return { id: 'local-proj-a', name: 'Alpha Project' };
+        return null;
+      }),
+      getSessionBySyncId: vi
+        .fn()
+        .mockImplementation(async (_projId: string, syncSessionId: string) => {
+          if (syncSessionId === 'sess-2') {
+            return { sync_status: 'in_sync', title: 'sess-2' };
+          }
+          return null;
+        }),
+    } as unknown as DbClient;
+
+    const resolveSessionTitle = vi.fn().mockResolvedValue('Renamed Session');
+    const manager = createManager({ dbClient: mockDb, resolveSessionTitle });
+
+    const items: StorageSessionItem[] = [
+      {
+        projectId: 'proj-a',
+        projectName: 'Alpha Project',
+        sessionId: 'sess-2',
+        title: 'sess-2',
+        modifiedTimestamp: 1000,
+        synced: false,
+      },
+    ];
+
+    const refreshed = await manager.refreshStorageSessionStatuses(items);
+    expect(refreshed[0].synced).toBe(true);
+    expect(refreshed[0].title).toBe('Renamed Session');
+  });
+
+  it('refreshStorageSessionStatuses keeps the previous title when no parsed title resolves and the stored title is the raw session id', async () => {
+    const mockDb = {
+      getProjectByReadableId: vi.fn().mockImplementation(async (readableId: string) => {
+        if (readableId === 'proj-a') return { id: 'local-proj-a', name: 'Alpha Project' };
+        return null;
+      }),
+      getSessionBySyncId: vi
+        .fn()
+        .mockImplementation(async (_projId: string, syncSessionId: string) => {
+          if (syncSessionId === 'sess-2') {
+            return { sync_status: 'in_sync', title: 'sess-2' };
+          }
+          return null;
+        }),
+    } as unknown as DbClient;
+
+    const resolveSessionTitle = vi.fn().mockResolvedValue(null);
+    const manager = createManager({ dbClient: mockDb, resolveSessionTitle });
+
+    const items: StorageSessionItem[] = [
+      {
+        projectId: 'proj-a',
+        projectName: 'Alpha Project',
+        sessionId: 'sess-2',
+        title: 'Session Two',
+        modifiedTimestamp: 1000,
+        synced: false,
+      },
+    ];
+
+    const refreshed = await manager.refreshStorageSessionStatuses(items);
+    expect(refreshed[0].title).toBe('Session Two');
+  });
+
+  it('refreshStorageSessionStatuses keeps a real stored title when resolution fails', async () => {
+    const mockDb = {
+      getProjectByReadableId: vi.fn().mockImplementation(async (readableId: string) => {
+        if (readableId === 'proj-a') return { id: 'local-proj-a', name: 'Alpha Project' };
+        return null;
+      }),
+      getSessionBySyncId: vi
+        .fn()
+        .mockImplementation(async (_projId: string, syncSessionId: string) => {
+          if (syncSessionId === 'sess-2') {
+            return { sync_status: 'in_sync', title: 'Session Two Updated' };
+          }
+          return null;
+        }),
+    } as unknown as DbClient;
+
+    const resolveSessionTitle = vi.fn().mockRejectedValue(new Error('worker down'));
+    const manager = createManager({ dbClient: mockDb, resolveSessionTitle });
+
+    const items: StorageSessionItem[] = [
+      {
+        projectId: 'proj-a',
+        projectName: 'Alpha Project',
+        sessionId: 'sess-2',
+        title: 'Session Two',
+        modifiedTimestamp: 1000,
+        synced: false,
+      },
+    ];
+
+    const refreshed = await manager.refreshStorageSessionStatuses(items);
+    expect(refreshed[0].title).toBe('Session Two Updated');
+  });
+
+  it('upserts a session stub with an empty title — the raw session id is not a title', async () => {
+    const mockDb = {
+      getSessionBySyncId: vi.fn().mockResolvedValue(null),
+      upsertSessionStub: vi.fn().mockResolvedValue(undefined),
+      updateSessionManifest: vi.fn().mockResolvedValue(undefined),
+      setSessionSyncStatus: vi.fn().mockResolvedValue(undefined),
+    } as unknown as DbClient;
+
+    const manager = createManager({ dbClient: mockDb });
+    const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;
+    const project = {
+      projectId: 'proj-1',
+      localProjectId: 'local-proj-1',
+      worker: mockWorker,
+      status: 'running' as const,
+      sessions: new Map(),
+      totalSessions: 0,
+      sessionsDone: 0,
+      sessionsFailed: 0,
+      filesFound: 0,
+      filesDownloaded: 0,
+      filesFailed: 0,
+      bytesReceived: 0,
+      isNew: false,
+    };
+
+    const manifest: SyncManifest = {
+      schemaVersion: 2,
+      projectId: 'proj-1',
+      sessionId: 'sess-uuid-abc',
+      harness: 'claude-code',
+      harnessVersion: '0.1.0',
+      syncVersion: '0.1.0',
+      pluginVersion: '0.1.0',
+      transcriptsCaptured: true,
+      artifacts: [],
+      syncRuns: [],
+      syncRunsCount: 0,
+    };
+
+    // @ts-expect-error — testing private method
+    await manager.handleSessionManifestReady({} as never, project, mockWorker, {
+      sessionId: 'sess-uuid-abc',
+      manifest,
+    });
+
+    expect(mockDb.upsertSessionStub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sync_session_id: 'sess-uuid-abc',
+        title: '',
+      }),
+    );
+  });
+
   it('sends SESSION_SYNC message with knownHashes when artifacts exist in db or blob store', async () => {
     const candidateHash1 = 'a'.repeat(64);
     const candidateHash2 = 'b'.repeat(64);
