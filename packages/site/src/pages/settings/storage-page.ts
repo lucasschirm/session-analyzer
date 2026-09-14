@@ -3,6 +3,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { PageLitElement, pageHostStyles } from '../page-lit-element';
 import '../../components/delete-confirmation-modal';
+import '../../components/sqlite-explorer-modal';
 import { type AnalyticsBackendReport, analyticsClient } from '../../db/analytics-client';
 import { dbClient } from '../../db/db-client';
 
@@ -27,7 +28,7 @@ interface DatabaseRow {
   sizeState: SizeState;
 }
 
-type OverlayMode = 'optimize' | 'download';
+type OverlayMode = 'optimize' | 'download' | 'explore';
 type OverlayPhase = 'running' | 'stalled' | 'success' | 'error';
 
 /** Drives the shared "Optimizing…"/"Preparing download…" overlay used by
@@ -287,6 +288,13 @@ export class StoragePage extends PageLitElement {
 
   @state() private singleDeleting = false;
 
+  @state() private explorerModal: {
+    open: boolean;
+    dbName: string;
+    filename: string;
+    blob: Blob | null;
+  } = { open: false, dbName: '', filename: '', blob: null };
+
   /** Single source of truth for which client/RPC a row's buttons call —
    * keyed by stable `DbId`, never by the mutable display label. */
   private readonly dbActions: Record<DbId, DbActions> = {
@@ -495,6 +503,23 @@ export class StoragePage extends PageLitElement {
     await this.runOverlay(id, 'optimize', () => this.dbActions[id].vacuum());
   }
 
+  private async handleExplore(event: Event, id: DbId): Promise<void> {
+    event.stopPropagation();
+    await this.runOverlay(id, 'explore', async () => {
+      const bytes = await this.dbActions[id].exportOptimized();
+      if (!this.isConnected) return;
+      const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
+      const filename = this.databases.find((db) => db.id === id)?.filename ?? `${id}.sqlite`;
+      const dbName = this.dbActions[id].label;
+      this.explorerModal = {
+        open: true,
+        dbName,
+        filename,
+        blob,
+      };
+    });
+  }
+
   private handleDeleteClick(): void {
     this.deleteDialogOpen = true;
   }
@@ -641,7 +666,9 @@ export class StoragePage extends PageLitElement {
 
   private overlayHeading(overlay: OverlayState): string {
     const label = this.dbActions[overlay.dbId].label;
-    return overlay.mode === 'download' ? `Preparing ${label} download…` : `Optimizing ${label}…`;
+    if (overlay.mode === 'download') return `Preparing ${label} download…`;
+    if (overlay.mode === 'optimize') return `Optimizing ${label}…`;
+    return `Preparing ${label} for exploration…`;
   }
 
   /** Body of the shared overlay, one branch per state-machine phase. */
@@ -656,7 +683,15 @@ export class StoragePage extends PageLitElement {
         `;
       case 'success':
         return html`
-          <p>${overlay.mode === 'download' ? 'Download ready.' : 'Optimization complete.'}</p>
+          <p>
+            ${
+              overlay.mode === 'download'
+                ? 'Download ready.'
+                : overlay.mode === 'optimize'
+                  ? 'Optimization complete.'
+                  : 'Explorer ready.'
+            }
+          </p>
         `;
       case 'error':
         return html`
@@ -698,6 +733,17 @@ export class StoragePage extends PageLitElement {
     void this.handleOptimize(event, id);
   }
 
+  private handleRowExplore(event: Event): void {
+    const button = event.currentTarget as HTMLButtonElement | null;
+    const id = button?.dataset.id;
+    if (id !== 'control' && id !== 'analytics') return;
+    void this.handleExplore(event, id);
+  }
+
+  private handleExplorerClose(): void {
+    this.explorerModal = { open: false, dbName: '', filename: '', blob: null };
+  }
+
   private handleRowDelete(event: Event): void {
     const button = event.currentTarget as HTMLButtonElement | null;
     const id = button?.dataset.id;
@@ -725,6 +771,14 @@ export class StoragePage extends PageLitElement {
           @click=${this.handleRowOptimize}
         >
           Optimize
+        </button>
+        <button
+          class="secondary"
+          ?disabled=${busy}
+          data-id=${db.id}
+          @click=${this.handleRowExplore}
+        >
+          Explore
         </button>
         <button
           class="danger"
@@ -857,6 +911,14 @@ export class StoragePage extends PageLitElement {
         @delete-confirmed=${this.handleSingleDeleteConfirm}
         @modal-close=${this.handleSingleDeleteCancel}
       ></delete-confirmation-modal>
+
+      <sqlite-explorer-modal
+        .open=${this.explorerModal.open}
+        .dbName=${this.explorerModal.dbName}
+        .filename=${this.explorerModal.filename}
+        .blob=${this.explorerModal.blob}
+        @modal-close=${this.handleExplorerClose}
+      ></sqlite-explorer-modal>
 
       ${this.renderOverlay()}
     `;

@@ -43,6 +43,7 @@ beforeEach(() => {
   mockAnalyticsClient.exportAnalyticsDatabaseOptimized.mockResolvedValue(new Uint8Array(2048));
   mockAnalyticsClient.vacuum.mockResolvedValue(undefined);
   mockAnalyticsClient.close.mockResolvedValue(undefined);
+  vi.spyOn(window, 'fetch').mockResolvedValue(new Response('<!doctype html><html></html>'));
 });
 
 afterEach(() => {
@@ -107,10 +108,11 @@ describe('storage-page', () => {
     expect(rows.length).toBe(2);
     for (const row of rows) {
       const buttons = row.querySelectorAll('td.actions button');
-      expect(buttons.length).toBe(3);
+      expect(buttons.length).toBe(4);
       expect(buttons[0]?.textContent?.trim()).toBe('Download');
       expect(buttons[1]?.textContent?.trim()).toBe('Optimize');
-      expect(buttons[2]?.textContent?.trim()).toBe('Delete');
+      expect(buttons[2]?.textContent?.trim()).toBe('Explore');
+      expect(buttons[3]?.textContent?.trim()).toBe('Delete');
     }
   });
 
@@ -134,7 +136,7 @@ describe('storage-page', () => {
     for (const row of rows) {
       const group = row.querySelector('td.actions .actions-group');
       expect(group).not.toBeNull();
-      expect(group?.querySelectorAll('button').length).toBe(3);
+      expect(group?.querySelectorAll('button').length).toBe(4);
     }
   });
 
@@ -494,6 +496,77 @@ describe('storage-page', () => {
       expect(clickSpy).not.toHaveBeenCalled();
 
       clickSpy.mockRestore();
+    });
+  });
+
+  describe('Explore flow', () => {
+    it('shows an overlay and opens sqlite-explorer-modal when Explore is clicked', async () => {
+      let resolveExport: (value: Uint8Array) => void = () => {};
+      mockDbClient.exportControlDatabaseOptimized.mockReturnValue(
+        new Promise((resolve) => {
+          resolveExport = resolve;
+        }),
+      );
+
+      const el = await mount();
+      const root = el.shadowRoot as ShadowRoot;
+      const controlRow = dbRow(root, 'Control DB');
+      const exploreButton = Array.from(controlRow.querySelectorAll('button')).find(
+        (b) => b.textContent?.trim() === 'Explore',
+      ) as HTMLButtonElement;
+      exploreButton.click();
+      await el.updateComplete;
+
+      const overlay = root.querySelector('.storage-overlay');
+      expect(overlay).not.toBeNull();
+      expect(overlay?.textContent).toContain('Preparing Control DB for exploration…');
+
+      const modal = root.querySelector('sqlite-explorer-modal') as HTMLElement & {
+        open: boolean;
+        dbName: string;
+        filename: string;
+        blob: Blob | null;
+      };
+      expect(modal).not.toBeNull();
+      expect(modal.open).toBe(false);
+
+      resolveExport(new Uint8Array(128));
+      await new Promise((r) => setTimeout(r, 0));
+      await el.updateComplete;
+
+      expect(modal.open).toBe(true);
+      expect(modal.dbName).toBe('Control DB');
+      expect(modal.filename).toBe('/session-analyzer.sqlite3');
+      expect(modal.blob).not.toBeNull();
+      expect(modal.blob?.size).toBe(128);
+
+      // Closing modal resets state
+      modal.dispatchEvent(new CustomEvent('modal-close'));
+      await el.updateComplete;
+      expect(modal.open).toBe(false);
+    });
+
+    it('shows error banner in overlay when export fails during explore', async () => {
+      mockAnalyticsClient.exportAnalyticsDatabaseOptimized.mockRejectedValue(
+        new Error('Export failed for explorer'),
+      );
+      const el = await mount();
+      const root = el.shadowRoot as ShadowRoot;
+      const analyticsRow = dbRow(root, 'Analytics DB');
+      const exploreButton = Array.from(analyticsRow.querySelectorAll('button')).find(
+        (b) => b.textContent?.trim() === 'Explore',
+      ) as HTMLButtonElement;
+      exploreButton.click();
+      await el.updateComplete;
+      await new Promise((r) => setTimeout(r, 0));
+      await el.updateComplete;
+
+      const overlay = root.querySelector('.storage-overlay');
+      expect(overlay).not.toBeNull();
+      expect(overlay?.textContent).toContain('Failed: Export failed for explorer');
+
+      const modal = root.querySelector('sqlite-explorer-modal') as HTMLElement & { open: boolean };
+      expect(modal.open).toBe(false);
     });
   });
 });
