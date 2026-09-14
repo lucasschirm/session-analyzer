@@ -179,7 +179,7 @@ describe('left-nav', () => {
 
     const backLink = root.querySelector('a.nav-back') as HTMLAnchorElement;
     expect(backLink).not.toBeNull();
-    expect(backLink.textContent).toContain('< Dashboard');
+    expect(backLink.textContent).toContain('Dashboard');
     expect(backLink.getAttribute('href')).toBe('#/');
 
     const labels = Array.from(root.querySelectorAll('.nav-section-label')).map((l) =>
@@ -211,7 +211,7 @@ describe('left-nav', () => {
 
     const backLink = root.querySelector('a.nav-back') as HTMLAnchorElement;
     expect(backLink).not.toBeNull();
-    expect(backLink.textContent).toContain('< Project');
+    expect(backLink.textContent).toContain('Project');
     expect(backLink.getAttribute('href')).toBe('#/projects/my-project');
 
     const sessionTitles = Array.from(root.querySelectorAll('.nav-session-title')).map(
@@ -228,7 +228,7 @@ describe('left-nav', () => {
     const root = el.shadowRoot as ShadowRoot;
 
     const backLink = root.querySelector('a.nav-back') as HTMLAnchorElement;
-    expect(backLink.textContent).toContain('< Dashboard');
+    expect(backLink.textContent).toContain('Dashboard');
     expect(backLink.getAttribute('href')).toBe('#/');
   });
 

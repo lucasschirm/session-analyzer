@@ -77,7 +77,7 @@ test.describe('Page-specific left-nav menus (UX-028)', () => {
     await expect(page).toHaveURL(new RegExp(`#/projects/${projectName}`, 'i'), {
       timeout: 10000,
     });
-    await expect(leftNav.locator('a.nav-back', { hasText: '< Dashboard' })).toBeVisible();
+    await expect(leftNav.locator('a.nav-back', { hasText: 'Dashboard' })).toBeVisible();
     await expect(leftNav.locator('.nav-section-label', { hasText: 'Sessions' })).toBeVisible();
 
     // The rich fixture's ai-title labels the session link.
@@ -90,7 +90,7 @@ test.describe('Page-specific left-nav menus (UX-028)', () => {
     await sessionItem.first().click();
     await expect(page).toHaveURL(/#\/sessions\//);
 
-    const projectBack = leftNav.locator('a.nav-back', { hasText: '< Project' });
+    const projectBack = leftNav.locator('a.nav-back', { hasText: 'Project' });
     await expect(projectBack).toBeVisible({ timeout: 15000 });
     await expect(projectBack).toHaveAttribute('href', new RegExp(`#/projects/${projectName}`));
     await expect(
@@ -100,7 +100,7 @@ test.describe('Page-specific left-nav menus (UX-028)', () => {
     // "< Project" returns to the project page; "< Dashboard" returns home.
     await projectBack.click();
     await expect(page).toHaveURL(new RegExp(`#/projects/${projectName}`), { timeout: 10000 });
-    await leftNav.locator('a.nav-back', { hasText: '< Dashboard' }).click();
+    await leftNav.locator('a.nav-back', { hasText: 'Dashboard' }).click();
     await expect(page).toHaveURL(/#\/$/, { timeout: 10000 });
   });
 
@@ -165,7 +165,7 @@ test.describe('Dedicated Project Sessions Page (UX-029)', () => {
     await expect(heading).not.toContainText('proj-');
 
     // Verify breadcrumb links
-    const dashboardLink = sessionsPage.locator('.breadcrumbs a', { hasText: '< Dashboard' });
+    const dashboardLink = sessionsPage.locator('.breadcrumbs a', { hasText: 'Dashboard' });
     await expect(dashboardLink).toBeVisible();
     const behaviorLink = sessionsPage.locator('.breadcrumbs a', { hasText: 'Project Behavior' });
     await expect(behaviorLink).toBeVisible();

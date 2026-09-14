@@ -100,6 +100,12 @@ export class LeftNav extends LitElement {
       color: var(--md-sys-color-on-surface, #e6e9ef);
     }
 
+    .nav-back .back-icon {
+      width: 14px;
+      height: 14px;
+      flex-shrink: 0;
+    }
+
     .nav-section-label {
       font-size: 11px;
       font-weight: 700;
@@ -476,10 +482,27 @@ export class LeftNav extends LitElement {
     `;
   }
 
+  private renderBackIcon() {
+    return html`
+      <svg
+        class="back-icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M15 18l-6-6 6-6"></path>
+      </svg>
+    `;
+  }
+
   private renderProjectNav() {
     return html`
       <nav>
-        <a href="#/" class="nav-item nav-back"><span>${'<'} Dashboard</span></a>
+        <a href="#/" class="nav-item nav-back">${this.renderBackIcon()}<span>Dashboard</span></a>
       </nav>
       <div class="nav-section-label">Sessions</div>
       <nav>
@@ -492,10 +515,12 @@ export class LeftNav extends LitElement {
     const backHref = this.sessionProjectSlug
       ? `#/projects/${encodeURIComponent(this.sessionProjectSlug)}`
       : '#/';
-    const backLabel = this.sessionProjectSlug ? '< Project' : '< Dashboard';
+    const backLabel = this.sessionProjectSlug ? 'Project' : 'Dashboard';
     return html`
       <nav>
-        <a href=${backHref} class="nav-item nav-back"><span>${backLabel}</span></a>
+        <a href=${backHref} class="nav-item nav-back"
+          >${this.renderBackIcon()}<span>${backLabel}</span></a
+        >
       </nav>
       <div class="nav-section-label">Sessions</div>
       <nav>

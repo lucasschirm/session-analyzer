@@ -112,7 +112,7 @@ test.describe('Left-nav Projects section (UX-018)', () => {
       timeout: 15000,
     });
     const leftNav = page.locator('left-nav');
-    await expect(leftNav.locator('a.nav-back', { hasText: '< Dashboard' })).toBeVisible();
+    await expect(leftNav.locator('a.nav-back', { hasText: 'Dashboard' })).toBeVisible();
     await expect(leftNav.locator('.nav-section-label', { hasText: 'Sessions' })).toBeVisible();
   });
 
@@ -134,7 +134,7 @@ test.describe('Left-nav Projects section (UX-018)', () => {
     await expect(page.getByRole('heading', { name: 'Project Behavior' })).toBeVisible({
       timeout: 15000,
     });
-    await page.locator('left-nav').locator('a.nav-back', { hasText: '< Dashboard' }).click();
+    await page.locator('left-nav').locator('a.nav-back', { hasText: 'Dashboard' }).click();
     await expect(page).toHaveURL(/#\/$/, { timeout: 10000 });
   });
 });
