@@ -177,19 +177,35 @@ async function initializeAnalyticsExecutor(): Promise<WasmSqliteExecutor> {
   return executor;
 }
 
-async function maybeRebuildDerivedData(executor: WasmSqliteExecutor): Promise<void> {
+async function maybeRebuildDerivedData(
+  executor: WasmSqliteExecutor,
+  context: IngestionContext,
+): Promise<void> {
   if (!(await needsRebuild(executor))) return;
 
   postReprocessStarted('Analytics data format updated');
   try {
-    await rebuildAnalyticsDerivedData(executor, postReprocessProgress);
-    postReprocessCompleted();
-    postDataChanged();
+    // Regeneration re-ingests stale sessions from their retained artifacts —
+    // the same per-session analytics generation path as a normal ingest.
+    const reprocessing = new DefaultReprocessingEngine(context);
+    await rebuildAnalyticsDerivedData(executor, postReprocessProgress, {
+      regenerateSession: async (sessionId) =>
+        (await reprocessing.reingestSession(sessionId)) === 'committed',
+    });
+    // VACUUM blocks this worker's only SQLite connection, so keep the overlay
+    // up (with a labeled step) until it finishes instead of completing early.
+    postReprocessProgress({
+      step: 'Optimizing storage',
+      completed: 0,
+      total: 1,
+    });
     try {
       await executor.vacuum();
     } catch (vacuumError) {
       console.error('Post-rebuild VACUUM failed', vacuumError);
     }
+    postReprocessCompleted();
+    postDataChanged();
   } catch (err) {
     postReprocessCompleted(err instanceof Error ? err.message : String(err));
   }
@@ -245,8 +261,8 @@ function buildAnalyticsState(
 
 export async function createAnalyticsWorkerState(): Promise<AnalyticsWorkerState> {
   const executor = await initializeAnalyticsExecutor();
-  await maybeRebuildDerivedData(executor);
   const { context, blobStore, syncCache } = buildIngestionContext(executor);
+  await maybeRebuildDerivedData(executor, context);
   void backfillArtifactBlobsToOpfs(executor);
   return buildAnalyticsState(executor, context, blobStore, syncCache);
 }

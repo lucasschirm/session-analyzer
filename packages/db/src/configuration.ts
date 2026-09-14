@@ -6,8 +6,13 @@ import {
   ComponentVersionStore,
   ConfigurationSnapshotStore,
   type ConfigurationSnapshotTemporalRole,
+  deterministicComponentLifecycleEventId,
   deterministicComponentVersionId,
+  deterministicConfigurationSnapshotId,
+  deterministicSnapshotCompletenessId,
+  deterministicSnapshotComponentId,
   type InsertComponentIdentityInput,
+  type InsertComponentLifecycleEventInput,
   type InsertSessionComponentExposureInput,
   SessionComponentExposureStore,
   SnapshotCompletenessStore,
@@ -380,38 +385,81 @@ export class ConfigurationSnapshotEngine {
         )
       : computeSnapshotCompleteness(input.components, classified, input.manifestArtifacts);
 
-    const snapshotId = await ConfigurationSnapshotStore.insert(tx, {
-      sessionId: input.sessionId ?? null,
-      generationId: input.generationId ?? null,
-      ordering: input.ordering,
-      scopeChain: input.scopeChain ?? null,
-      captureTime: input.captureTime,
-      ingestionTime: input.ingestionTime,
-      harness: input.harness,
-      temporalRole: input.temporalRole,
-      sourceManifestId: input.sourceManifestId ?? null,
-      environmentId: input.environmentId,
-      projectId: input.projectId ?? null,
-      workspaceId: input.workspaceId ?? null,
-      safeMetadata: JSON.stringify({
-        harnessVersion: input.harnessVersion,
-        repositoryId: input.repositoryId,
-      }),
-    });
+    const snapshotId = deterministicConfigurationSnapshotId(
+      input.environmentId,
+      input.projectId ?? null,
+      input.workspaceId ?? null,
+      input.ordering,
+      input.captureTime,
+    );
+    const existingSnapshot = await ConfigurationSnapshotStore.getById(
+      tx,
+      input.environmentId,
+      snapshotId,
+    );
+    if (existingSnapshot) {
+      // Identity-keyed snapshots can be re-observed by a replacement
+      // generation (reprocessing, processing-version bumps): re-point the row
+      // at the observing session/generation rather than colliding on the
+      // deterministic id. Completeness, snapshot_components, and the
+      // lifecycle events derived from this snapshot are deduped by id below.
+      await tx.exec(
+        `UPDATE configuration_snapshots
+         SET session_id = ?, generation_id = ?, temporal_role = ?, ingestion_time = ?,
+             source_manifest_id = COALESCE(?, source_manifest_id), safe_metadata = ?
+         WHERE id = ?`,
+        [
+          input.sessionId ?? null,
+          input.generationId ?? null,
+          input.temporalRole,
+          input.ingestionTime ?? Date.now(),
+          input.sourceManifestId ?? null,
+          JSON.stringify({
+            harnessVersion: input.harnessVersion,
+            repositoryId: input.repositoryId,
+          }),
+          snapshotId,
+        ],
+      );
+    } else {
+      await ConfigurationSnapshotStore.insert(tx, {
+        id: snapshotId,
+        sessionId: input.sessionId ?? null,
+        generationId: input.generationId ?? null,
+        ordering: input.ordering,
+        scopeChain: input.scopeChain ?? null,
+        captureTime: input.captureTime,
+        ingestionTime: input.ingestionTime,
+        harness: input.harness,
+        temporalRole: input.temporalRole,
+        sourceManifestId: input.sourceManifestId ?? null,
+        environmentId: input.environmentId,
+        projectId: input.projectId ?? null,
+        workspaceId: input.workspaceId ?? null,
+        safeMetadata: JSON.stringify({
+          harnessVersion: input.harnessVersion,
+          repositoryId: input.repositoryId,
+        }),
+      });
+    }
 
     const completenessIds: string[] = [];
     for (const [kind, status] of Object.entries(completeness)) {
       if (!CLASSIFIABLE_KINDS.has(kind)) continue;
-      const id = await SnapshotCompletenessStore.insert(tx, {
-        snapshotId,
-        componentKind: kind,
-        status,
-        observedCount: input.components.filter((c) => canonicalKind(c.kind) === kind).length,
-        reason:
-          status === 'partial'
-            ? 'some expected artifacts were missing, failed, or unclassified'
-            : null,
-      });
+      const id = deterministicSnapshotCompletenessId(snapshotId, kind);
+      if (!(await SnapshotCompletenessStore.getById(tx, snapshotId, id))) {
+        await SnapshotCompletenessStore.insert(tx, {
+          id,
+          snapshotId,
+          componentKind: kind,
+          status,
+          observedCount: input.components.filter((c) => canonicalKind(c.kind) === kind).length,
+          reason:
+            status === 'partial'
+              ? 'some expected artifacts were missing, failed, or unclassified'
+              : null,
+        });
+      }
       completenessIds.push(id);
     }
 
@@ -471,12 +519,21 @@ export class ConfigurationSnapshotEngine {
       const sourceScope = sourceArtifact?.scope ?? 'runtime';
       const sourcePointer = sourceArtifact ? sourcePointerToString(component.sourcePointer) : '';
 
-      const id = await SnapshotComponentStore.insert(tx, {
+      const id = deterministicSnapshotComponentId(
         snapshotId,
-        componentVersionId: versionId,
+        versionId,
         sourceScope,
         sourcePointer,
-      });
+      );
+      if (!(await SnapshotComponentStore.getById(tx, snapshotId, id))) {
+        await SnapshotComponentStore.insert(tx, {
+          id,
+          snapshotId,
+          componentVersionId: versionId,
+          sourceScope,
+          sourcePointer,
+        });
+      }
       snapshotComponentIds.push(id);
     }
 
@@ -560,6 +617,30 @@ export class ConfigurationSnapshotEngine {
     });
   }
 
+  /**
+   * Lifecycle events are identity-keyed observations — the same
+   * (component, environment, event, before→after, capture_time) tuple can be
+   * re-derived when a replacement generation re-observes an existing
+   * snapshot. Dedup on the deterministic id so re-observation reuses the
+   * original event row instead of colliding on the primary key.
+   */
+  private async insertLifecycleEvent(
+    tx: SqliteTransaction,
+    input: InsertComponentLifecycleEventInput,
+  ): Promise<string> {
+    const id = deterministicComponentLifecycleEventId(
+      input.componentId,
+      input.environmentId,
+      input.eventType,
+      input.beforeVersionId ?? null,
+      input.afterVersionId ?? null,
+      input.createdAt ?? Date.now(),
+    );
+    const existing = await ComponentLifecycleEventStore.getById(tx, input.componentId, id);
+    if (existing) return existing.id;
+    return ComponentLifecycleEventStore.insert(tx, { ...input, id });
+  }
+
   private async inferLifecycleEvents(
     tx: SqliteTransaction,
     snapshotId: string,
@@ -595,7 +676,7 @@ export class ConfigurationSnapshotEngine {
       if (!previous) {
         if (currentStatus !== 'complete') continue;
         for (const [componentId, info] of currentMap) {
-          const id = await ComponentLifecycleEventStore.insert(tx, {
+          const id = await this.insertLifecycleEvent(tx, {
             componentId,
             environmentId: input.environmentId,
             eventType: 'baseline',
@@ -622,7 +703,7 @@ export class ConfigurationSnapshotEngine {
         const previousInfo = previousMap.get(componentId);
         if (previousInfo) {
           if (previousInfo.versionId !== currentInfo.versionId) {
-            const id = await ComponentLifecycleEventStore.insert(tx, {
+            const id = await this.insertLifecycleEvent(tx, {
               componentId,
               environmentId: input.environmentId,
               eventType: 'updated',
@@ -643,7 +724,7 @@ export class ConfigurationSnapshotEngine {
 
         const aliasedPrevious = await this.findAliasedComponent(tx, componentId, previousMap);
         if (aliasedPrevious) {
-          const id = await ComponentLifecycleEventStore.insert(tx, {
+          const id = await this.insertLifecycleEvent(tx, {
             componentId,
             environmentId: input.environmentId,
             eventType: 'updated',
@@ -662,7 +743,7 @@ export class ConfigurationSnapshotEngine {
         }
 
         const eventType = currentStatus === 'complete' ? 'added' : 'added';
-        const id = await ComponentLifecycleEventStore.insert(tx, {
+        const id = await this.insertLifecycleEvent(tx, {
           componentId,
           environmentId: input.environmentId,
           eventType,
@@ -682,7 +763,7 @@ export class ConfigurationSnapshotEngine {
           if (previousHandled.has(componentId)) continue;
           const aliasedCurrent = await this.findAliasedComponent(tx, componentId, currentMap);
           if (aliasedCurrent) {
-            const id = await ComponentLifecycleEventStore.insert(tx, {
+            const id = await this.insertLifecycleEvent(tx, {
               componentId,
               environmentId: input.environmentId,
               eventType: 'updated',
@@ -699,7 +780,7 @@ export class ConfigurationSnapshotEngine {
             continue;
           }
 
-          const id = await ComponentLifecycleEventStore.insert(tx, {
+          const id = await this.insertLifecycleEvent(tx, {
             componentId,
             environmentId: input.environmentId,
             eventType: 'removed',

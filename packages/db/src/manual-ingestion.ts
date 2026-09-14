@@ -28,6 +28,7 @@ import {
 } from './ingestion.js';
 import type { ManualIngestionBundle } from './manifest.js';
 import type { ArtifactContent } from './ports.js';
+import { ANALYTICS_PROCESSING_VERSION } from './processing-version.js';
 
 export interface ManualIngestionFlowInput extends Omit<ManualIngestionBundle, 'harness'> {
   /** User-selected or detected harness. */
@@ -477,6 +478,9 @@ export class ManualIngestionOrchestrator {
       canonical.nativeSessionId,
       sourceFingerprint,
       this.context.analysisReleaseId,
+      // See ingestion.ts — the processing version is part of generation
+      // identity so version bumps force regeneration on re-ingest.
+      String(ANALYTICS_PROCESSING_VERSION),
       result.parserVersion,
       result.transformerVersion,
       result.ontologyVersion,

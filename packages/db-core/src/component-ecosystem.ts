@@ -707,6 +707,55 @@ export function deterministicComponentInstallationId(
   )}`;
 }
 
+export function deterministicComponentLifecycleEventId(
+  componentId: string,
+  environmentId: string,
+  eventType: string,
+  beforeVersionId: string | null,
+  afterVersionId: string | null,
+  createdAt: number,
+): string {
+  return `cle-${deterministicId(
+    'component-lifecycle-event',
+    componentId,
+    environmentId,
+    eventType,
+    beforeVersionId ?? '',
+    afterVersionId ?? '',
+    String(createdAt),
+  )}`;
+}
+
+export function deterministicComponentAvailabilityEventId(
+  componentId: string,
+  environmentId: string,
+  eventType: string,
+  startTime: number,
+): string {
+  return `cae-${deterministicId(
+    'component-availability-event',
+    componentId,
+    environmentId,
+    eventType,
+    String(startTime),
+  )}`;
+}
+
+export function deterministicComponentContextEventId(
+  componentId: string,
+  environmentId: string,
+  eventType: string,
+  startTime: number,
+): string {
+  return `cce-${deterministicId(
+    'component-context-event',
+    componentId,
+    environmentId,
+    eventType,
+    String(startTime),
+  )}`;
+}
+
 export function deterministicConfigurationSnapshotId(
   environmentId: string,
   projectId: string | null,
@@ -1940,15 +1989,14 @@ export class ComponentLifecycleEventStore {
     const now = Date.now();
     const id =
       input.id ??
-      `cle-${deterministicId(
-        'component-lifecycle-event',
+      deterministicComponentLifecycleEventId(
         input.componentId,
         input.environmentId,
         input.eventType,
-        input.beforeVersionId ?? '',
-        input.afterVersionId ?? '',
-        String(input.createdAt ?? now),
-      )}`;
+        input.beforeVersionId ?? null,
+        input.afterVersionId ?? null,
+        input.createdAt ?? now,
+      );
     await queryable.exec(
       `INSERT INTO component_lifecycle_events (
         id, component_id, environment_id, event_type, before_version_id, after_version_id,
@@ -2084,13 +2132,12 @@ export class ComponentAvailabilityEventStore {
     const now = Date.now();
     const id =
       input.id ??
-      `cae-${deterministicId(
-        'component-availability-event',
+      deterministicComponentAvailabilityEventId(
         input.componentId,
         input.environmentId,
         input.eventType,
-        String(input.startTime),
-      )}`;
+        input.startTime,
+      );
     await queryable.exec(
       `INSERT INTO component_availability_events (
         id, component_id, environment_id, session_id, event_type, snapshot_id, generation_id,
@@ -2225,13 +2272,12 @@ export class ComponentContextEventStore {
     const now = Date.now();
     const id =
       input.id ??
-      `cce-${deterministicId(
-        'component-context-event',
+      deterministicComponentContextEventId(
         input.componentId,
         input.environmentId,
         input.eventType,
-        String(input.startTime),
-      )}`;
+        input.startTime,
+      );
     await queryable.exec(
       `INSERT INTO component_context_events (
         id, component_id, environment_id, session_id, event_type, snapshot_id, generation_id,

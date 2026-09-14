@@ -73,6 +73,7 @@ import type {
   ContentHasher,
   ResolvedArtifact,
 } from './ports.js';
+import { ANALYTICS_PROCESSING_VERSION } from './processing-version.js';
 import { applySessionRollupContributions } from './rollup-reconciliation.js';
 
 declare const console:
@@ -690,6 +691,8 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
 
         // 6b. Apply the configuration snapshot (components, lifecycle events,
         //     exposures) so component ecosystem and utilization views have data.
+        //     Re-observation of an unchanged snapshot is deduped by the
+        //     identity-keyed deterministic ids inside the engine.
         await this.upsertConfigurationSnapshot(tx, canonical, commit, result);
         // 6c. Aggregate component_evidence_link records into
         //     session_component_stats so utilization views can distinguish
@@ -872,6 +875,10 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       canonical.nativeSessionId,
       sourceFingerprint,
       this.context.analysisReleaseId,
+      // The persisted derived-row contract is part of generation identity: a
+      // processing-version bump must mint a new generation on re-ingest so
+      // reprocessing actually rewrites derived rows instead of deduping away.
+      String(ANALYTICS_PROCESSING_VERSION),
       result.parserVersion,
       result.transformerVersion,
       result.ontologyVersion,

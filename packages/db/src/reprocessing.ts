@@ -38,6 +38,23 @@ export type ReprocessingTrigger =
 
 export type SourceAvailability = 'local' | 'remote_reacquirable' | 'unavailable';
 
+/**
+ * Result of `reingestSession`:
+ * - `committed`: a new generation was committed (the transform output or the
+ *   processing-version-derived generation identity changed).
+ * - `skipped`: the recomputed generation already matches the current one — the
+ *   session's derived rows are already up to date.
+ * - `unavailable`: source artifacts could not be resolved locally or remotely,
+ *   or the re-ingest failed — the caller should fall back to cheaper backfills.
+ */
+export type ReingestSessionOutcome = 'committed' | 'skipped' | 'unavailable';
+
+declare const console:
+  | {
+      warn?: (...args: unknown[]) => void;
+    }
+  | undefined;
+
 export interface ReprocessingContext {
   readonly executor: SqliteExecutor;
   readonly resolver: ArtifactResolver;
@@ -146,6 +163,7 @@ export interface ReprocessingEngine {
   ): Promise<ReprocessingReport>;
   reprocessSession(sessionId: string, analysisReleaseId?: string): Promise<ReprocessingReport>;
   reprocessProject(projectId: string, analysisReleaseId?: string): Promise<ReprocessingReport>;
+  reingestSession(sessionId: string, analysisReleaseId?: string): Promise<ReingestSessionOutcome>;
   purgeLocalBlob(sha256: string): Promise<void>;
   recordAuthoritativeTombstone(
     input: {
@@ -668,6 +686,66 @@ export class DefaultReprocessingEngine implements ReprocessingEngine {
       failures,
       duration: Date.now() - start,
     };
+  }
+
+  /**
+   * Re-ingests a single session from its retained/resolvable artifacts and
+   * commits a fresh generation when the derived-data contract moved (the
+   * generation id incorporates the analytics processing version). Unlike
+   * `reprocessSession` it does not run a frontier rebuild — callers that
+   * regenerate many sessions during a version rebuild recompute rollups
+   * themselves afterwards. Failures are isolated to the session.
+   */
+  async reingestSession(
+    sessionId: string,
+    analysisReleaseId?: string,
+  ): Promise<ReingestSessionOutcome> {
+    const check = await this.checkSourceAvailability(sessionId);
+    if (check.status === 'unavailable') return 'unavailable';
+
+    const session = await this.getSessionWithNatives(sessionId);
+    if (!session) return 'unavailable';
+
+    const resolved = await this.resolveSessionArtifacts(sessionId, check.artifactHashes);
+    if (resolved.length === 0) return 'unavailable';
+
+    const previousGenerationId = await getCurrentGenerationId(this.context.executor, sessionId);
+
+    try {
+      const orchestrator = new DefaultIngestionOrchestrator({
+        ...this.context,
+        analysisReleaseId: analysisReleaseId ?? this.context.analysisReleaseId,
+      });
+
+      const receipt = await orchestrator.ingestManual({
+        artifacts: resolved.map((a) => ({
+          relativePath: a.relativePath,
+          mediaType: a.mediaType,
+          content: a.content,
+          sha256: a.sha256,
+          size: a.size,
+          status: 'uploaded' as const,
+        })),
+        source: {
+          sourceId: session.nativeSourceId,
+          environmentId: session.nativeEnvironmentId ?? undefined,
+          projectId: session.nativeProjectId,
+          sessionId: session.nativeSessionId,
+        },
+        harness: session.harness,
+        projectId: session.nativeProjectId,
+        sessionId: session.nativeSessionId,
+      });
+
+      if (receipt.status === 'failed') {
+        console?.warn?.('[reingestSession] ingest failed', sessionId, JSON.stringify(receipt));
+        return 'unavailable';
+      }
+      return receipt.generationId === previousGenerationId ? 'skipped' : 'committed';
+    } catch (err) {
+      console?.warn?.('[reingestSession] ingest threw', sessionId, err);
+      return 'unavailable';
+    }
   }
 
   async purgeLocalBlob(sha256: string): Promise<void> {
