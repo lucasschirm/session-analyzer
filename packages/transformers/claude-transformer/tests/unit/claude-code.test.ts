@@ -276,6 +276,96 @@ describe('ClaudeCodeTransformer', () => {
       expect(result.sessionSummaries[0]?.parentSessionId).toBeUndefined();
     });
 
+    it('emits a truncated first-prompt fallbackTitle when the transcript has no ai-title', () => {
+      const lines = [
+        // Skipped classes mirror Claude Code's own first-prompt extraction.
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u-1',
+          timestamp: '2026-08-01T10:00:00.000Z',
+          sessionId: 'sess-title-1',
+          isMeta: true,
+          message: { role: 'user', content: 'injected meta text' },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u-2',
+          timestamp: '2026-08-01T10:00:01.000Z',
+          sessionId: 'sess-title-1',
+          message: {
+            role: 'user',
+            content: [{ type: 'tool_result', tool_use_id: 't-1', content: 'ok' }],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u-3',
+          timestamp: '2026-08-01T10:00:02.000Z',
+          sessionId: 'sess-title-1',
+          message: { role: 'user', content: '<ide_selection>ignored</ide_selection>' },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u-4',
+          timestamp: '2026-08-01T10:00:03.000Z',
+          sessionId: 'sess-title-1',
+          message: {
+            role: 'user',
+            content:
+              'Refactor the cache layer to use a bounded LRU for all in-memory stores\nand evict stale entries',
+          },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          uuid: 'a-1',
+          timestamp: '2026-08-01T10:00:05.000Z',
+          sessionId: 'sess-title-1',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'done' }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        }),
+      ];
+      const b = bundle([artifact('transcript.jsonl', lines.join('\n'), 'application/jsonl')]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      expect(result.errors).toEqual([]);
+
+      const session = result.evidence.find((r) => r.recordType === 'session');
+      // Newlines collapse to a single line and the prompt truncates at 50
+      // chars with an ellipsis.
+      expect(session?.payload.fallbackTitle).toBe(
+        'Refactor the cache layer to use a bounded LRU for…',
+      );
+      expect(session?.payload.aiTitle).toBeUndefined();
+    });
+
+    it('keeps a short first prompt untruncated in fallbackTitle', () => {
+      const lines = [
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u-1',
+          timestamp: '2026-08-01T10:00:00.000Z',
+          sessionId: 'sess-title-2',
+          message: { role: 'user', content: 'Fix the bug in app.ts' },
+        }),
+      ];
+      const b = bundle([artifact('transcript.jsonl', lines.join('\n'), 'application/jsonl')]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      const session = result.evidence.find((r) => r.recordType === 'session');
+      expect(session?.payload.fallbackTitle).toBe('Fix the bug in app.ts');
+    });
+
+    it('does not emit fallbackTitle when the transcript carries an ai-title', () => {
+      const b = bundle([
+        artifact('transcript.jsonl', fixture('t2-ai-title-last-wins.jsonl'), 'application/jsonl'),
+      ]);
+      const result = ClaudeCodeTransformer.transform(b, defaultContext);
+      const session = result.evidence.find((r) => r.recordType === 'session');
+      expect(session?.payload.aiTitle).toBe('Second Title (rewritten)');
+      expect(session?.payload.fallbackTitle).toBeUndefined();
+    });
+
     it('threads raw effort and maps it to normalizedEffort for every recognized and unrecognized value', () => {
       // Real observed raw values (see #289 finding 1): high, xhigh, medium,
       // max, low. Plus one unrecognized string and one entry with no effort

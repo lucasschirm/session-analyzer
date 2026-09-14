@@ -149,6 +149,10 @@ export function buildSessionSpine(
       model: session?.model,
       agentMode: session?.agentMode,
       title: session?.title,
+      // Devin CLI persists its own per-session title (derived from the
+      // first user message); surface it as the canonical session title
+      // (`ai_title`) for read paths — ingestion reads `aiTitle`.
+      aiTitle: session?.title,
       startTime: start,
       endTime: end,
       finality: 'partial',

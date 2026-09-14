@@ -1082,6 +1082,10 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       const spine = sessionPayloads.get(summary.sessionId);
       const aiTitle =
         typeof spine?.aiTitle === 'string' && spine.aiTitle.trim() ? spine.aiTitle : null;
+      const fallbackTitle =
+        typeof spine?.fallbackTitle === 'string' && spine.fallbackTitle.trim()
+          ? spine.fallbackTitle
+          : null;
       const slug = typeof spine?.slug === 'string' && spine.slug.trim() ? spine.slug : null;
 
       const baseInput = {
@@ -1109,9 +1113,14 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         // read the previous generation ID. Likewise aiTitle/slug are only
         // overwritten when this ingest actually carries them (undefined fields
         // are skipped by the store), so user-set titles survive re-ingestion.
+        // A transformer's derived fallbackTitle (e.g. the first user prompt)
+        // only fills an otherwise-untitled row — it never replaces a real or
+        // user-set title.
+        const existingHasTitle =
+          typeof existing.aiTitle === 'string' && existing.aiTitle.trim().length > 0;
         await SessionStore.update(tx, canonical.projectId, summary.sessionId, {
           ...baseInput,
-          aiTitle: aiTitle ?? undefined,
+          aiTitle: aiTitle ?? (existingHasTitle ? undefined : (fallbackTitle ?? undefined)),
           slug: slug ?? undefined,
         } as UpdateSessionInput);
       } else {
@@ -1123,6 +1132,7 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
           nativeSessionId,
           currentGenerationId: null,
           ...baseInput,
+          aiTitle: aiTitle ?? fallbackTitle,
         };
         await SessionStore.insert(tx, insertInput as InsertSessionInput);
       }

@@ -551,6 +551,21 @@ describe('Internal session spine', () => {
     expect(result.summary.startTime).toBeDefined();
     expect(result.summary.endTime).toBeDefined();
   });
+
+  it('surfaces the persisted session title as aiTitle for ingestion', () => {
+    const session = {
+      id: 's1',
+      title: 'Fix the login redirect',
+      createdAt: null,
+      lastActivityAt: null,
+      metadata: null,
+    } as unknown as Parameters<typeof buildSessionSpine>[1];
+    const result = buildSessionSpine('s1', session, [], [], 'artifact-1');
+    expect(result.records[0]?.payload).toMatchObject({
+      title: 'Fix the login redirect',
+      aiTitle: 'Fix the login redirect',
+    });
+  });
 });
 
 describe('Internal definitions', () => {

@@ -793,6 +793,52 @@ function sessionStartAndEnd(session: ClaudeCodeSession): { start?: string; end?:
   return { start: timestamps[0], end: timestamps[timestamps.length - 1] };
 }
 
+/**
+ * Maximum length of a session title derived from the first real user
+ * prompt — mirrors the short single-line first-prompt label Claude Code
+ * shows in its session picker.
+ */
+const MAX_DERIVED_SESSION_TITLE_LENGTH = 50;
+
+/**
+ * Extracts the text of the first real user prompt. Skips the same message
+ * classes Claude Code's own first-prompt extraction skips: CLI-injected
+ * meta entries, compact-continuation summaries, tool_result-only messages,
+ * and `<…>`-wrapped command/system/IDE content.
+ */
+function firstUserPromptText(session: ClaudeCodeSession): string | undefined {
+  for (const entry of session.entries) {
+    if (!isUserEntry(entry) || entry.isMeta || entry.isCompactSummary) continue;
+    const content = entry.message.content;
+    const text =
+      typeof content === 'string'
+        ? content
+        : content
+            .map((block) =>
+              block.type === 'text' && typeof block.text === 'string' ? block.text : '',
+            )
+            .join(' ');
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (!normalized || normalized.startsWith('<')) continue;
+    return normalized;
+  }
+  return undefined;
+}
+
+/**
+ * Derives a display title from the first real user prompt, collapsed to a
+ * single line and truncated — the first-message-as-title convention Devin
+ * CLI uses for its own sessions — for sessions without an `ai-title` event.
+ * Emitted as `fallbackTitle`: ingestion only writes it when no better
+ * title (ai-title, user rename) exists on the session row.
+ */
+function deriveSessionTitle(session: ClaudeCodeSession): string | undefined {
+  const prompt = firstUserPromptText(session);
+  if (!prompt) return undefined;
+  if (prompt.length <= MAX_DERIVED_SESSION_TITLE_LENGTH) return prompt;
+  return `${prompt.slice(0, MAX_DERIVED_SESSION_TITLE_LENGTH).trimEnd()}…`;
+}
+
 function normalizeSessionSpine(
   session: ClaudeCodeSession,
   bundle: UnknownArtifactBundle,
@@ -834,6 +880,7 @@ function normalizeSessionSpine(
       harness: 'claude-code',
       nativeSessionId,
       aiTitle: session.aiTitle,
+      fallbackTitle: session.aiTitle?.trim() ? undefined : deriveSessionTitle(session),
       slug: session.slug,
       agentName: session.agentName,
       cwd: session.cwd,
