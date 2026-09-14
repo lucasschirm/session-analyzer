@@ -332,12 +332,11 @@ describe('ClaudeCodeTransformer', () => {
       expect(result.errors).toEqual([]);
 
       const session = result.evidence.find((r) => r.recordType === 'session');
+      const payload = session?.payload as Record<string, unknown> | undefined;
       // Newlines collapse to a single line and the prompt truncates at 50
       // chars with an ellipsis.
-      expect(session?.payload.fallbackTitle).toBe(
-        'Refactor the cache layer to use a bounded LRU for…',
-      );
-      expect(session?.payload.aiTitle).toBeUndefined();
+      expect(payload?.fallbackTitle).toBe('Refactor the cache layer to use a bounded LRU for…');
+      expect(payload?.aiTitle).toBeUndefined();
     });
 
     it('keeps a short first prompt untruncated in fallbackTitle', () => {
@@ -353,7 +352,8 @@ describe('ClaudeCodeTransformer', () => {
       const b = bundle([artifact('transcript.jsonl', lines.join('\n'), 'application/jsonl')]);
       const result = ClaudeCodeTransformer.transform(b, defaultContext);
       const session = result.evidence.find((r) => r.recordType === 'session');
-      expect(session?.payload.fallbackTitle).toBe('Fix the bug in app.ts');
+      const payload = session?.payload as Record<string, unknown> | undefined;
+      expect(payload?.fallbackTitle).toBe('Fix the bug in app.ts');
     });
 
     it('does not emit fallbackTitle when the transcript carries an ai-title', () => {
@@ -362,8 +362,9 @@ describe('ClaudeCodeTransformer', () => {
       ]);
       const result = ClaudeCodeTransformer.transform(b, defaultContext);
       const session = result.evidence.find((r) => r.recordType === 'session');
-      expect(session?.payload.aiTitle).toBe('Second Title (rewritten)');
-      expect(session?.payload.fallbackTitle).toBeUndefined();
+      const payload = session?.payload as Record<string, unknown> | undefined;
+      expect(payload?.aiTitle).toBe('Second Title (rewritten)');
+      expect(payload?.fallbackTitle).toBeUndefined();
     });
 
     it('threads raw effort and maps it to normalizedEffort for every recognized and unrecognized value', () => {
