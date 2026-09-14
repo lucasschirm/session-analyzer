@@ -6,23 +6,53 @@ const HOME = '/home/tester';
 const CWD = '/home/tester/project';
 
 describe('resolveDevinDataRoot', () => {
-  it('resolves $XDG_DATA_HOME/devin/cli when the env var is set', () => {
-    const root = resolveDevinDataRoot({ xdgDataHome: '/custom/xdg-data', home: HOME, cwd: CWD });
+  it('resolves $XDG_DATA_HOME/devin/cli when the env var is set and sessions.db exists there', () => {
+    const xdgRoot = join('/custom/xdg-data', 'devin', 'cli', 'sessions.db');
+    const root = resolveDevinDataRoot(
+      { xdgDataHome: '/custom/xdg-data', home: HOME, cwd: CWD },
+      (p) => p === xdgRoot,
+    );
     expect(root).toBe(join('/custom/xdg-data', 'devin', 'cli'));
   });
 
-  it('falls back to ~/.local/share/devin/cli when unset', () => {
-    const root = resolveDevinDataRoot({ home: HOME, cwd: CWD });
+  it('falls back to ~/.local/share/devin/cli when unset and no candidate exists', () => {
+    const root = resolveDevinDataRoot({ home: HOME, cwd: CWD }, () => false);
     expect(root).toBe(join(HOME, '.local', 'share', 'devin', 'cli'));
   });
 
-  it('falls back when the env var is set but empty', () => {
-    const root = resolveDevinDataRoot({ xdgDataHome: '', home: HOME, cwd: CWD });
+  it('falls back when the env var is set but empty (and no candidate exists)', () => {
+    const root = resolveDevinDataRoot({ xdgDataHome: '', home: HOME, cwd: CWD }, () => false);
     expect(root).toBe(join(HOME, '.local', 'share', 'devin', 'cli'));
   });
 
-  it('falls back when the env var is set but whitespace-only', () => {
-    const root = resolveDevinDataRoot({ xdgDataHome: '   ', home: HOME, cwd: CWD });
+  it('falls back when the env var is set but whitespace-only (and no candidate exists)', () => {
+    const root = resolveDevinDataRoot({ xdgDataHome: '   ', home: HOME, cwd: CWD }, () => false);
+    expect(root).toBe(join(HOME, '.local', 'share', 'devin', 'cli'));
+  });
+
+  it('probes ~/.devin-xdg-data when XDG_DATA_HOME is unset and ~/.local/share has no sessions.db', () => {
+    const orcaRoot = join(HOME, '.devin-xdg-data', 'devin', 'cli', 'sessions.db');
+    const root = resolveDevinDataRoot({ home: HOME, cwd: CWD }, (p) => p === orcaRoot);
+    expect(root).toBe(join(HOME, '.devin-xdg-data', 'devin', 'cli'));
+  });
+
+  it('prefers $XDG_DATA_HOME over ~/.devin-xdg-data when both have sessions.db', () => {
+    const xdgRoot = join('/custom/xdg-data', 'devin', 'cli', 'sessions.db');
+    const orcaRoot = join(HOME, '.devin-xdg-data', 'devin', 'cli', 'sessions.db');
+    const root = resolveDevinDataRoot(
+      { xdgDataHome: '/custom/xdg-data', home: HOME, cwd: CWD },
+      (p) => p === xdgRoot || p === orcaRoot,
+    );
+    expect(root).toBe(join('/custom/xdg-data', 'devin', 'cli'));
+  });
+
+  it('prefers ~/.local/share over ~/.devin-xdg-data when both have sessions.db and XDG_DATA_HOME is unset', () => {
+    const localRoot = join(HOME, '.local', 'share', 'devin', 'cli', 'sessions.db');
+    const orcaRoot = join(HOME, '.devin-xdg-data', 'devin', 'cli', 'sessions.db');
+    const root = resolveDevinDataRoot(
+      { home: HOME, cwd: CWD },
+      (p) => p === localRoot || p === orcaRoot,
+    );
     expect(root).toBe(join(HOME, '.local', 'share', 'devin', 'cli'));
   });
 });

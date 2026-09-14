@@ -54,7 +54,7 @@ export function resolveDevinPaths(
   env: DevinPathEnv,
   existsFn: (path: string) => boolean = existsSync,
 ): ResolvedDevinPaths {
-  const dataRoot = resolveDevinDataRoot(env);
+  const dataRoot = resolveDevinDataRoot(env, existsFn);
   const probes = optionalProbeCandidates(env).map(({ label, path }) => ({
     label,
     path,
