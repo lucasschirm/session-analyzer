@@ -148,6 +148,15 @@ export interface DeleteSessionMetricsRequest extends BaseRequest {
   readonly sessionId: string;
 }
 
+/**
+ * Reads a session's stored display title (`ai_title` falling back to `slug`)
+ * resolved by internal or native session id. Returns null when unknown.
+ */
+export interface GetSessionTitleRequest extends BaseRequest {
+  readonly type: 'getSessionTitle';
+  readonly sessionId: string;
+}
+
 /** Renames a session: writes the user-supplied title to `sessions.ai_title`. */
 export interface SetSessionTitleRequest extends BaseRequest {
   readonly type: 'setSessionTitle';
@@ -197,6 +206,7 @@ export type AnalyticsRequest =
   | ResolveProjectIdRequest
   | DeleteProjectRequest
   | DeleteSessionMetricsRequest
+  | GetSessionTitleRequest
   | SetSessionTitleRequest
   | ExportAnalyticsDatabaseRequest
   | VacuumAnalyticsDatabaseRequest
@@ -218,6 +228,7 @@ export type AnalyticsRequestPayload =
   | Omit<ResolveProjectIdRequest, 'id'>
   | Omit<DeleteProjectRequest, 'id'>
   | Omit<DeleteSessionMetricsRequest, 'id'>
+  | Omit<GetSessionTitleRequest, 'id'>
   | Omit<SetSessionTitleRequest, 'id'>
   | Omit<ExportAnalyticsDatabaseRequest, 'id'>
   | Omit<VacuumAnalyticsDatabaseRequest, 'id'>

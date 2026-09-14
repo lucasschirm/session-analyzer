@@ -338,6 +338,34 @@ describe('AnalyticsClient', () => {
     await expect(promise).rejects.toThrow('ingest failed');
   });
 
+  /**
+   * Regression: the sync manager resolves cherry-picked session titles through
+   * this request. If `getSessionTitle` is not posted (or resolves the wrong
+   * shape), synced sessions in storage listings fall back to raw session ids.
+   */
+  it('posts getSessionTitle and unwraps the resolved title', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.getSessionTitle('sess-1');
+    expect(worker.posted[1].type).toBe('getSessionTitle');
+    const request = worker.posted[1] as Extract<AnalyticsRequest, { type: 'getSessionTitle' }>;
+    expect(request.sessionId).toBe('sess-1');
+
+    worker.respond({ id: request.id, ok: true, result: 'My Parsed Title' });
+    await expect(promise).resolves.toBe('My Parsed Title');
+  });
+
+  it('getSessionTitle resolves null when the session has no stored title', async () => {
+    void client.ensureReady();
+    worker.respond({ id: 1, ok: true, backend: backendReport() });
+
+    const promise = client.getSessionTitle('sess-unknown');
+    worker.respond({ id: worker.posted[1].id, ok: true, result: null });
+
+    await expect(promise).resolves.toBeNull();
+  });
+
   it('does not carry SQL implementation types across the worker boundary', async () => {
     // A query request should only contain DTO fields.
     const query: AnalyticsRequest = {

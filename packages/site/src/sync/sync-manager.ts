@@ -133,6 +133,14 @@ export interface SyncManagerOptions {
   onWarning?: (warning: string) => void;
   /** Async seam for checking which artifact blobs exist in the blob store. */
   hasArtifactBlobs?: (hashes: readonly string[]) => Promise<string[]>;
+  /**
+   * Async seam for resolving a session's parsed display title (the
+   * analytics `ai_title`/`slug`) by remote session id. Returns null when
+   * no parsed title is known. Wired to `analyticsClient.getSessionTitle`
+   * in production; when unset, storage session listings fall back to the
+   * locally stored title.
+   */
+  resolveSessionTitle?: (sessionId: string) => Promise<string | null>;
   /** Event target for `offline` events; defaults to `globalThis`. */
   eventTarget?: EventTarget;
 }
@@ -314,6 +322,7 @@ export class SyncManager extends EventTarget {
   private readonly onRunSummary?: (summary: RunSummary) => void;
   private readonly onWarning?: (warning: string) => void;
   private readonly hasArtifactBlobs?: (hashes: readonly string[]) => Promise<string[]>;
+  private readonly resolveSessionTitle?: (sessionId: string) => Promise<string | null>;
   private readonly eventTarget: EventTarget;
 
   private broadcastChannel: BroadcastChannel | null = null;
@@ -353,6 +362,7 @@ export class SyncManager extends EventTarget {
     this.onWarning = options.onWarning;
     this.hasArtifactBlobs =
       options.hasArtifactBlobs ?? ((hashes) => analyticsClient.hasArtifactBlobs(hashes));
+    this.resolveSessionTitle = options.resolveSessionTitle;
     this.eventTarget = options.eventTarget ?? globalThis;
   }
 
@@ -1341,7 +1351,9 @@ export class SyncManager extends EventTarget {
     existing?: DashboardSession | null,
   ): SessionStub {
     const source = existing?.source ?? manifest?.harness ?? 'claude';
-    const title = existing?.title ?? manifest?.sessionId ?? sessionId;
+    // The raw remote session id is not a title — leave it empty until the
+    // parsed `ai-title` lands in the analytics DB (never-display-raw-ids).
+    const title = existing?.title ?? '';
     const startedAt =
       this.stubTimestamp(existing?.started_at) ?? manifest?.startedAt ?? new Date().toISOString();
     const endedAt =
@@ -2292,7 +2304,10 @@ export class SyncManager extends EventTarget {
     if (localProj) {
       const localSess = await this.db.getSessionBySyncId(localProj.id, sessionId);
       synced = localSess?.sync_status === 'in_sync';
-      title = localSess?.title ?? undefined;
+      title = localSess
+        ? ((await this.resolveParsedSessionTitle(sessionId)) ??
+          this.storedDisplayTitle(localSess, sessionId))
+        : undefined;
     }
     return {
       projectId: folder,
@@ -2334,9 +2349,44 @@ export class SyncManager extends EventTarget {
     if (!localProj) return item;
     const localSess = await this.db.getSessionBySyncId(localProj.id, item.sessionId);
     const synced = localSess?.sync_status === 'in_sync';
-    const title = localSess?.title ? localSess.title : item.title;
+    const title = localSess
+      ? ((await this.resolveParsedSessionTitle(item.sessionId)) ??
+        this.storedDisplayTitle(localSess, item.sessionId) ??
+        item.title)
+      : item.title;
     if (synced === item.synced && title === item.title) return item;
     return { ...item, synced, title };
+  }
+
+  /**
+   * Resolves the parsed session title (`ai_title`/`slug`) from the
+   * analytics DB via the `resolveSessionTitle` seam. Best-effort: any
+   * resolution failure falls back to the locally stored title so the
+   * session listing never breaks on an analytics hiccup.
+   */
+  private async resolveParsedSessionTitle(remoteSessionId: string): Promise<string | undefined> {
+    if (!this.resolveSessionTitle) return undefined;
+    try {
+      return (await this.resolveSessionTitle(remoteSessionId)) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * A stored control-DB title is only displayable when it is a real title.
+   * Sync stubs written before this fix persist the raw remote session id
+   * into `sessions.title`; a value equal to the session id is that
+   * placeholder, not a title, and must never be rendered
+   * (never-display-raw-ids).
+   */
+  private storedDisplayTitle(
+    localSess: DashboardSession,
+    remoteSessionId: string,
+  ): string | undefined {
+    const title = localSess.title?.trim();
+    if (!title || title === remoteSessionId) return undefined;
+    return title;
   }
 
   /**
@@ -2494,6 +2544,7 @@ export const syncManager = new SyncManager({
       }
     }
   },
+  resolveSessionTitle: (sessionId) => analyticsClient.getSessionTitle(sessionId),
   onFileDownloaded: async (_sessionId, file, _projectId) => {
     // Retain each downloaded file in the analytics blob store so the
     // analytics worker can resolve artifacts during manifest ingestion.

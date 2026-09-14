@@ -31,6 +31,7 @@ import {
   ArtifactBlobStore as DbArtifactBlobStore,
   deleteSessionMetrics,
   findSessionRef,
+  getSessionTitle,
   MIGRATIONS,
   MigrationRunner,
   SessionStore,
@@ -665,6 +666,18 @@ async function handleDeleteSessionMetrics(
   }
 }
 
+async function handleGetSessionTitle(
+  state: AnalyticsWorkerState,
+  request: Extract<AnalyticsRequest, { type: 'getSessionTitle' }>,
+): Promise<AnalyticsResponse> {
+  try {
+    const title = await getSessionTitle(state.executor, request.sessionId);
+    return { id: 0, ok: true, result: title };
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
 async function handleSetSessionTitle(
   state: AnalyticsWorkerState,
   request: Extract<AnalyticsRequest, { type: 'setSessionTitle' }>,
@@ -796,6 +809,8 @@ export async function handleAnalyticsRequest(
         return await handleDeleteProject(state, request);
       case 'deleteSessionMetrics':
         return await handleDeleteSessionMetrics(state, request);
+      case 'getSessionTitle':
+        return await handleGetSessionTitle(state, request);
       case 'setSessionTitle':
         return await handleSetSessionTitle(state, request);
       case 'exportAnalyticsDatabase':
