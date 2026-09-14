@@ -26,7 +26,10 @@ for both harnesses (regressed twice before in that plugin: commits
   `.devin/config.json` (project) / `~/.config/devin/config.json`
   (user-global — note the 3-segment shape, one more than Claude's
   `~/.claude/settings.json`, which is exactly why `resolveConfigPaths` is a
-  function and not a shared string template).
+  function and not a shared string template). Devin-specific: the
+  user-global tier is trusted (`DevinCliAdapter.userGlobalEnvBlocklist: []`)
+  because `~/.config/devin/config.json` lives outside any repository — the
+  `securityBlocklist` still applies to project `.devin/config.json`.
 - **config.ts** — `validateCliConfig` / `validateStorageConfig`: wraps the
   shared functions, using `DevinCliAdapter.packageName`
   (`@lucasschirm/devin-session-sync`) and `DevinCliAdapter.localConfigDisplayPath`

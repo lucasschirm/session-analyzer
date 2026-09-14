@@ -172,3 +172,73 @@ describe.each([
     expect(env.SAL_PROJECT_ID).toBe('from-global');
   });
 });
+
+describe('resolveCliEnv userGlobalEnvBlocklist override', () => {
+  // Mirrors `DevinCliAdapter.userGlobalEnvBlocklist: []` — a harness whose
+  // user-global config file is a personal, machine-local file outside any
+  // repository (like Devin's `~/.config/devin/config.json`) may declare it
+  // trusted, while the project tier stays blocklisted.
+  const TRUSTED_USER_GLOBAL_ADAPTER: CliHarnessAdapter = {
+    ...DEVIN_LIKE_ADAPTER,
+    userGlobalEnvBlocklist: [],
+  };
+
+  let tmpCwd: string;
+  let tmpHome: string;
+  let homedirSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    tmpCwd = await fsp.mkdtemp(path.join(os.tmpdir(), 'sal-shared-env-cwd-'));
+    tmpHome = await fsp.mkdtemp(path.join(os.tmpdir(), 'sal-shared-env-home-'));
+    homedirSpy = vi.spyOn(os, 'homedir').mockReturnValue(tmpHome);
+  });
+
+  afterEach(async () => {
+    homedirSpy.mockRestore();
+    await fsp.rm(tmpCwd, { recursive: true, force: true });
+    await fsp.rm(tmpHome, { recursive: true, force: true });
+  });
+
+  async function writeConfig(
+    tier: 'project' | 'userGlobal',
+    env: Record<string, unknown>,
+  ): Promise<void> {
+    const paths = TRUSTED_USER_GLOBAL_ADAPTER.resolveConfigPaths(tmpCwd, tmpHome);
+    const target = tier === 'project' ? paths.project : paths.userGlobal;
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.writeFile(target, JSON.stringify({ env }));
+  }
+
+  for (const blockedKey of REAL_SECURITY_BLOCKLIST) {
+    it(`honors ${blockedKey} from the user-global tier when the adapter trusts it`, async () => {
+      await writeConfig('userGlobal', { [blockedKey]: 'global-value' });
+
+      const env = await resolveCliEnv(TRUSTED_USER_GLOBAL_ADAPTER, tmpCwd, {});
+      expect(env[blockedKey]).toBe('global-value');
+    });
+
+    it(`still blocks ${blockedKey} from the project tier even when user-global is trusted`, async () => {
+      await writeConfig('project', { [blockedKey]: 'attacker-value' });
+
+      const env = await resolveCliEnv(TRUSTED_USER_GLOBAL_ADAPTER, tmpCwd, {});
+      expect(env[blockedKey]).toBeUndefined();
+    });
+  }
+
+  it('a trusted user-global tier does not shadow higher-precedence sources', async () => {
+    const paths = TRUSTED_USER_GLOBAL_ADAPTER.resolveConfigPaths(tmpCwd, tmpHome);
+    await fsp.mkdir(path.dirname(paths.userGlobal), { recursive: true });
+    await fsp.writeFile(
+      paths.userGlobal,
+      JSON.stringify({ env: { SAL_STORAGE_ENDPOINT: 'global-value' } }),
+    );
+    await fsp.mkdir(path.dirname(paths.local), { recursive: true });
+    await fsp.writeFile(
+      paths.local,
+      JSON.stringify({ env: { SAL_STORAGE_ENDPOINT: 'local-value' } }),
+    );
+
+    const env = await resolveCliEnv(TRUSTED_USER_GLOBAL_ADAPTER, tmpCwd, {});
+    expect(env.SAL_STORAGE_ENDPOINT).toBe('local-value');
+  });
+});

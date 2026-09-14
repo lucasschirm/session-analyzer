@@ -59,7 +59,11 @@ highest-scrutiny step in the whole CLI surface, verified by:
 2. `packages/sync/tests/unit/cli/env.test.ts` — a shared parity test with two
    fixture adapters mirroring Claude's and Devin's distinct config-path
    *shapes* (2 vs 3 segments under home), proving the blocklist applies to
-   both the project and user-global tiers regardless of adapter shape.
+   the project tier regardless of adapter shape, and to the user-global
+   tier unless the adapter opts out via
+   `CliHarnessAdapter.userGlobalEnvBlocklist` (Devin sets it to `[]` —
+   `~/.config/devin/config.json` is a personal file outside any repo;
+   Claude leaves it undefined and keeps both tiers blocklisted).
 
 ## Key relationships
 

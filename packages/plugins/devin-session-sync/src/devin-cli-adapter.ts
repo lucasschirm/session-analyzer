@@ -64,11 +64,12 @@ Configuration is resolved in precedence order (highest first):
   1. process.env                           (real environment variables)
   2. .devin/config.local.json "env"        (project-local, expected gitignored)
   3. .devin/config.json "env"              (project, may be committed)
-  4. ~/.config/devin/config.json "env"     (user-global, may be committed)
+  4. ~/.config/devin/config.json "env"     (user-global, personal machine file)
 
 Security: SAL_STORAGE_ENDPOINT, SAL_STORAGE_ACCESS_KEY_ID, and
-SAL_STORAGE_SECRET_ACCESS_KEY are only read from process.env or
-.devin/config.local.json — never from a file that might be committed to git.
+SAL_STORAGE_SECRET_ACCESS_KEY are read from process.env,
+.devin/config.local.json, or ~/.config/devin/config.json — never from a
+project .devin/config.json that might be committed to git.
 
 Working directory configuration is stored at:
   ~/.sal-sync/projects/<SAL_PROJECT_ID>/config.json
@@ -102,6 +103,15 @@ export const DevinCliAdapter: CliHarnessAdapter = {
   binName: 'devin-sync',
   packageName: '@lucasschirm/devin-session-sync',
   logFolderEnvVar: 'DEVIN_SYNC_LOG_PATH_FOLDER',
+  /**
+   * `~/.config/devin/config.json` is a personal, machine-local file outside
+   * any repository — Devin's user-global tier is trusted like the
+   * gitignored local tier, so credentials may live there (this is how the
+   * plugin is meant to be configured machine-wide). The project
+   * `.devin/config.json` tier remains governed by
+   * `DevinHarnessProfile.securityBlocklist`.
+   */
+  userGlobalEnvBlocklist: [],
   resolveConfigPaths: resolveDevinConfigPaths,
   localConfigDisplayPath: '.devin/config.local.json',
   migrateManifestHarness: DevinHarnessProfile.harness,

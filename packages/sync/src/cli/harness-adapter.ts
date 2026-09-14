@@ -8,7 +8,8 @@ import type { HarnessProfile } from '@lucasschirm/sal-sync-core';
  * ```
  *   local      (project-local override, gitignored, no blocklist)
  *   project    (project-wide, may be committed, blocklist applies)
- *   userGlobal (user-global, may be committed, blocklist applies)
+ *   userGlobal (user-global, blocklist applies unless the adapter overrides it
+ *               via `CliHarnessAdapter.userGlobalEnvBlocklist`)
  * ```
  */
 export interface CliConfigPaths {
@@ -16,7 +17,7 @@ export interface CliConfigPaths {
   local: string;
   /** Project-wide, may be committed to git, blocklist applies (e.g. `<cwd>/.claude/settings.json`). */
   project: string;
-  /** User-global, may be committed to git, blocklist applies (e.g. `~/.claude/settings.json`). */
+  /** User-global, blocklist applies unless overridden via `CliHarnessAdapter.userGlobalEnvBlocklist` (e.g. `~/.claude/settings.json`). */
   userGlobal: string;
 }
 
@@ -57,6 +58,21 @@ export interface CliHarnessAdapter {
    * that difference.
    */
   resolveConfigPaths(cwd: string, homedir: string): CliConfigPaths;
+  /**
+   * Optional blocklist applied ONLY to the user-global config tier
+   * (`resolveConfigPaths().userGlobal`'s `env` object) during
+   * `resolveCliEnv`. Defaults to `profile.securityBlocklist` — the same
+   * list applied to the project tier — when omitted.
+   *
+   * Set to `[]` to fully trust the user-global file: some harnesses treat
+   * it as a personal, machine-local file outside any repository (e.g.
+   * Devin's `~/.config/devin/config.json`), making it as safe a credential
+   * source as the gitignored local tier. The project tier is ALWAYS
+   * governed by `profile.securityBlocklist` (or the `blocklist` argument)
+   * regardless of this field — this cannot weaken protection for files
+   * that live inside a repository.
+   */
+  userGlobalEnvBlocklist?: readonly string[];
   /** Human-readable local-override path shown in config-error messages, e.g. `'.claude/settings.local.json'`. */
   localConfigDisplayPath: string;
   /**
