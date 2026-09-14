@@ -159,6 +159,80 @@ export class SessionEvidenceView extends PageLitElement {
       color: var(--md-sys-color-on-surface-variant, #9aa4b2);
     }
 
+    .session-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .edit-title-btn {
+      background: transparent;
+      border: none;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.15s ease, color 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .edit-title-btn:hover {
+      background: var(--md-sys-color-surface-container, #1f242e);
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+    }
+
+    .edit-title-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .title-edit-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .title-edit-row input {
+      background: var(--md-sys-color-surface, #171a21);
+      border: 1px solid var(--md-sys-color-primary, #4f8cff);
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      font: inherit;
+      font-size: 20px;
+      min-width: 260px;
+    }
+
+    .title-edit-row button {
+      border: none;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .title-edit-row .title-save {
+      background: var(--md-sys-color-primary, #4f8cff);
+      color: #fff;
+    }
+
+    .title-edit-row .title-cancel {
+      background: var(--md-sys-color-surface-container, #1f242e);
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+    }
+
+    .title-edit-error {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--md-sys-color-error, #f28b82);
+    }
+
     .transcript-link {
       background: var(--md-sys-color-primary, #4f8cff);
       color: #fff;
@@ -379,6 +453,17 @@ export class SessionEvidenceView extends PageLitElement {
 
   @state() private selectedMessage: ContextTimingPoint | null = null;
 
+  @state() private editingTitle = false;
+
+  @state() private draftTitle = '';
+
+  @state() private savingTitle = false;
+
+  @state() private titleError: string | null = null;
+
+  /** Locally applied rename, shown until the next summary load confirms it. */
+  @state() private titleOverride: string | null = null;
+
   private cachedContextTimingSeries: ChartSeries | null = null;
 
   private hashListener = () => this.handleHashChange();
@@ -399,6 +484,9 @@ export class SessionEvidenceView extends PageLitElement {
   willUpdate(changed: PropertyValues): void {
     super.willUpdate(changed);
     if (changed.has('sessionId') && this.sessionId) {
+      this.titleOverride = null;
+      this.editingTitle = false;
+      this.titleError = null;
       void this.load();
     }
     if (changed.has('contextTiming') || changed.has('sessionId')) {
@@ -537,15 +625,113 @@ export class SessionEvidenceView extends PageLitElement {
     return html`<a class="back-link" href="#/">← Back to Projects</a>`;
   }
 
+  private get displayTitle(): string {
+    const title = this.titleOverride ?? this.summary.data?.title;
+    return title?.trim() || 'Unknown';
+  }
+
+  private startTitleEdit(): void {
+    this.draftTitle = this.summary.data?.title?.trim() ?? '';
+    this.titleError = null;
+    this.editingTitle = true;
+    void this.updateComplete.then(() => {
+      const input = this.shadowRoot?.querySelector<HTMLInputElement>('.title-edit-row input');
+      input?.focus();
+      input?.select();
+    });
+  }
+
+  private cancelTitleEdit(): void {
+    this.editingTitle = false;
+    this.titleError = null;
+  }
+
+  private handleTitleKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void this.saveTitle();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      this.cancelTitleEdit();
+    }
+  }
+
+  private async saveTitle(): Promise<void> {
+    const title = this.draftTitle.trim();
+    if (!title || this.savingTitle) return;
+    this.savingTitle = true;
+    this.titleError = null;
+    try {
+      await analyticsClient.setSessionTitle(this.sessionId, title);
+      this.titleOverride = title;
+      this.editingTitle = false;
+    } catch (error) {
+      this.titleError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.savingTitle = false;
+    }
+  }
+
   private renderHeader() {
     const summary = this.summary.data;
     return html`
       <div class="title-row">
         <div>
-          <h1>Session Evidence — ${this.sessionId}</h1>
+          ${
+            this.editingTitle
+              ? html`
+              <div class="title-edit-row">
+                <input
+                  type="text"
+                  aria-label="Session title"
+                  .value=${this.draftTitle}
+                  ?disabled=${this.savingTitle}
+                  @input=${(e: Event) => {
+                    this.draftTitle = (e.target as HTMLInputElement).value;
+                  }}
+                  @keydown=${this.handleTitleKeydown}
+                />
+                <button
+                  type="button"
+                  class="title-save"
+                  ?disabled=${this.savingTitle || !this.draftTitle.trim()}
+                  @click=${() => void this.saveTitle()}
+                >
+                  ${this.savingTitle ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  class="title-cancel"
+                  ?disabled=${this.savingTitle}
+                  @click=${this.cancelTitleEdit}
+                >
+                  Cancel
+                </button>
+              </div>
+              ${this.titleError ? html`<p class="title-edit-error">${this.titleError}</p>` : ''}
+            `
+              : html`
+              <div class="session-title-row">
+                <h1>${this.displayTitle}</h1>
+                <button
+                  type="button"
+                  class="edit-title-btn"
+                  aria-label="Rename session"
+                  title="Rename session"
+                  @click=${this.startTitleEdit}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path>
+                  </svg>
+                </button>
+              </div>
+            `
+          }
           <p class="session-subtitle">
             ${summary ? html`Harness: ${summary.harness}` : ''}
             ${summary?.parentSessionId ? html` • Parent: ${summary.parentSessionId}` : ''}
+            • Session ID: ${this.sessionId}
           </p>
         </div>
         <a class="transcript-link" href="#/sessions/${this.sessionId}/transcript">

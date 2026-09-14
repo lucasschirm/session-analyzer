@@ -114,7 +114,10 @@ export async function importDevinSession(
  */
 export async function openDevinSessionEvidence(page: Page, sessionId: string): Promise<void> {
   await page.goto(`/#/sessions/${encodeURIComponent(sessionId)}`);
-  await expect(page.getByText(/Session Evidence —/)).toBeVisible({ timeout: 15000 });
+  // The session evidence heading shows the session title (or "Unknown").
+  await expect(
+    page.locator('session-evidence-view').getByRole('heading', { level: 1 }),
+  ).toBeVisible({ timeout: 15000 });
 }
 
 /**

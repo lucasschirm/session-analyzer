@@ -15,8 +15,10 @@ test.describe('Devin session upload → drill-down journey', () => {
     const sessionId = await importDevinSession(page, PROJECT_NAME, SESSION_ID);
     expect(sessionId).not.toBe('');
 
-    // Session Evidence heading for the imported session.
-    await expect(page.getByRole('heading', { name: /Session Evidence/ })).toBeVisible();
+    // Session Evidence heading for the imported session shows its title.
+    await expect(
+      page.locator('session-evidence-view').getByRole('heading', { level: 1 }),
+    ).toBeVisible();
 
     // The session is detected and ingested as the devin harness.
     await expect(page.getByText('Harness: devin')).toBeVisible();

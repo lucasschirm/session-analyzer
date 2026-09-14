@@ -30,9 +30,15 @@ const searchMock = vi.hoisted(() => ({
   getRootSessionTree: vi.fn(),
 }));
 
+const mockSetSessionTitle = vi.hoisted(() => vi.fn());
+
 vi.mock('../../src/db/analytics-client', () => ({
   AnalyticsClient: vi.fn(),
-  analyticsClient: { session: sessionMock, search: searchMock },
+  analyticsClient: {
+    session: sessionMock,
+    search: searchMock,
+    setSessionTitle: (...args: unknown[]) => mockSetSessionTitle(...args),
+  },
 }));
 
 async function flush(element: LitElement): Promise<void> {
@@ -103,6 +109,7 @@ function summaryFixture(overrides: Partial<SessionEvidenceSummary> = {}): Sessio
     rootSessionId: 's1',
     parentSessionId: undefined,
     harness: 'claude',
+    title: 'Quarterly report analysis',
     headlineMetrics: [metricValueFixture()],
     ...overrides,
   };
@@ -387,6 +394,7 @@ function stubSessionLoad(): void {
 
 beforeEach(() => {
   stubSessionLoad();
+  mockSetSessionTitle.mockResolvedValue(undefined);
   window.location.hash = '#/sessions/s1';
 });
 
@@ -403,7 +411,7 @@ describe('session-evidence-view', () => {
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    expect(root.textContent).toContain('Session Evidence');
+    expect(root.querySelector('h1')?.textContent).toContain('Quarterly report analysis');
     expect(root.textContent).toContain('Context and request timing');
     expect(root.textContent).toContain('Root and child sessions');
     expect(root.textContent).toContain('Tool / Skill / Agent activity');
@@ -661,6 +669,60 @@ describe('session-evidence-view', () => {
     expect(kinds).toContain('skill');
     expect(kinds).toContain('agent');
     expect(rows.length).toBe(3);
+  });
+
+  it('renames the session from the header and shows the new title', async () => {
+    const view = Object.assign(document.createElement('session-evidence-view'), {
+      sessionId: 's1',
+    }) as SessionEvidenceView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    const editBtn = root.querySelector('.edit-title-btn') as HTMLButtonElement;
+    expect(editBtn).not.toBeNull();
+    editBtn.click();
+    await flush(view);
+
+    const input = root.querySelector('.title-edit-row input') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect(input.value).toBe('Quarterly report analysis');
+
+    input.value = 'Renamed session';
+    input.dispatchEvent(new Event('input'));
+    await flush(view);
+
+    (root.querySelector('.title-save') as HTMLButtonElement).click();
+    await flush(view);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flush(view);
+
+    expect(mockSetSessionTitle).toHaveBeenCalledWith('s1', 'Renamed session');
+    expect(root.querySelector('h1')?.textContent).toContain('Renamed session');
+  });
+
+  it('surfaces rename failures without leaving edit mode', async () => {
+    mockSetSessionTitle.mockRejectedValue(new Error('rename failed'));
+    const view = Object.assign(document.createElement('session-evidence-view'), {
+      sessionId: 's1',
+    }) as SessionEvidenceView;
+    await mount(view);
+    const root = view.shadowRoot as ShadowRoot;
+
+    (root.querySelector('.edit-title-btn') as HTMLButtonElement).click();
+    await flush(view);
+
+    const input = root.querySelector('.title-edit-row input') as HTMLInputElement;
+    input.value = 'New title';
+    input.dispatchEvent(new Event('input'));
+    await flush(view);
+
+    (root.querySelector('.title-save') as HTMLButtonElement).click();
+    await flush(view);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flush(view);
+
+    expect(root.querySelector('.title-edit-error')?.textContent).toContain('rename failed');
+    expect(root.querySelector('.title-edit-row input')).not.toBeNull();
   });
 
   it('shows an error when the data source fails', async () => {

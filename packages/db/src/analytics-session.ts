@@ -50,6 +50,7 @@ import type {
   RootChildEntry,
   SessionEvidenceSummary,
   SessionEvidenceView,
+  SessionProjectRef,
   SessionTree,
   SessionTreeNode,
   SessionValidation,
@@ -265,6 +266,8 @@ interface SessionContext {
   readonly startTime: number | null;
   readonly endTime: number | null;
   readonly occurrenceTime: number | null;
+  /** Stored session title (`ai_title` falling back to `slug`), or null. */
+  readonly title: string | null;
 }
 
 async function getSessionContext(
@@ -273,7 +276,8 @@ async function getSessionContext(
 ): Promise<SessionContext | undefined> {
   const { rows } = await queryable.exec(
     `SELECT id, project_id, ingestion_source_id, native_session_id, current_generation_id,
-            harness, finality, mode, task_cohort, start_time, end_time, occurrence_time
+            harness, finality, mode, task_cohort, start_time, end_time, occurrence_time,
+            ai_title, slug
      FROM sessions WHERE id = ?`,
     [sessionId],
   );
@@ -292,6 +296,7 @@ async function getSessionContext(
     startTime: asOptionalNumber(row.start_time),
     endTime: asOptionalNumber(row.end_time),
     occurrenceTime: asOptionalNumber(row.occurrence_time),
+    title: asOptionalString(row.ai_title) ?? asOptionalString(row.slug),
   };
 }
 
@@ -510,6 +515,7 @@ async function getSessionEvidenceSummary(
     rootSessionId,
     parentSessionId,
     harness: session?.harness ?? 'unknown',
+    title: session?.title ?? undefined,
     headlineMetrics,
   };
 }
@@ -1886,6 +1892,28 @@ export function createProjectSessionSearchView(queryable: Queryable): ProjectSes
     getProjectSessionList: (projectId, query) => getProjectSessionList(queryable, projectId, query),
     getRootSessionTree: (sessionId) => getRootSessionTree(queryable, sessionId),
     getChildSessionTree: (sessionId) => getChildSessionTree(queryable, sessionId),
+    getSessionProjectRef: (sessionId) => getSessionProjectRef(queryable, sessionId),
+  };
+}
+
+async function getSessionProjectRef(
+  queryable: Queryable,
+  sessionId: string,
+): Promise<SessionProjectRef | null> {
+  const { rows } = await queryable.exec(
+    `SELECT s.id AS session_id, s.project_id, sp.native_project_id
+     FROM sessions s
+     LEFT JOIN source_projects sp ON sp.project_id = s.project_id
+     WHERE s.id = ? OR s.native_session_id = ?
+     LIMIT 1`,
+    [sessionId, sessionId],
+  );
+  if (rows.length === 0) return null;
+  const row = rows[0] as SqliteRow;
+  return {
+    sessionId: asString(row.session_id),
+    projectId: asString(row.project_id),
+    nativeProjectId: asOptionalString(row.native_project_id) ?? undefined,
   };
 }
 

@@ -33,6 +33,7 @@ import {
   findSessionRef,
   MIGRATIONS,
   MigrationRunner,
+  SessionStore,
 } from '@lucasschirm/sal-db-core';
 import { type ManifestArtifact, parseSyncManifest } from '@lucasschirm/sal-sync-core';
 import { createDefaultRegistry } from '@lucasschirm/sal-transformer-registry';
@@ -648,6 +649,25 @@ async function handleDeleteSessionMetrics(
   }
 }
 
+async function handleSetSessionTitle(
+  state: AnalyticsWorkerState,
+  request: Extract<AnalyticsRequest, { type: 'setSessionTitle' }>,
+): Promise<AnalyticsResponse> {
+  try {
+    const ref = await findSessionRef(state.executor, request.sessionId);
+    if (!ref) {
+      return { id: 0, ok: false, error: `Session not found: ${request.sessionId}` };
+    }
+    await SessionStore.update(state.executor, ref.projectId, ref.sessionId, {
+      aiTitle: request.title.trim(),
+    });
+    postDataChanged();
+    return { id: 0, ok: true };
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
 async function handleVacuumAnalyticsDatabase(
   state: AnalyticsWorkerState,
 ): Promise<AnalyticsResponse> {
@@ -760,6 +780,8 @@ export async function handleAnalyticsRequest(
         return await handleDeleteProject(state, request);
       case 'deleteSessionMetrics':
         return await handleDeleteSessionMetrics(state, request);
+      case 'setSessionTitle':
+        return await handleSetSessionTitle(state, request);
       case 'exportAnalyticsDatabase':
         try {
           const bytes = state.executor.exportDatabase();

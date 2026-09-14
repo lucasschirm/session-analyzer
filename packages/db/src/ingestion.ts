@@ -1053,6 +1053,16 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
     const rootSession = this.rootSessionSummary(result);
     const rootSessionId = rootSession?.sessionId;
 
+    // Session spine fields (aiTitle, slug) are emitted by transformers on the
+    // `session`-typed evidence record for each session; persist them on the
+    // session row so titles are available to read paths.
+    const sessionPayloads = new Map<string, Record<string, unknown>>();
+    for (const record of result.evidence) {
+      if (record.recordType === 'session' && record.payload && typeof record.payload === 'object') {
+        sessionPayloads.set(record.sessionId, record.payload as Record<string, unknown>);
+      }
+    }
+
     for (const summary of result.sessionSummaries) {
       const existing = await SessionStore.getById(tx, canonical.projectId, summary.sessionId);
       const occurrence = summary.startTime ? new Date(summary.startTime).getTime() : null;
@@ -1062,6 +1072,11 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
       const nativeSessionId =
         summary.sessionId === rootSessionId ? canonical.nativeSessionId : summary.sessionId;
 
+      const spine = sessionPayloads.get(summary.sessionId);
+      const aiTitle =
+        typeof spine?.aiTitle === 'string' && spine.aiTitle.trim() ? spine.aiTitle : null;
+      const slug = typeof spine?.slug === 'string' && spine.slug.trim() ? spine.slug : null;
+
       const baseInput = {
         environmentId: canonical.environmentId,
         finality,
@@ -1070,8 +1085,8 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         endTime,
         mode: null,
         taskCohort: null,
-        aiTitle: null,
-        slug: null,
+        aiTitle,
+        slug,
         agentName: null,
         cwd: null,
         gitBranch: null,
@@ -1084,13 +1099,14 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         // currentGenerationId is intentionally omitted from the update so the
         // existing value survives until commitGeneration flips it below; passing
         // null here would clobber it before applySessionRollupContributions can
-        // read the previous generation ID.
-        await SessionStore.update(
-          tx,
-          canonical.projectId,
-          summary.sessionId,
-          baseInput as UpdateSessionInput,
-        );
+        // read the previous generation ID. Likewise aiTitle/slug are only
+        // overwritten when this ingest actually carries them (undefined fields
+        // are skipped by the store), so user-set titles survive re-ingestion.
+        await SessionStore.update(tx, canonical.projectId, summary.sessionId, {
+          ...baseInput,
+          aiTitle: aiTitle ?? undefined,
+          slug: slug ?? undefined,
+        } as UpdateSessionInput);
       } else {
         const insertInput = {
           id: summary.sessionId,

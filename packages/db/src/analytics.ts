@@ -174,6 +174,12 @@ export interface SessionEvidenceSummary {
   readonly rootSessionId: string;
   readonly parentSessionId?: string;
   readonly harness: string;
+  /**
+   * The session's stored title (`ai_title`/`slug`), when one was recorded.
+   * Absent when the session has no title — callers render their own
+   * fallback (e.g. "Unknown"), never the raw session id.
+   */
+  readonly title?: string;
   readonly headlineMetrics: readonly MetricValueDto[];
 }
 
@@ -392,6 +398,17 @@ export interface SessionTree {
   readonly nodes: readonly SessionTreeNode[];
 }
 
+/**
+ * Routing reference for a session's owning project. `projectId` is the
+ * internal analytics project id; `nativeProjectId` is the source-side
+ * project identifier (readable id / name) preferred for user-facing URLs.
+ */
+export interface SessionProjectRef {
+  readonly sessionId: string;
+  readonly projectId: string;
+  readonly nativeProjectId?: string;
+}
+
 export interface FilterField {
   readonly field: string;
   readonly type: string;
@@ -491,6 +508,11 @@ export interface ProjectSessionSearchView {
   getProjectSessionList(projectId: string, query: AnalyticsQuery): Promise<ProjectSessionListPage>;
   getRootSessionTree(sessionId: string): Promise<SessionTree>;
   getChildSessionTree(sessionId: string): Promise<SessionTree>;
+  /**
+   * Resolves a session (by internal id or native session id) to its owning
+   * project for navigation. Returns null when the session is unknown.
+   */
+  getSessionProjectRef(sessionId: string): Promise<SessionProjectRef | null>;
 }
 
 export interface HarnessOption {
