@@ -24,6 +24,7 @@ import type {
   SyncManifest,
 } from '../types';
 import { readOpfsFileBytes, removeOpfsFileIfExists } from './opfs-file-io';
+import { applyStandardOpfsPragmas } from './sqlite-pragmas';
 
 export type StorageBackend = 'opfs' | 'memory';
 export type FallbackReason = 'locked' | 'unsupported';
@@ -325,7 +326,7 @@ export class DatabaseManager {
     if (!this.sqlite3) this.sqlite3 = await sqlite3InitModule();
 
     this.db = this.openDatabase(filename);
-    this.db.exec('PRAGMA foreign_keys = ON;');
+    applyStandardOpfsPragmas(this.db);
     this.createTables();
     this.migrate();
     return this.storage;

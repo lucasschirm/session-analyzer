@@ -32,6 +32,7 @@ import type {
   ManualArtifactPayload,
   ManualIngestionBundleRequest,
 } from './analytics-protocol';
+import { OPFS_JOURNAL_MODE } from './sqlite-pragmas';
 
 export type { AnalyticsBackendReport, ManualArtifactPayload, ManualIngestionBundleRequest };
 
@@ -303,7 +304,7 @@ export class AnalyticsClient extends EventTarget implements AnalyticsDataSource 
     return {
       backendName: storage === 'opfs' ? 'wasm-opfs' : 'wasm-memory',
       durability: storage === 'opfs' ? 'persistent' : 'ephemeral',
-      journalMode: 'delete',
+      journalMode: storage === 'opfs' ? OPFS_JOURNAL_MODE.toLowerCase() : 'memory',
       storage: storage ?? 'memory',
       fallbackReason: this.fallbackReason,
     };
