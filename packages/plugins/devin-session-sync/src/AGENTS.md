@@ -95,3 +95,4 @@ the byte/duration fields the Devin pipeline doesn't track with zeros
 path added to this plugin MUST call `emitTelemetry` on both success and
 failure — a sync that silently succeeds without a telemetry record is a
 bug, not a feature.
+
