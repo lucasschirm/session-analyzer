@@ -2,6 +2,7 @@ import process from 'node:process';
 
 import {
   buildStorageAdapter,
+  emitTelemetry,
   getDataDir,
   type HarnessProfile,
   readWorkdirConfig,
@@ -14,6 +15,7 @@ import {
 import { DevinHarnessProfile } from '../devin-profile.js';
 import { type DevinSnapshotHandle, openDevinSnapshotHandle } from '../devin-snapshot.js';
 import type { DevinSessionRow } from '../extractor/types.js';
+import { buildDevinTelemetryRecord } from '../hook-common.js';
 import { type CaptureDevinModelsOptions, captureDevinModels } from '../models/capture.js';
 import {
   type DevinSessionSyncOutcome,
@@ -65,7 +67,7 @@ async function syncOneSessionSafely(
     // session's data is in JS memory at a time, fixing the OOM that occurred
     // when the full snapshot loaded all sessions' rows simultaneously.
     const tables = handle.readSessionTables(session.id);
-    return await runDevinSessionSync({
+    const outcome = await runDevinSessionSync({
       tables,
       schemaDescriptor: handle.schemaDescriptor,
       sessionId: session.id,
@@ -81,10 +83,12 @@ async function syncOneSessionSafely(
       releaseTablesAfterMaterialization: true,
       onProgress: (event) => writeProgressLine(stdout, event),
     });
+    await emitTelemetry(dataDir, buildDevinTelemetryRecord(outcome, 'manual', 'sync'));
+    return outcome;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     stdout.write(`[fail] session ${session.id} — ${message}\n`);
-    return {
+    const failedOutcome: DevinSessionSyncOutcome = {
       sessionId: session.id,
       uploaded: 0,
       skipped: 0,
@@ -92,6 +96,8 @@ async function syncOneSessionSafely(
       errors: [message],
       warnings: [],
     };
+    await emitTelemetry(dataDir, buildDevinTelemetryRecord(failedOutcome, 'manual', 'sync'));
+    return failedOutcome;
   }
 }
 
