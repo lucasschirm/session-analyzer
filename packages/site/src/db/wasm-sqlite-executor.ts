@@ -20,11 +20,7 @@ import type {
   SqliteTransaction,
   SqliteValue,
 } from '@lucasschirm/sal-db-core';
-import {
-  DEFAULT_JOURNAL_MODE,
-  REQUIRED_PRAGMAS,
-  SUPPORTED_SQL_FEATURES,
-} from '@lucasschirm/sal-db-core';
+import { REQUIRED_PRAGMAS, SUPPORTED_SQL_FEATURES } from '@lucasschirm/sal-db-core';
 import type {
   BindableValue,
   Database,
@@ -33,6 +29,7 @@ import type {
 } from '@sqlite.org/sqlite-wasm';
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import { readOpfsFileBytes, removeOpfsFileIfExists } from './opfs-file-io';
+import { applyStandardOpfsPragmas } from './sqlite-pragmas';
 
 export type WasmBackendName = 'wasm-opfs' | 'wasm-memory';
 export type FallbackReason = 'locked' | 'unsupported' | undefined;
@@ -515,17 +512,7 @@ export class WasmSqliteExecutor implements SqliteExecutor {
   }
 
   private applyPragmas(): void {
-    this.db.exec(`PRAGMA foreign_keys = ${REQUIRED_PRAGMAS.foreign_keys};`);
-    this.db.exec(`PRAGMA journal_mode = ${DEFAULT_JOURNAL_MODE};`);
-    this.db.exec('PRAGMA synchronous = NORMAL;');
-    this.db.exec('PRAGMA cache_size = -10000;');
-    const rows = this.db.exec({
-      sql: 'PRAGMA journal_mode',
-      returnValue: 'resultRows',
-      resultRows: [],
-      rowMode: 'object',
-    }) as Array<{ journal_mode: WasmSqlValue }>;
-    this.journalMode = String(rows[0]?.journal_mode ?? 'memory').toLowerCase();
+    this.journalMode = applyStandardOpfsPragmas(this.db);
   }
 
   private readPragmaInt(pragma: string): number {
