@@ -425,6 +425,14 @@ describe('storage-sessions-page', () => {
     expect(rawButtons[0].getAttribute('data-session-id')).toBe('sess-102');
     expect(rawButtons[1].getAttribute('data-session-id')).toBe('sess-201');
     expect(rawButtons[2].getAttribute('data-session-id')).toBe('sess-101');
+
+    // All sessions (synced and unsynced) have a download button
+    const downloadButtons = root.querySelectorAll('.download-btn');
+    expect(downloadButtons.length).toBe(3);
+    expect(downloadButtons[0].textContent?.trim()).toBe('download');
+    expect(downloadButtons[0].getAttribute('data-session-id')).toBe('sess-102');
+    expect(downloadButtons[1].getAttribute('data-session-id')).toBe('sess-201');
+    expect(downloadButtons[2].getAttribute('data-session-id')).toBe('sess-101');
   });
 
   it('navigates to session page when View button is clicked', async () => {
@@ -498,5 +506,60 @@ describe('storage-sessions-page', () => {
     expect(mockTab.location.href).toContain('blob:');
 
     openSpy.mockRestore();
+  });
+
+  it('calls downloadRawSessionFile and triggers file download when download button is clicked', async () => {
+    mockSyncManager.downloadRawSessionFile.mockResolvedValue({
+      filename: 'transcript-sess-101.jsonl',
+      content: '{"type":"message","id":"1"}',
+    });
+
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const downloadBtn = root.querySelector(
+      '.download-btn[data-session-id="sess-101"]',
+    ) as HTMLButtonElement;
+    expect(downloadBtn).not.toBeNull();
+    expect(downloadBtn.textContent?.trim()).toBe('download');
+
+    downloadBtn.click();
+    await flush(page);
+
+    expect(mockSyncManager.downloadRawSessionFile).toHaveBeenCalledWith(
+      's3-main',
+      'proj-1',
+      'sess-101',
+    );
+    expect(clickSpy).toHaveBeenCalled();
+
+    clickSpy.mockRestore();
+  });
+
+  it('displays error banner when download fails', async () => {
+    mockSyncManager.downloadRawSessionFile.mockRejectedValue(new Error('S3 network failure'));
+
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const downloadBtn = root.querySelector(
+      '.download-btn[data-session-id="sess-101"]',
+    ) as HTMLButtonElement;
+    expect(downloadBtn).not.toBeNull();
+
+    downloadBtn.click();
+    await flush(page);
+
+    expect(root.querySelector('.error-banner')?.textContent).toContain(
+      'Could not download session: S3 network failure',
+    );
   });
 });

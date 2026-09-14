@@ -280,7 +280,7 @@ export class StorageSessionsPage extends PageLitElement {
       }
 
       .col-actions {
-        width: 220px;
+        width: 300px;
         white-space: nowrap;
       }
 
@@ -669,6 +669,39 @@ export class StorageSessionsPage extends PageLitElement {
     this.error = `Could not view raw session: ${message}`;
   }
 
+  private handleDownloadClick(event: MouseEvent): void {
+    const btn = (event.currentTarget as HTMLElement).closest('button');
+    const sessionId = btn?.getAttribute('data-session-id');
+    const projectId = btn?.getAttribute('data-project-id');
+    if (!sessionId || !projectId) return;
+    void this.downloadSession(projectId, sessionId);
+  }
+
+  private async downloadSession(projectId: string, sessionId: string): Promise<void> {
+    this.addProcessingSession(sessionId);
+    try {
+      const file = await syncManager.downloadRawSessionFile(this.storage, projectId, sessionId);
+      this.triggerFileDownload(file.filename, file.content);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.error = `Could not download session: ${message}`;
+    } finally {
+      this.removeProcessingSession(sessionId);
+    }
+  }
+
+  private triggerFileDownload(filename: string, content: string): void {
+    const blob = new Blob([content], { type: 'application/x-jsonlines;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  }
+
   private formatSessionTitle(session: StorageSessionItem): string {
     if (session.title?.trim()) {
       return session.title.trim();
@@ -885,6 +918,22 @@ export class StorageSessionsPage extends PageLitElement {
     `;
   }
 
+  private renderDownloadButton(projectId: string, sessionId: string): TemplateResult {
+    const busy = this.isProcessingSession(sessionId);
+    return html`
+      <button
+        ?disabled=${busy}
+        class="action-btn download-btn"
+        data-project-id=${projectId}
+        data-session-id=${sessionId}
+        type="button"
+        @click=${this.handleDownloadClick}
+      >
+        ${busy ? 'Downloading...' : 'download'}
+      </button>
+    `;
+  }
+
   private renderRowActions(session: StorageSessionItem): TemplateResult {
     return html`
       <div class="row-actions">
@@ -894,6 +943,7 @@ export class StorageSessionsPage extends PageLitElement {
             : nothing
         }
         ${this.renderViewRawButton(session.projectId, session.sessionId)}
+        ${this.renderDownloadButton(session.projectId, session.sessionId)}
       </div>
     `;
   }
