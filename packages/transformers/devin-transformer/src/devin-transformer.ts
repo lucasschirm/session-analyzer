@@ -147,7 +147,27 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // devin-transformer.ts's `transform()` below), so no existing metric's
 // formula, population, or comparability group reads this data — the
 // versioning rule's trigger condition doesn't apply here.
-export const DEVIN_TRANSFORMER_VERSION = '0.11.0';
+// Bumped 0.11.0 -> 0.12.0: `buildTokenUsageRecords` (token-usage.ts) now
+// links every `model_usage` record to its corresponding turn via
+// `parentId` (per-step records map to their ATIF step's message; the
+// tier-2/3 session-level aggregate maps to the first message's turn), and
+// `buildSessionSpine` (session-spine.ts) now carries `content`/`timestamp`
+// in the `message` evidence payload. Both changes feed the
+// context-timing computation (packages/db/src/context-timing.ts):
+// `parentId` lets `resolveMessageRequest` find each message's request via
+// `byTurn` (previously only `requestOrder=1` matched the first message via
+// `byOrder`, leaving every subsequent message to inherit the first
+// message's context value via carry-forward — the flat-context-growth
+// chart bug), and `payload.content` populates `ContextTimingPoint.content`
+// directly (previously always undefined, so the message drawer showed "No
+// content recorded for this message"). No `DEVIN_METRIC_DEFINITION_VERSION`
+// bump: `devin:tokens:total:*`'s formula, population, and comparability
+// group are unchanged (still sourced from `atif.finalMetrics`/
+// `response_dimensions` aggregate fields, byte-identical per tier), and
+// `model_usage`/`model_requests` are still not yet ingested by
+// `packages/db`. Forces a fresh generation on reprocess so no analysis
+// mixes pre-/post-fix `model_usage`/`message` evidence shapes.
+export const DEVIN_TRANSFORMER_VERSION = '0.12.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly
@@ -445,6 +465,7 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       parsed.atif,
       parsed.models,
       rootArtifactId,
+      parsed.orderedMessages,
     );
     const compactionRecords = buildDevinCompactionRecords(
       sessionId,

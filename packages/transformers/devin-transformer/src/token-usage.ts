@@ -2,12 +2,13 @@ import type {
   AtifFinalMetrics,
   AtifStep,
   AtifTranscript,
+  DevinMessageLine,
   DevinModelRecord,
   DevinSessionLine,
 } from '@lucasschirm/sal-devin-session-parser';
 import type { NormalizedEvidenceRecord } from '@lucasschirm/sal-transformer-shared';
 import { resolveDevinEffortForModel } from './effort.js';
-import { provenanceForArtifact, stableId } from './session-spine.js';
+import { chatMessageText, provenanceForArtifact, stableId } from './session-spine.js';
 
 export interface TokenUsageResult {
   readonly records: readonly NormalizedEvidenceRecord[];
@@ -248,11 +249,13 @@ function usageRecord(
   sourceField: string,
   rootArtifactId: string,
   payload: NormalizedEvidenceRecord['payload'],
+  parentId?: string,
 ): NormalizedEvidenceRecord {
   return {
     recordId,
     recordType: 'model_usage',
     sessionId,
+    parentId,
     sourceEventId,
     sourceField,
     provenance: provenanceForArtifact(rootArtifactId, sourceEventId, sourceField),
@@ -277,6 +280,7 @@ function stepUsageRecord(
   index: number,
   models: readonly DevinModelRecord[],
   rootArtifactId: string,
+  parentId?: string,
 ): NormalizedEvidenceRecord {
   const requestOrder = step.stepId ?? index + 1;
   // `sourceEventId` and `payload.requestId` both key off the canonical
@@ -298,7 +302,15 @@ function stepUsageRecord(
     ...effortPayloadFields(step.generationModel, models),
   };
   const recordId = stableId('model_usage', { session: sessionId, step: requestOrder });
-  return usageRecord(recordId, sessionId, sourceEventId, 'atif_step', rootArtifactId, payload);
+  return usageRecord(
+    recordId,
+    sessionId,
+    sourceEventId,
+    'atif_step',
+    rootArtifactId,
+    payload,
+    parentId,
+  );
 }
 
 function buildStepRecords(
@@ -306,11 +318,23 @@ function buildStepRecords(
   steps: readonly AtifStep[],
   models: readonly DevinModelRecord[],
   rootArtifactId: string,
+  orderedMessages: readonly DevinMessageLine[],
 ): NormalizedEvidenceRecord[] {
   const records: NormalizedEvidenceRecord[] = [];
   steps.forEach((step, index) => {
     if (!step.metrics) return;
-    records.push(stepUsageRecord(sessionId, step, step.metrics, index, models, rootArtifactId));
+    // Link the model_usage record to the corresponding turn via parentId so
+    // the context-timing computation (resolveMessageRequest → byTurn) can
+    // attribute the step's token usage to the right message. ATIF steps are
+    // in the same conversation order as orderedMessages (both represent the
+    // main-chain sequence), so step `index` maps to orderedMessages[index].
+    const message = orderedMessages[index];
+    const parentId = message
+      ? stableId('turn', { session: sessionId, nodeId: message.nodeId })
+      : undefined;
+    records.push(
+      stepUsageRecord(sessionId, step, step.metrics, index, models, rootArtifactId, parentId),
+    );
   });
   return records;
 }
@@ -322,6 +346,7 @@ function sessionLevelRecord(
   models: readonly DevinModelRecord[],
   rootArtifactId: string,
   aggregate: TokenAggregate,
+  parentId?: string,
 ): NormalizedEvidenceRecord {
   const sourceEventId = session?.id ?? 'unknown';
   const resolvedModel = resolveModel(session, models);
@@ -340,7 +365,15 @@ function sessionLevelRecord(
     ...effortPayloadFields(resolvedModel, models),
   };
   const recordId = stableId('model_usage', { session: sessionId });
-  return usageRecord(recordId, sessionId, sourceEventId, 'final_metrics', rootArtifactId, payload);
+  return usageRecord(
+    recordId,
+    sessionId,
+    sourceEventId,
+    'final_metrics',
+    rootArtifactId,
+    payload,
+    parentId,
+  );
 }
 
 /**
@@ -366,16 +399,37 @@ export function buildTokenUsageRecords(
   atif: AtifTranscript | undefined,
   models: readonly DevinModelRecord[],
   rootArtifactId: string,
+  orderedMessages: readonly DevinMessageLine[],
 ): TokenUsageResult {
   const metadata = parseMetadata(session?.metadata ?? null);
   const aggregate = aggregateTokens(atif, metadata);
   const total = totalFromParts(aggregate.prompt, aggregate.completion);
 
-  const stepRecords = atif ? buildStepRecords(sessionId, atif.steps, models, rootArtifactId) : [];
+  const stepRecords = atif
+    ? buildStepRecords(sessionId, atif.steps, models, rootArtifactId, orderedMessages)
+    : [];
   const records =
     stepRecords.length > 0
       ? stepRecords
-      : [sessionLevelRecord(sessionId, session, models, rootArtifactId, aggregate)];
+      : [
+          // Tier 2/3 fallback: a single session-level aggregate. Link it to
+          // the first turn so the context-timing computation can attribute
+          // the aggregate's token usage to the first message (requestOrder=1
+          // already aligns with the first message via byOrder). Without a
+          // parentId the record is unreachable through byTurn, leaving every
+          // subsequent message to inherit the first message's context value
+          // via carry-forward — the flat-chart bug.
+          sessionLevelRecord(
+            sessionId,
+            session,
+            models,
+            rootArtifactId,
+            aggregate,
+            orderedMessages[0]
+              ? stableId('turn', { session: sessionId, nodeId: orderedMessages[0].nodeId })
+              : undefined,
+          ),
+        ];
 
   return {
     records,

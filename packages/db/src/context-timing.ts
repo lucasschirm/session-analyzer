@@ -491,6 +491,12 @@ interface ContextPointMeta {
   /** Compaction removed-tokens when it cannot be encoded as a negative
    *  context value (zero or negative drops). */
   cmp?: number;
+  /** Message body text — populated when the transformer carries
+   *  `payload.content` on the message evidence record (Devin sessions
+   *  after the context-growth fix). Omitted when absent so the drawer's
+   *  on-demand transcript hydration remains the fallback for sessions
+   *  whose evidence predates the field. */
+  cnt?: string;
 }
 
 const TRANSCRIPT_CHAT_ROLES = new Set(['user', 'assistant']);
@@ -522,6 +528,7 @@ export function encodeContextSeries(rawPoints: readonly RawTimingPoint[]): Encod
     if (msg.timestamp) meta.ts = msg.timestamp;
     const model = (req ? asOptionalString(req.model) : msg.model) ?? undefined;
     if (model) meta.model = model;
+    if (msg.content) meta.cnt = msg.content;
     if (req) {
       meta.rq = 1;
       if (req.inputTokens != null) meta.in = req.inputTokens;
@@ -604,6 +611,7 @@ export function decodeContextSeries(row: {
       role,
       model: typeof meta.model === 'string' ? meta.model : undefined,
       timestamp: typeof meta.ts === 'string' ? meta.ts : undefined,
+      content: typeof meta.cnt === 'string' ? meta.cnt : undefined,
       totalTokens: contextTokens !== null ? contextTokens + (generation ?? 0) : generation,
       contextTokens,
       generationTokens: generation,

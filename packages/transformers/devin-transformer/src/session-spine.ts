@@ -132,7 +132,7 @@ export function messageId(message: DevinMessageLine): string {
  * plain string `content`; tolerate an array of content blocks (text blocks
  * only) for forward compatibility.
  */
-function chatMessageText(chatMessage: unknown): string | undefined {
+export function chatMessageText(chatMessage: unknown): string | undefined {
   if (!chatMessage || typeof chatMessage !== 'object') return undefined;
   const content = (chatMessage as { content?: unknown }).content;
   if (typeof content === 'string') return content;
@@ -261,6 +261,16 @@ export function buildSessionSpine(
         messageId: eventId,
         nodeId: message.nodeId,
         parentNodeId: message.parentNodeId,
+        // Carry the chat_message text so the context-timing computation can
+        // populate `content` on ContextTimingPoint without a blob round-trip.
+        // The drawer's on-demand hydration remains the fallback for sessions
+        // whose message payloads predate this field (reprocessed generations
+        // pick it up automatically via the processing-version bump).
+        content: chatMessageText(message.chatMessage),
+        timestamp:
+          typeof message.createdAt === 'number' && Number.isFinite(message.createdAt)
+            ? new Date(message.createdAt * 1000).toISOString()
+            : undefined,
         storage: 'artifact-blob',
         path: rootArtifactId,
         ...subagentTagFields(message),
