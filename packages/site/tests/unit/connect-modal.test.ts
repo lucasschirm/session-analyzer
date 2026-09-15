@@ -395,7 +395,10 @@ describe('connect-modal', () => {
     clickButtonByText(confirmRoot, 'Start Sync');
     await flush(modal);
 
-    expect(mockSyncManager.requestRun).toHaveBeenCalledWith('c1', { syncOnlyNew: true });
+    expect(mockSyncManager.requestRun).toHaveBeenCalledWith('c1', {
+      syncOnlyNew: true,
+      includeFailed: false,
+    });
     expect(closed).toBe(1);
   });
 

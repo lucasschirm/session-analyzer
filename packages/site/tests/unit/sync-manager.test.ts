@@ -478,7 +478,7 @@ describe('SyncManager session failure isolation', () => {
     expect(mockWorker.terminate).not.toHaveBeenCalled();
   });
 
-  it('handleSessionFound retries failed sessions even with syncOnlyNew', async () => {
+  it('handleSessionFound retries failed sessions even with syncOnlyNew when includeFailed is true', async () => {
     const mockDb = createMockDb();
     const postedToWorker: Array<{ sessionId: string; sync: boolean }> = [];
     const mockWorker = {
@@ -487,13 +487,13 @@ describe('SyncManager session failure isolation', () => {
     } as unknown as Worker;
     const manager = createManager({ dbClient: mockDb });
     const project = createTestProject(mockWorker);
-    const run = { syncOnlyNew: true, connectionId: 'c1' };
+    const run = { syncOnlyNew: true, connectionId: 'c1', includeFailed: true };
 
     // 1. Session not in DB -> sync: true
     // @ts-expect-error — testing private method
     await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's-new' });
 
-    // 2. Session exists with status 'failed' -> sync: true (allows retry)
+    // 2. Session exists with status 'failed' -> sync: true (allows retry when includeFailed)
     // @ts-expect-error — mock return
     mockDb.getSessionBySyncId.mockResolvedValueOnce({ id: 's2-id', sync_status: 'failed' });
     // @ts-expect-error — testing private method
@@ -512,11 +512,47 @@ describe('SyncManager session failure isolation', () => {
     ]);
   });
 
+  it('handleSessionFound excludes failed sessions when includeFailed is false (default)', async () => {
+    const mockDb = createMockDb();
+    const postedToWorker: Array<{ sessionId: string; sync: boolean }> = [];
+    const mockWorker = {
+      postMessage: (msg: { sessionId: string; sync: boolean }) => postedToWorker.push(msg),
+      terminate: vi.fn(),
+    } as unknown as Worker;
+    const manager = createManager({ dbClient: mockDb });
+    const project = createTestProject(mockWorker);
+    const run = { syncOnlyNew: true, connectionId: 'c1', includeFailed: false };
+
+    // 1. Session not in DB -> sync: true
+    // @ts-expect-error — testing private method
+    await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's-new' });
+
+    // 2. Session exists with status 'failed' -> sync: false (excluded by default)
+    // @ts-expect-error — mock return
+    mockDb.getSessionBySyncId.mockResolvedValueOnce({ id: 's2-id', sync_status: 'failed' });
+    // @ts-expect-error — testing private method
+    await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's-failed' });
+
+    // 3. Session exists with status 'in_sync' -> sync: false (skip)
+    // @ts-expect-error — mock return
+    mockDb.getSessionBySyncId.mockResolvedValueOnce({ id: 's3-id', sync_status: 'in_sync' });
+    // @ts-expect-error — testing private method
+    await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's-synced' });
+
+    expect(postedToWorker).toEqual([
+      expect.objectContaining({ sessionId: 's-new', sync: true }),
+      expect.objectContaining({ sessionId: 's-failed', sync: false }),
+      expect.objectContaining({ sessionId: 's-synced', sync: false }),
+    ]);
+  });
+
   /**
    * SYNC-014: D2 unchanged-skip gate truth table. `run.syncOnlyNew = false`
    * for every case here — the D3 branch (syncOnlyNew = true) is covered
    * separately by 'handleSessionFound retries failed sessions even with
-   * syncOnlyNew' above, unmodified.
+   * syncOnlyNew when includeFailed is true' above, unmodified. `includeFailed`
+   * is set to true so the failed-session exclusion gate does not interfere
+   * with the unchanged-skip fingerprint logic under test here.
    */
   describe.each([
     {
@@ -607,7 +643,7 @@ describe('SyncManager session failure isolation', () => {
       } as unknown as Worker;
       const manager = createManager({ dbClient: mockDb });
       const project = createTestProject(mockWorker);
-      const run = { syncOnlyNew: false, connectionId: 'c1' };
+      const run = { syncOnlyNew: false, connectionId: 'c1', includeFailed: true };
 
       // @ts-expect-error — testing private method
       await manager.handleSessionFound(run as never, project, mockWorker, {

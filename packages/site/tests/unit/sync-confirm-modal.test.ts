@@ -94,15 +94,25 @@ describe('sync-confirm-modal', () => {
     await flush(modal);
     const root = shadow(modal);
 
-    let confirmedDetail: { connectionId: string; syncOnlyNew: boolean } | null = null;
+    let confirmedDetail: {
+      connectionId: string;
+      syncOnlyNew: boolean;
+      includeFailed: boolean;
+    } | null = null;
     modal.addEventListener('sync-confirmed', (e) => {
-      confirmedDetail = (e as CustomEvent<{ connectionId: string; syncOnlyNew: boolean }>).detail;
+      confirmedDetail = (
+        e as CustomEvent<{ connectionId: string; syncOnlyNew: boolean; includeFailed: boolean }>
+      ).detail;
     });
 
     clickButtonByText(root, 'Start Sync');
     await flush(modal);
 
-    expect(confirmedDetail).toEqual({ connectionId: 'conn-2', syncOnlyNew: false });
+    expect(confirmedDetail).toEqual({
+      connectionId: 'conn-2',
+      syncOnlyNew: false,
+      includeFailed: false,
+    });
   });
 
   it('clicking Cancel emits modal-close', async () => {
