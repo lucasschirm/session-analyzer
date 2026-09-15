@@ -91,7 +91,7 @@ describe('project-sessions-page', () => {
     const headers = Array.from(tableRoot.querySelectorAll('th')).map((th) =>
       th.textContent?.trim(),
     );
-    expect(headers).toEqual(['Title', 'Start date', 'Sub agents']);
+    expect(headers).toEqual(['Title', 'Start date', 'Sync', 'Sub agents']);
 
     const rows = Array.from(tableRoot.querySelectorAll('tbody tr'));
     expect(rows.length).toBe(2);

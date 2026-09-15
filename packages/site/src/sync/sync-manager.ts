@@ -1054,12 +1054,11 @@ export class SyncManager extends EventTarget {
     try {
       const local = await this.db.getSessionBySyncId(localProjectId, sessionId);
       if (local === null) return true;
-      if (local.sync_status === 'failed' && excludeFailed) return false;
-      return (
-        local.sync_status === 'failed' ||
-        local.sync_status === 'transcript_unavailable' ||
-        local.sync_status === 'pending'
-      );
+      // Treat both 'failed' and legacy 'transcript_unavailable' as failed.
+      const isFailed =
+        local.sync_status === 'failed' || local.sync_status === 'transcript_unavailable';
+      if (isFailed && excludeFailed) return false;
+      return isFailed || local.sync_status === 'pending';
     } catch (error) {
       console.error(`Error checking local session ${sessionId}:`, error);
       return true;
@@ -1075,7 +1074,10 @@ export class SyncManager extends EventTarget {
     try {
       const local = await this.db.getSessionBySyncId(localProjectId, message.sessionId);
       if (local === null) return true;
-      if (local.sync_status === 'failed' && excludeFailed) return false;
+      // Treat both 'failed' and legacy 'transcript_unavailable' as failed.
+      const isFailed =
+        local.sync_status === 'failed' || local.sync_status === 'transcript_unavailable';
+      if (isFailed && excludeFailed) return false;
       if (local.sync_status !== 'in_sync') return true;
       const localFingerprint: ManifestFingerprint = {
         etag: local.sync_manifest_etag,
@@ -1211,6 +1213,7 @@ export class SyncManager extends EventTarget {
     if (!this.findMainArtifact(ctx.manifest, ctx.mainPath)) {
       return this.handleTranscriptUnavailable(
         run,
+        project,
         sessionState,
         localSession,
         worker,
@@ -1341,17 +1344,19 @@ export class SyncManager extends EventTarget {
 
   private async handleTranscriptUnavailable(
     run: SyncRun,
+    project: ProjectSyncState,
     sessionState: SessionSyncState,
     localSession: DashboardSession,
     worker: Worker,
     remoteSessionId: string,
   ): Promise<void> {
-    sessionState.syncStatus = 'transcript_unavailable';
-    await this.db.setSessionSyncStatus(
-      localSession.id,
-      'transcript_unavailable',
-      'Main transcript not uploaded',
-    );
+    // A session with no main transcript is a sync failure: mark it 'failed'
+    // so the standard failed-session exclusion gate prevents auto-retry
+    // (unless the user explicitly opts in via includeFailed or cherry-pick).
+    this.markSessionFailed(project, sessionState);
+    await this.db
+      .setSessionSyncStatus(localSession.id, 'failed', 'Main transcript not uploaded')
+      .catch(() => undefined);
     this.pushWarning(run, `${remoteSessionId}: no main transcript uploaded — session not synced`);
     worker.postMessage(this.buildSyncMessage(remoteSessionId, false, true));
     this.emitChange();

@@ -1580,12 +1580,14 @@ test('UX-040: failed sessions surface in cherry-pick and are excluded from bulk 
   await expect(failedRow.locator('.badge-failed')).toContainText('Failed');
   await expect(failedRow.locator('.error-viewer-btn')).toBeVisible();
 
-  // The transcript-less session is surfaced with its own amber badge and the
-  // same View error affordance — never a silent "Not synced".
-  await expect(noTranscriptRow.locator('.badge-transcript-unavailable')).toContainText(
-    'No transcript',
-    { timeout: 15000 },
-  );
+  // The transcript-less session is now treated as a sync failure (status
+  // 'failed' with details "Main transcript not uploaded") so the standard
+  // failed-session exclusion gate prevents auto-retry. It surfaces with the
+  // same Failed badge and View error affordance as the download failure —
+  // never a silent "Not synced".
+  await expect(noTranscriptRow.locator('.badge-failed')).toContainText('Failed', {
+    timeout: 15000,
+  });
   await noTranscriptRow.locator('.error-viewer-btn').click();
   const noTranscriptDialog = page.getByRole('dialog', { name: 'Session sync error details' });
   await expect(noTranscriptDialog).toBeVisible();
@@ -1602,14 +1604,15 @@ test('UX-040: failed sessions surface in cherry-pick and are excluded from bulk 
   await errorDialog.press('Escape');
   await expect(errorDialog).toBeHidden();
 
-  // A bulk sync without "Include sessions failed importing" must skip the
-  // failed session entirely: zero S3 GETs mention it. The healthy session is
-  // also untouched (in-sync fingerprint skip), so the run is a no-op listing.
+  // A bulk sync without "Include sessions failed importing" must skip both
+  // failed sessions entirely: zero S3 GETs mention either. The healthy session
+  // is also untouched (in-sync fingerprint skip), so the run is a no-op listing.
   bucket.clearRequests();
   await openConnectModal(page);
   await clickRowSyncAndConfirm(page);
   await waitForSyncIdle(page);
   expect(bucket.getRequests({ method: 'GET', key: failedSessionId })).toHaveLength(0);
+  expect(bucket.getRequests({ method: 'GET', key: noTranscriptSessionId })).toHaveLength(0);
 
   // Explicit cherry-pick retry still targets the failed session: selecting it
   // queues a targeted run that re-fetches its manifest (bypasses the gate).

@@ -3,6 +3,7 @@ import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { analyticsClient } from '../db/analytics-client';
 import { dbClient } from '../db/db-client';
+import type { SessionSyncStatus } from '../types';
 import { PageLitElement, pageHostStyles } from './page-lit-element';
 import '../components/project-sessions-table';
 
@@ -232,6 +233,13 @@ export class ProjectSessionsPage extends PageLitElement {
 
   @state() private resolvedProjectId: string | null = null;
 
+  @state() private controlProjectId: string | null = null;
+
+  @state() private syncStatuses: Map<
+    string,
+    { syncStatus: SessionSyncStatus; syncDetails: string | undefined }
+  > = new Map();
+
   private searchDebounceTimer: number | undefined;
   private loadSeq = 0;
 
@@ -269,6 +277,7 @@ export class ProjectSessionsPage extends PageLitElement {
         (await dbClient?.getProjectByReadableId?.(decoded));
       if (project) {
         this.projectName = project.name;
+        this.controlProjectId = project.id;
         if (!resolved) {
           resolved =
             (await analyticsClient?.resolveProjectId?.(project.name)) ||
@@ -304,6 +313,16 @@ export class ProjectSessionsPage extends PageLitElement {
       if (seq !== this.loadSeq) return;
       this.sessions = [...page.items];
       this.totalCount = page.totalCount ?? page.items.length;
+      // Cross-reference sync status from the control DB for the loaded
+      // sessions. The analytics DB session id matches the control DB
+      // sync_session_id (both are the remote session id).
+      if (this.controlProjectId) {
+        try {
+          this.syncStatuses = await dbClient.listProjectSessionSyncStatuses(this.controlProjectId);
+        } catch {
+          this.syncStatuses = new Map();
+        }
+      }
     } catch (err) {
       if (seq !== this.loadSeq) return;
       this.error = err instanceof Error ? err.message : String(err);
@@ -445,6 +464,7 @@ export class ProjectSessionsPage extends PageLitElement {
           .loading=${this.loading}
           .error=${this.error}
           .searchQuery=${this.searchQuery}
+          .syncStatuses=${this.syncStatuses}
         ></project-sessions-table>
 
         ${

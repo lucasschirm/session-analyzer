@@ -539,10 +539,22 @@ describe('SyncManager session failure isolation', () => {
     // @ts-expect-error — testing private method
     await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's-synced' });
 
+    // 4. Legacy 'transcript_unavailable' row -> sync: false (treated as failed)
+    // @ts-expect-error — mock return
+    mockDb.getSessionBySyncId.mockResolvedValueOnce({
+      id: 's4-id',
+      sync_status: 'transcript_unavailable',
+    });
+    // @ts-expect-error — testing private method
+    await manager.handleSessionFound(run as never, project, mockWorker, {
+      sessionId: 's-notranscript',
+    });
+
     expect(postedToWorker).toEqual([
       expect.objectContaining({ sessionId: 's-new', sync: true }),
       expect.objectContaining({ sessionId: 's-failed', sync: false }),
       expect.objectContaining({ sessionId: 's-synced', sync: false }),
+      expect.objectContaining({ sessionId: 's-notranscript', sync: false }),
     ]);
   });
 
@@ -766,16 +778,20 @@ describe('SyncManager session failure isolation', () => {
     // @ts-expect-error — testing private method
     await manager.handleTranscriptUnavailable(
       { warnings: [] } as never,
+      project as never,
       sessionState as never,
       { id: 'local-1' } as never,
       mockWorker,
       'sess-notranscript',
     );
 
-    expect(sessionState.syncStatus).toBe('transcript_unavailable');
+    // Transcript-unavailable is now treated as a sync failure so the standard
+    // failed-session exclusion gate prevents auto-retry.
+    expect(sessionState.syncStatus).toBe('failed');
+    expect(project.sessionsFailed).toBe(1);
     expect(mockDb.setSessionSyncStatus).toHaveBeenCalledWith(
       'local-1',
-      'transcript_unavailable',
+      'failed',
       'Main transcript not uploaded',
     );
     expect(warnings).toEqual([

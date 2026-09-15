@@ -103,6 +103,14 @@ const handlers: Record<DbRequest['type'], Handler> = {
       result: manager.getSessionBySyncId(req.projectId, req.syncSessionId),
     };
   },
+  listProjectSessionSyncStatuses: (request) => {
+    const req = request as DbRequestOf<'listProjectSessionSyncStatuses'>;
+    return {
+      id: request.id,
+      ok: true,
+      result: manager.listProjectSessionSyncStatuses(req.projectId),
+    };
+  },
   upsertSessionStub: (request) => {
     manager.upsertSessionStub((request as DbRequestOf<'upsertSessionStub'>).stub);
     return { id: request.id, ok: true };

@@ -176,6 +176,21 @@ export class DbClient {
   }
 
   /**
+   * Returns a map of `sync_session_id -> { syncStatus, syncDetails }` for
+   * every session in the given project that has a `sync_session_id`. Used by
+   * the project sessions page to cross-reference sync status from the control
+   * DB against analytics-DB session rows.
+   */
+  listProjectSessionSyncStatuses(
+    projectId: string,
+  ): Promise<Map<string, { syncStatus: SessionSyncStatus; syncDetails: string | undefined }>> {
+    return this.call({
+      type: 'listProjectSessionSyncStatuses',
+      projectId,
+    }) as Promise<Map<string, { syncStatus: SessionSyncStatus; syncDetails: string | undefined }>>;
+  }
+
+  /**
    * Inserts a sync stub or updates an existing session's stub-relevant
    * columns. Existing parsed rows are never overwritten.
    */
