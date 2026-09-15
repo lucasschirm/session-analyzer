@@ -97,23 +97,34 @@ export class SyncConfirmModal extends ModalBase {
 
   @state() private syncOnlyNew: boolean = false;
 
+  @state() private includeFailed: boolean = false;
+
   private localStorageKey(): string {
     return `sal-sync-only-new:${this.connectionId}`;
+  }
+
+  private includeFailedStorageKey(): string {
+    return `sal-include-failed:${this.connectionId}`;
   }
 
   willUpdate(changed: PropertyValues): void {
     super.willUpdate(changed);
     if (changed.has('open') && this.open && this.connectionId) {
-      const stored = localStorage.getItem(this.localStorageKey());
-      this.syncOnlyNew = stored === 'true';
+      this.syncOnlyNew = localStorage.getItem(this.localStorageKey()) === 'true';
+      this.includeFailed = localStorage.getItem(this.includeFailedStorageKey()) === 'true';
     }
   }
 
   private handleConfirm(): void {
     localStorage.setItem(this.localStorageKey(), String(this.syncOnlyNew));
+    localStorage.setItem(this.includeFailedStorageKey(), String(this.includeFailed));
     this.dispatchEvent(
       new CustomEvent('sync-confirmed', {
-        detail: { connectionId: this.connectionId, syncOnlyNew: this.syncOnlyNew },
+        detail: {
+          connectionId: this.connectionId,
+          syncOnlyNew: this.syncOnlyNew,
+          includeFailed: this.includeFailed,
+        },
         bubbles: true,
         composed: true,
       }),
@@ -140,6 +151,10 @@ export class SyncConfirmModal extends ModalBase {
     this.syncOnlyNew = (event.target as HTMLInputElement).checked;
   }
 
+  private handleIncludeFailedChange(event: Event): void {
+    this.includeFailed = (event.target as HTMLInputElement).checked;
+  }
+
   renderPanel(): TemplateResult {
     return html`
       <h2>Sync ${this.connectionName}</h2>
@@ -150,6 +165,14 @@ export class SyncConfirmModal extends ModalBase {
       <label class="checkbox-label">
         <input type="checkbox" .checked=${this.syncOnlyNew} @change=${this.handleCheckboxChange} />
         Sync only new sessions
+      </label>
+      <label class="checkbox-label">
+        <input
+          type="checkbox"
+          .checked=${this.includeFailed}
+          @change=${this.handleIncludeFailedChange}
+        />
+        Include sessions failed importing
       </label>
       <div class="actions">
         <button type="button" class="secondary" @click=${this.handleClose}>Cancel</button>

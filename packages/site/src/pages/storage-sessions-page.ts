@@ -279,6 +279,101 @@ export class StorageSessionsPage extends PageLitElement {
         border: 1px solid var(--md-sys-color-outline, #2a303c);
       }
 
+      .badge-failed {
+        background: rgba(237, 78, 80, 0.15);
+        color: #f28b82;
+        border: 1px solid rgba(237, 78, 80, 0.3);
+      }
+
+      tbody tr.row-failed {
+        background: rgba(237, 78, 80, 0.08);
+      }
+
+      tbody tr.row-failed:hover {
+        background: rgba(237, 78, 80, 0.14);
+      }
+
+      tbody tr.row-failed.selected {
+        background: rgba(237, 78, 80, 0.16);
+      }
+
+      .error-viewer-btn {
+        color: #f28b82;
+      }
+
+      .error-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+      }
+
+      .error-modal {
+        background: var(--md-sys-color-surface-container, #1f242e);
+        border: 1px solid var(--md-sys-color-outline, #2a303c);
+        border-radius: 12px;
+        width: min(640px, 90vw);
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 24px;
+      }
+
+      .error-modal h3 {
+        margin: 0;
+        font-size: 16px;
+        color: var(--md-sys-color-on-surface, #e6e9ef);
+      }
+
+      .error-modal-body {
+        overflow-y: auto;
+        flex: 1;
+      }
+
+      .error-modal-body pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: 'Fira Code', 'Cascadia Code', 'SF Mono', monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+        background: var(--md-sys-color-surface, #171a21);
+        padding: 12px;
+        border-radius: 6px;
+        border: 1px solid var(--md-sys-color-outline, #2a303c);
+      }
+
+      .error-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .error-modal-actions button {
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .error-modal-actions .secondary {
+        background: var(--md-sys-color-surface-container, #1f242e);
+        color: var(--md-sys-color-on-surface, #e6e9ef);
+        border: 1px solid var(--md-sys-color-outline, #2a303c);
+      }
+
+      .error-modal-actions .primary {
+        background: var(--md-sys-color-primary, #4f8cff);
+        color: #fff;
+      }
+
       .col-actions {
         width: 300px;
         white-space: nowrap;
@@ -387,6 +482,9 @@ export class StorageSessionsPage extends PageLitElement {
 
   @state() private syncFeedback: string | null = null;
   @state() private processingSessionIds: Set<string> = new Set();
+
+  /** Error modal state: the session title and sync_details to display. */
+  @state() private errorModalSession: { title: string; details: string } | null = null;
 
   private loadGeneration: number = 0;
   private isRefreshingStatuses: boolean = false;
@@ -602,6 +700,23 @@ export class StorageSessionsPage extends PageLitElement {
     const btn = (event.currentTarget as HTMLElement).closest('button');
     const sessionId = btn?.getAttribute('data-session-id');
     if (sessionId) window.location.hash = `#/sessions/${sessionId}`;
+  }
+
+  private handleViewErrorClick(event: MouseEvent): void {
+    event.stopPropagation();
+    const btn = (event.currentTarget as HTMLElement).closest('button');
+    const sessionId = btn?.getAttribute('data-session-id');
+    if (!sessionId) return;
+    const session = this.sessions.find((s) => s.sessionId === sessionId);
+    if (!session) return;
+    this.errorModalSession = {
+      title: this.formatSessionTitle(session),
+      details: session.syncDetails ?? 'No error details available.',
+    };
+  }
+
+  private closeErrorModal(): void {
+    this.errorModalSession = null;
   }
 
   private handleReprocessClick(event: MouseEvent): void {
@@ -841,16 +956,18 @@ export class StorageSessionsPage extends PageLitElement {
     `;
   }
 
-  private renderStatusBadge(synced: boolean): TemplateResult {
+  private renderStatusBadge(session: StorageSessionItem): TemplateResult {
+    const failed = session.syncStatus === 'failed';
     return html`
       <span
         class=${classMap({
           badge: true,
-          'badge-synced': synced,
-          'badge-unsynced': !synced,
+          'badge-synced': session.synced,
+          'badge-unsynced': !session.synced && !failed,
+          'badge-failed': failed,
         })}
       >
-        ${synced ? 'Synced' : 'Not synced'}
+        ${session.synced ? 'Synced' : failed ? 'Failed' : 'Not synced'}
       </span>
     `;
   }
@@ -935,6 +1052,7 @@ export class StorageSessionsPage extends PageLitElement {
   }
 
   private renderRowActions(session: StorageSessionItem): TemplateResult {
+    const failed = session.syncStatus === 'failed';
     return html`
       <div class="row-actions">
         ${
@@ -942,9 +1060,23 @@ export class StorageSessionsPage extends PageLitElement {
             ? html`${this.renderViewButton(session.sessionId)}${this.renderReprocessButton(session.projectId, session.sessionId)}`
             : nothing
         }
+        ${failed ? this.renderViewErrorButton(session) : nothing}
         ${this.renderViewRawButton(session.projectId, session.sessionId)}
         ${this.renderDownloadButton(session.projectId, session.sessionId)}
       </div>
+    `;
+  }
+
+  private renderViewErrorButton(session: StorageSessionItem): TemplateResult {
+    return html`
+      <button
+        class="action-btn error-viewer-btn"
+        data-session-id=${session.sessionId}
+        type="button"
+        @click=${this.handleViewErrorClick}
+      >
+        View error
+      </button>
     `;
   }
 
@@ -964,14 +1096,19 @@ export class StorageSessionsPage extends PageLitElement {
   private renderRow(session: StorageSessionItem): TemplateResult {
     const key = `${session.projectId}:${session.sessionId}`;
     const selected = this.selectedSessionKeys.has(key);
+    const failed = session.syncStatus === 'failed';
     const title = this.formatSessionTitle(session);
     return html`
-      <tr class=${classMap({ selected })} data-key=${key} @click=${this.handleRowClick}>
+      <tr
+        class=${classMap({ selected, 'row-failed': failed })}
+        data-key=${key}
+        @click=${this.handleRowClick}
+      >
         ${this.renderSessionCheckbox(key, selected, title)}
         ${this.renderSessionTitleCell(session, title)}
         <td class="col-project"><span class="project-badge">${session.projectName}</span></td>
         <td class="col-date">${formatDateTime(session.lastModified)}</td>
-        <td class="col-status">${this.renderStatusBadge(session.synced)}</td>
+        <td class="col-status">${this.renderStatusBadge(session)}</td>
         <td class="col-actions" @click=${this.handleCellClick}>
           ${this.renderRowActions(session)}
         </td>
@@ -1084,12 +1221,40 @@ export class StorageSessionsPage extends PageLitElement {
     `;
   }
 
+  private renderErrorModal(): TemplateResult {
+    if (!this.errorModalSession) return html``;
+    return html`
+      <div
+        class="error-modal-overlay"
+        @click=${(e: MouseEvent) => {
+          if (e.target === e.currentTarget) this.closeErrorModal();
+        }}
+      >
+        <div
+          class="error-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Session sync error details"
+        >
+          <h3>Sync error: ${this.errorModalSession.title}</h3>
+          <div class="error-modal-body">
+            <pre>${this.errorModalSession.details}</pre>
+          </div>
+          <div class="error-modal-actions">
+            <button type="button" class="secondary" @click=${this.closeErrorModal}>Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   render(): TemplateResult {
     return html`
       <div class="storage-sessions-page">
         ${this.renderHeader()}
         ${this.syncFeedback ? html`<div class="feedback-banner">${this.syncFeedback}</div>` : ''}
         ${this.renderContent()}
+        ${this.renderErrorModal()}
       </div>
     `;
   }
