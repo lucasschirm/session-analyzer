@@ -126,7 +126,7 @@ function progressBar(page: Page): Locator {
  */
 async function clickRowSyncAndConfirm(
   page: Page,
-  options: { syncOnlyNew?: boolean } = {},
+  options: { syncOnlyNew?: boolean; includeFailed?: boolean } = {},
 ): Promise<void> {
   const panel = page.locator('connect-modal');
   await panel.getByRole('button', { name: 'Sync' }).click();
@@ -136,6 +136,13 @@ async function clickRowSyncAndConfirm(
     const checkbox = syncConfirm.getByLabel('Sync only new sessions');
     const isChecked = await checkbox.isChecked();
     if (isChecked !== options.syncOnlyNew) {
+      await checkbox.click();
+    }
+  }
+  if (options.includeFailed !== undefined) {
+    const checkbox = syncConfirm.getByLabel('Include sessions failed importing');
+    const isChecked = await checkbox.isChecked();
+    if (isChecked !== options.includeFailed) {
       await checkbox.click();
     }
   }
@@ -599,10 +606,10 @@ test('re-syncing unchanged files receives an empty download list', async ({ page
 });
 
 // =============================================================================
-// Scenario 11: Failed session can be retried by re-syncing after the remote
-// file is fixed. The old session-sync-chip retry UI was removed in TSK0044;
-// re-syncing from the Connect modal achieves the same effect because
-// isSyncNeeded() returns true for sessions in the 'failed' state.
+// Scenario 11: Failed session can be retried after the remote file is fixed.
+// Failed sessions are excluded from bulk sync runs by default (UX-040), so the
+// retry opts in via the confirm modal's "Include sessions failed importing"
+// checkbox — the bulk equivalent of the cherry-pick retry path.
 // =============================================================================
 
 test('failed session can be retried after the remote file is fixed', async ({ page }) => {
@@ -651,11 +658,11 @@ test('failed session can be retried after the remote file is fixed', async ({ pa
   const fixed = buildSessionManifest('retry-proj', 'e2e-retry', validFiles, true);
   bucket.setManifestContent('retry-proj', 'e2e-retry', Buffer.from(JSON.stringify(fixed)));
 
-  // Re-sync from the Data Sources page. The session is in 'failed' state, so
-  // isSyncNeeded() returns true and the session is re-downloaded and
-  // re-ingested.
+  // Re-sync from the Data Sources page with "Include sessions failed
+  // importing" checked: failed sessions are excluded from bulk runs by
+  // default, so the explicit opt-in is what re-downloads and re-ingests it.
   await openConnectForResync(page);
-  await clickRowSyncAndConfirm(page);
+  await clickRowSyncAndConfirm(page, { includeFailed: true });
   await waitForSyncCompleted(page, 60000);
 
   // After re-sync, the session should no longer be in the failed state.
@@ -1474,4 +1481,122 @@ test('UX-036: cherry-picked sessions display resolved titles after sync', async 
   await expect(untitledTitle).toContainText('Fix the bug in app.ts', { timeout: 15000 });
   await expect(titledTitle).not.toContainText(titledSessionId);
   await expect(untitledTitle).not.toContainText(untitledSessionId);
+});
+
+// =============================================================================
+// UX-040: Failed sessions are surfaced on the cherry-pick page (light-red row,
+// Failed badge, "View error" dialog with the stored sync_details log) and are
+// excluded from bulk sync runs unless "Include sessions failed importing" is
+// checked — while the explicit cherry-pick retry path still re-syncs them.
+// The failure is produced deterministically: the session manifest lists
+// transcript.jsonl, but the bucket injects a 404 for that object, so the
+// download fails and the session is recorded as failed (failure isolation:
+// the healthy session in the same run still completes).
+// =============================================================================
+
+test('UX-040: failed sessions surface in cherry-pick and are excluded from bulk sync', async ({
+  page,
+}) => {
+  const projectId = 'ux040-proj';
+  const failedSessionId = 'e2e-failed-session';
+  const healthySessionId = 'e2e-claude-session';
+  const bucket = new FixtureBucket();
+  bucket.addProject(projectId, 'UX-040 Project', '');
+  bucket.addSession(projectId, healthySessionId, {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+  });
+  // Unique content (not shared with the healthy session) so no CAS blob for
+  // it exists locally — otherwise the CAS dedup would legitimately skip the
+  // download on retry and the session would sync instead of failing.
+  const failedTranscript = Buffer.concat([
+    fixtureBuffer('claude-session.jsonl'),
+    Buffer.from('\n{"type":"ux040-marker"}\n'),
+  ]);
+  bucket.addSession(projectId, failedSessionId, {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: failedTranscript,
+      },
+    ],
+  });
+  // The manifest lists transcript.jsonl, but every GET for it 404s.
+  bucket.setHttpError(transcriptFileKey(projectId, failedSessionId), 404);
+  attachLoggers(page);
+
+  // Save the connection (no sync); vault creation is prompted by the save.
+  await bucket.installRoute(page);
+  await openConnectModal(page);
+  await fillConnectionForm(page);
+  const panel = page.locator('connect-modal');
+  await panel.getByRole('button', { name: 'Save' }).click();
+  await confirmPasskey(page);
+
+  // Cherry-pick both sessions; the failed download isolates to one session.
+  await panel.getByRole('button', { name: 'Sync' }).click();
+  const syncConfirm = page.getByRole('dialog', { name: 'Confirm sync' });
+  await expect(syncConfirm).toBeVisible({ timeout: 10000 });
+  await syncConfirm.getByRole('button', { name: 'Cherry pick' }).click();
+
+  const sessionsPage = page.locator('storage-sessions-page');
+  const healthyRow = sessionsPage.locator(`tr[data-key="${projectId}:${healthySessionId}"]`);
+  const failedRow = sessionsPage.locator(`tr[data-key="${projectId}:${failedSessionId}"]`);
+  await expect(failedRow).toBeVisible({ timeout: 15000 });
+  await expect(healthyRow).toBeVisible();
+
+  await sessionsPage.getByRole('button', { name: 'Select visible' }).click();
+  await sessionsPage.getByRole('button', { name: /Sync \(2\) Selected/ }).click();
+  await waitForSyncIdle(page);
+
+  // The healthy session synced; the failed one is isolated, styled with the
+  // light-red failed row, and carries a Failed badge plus a View error action.
+  await expect(healthyRow.locator('.badge')).toContainText('Synced', { timeout: 15000 });
+  await expect(failedRow).toHaveClass(/row-failed/);
+  await expect(failedRow.locator('.badge-failed')).toContainText('Failed');
+  await expect(failedRow.locator('.error-viewer-btn')).toBeVisible();
+
+  // The error modal shows the stored failure log (DOWNLOAD_FAILED details),
+  // dismissible via Escape with focus handed to the dialog.
+  await failedRow.locator('.error-viewer-btn').click();
+  const errorDialog = page.getByRole('dialog', { name: 'Session sync error details' });
+  await expect(errorDialog).toBeVisible();
+  await expect(errorDialog).toContainText('DOWNLOAD_FAILED');
+  await errorDialog.press('Escape');
+  await expect(errorDialog).toBeHidden();
+
+  // A bulk sync without "Include sessions failed importing" must skip the
+  // failed session entirely: zero S3 GETs mention it. The healthy session is
+  // also untouched (in-sync fingerprint skip), so the run is a no-op listing.
+  bucket.clearRequests();
+  await openConnectModal(page);
+  await clickRowSyncAndConfirm(page);
+  await waitForSyncIdle(page);
+  expect(bucket.getRequests({ method: 'GET', key: failedSessionId })).toHaveLength(0);
+
+  // Explicit cherry-pick retry still targets the failed session: selecting it
+  // queues a targeted run that re-fetches its manifest (bypasses the gate).
+  bucket.clearRequests();
+  await panel.getByRole('button', { name: 'Sync' }).click();
+  const retryConfirm = page.getByRole('dialog', { name: 'Confirm sync' });
+  await expect(retryConfirm).toBeVisible({ timeout: 10000 });
+  await retryConfirm.getByRole('button', { name: 'Cherry pick' }).click();
+  await expect(sessionsPage.getByRole('heading', { name: 'Cherry-pick Sessions' })).toBeVisible({
+    timeout: 10000,
+  });
+  await failedRow.locator('input[type="checkbox"]').click();
+  await sessionsPage.getByRole('button', { name: /Sync \(1\) Selected/ }).click();
+  await expect(progressBar(page)).toBeVisible({ timeout: 10000 });
+  await waitForSyncIdle(page);
+  expect(
+    bucket.getRequests({ method: 'GET', key: `${projectId}/${failedSessionId}/manifest.json` }),
+  ).toHaveLength(1);
+  // The transcript is still missing, so the session remains failed.
+  await expect(failedRow.locator('.badge-failed')).toContainText('Failed', { timeout: 15000 });
 });

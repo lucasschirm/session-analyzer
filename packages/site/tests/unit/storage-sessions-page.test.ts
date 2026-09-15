@@ -615,23 +615,46 @@ describe('storage-sessions-page', () => {
     await flush(page);
 
     const root = shadow(page);
-    expect(root.querySelector('.error-modal-overlay')).toBeNull();
+    const modalEl = root.querySelector('session-error-modal') as LitElement;
+    expect(modalEl).not.toBeNull();
+    expect(modalEl.hasAttribute('open')).toBe(false);
 
     const errorBtn = root.querySelector('.error-viewer-btn') as HTMLButtonElement;
     errorBtn.click();
     await flush(page);
 
-    const modal = root.querySelector('.error-modal-overlay');
-    expect(modal).not.toBeNull();
-    expect(modal?.textContent).toContain('Sync error: Failed Session Import');
-    expect(modal?.textContent).toContain(
+    expect(modalEl.hasAttribute('open')).toBe(true);
+    const modalRoot = modalEl.shadowRoot as ShadowRoot;
+    expect(modalRoot.textContent).toContain('Sync error: Failed Session Import');
+    expect(modalRoot.textContent).toContain(
       'INGEST_FAILED: ingestion issues: missing_root_transcript',
     );
 
     // Close button dismisses the modal
-    const closeBtn = modal?.querySelector('button') as HTMLButtonElement;
+    const closeBtn = modalRoot.querySelector('button') as HTMLButtonElement;
     closeBtn.click();
     await flush(page);
-    expect(root.querySelector('.error-modal-overlay')).toBeNull();
+    expect(modalEl.hasAttribute('open')).toBe(false);
+  });
+
+  it('closes the error modal via Escape key', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const modalEl = root.querySelector('session-error-modal') as LitElement;
+    const errorBtn = root.querySelector('.error-viewer-btn') as HTMLButtonElement;
+    errorBtn.click();
+    await flush(page);
+    expect(modalEl.hasAttribute('open')).toBe(true);
+
+    const modalRoot = modalEl.shadowRoot as ShadowRoot;
+    modalRoot
+      .querySelector('.modal')
+      ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(page);
+    expect(modalEl.hasAttribute('open')).toBe(false);
   });
 });

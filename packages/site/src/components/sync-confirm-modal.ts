@@ -12,8 +12,8 @@ import { ModalBase, type ModalStyles } from './modal-base';
  * every time.
  *
  * Emits:
- *   - `sync-confirmed` with `{ connectionId, syncOnlyNew }` when the user
- *     confirms. The parent owns starting the run and closing the modal.
+ *   - `sync-confirmed` with `{ connectionId, syncOnlyNew, includeFailed }` when
+ *     the user confirms. The parent owns starting the run and closing the modal.
  *   - `modal-close` when the user cancels via the Cancel button, overlay click,
  *     or Escape. The parent sets `open` to false.
  */

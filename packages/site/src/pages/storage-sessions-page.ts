@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { formatDateTime } from '../lib/format';
+import '../components/session-error-modal';
 import { type StorageSessionItem, syncManager } from '../sync/sync-manager';
 import type { Connection } from '../types';
 import { PageLitElement, pageHostStyles } from './page-lit-element';
@@ -301,79 +302,6 @@ export class StorageSessionsPage extends PageLitElement {
         color: #f28b82;
       }
 
-      .error-modal-overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.6);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-      }
-
-      .error-modal {
-        background: var(--md-sys-color-surface-container, #1f242e);
-        border: 1px solid var(--md-sys-color-outline, #2a303c);
-        border-radius: 12px;
-        width: min(640px, 90vw);
-        max-height: 80vh;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        padding: 24px;
-      }
-
-      .error-modal h3 {
-        margin: 0;
-        font-size: 16px;
-        color: var(--md-sys-color-on-surface, #e6e9ef);
-      }
-
-      .error-modal-body {
-        overflow-y: auto;
-        flex: 1;
-      }
-
-      .error-modal-body pre {
-        margin: 0;
-        white-space: pre-wrap;
-        word-break: break-word;
-        font-family: 'Fira Code', 'Cascadia Code', 'SF Mono', monospace;
-        font-size: 13px;
-        line-height: 1.5;
-        color: var(--md-sys-color-on-surface-variant, #9aa4b2);
-        background: var(--md-sys-color-surface, #171a21);
-        padding: 12px;
-        border-radius: 6px;
-        border: 1px solid var(--md-sys-color-outline, #2a303c);
-      }
-
-      .error-modal-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
-      }
-
-      .error-modal-actions button {
-        border: none;
-        padding: 8px 16px;
-        border-radius: 6px;
-        font-size: 14px;
-        font-weight: 600;
-        cursor: pointer;
-      }
-
-      .error-modal-actions .secondary {
-        background: var(--md-sys-color-surface-container, #1f242e);
-        color: var(--md-sys-color-on-surface, #e6e9ef);
-        border: 1px solid var(--md-sys-color-outline, #2a303c);
-      }
-
-      .error-modal-actions .primary {
-        background: var(--md-sys-color-primary, #4f8cff);
-        color: #fff;
-      }
-
       .col-actions {
         width: 300px;
         white-space: nowrap;
@@ -483,8 +411,8 @@ export class StorageSessionsPage extends PageLitElement {
   @state() private syncFeedback: string | null = null;
   @state() private processingSessionIds: Set<string> = new Set();
 
-  /** Error modal state: the session title and sync_details to display. */
-  @state() private errorModalSession: { title: string; details: string } | null = null;
+  /** Error modal state: the failed session whose sync_details to display. */
+  @state() private errorModalSession: StorageSessionItem | null = null;
 
   private loadGeneration: number = 0;
   private isRefreshingStatuses: boolean = false;
@@ -706,13 +634,13 @@ export class StorageSessionsPage extends PageLitElement {
     event.stopPropagation();
     const btn = (event.currentTarget as HTMLElement).closest('button');
     const sessionId = btn?.getAttribute('data-session-id');
-    if (!sessionId) return;
-    const session = this.sessions.find((s) => s.sessionId === sessionId);
+    const projectId = btn?.getAttribute('data-project-id');
+    if (!sessionId || !projectId) return;
+    const session = this.sessions.find(
+      (s) => s.projectId === projectId && s.sessionId === sessionId,
+    );
     if (!session) return;
-    this.errorModalSession = {
-      title: this.formatSessionTitle(session),
-      details: session.syncDetails ?? 'No error details available.',
-    };
+    this.errorModalSession = session;
   }
 
   private closeErrorModal(): void {
@@ -1071,6 +999,7 @@ export class StorageSessionsPage extends PageLitElement {
     return html`
       <button
         class="action-btn error-viewer-btn"
+        data-project-id=${session.projectId}
         data-session-id=${session.sessionId}
         type="button"
         @click=${this.handleViewErrorClick}
@@ -1222,29 +1151,14 @@ export class StorageSessionsPage extends PageLitElement {
   }
 
   private renderErrorModal(): TemplateResult {
-    if (!this.errorModalSession) return html``;
+    const session = this.errorModalSession;
     return html`
-      <div
-        class="error-modal-overlay"
-        @click=${(e: MouseEvent) => {
-          if (e.target === e.currentTarget) this.closeErrorModal();
-        }}
-      >
-        <div
-          class="error-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Session sync error details"
-        >
-          <h3>Sync error: ${this.errorModalSession.title}</h3>
-          <div class="error-modal-body">
-            <pre>${this.errorModalSession.details}</pre>
-          </div>
-          <div class="error-modal-actions">
-            <button type="button" class="secondary" @click=${this.closeErrorModal}>Close</button>
-          </div>
-        </div>
-      </div>
+      <session-error-modal
+        ?open=${session !== null}
+        .sessionTitle=${session ? this.formatSessionTitle(session) : ''}
+        .errorDetails=${session?.syncDetails ?? 'No error details available.'}
+        @modal-close=${this.closeErrorModal}
+      ></session-error-modal>
     `;
   }
 
