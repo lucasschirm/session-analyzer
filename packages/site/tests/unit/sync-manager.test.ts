@@ -751,6 +751,41 @@ describe('SyncManager session failure isolation', () => {
     );
   });
 
+  it('handleTranscriptUnavailable persists the status and pushes a warning toast', async () => {
+    const mockDb = createMockDb();
+    const postedToWorker: Array<{ sessionId: string; sync: boolean }> = [];
+    const mockWorker = {
+      postMessage: (msg: { sessionId: string; sync: boolean }) => postedToWorker.push(msg),
+      terminate: vi.fn(),
+    } as unknown as Worker;
+    const warnings: string[] = [];
+    const manager = createManager({ dbClient: mockDb, onWarning: (w) => warnings.push(w) });
+    const project = createTestProject(mockWorker);
+    const sessionState = { syncStatus: 'pending' };
+
+    // @ts-expect-error — testing private method
+    await manager.handleTranscriptUnavailable(
+      { warnings: [] } as never,
+      sessionState as never,
+      { id: 'local-1' } as never,
+      mockWorker,
+      'sess-notranscript',
+    );
+
+    expect(sessionState.syncStatus).toBe('transcript_unavailable');
+    expect(mockDb.setSessionSyncStatus).toHaveBeenCalledWith(
+      'local-1',
+      'transcript_unavailable',
+      'Main transcript not uploaded',
+    );
+    expect(warnings).toEqual([
+      'sess-notranscript: no main transcript uploaded — session not synced',
+    ]);
+    expect(postedToWorker).toEqual([
+      expect.objectContaining({ sessionId: 'sess-notranscript', sync: false }),
+    ]);
+  });
+
   it('isolateWorkerMessageError isolates unexpected session-level message errors', async () => {
     const mockDb = createMockDb();
     const mockWorker = { postMessage: vi.fn(), terminate: vi.fn() } as unknown as Worker;

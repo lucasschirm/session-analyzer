@@ -286,6 +286,12 @@ export class StorageSessionsPage extends PageLitElement {
         border: 1px solid rgba(237, 78, 80, 0.3);
       }
 
+      .badge-transcript-unavailable {
+        background: rgba(251, 188, 5, 0.15);
+        color: #fdd663;
+        border: 1px solid rgba(251, 188, 5, 0.3);
+      }
+
       tbody tr.row-failed {
         background: rgba(237, 78, 80, 0.08);
       }
@@ -886,16 +892,26 @@ export class StorageSessionsPage extends PageLitElement {
 
   private renderStatusBadge(session: StorageSessionItem): TemplateResult {
     const failed = session.syncStatus === 'failed';
+    const noTranscript = session.syncStatus === 'transcript_unavailable';
     return html`
       <span
         class=${classMap({
           badge: true,
           'badge-synced': session.synced,
-          'badge-unsynced': !session.synced && !failed,
+          'badge-unsynced': !session.synced && !failed && !noTranscript,
           'badge-failed': failed,
+          'badge-transcript-unavailable': noTranscript,
         })}
       >
-        ${session.synced ? 'Synced' : failed ? 'Failed' : 'Not synced'}
+        ${
+          session.synced
+            ? 'Synced'
+            : failed
+              ? 'Failed'
+              : noTranscript
+                ? 'No transcript'
+                : 'Not synced'
+        }
       </span>
     `;
   }
@@ -981,6 +997,7 @@ export class StorageSessionsPage extends PageLitElement {
 
   private renderRowActions(session: StorageSessionItem): TemplateResult {
     const failed = session.syncStatus === 'failed';
+    const noTranscript = session.syncStatus === 'transcript_unavailable';
     return html`
       <div class="row-actions">
         ${
@@ -988,7 +1005,7 @@ export class StorageSessionsPage extends PageLitElement {
             ? html`${this.renderViewButton(session.sessionId)}${this.renderReprocessButton(session.projectId, session.sessionId)}`
             : nothing
         }
-        ${failed ? this.renderViewErrorButton(session) : nothing}
+        ${failed || noTranscript ? this.renderViewErrorButton(session) : nothing}
         ${this.renderViewRawButton(session.projectId, session.sessionId)}
         ${this.renderDownloadButton(session.projectId, session.sessionId)}
       </div>

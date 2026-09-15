@@ -1106,13 +1106,14 @@ export class SyncManager extends EventTarget {
   }
 
   private async handleSessionManifestReady(
-    _run: SyncRun,
+    run: SyncRun,
     project: ProjectSyncState,
     worker: Worker,
     message: SessionManifestReadyMessage,
   ): Promise<void> {
     try {
       await this.processSessionManifest(
+        run,
         project,
         worker,
         message.sessionId,
@@ -1160,6 +1161,7 @@ export class SyncManager extends EventTarget {
   }
 
   private async processSessionManifest(
+    run: SyncRun,
     project: ProjectSyncState,
     worker: Worker,
     remoteSessionId: string,
@@ -1173,7 +1175,7 @@ export class SyncManager extends EventTarget {
       fingerprint,
     );
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
-    await this.dispatchOrHandleMainArtifact(sessionState, project, localSession, worker, {
+    await this.dispatchOrHandleMainArtifact(sessionState, run, project, localSession, worker, {
       remoteSessionId,
       manifest,
       mainPath,
@@ -1200,6 +1202,7 @@ export class SyncManager extends EventTarget {
 
   private async dispatchOrHandleMainArtifact(
     sessionState: SessionSyncState,
+    run: SyncRun,
     project: ProjectSyncState,
     localSession: DashboardSession,
     worker: Worker,
@@ -1207,6 +1210,7 @@ export class SyncManager extends EventTarget {
   ): Promise<void> {
     if (!this.findMainArtifact(ctx.manifest, ctx.mainPath)) {
       return this.handleTranscriptUnavailable(
+        run,
         sessionState,
         localSession,
         worker,
@@ -1336,6 +1340,7 @@ export class SyncManager extends EventTarget {
   }
 
   private async handleTranscriptUnavailable(
+    run: SyncRun,
     sessionState: SessionSyncState,
     localSession: DashboardSession,
     worker: Worker,
@@ -1347,6 +1352,7 @@ export class SyncManager extends EventTarget {
       'transcript_unavailable',
       'Main transcript not uploaded',
     );
+    this.pushWarning(run, `${remoteSessionId}: no main transcript uploaded — session not synced`);
     worker.postMessage(this.buildSyncMessage(remoteSessionId, false, true));
     this.emitChange();
   }

@@ -43,6 +43,17 @@ const mockSessions: StorageSessionItem[] = [
     syncStatus: 'failed',
     syncDetails: 'INGEST_FAILED: ingestion issues: missing_root_transcript',
   },
+  {
+    projectId: 'proj-2',
+    projectName: 'Beta Service',
+    sessionId: 'sess-203',
+    title: 'No Transcript Session',
+    lastModified: '2026-09-08T08:00:00.000Z',
+    modifiedTimestamp: new Date('2026-09-08T08:00:00.000Z').getTime(),
+    synced: false,
+    syncStatus: 'transcript_unavailable',
+    syncDetails: 'Main transcript not uploaded',
+  },
 ];
 
 const mockSyncManager = vi.hoisted(() => {
@@ -186,7 +197,7 @@ describe('storage-sessions-page', () => {
     expect(root.textContent).toContain('Beta Service');
 
     const rows = root.querySelectorAll('tbody tr');
-    expect(rows.length).toBe(4);
+    expect(rows.length).toBe(5);
 
     const badges = root.querySelectorAll('.badge');
     expect(badges[0].textContent?.trim()).toBe('Failed'); // latest is sess-202 (Sep 13, failed)
@@ -208,9 +219,10 @@ describe('storage-sessions-page', () => {
     await flush(page);
 
     const rows = root.querySelectorAll('tbody tr');
-    expect(rows.length).toBe(2);
+    expect(rows.length).toBe(3);
     expect(root.textContent).toContain('Add S3 Integration');
     expect(root.textContent).toContain('Failed Session Import');
+    expect(root.textContent).toContain('No Transcript Session');
     expect(root.textContent).toContain('Beta Service');
     expect(root.textContent).not.toContain('Fix Authentication Flow');
   });
@@ -224,10 +236,10 @@ describe('storage-sessions-page', () => {
     const root = shadow(page);
     const sortSelect = root.querySelector('#sort-order') as HTMLSelectElement;
 
-    // Default is desc: newest first (sess-202 on Sep 13, sess-102 on Sep 12, sess-201 on Sep 11, sess-101 on Sep 10)
+    // Default is desc: newest first (sess-202 Sep 13, sess-102 Sep 12, sess-201 Sep 11, sess-101 Sep 10, sess-203 Sep 8)
     let rows = root.querySelectorAll('tbody tr');
     expect(rows[0].textContent).toContain('Failed Session Import');
-    expect(rows[3].textContent).toContain('Fix Authentication Flow');
+    expect(rows[4].textContent).toContain('No Transcript Session');
 
     // Switch to asc
     sortSelect.value = 'asc';
@@ -235,8 +247,8 @@ describe('storage-sessions-page', () => {
     await flush(page);
 
     rows = root.querySelectorAll('tbody tr');
-    expect(rows[0].textContent).toContain('Fix Authentication Flow'); // oldest first (Sep 10)
-    expect(rows[3].textContent).toContain('Failed Session Import'); // newest last (Sep 13)
+    expect(rows[0].textContent).toContain('No Transcript Session'); // oldest first (Sep 8)
+    expect(rows[4].textContent).toContain('Failed Session Import'); // newest last (Sep 13)
   });
 
   it('hides already synced sessions when checkbox is checked', async () => {
@@ -248,18 +260,19 @@ describe('storage-sessions-page', () => {
     const root = shadow(page);
     const hideCheckbox = root.querySelector('#hide-synced') as HTMLInputElement;
 
-    expect(root.querySelectorAll('tbody tr').length).toBe(4);
+    expect(root.querySelectorAll('tbody tr').length).toBe(5);
 
     hideCheckbox.checked = true;
     hideCheckbox.dispatchEvent(new Event('change'));
     await flush(page);
 
     const rows = root.querySelectorAll('tbody tr');
-    expect(rows.length).toBe(3);
+    expect(rows.length).toBe(4);
     expect(root.textContent).not.toContain('Fix Authentication Flow'); // sess-101 was synced
     expect(root.textContent).toContain('Update Database Migrations');
     expect(root.textContent).toContain('Add S3 Integration');
     expect(root.textContent).toContain('Failed Session Import');
+    expect(root.textContent).toContain('No Transcript Session');
   });
 
   it('changing filter should not unselect already picked sessions (Critical Invariant)', async () => {
@@ -272,7 +285,7 @@ describe('storage-sessions-page', () => {
     let rows = root.querySelectorAll('tbody tr');
 
     // Select sess-101 (synced, proj-1) and sess-201 (not synced, proj-2)
-    // rows currently (desc): [0] sess-202, [1] sess-102, [2] sess-201, [3] sess-101
+    // rows currently (desc): [0] sess-202, [1] sess-102, [2] sess-201, [3] sess-101, [4] sess-203
     const checkbox201 = rows[2].querySelector('input[type="checkbox"]') as HTMLInputElement;
     const checkbox101 = rows[3].querySelector('input[type="checkbox"]') as HTMLInputElement;
 
@@ -282,7 +295,7 @@ describe('storage-sessions-page', () => {
 
     expect(root.querySelector('.selection-count')?.textContent).toContain('2 selected');
 
-    // Now filter by project: proj-1 only (sess-201 and sess-202 are now hidden from the table)
+    // Now filter by project: proj-1 only (proj-2 sessions are now hidden from the table)
     const projectSelect = root.querySelector('#project-filter') as HTMLSelectElement;
     projectSelect.value = 'proj-1';
     projectSelect.dispatchEvent(new Event('change'));
@@ -319,18 +332,18 @@ describe('storage-sessions-page', () => {
     await flush(page);
 
     rows = root.querySelectorAll('tbody tr');
-    expect(rows.length).toBe(4);
+    expect(rows.length).toBe(5);
     expect(root.querySelector('.selection-count')?.textContent).toContain('2 selected');
 
     // Check that the checkboxes for sess-101 and sess-201 are still checked!
-    // in asc order: [0] sess-101, [1] sess-201, [2] sess-102, [3] sess-202
-    expect((rows[0].querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(
-      true,
-    );
+    // in asc order: [0] sess-203, [1] sess-101, [2] sess-201, [3] sess-102, [4] sess-202
     expect((rows[1].querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(
       true,
     );
     expect((rows[2].querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect((rows[3].querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(
       false,
     );
   });
@@ -349,9 +362,9 @@ describe('storage-sessions-page', () => {
     clickButtonByText(root, 'Select visible');
     await flush(page);
 
-    expect(root.querySelector('.selection-count')?.textContent).toContain('4 selected');
+    expect(root.querySelector('.selection-count')?.textContent).toContain('5 selected');
     expect(syncButton.disabled).toBe(false);
-    expect(syncButton.textContent).toContain('Sync (4) Selected');
+    expect(syncButton.textContent).toContain('Sync (5) Selected');
 
     // Click sync button
     syncButton.click();
@@ -363,11 +376,12 @@ describe('storage-sessions-page', () => {
         { projectId: 'proj-1', sessionId: 'sess-102' },
         { projectId: 'proj-2', sessionId: 'sess-201' },
         { projectId: 'proj-2', sessionId: 'sess-202' },
+        { projectId: 'proj-2', sessionId: 'sess-203' },
       ],
     });
 
     expect(root.querySelector('.feedback-banner')?.textContent).toContain(
-      'Sync queued for 4 sessions',
+      'Sync queued for 5 sessions',
     );
   });
 
@@ -380,7 +394,7 @@ describe('storage-sessions-page', () => {
     const root = shadow(page);
     clickButtonByText(root, 'Select visible');
     await flush(page);
-    expect(root.querySelector('.selection-count')?.textContent).toContain('4 selected');
+    expect(root.querySelector('.selection-count')?.textContent).toContain('5 selected');
 
     clickButtonByText(root, 'Clear');
     await flush(page);
@@ -434,7 +448,7 @@ describe('storage-sessions-page', () => {
     expect(reprocessButtons[0].getAttribute('data-session-id')).toBe('sess-101');
 
     // All sessions (synced and unsynced) have a raw button
-    expect(rawButtons.length).toBe(4);
+    expect(rawButtons.length).toBe(5);
     expect(rawButtons[0].textContent?.trim()).toBe('raw');
     expect(rawButtons[0].getAttribute('data-session-id')).toBe('sess-202');
     expect(rawButtons[1].getAttribute('data-session-id')).toBe('sess-102');
@@ -443,7 +457,7 @@ describe('storage-sessions-page', () => {
 
     // All sessions (synced and unsynced) have a download button
     const downloadButtons = root.querySelectorAll('.download-btn');
-    expect(downloadButtons.length).toBe(4);
+    expect(downloadButtons.length).toBe(5);
     expect(downloadButtons[0].textContent?.trim()).toBe('download');
     expect(downloadButtons[0].getAttribute('data-session-id')).toBe('sess-202');
     expect(downloadButtons[1].getAttribute('data-session-id')).toBe('sess-102');
@@ -595,7 +609,34 @@ describe('storage-sessions-page', () => {
     expect(failedBadge?.textContent?.trim()).toBe('Failed');
   });
 
-  it('shows View error button only for failed sessions', async () => {
+  it('renders transcript-unavailable rows with a No transcript badge and View error button', async () => {
+    const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
+    page.storage = 's3-main';
+    await mount(page);
+    await flush(page);
+
+    const root = shadow(page);
+    const unavailableBadge = root.querySelector('.badge-transcript-unavailable');
+    expect(unavailableBadge).not.toBeNull();
+    expect(unavailableBadge?.textContent?.trim()).toBe('No transcript');
+
+    // The transcript-unavailable row offers the same View error affordance as
+    // failed rows, showing the stored sync_details.
+    const row = root.querySelector('tr[data-key="proj-2:sess-203"]');
+    expect(row).not.toBeNull();
+    const errorBtn = row?.querySelector('.error-viewer-btn') as HTMLButtonElement;
+    expect(errorBtn).not.toBeNull();
+    errorBtn.click();
+    await flush(page);
+
+    const modalEl = root.querySelector('session-error-modal') as LitElement;
+    expect(modalEl.hasAttribute('open')).toBe(true);
+    expect((modalEl.shadowRoot as ShadowRoot).textContent).toContain(
+      'Main transcript not uploaded',
+    );
+  });
+
+  it('shows View error button for failed and transcript-unavailable sessions', async () => {
     const page = document.createElement('storage-sessions-page') as StorageSessionsPage;
     page.storage = 's3-main';
     await mount(page);
@@ -603,8 +644,9 @@ describe('storage-sessions-page', () => {
 
     const root = shadow(page);
     const errorButtons = root.querySelectorAll('.error-viewer-btn');
-    expect(errorButtons.length).toBe(1);
+    expect(errorButtons.length).toBe(2);
     expect(errorButtons[0].getAttribute('data-session-id')).toBe('sess-202');
+    expect(errorButtons[1].getAttribute('data-session-id')).toBe('sess-203');
     expect(errorButtons[0].textContent?.trim()).toBe('View error');
   });
 
