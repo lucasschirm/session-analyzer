@@ -9,6 +9,8 @@
 import { mapDevinRole } from '../message/role-map.js';
 import { parseAcpToolCall, parseAcpToolCallUpdate } from '../tool-call/acp-parse.js';
 import type {
+  DevinChatMessageToolCall,
+  DevinGenerationMetrics,
   DevinJsonlParseResult,
   DevinJsonlParseWarning,
   DevinMessageLine,
@@ -163,6 +165,76 @@ function parseSubagentExtensions(chatMessage: unknown): DevinSubagentExtensions 
   return { agentId, profileName, model, chainNodeId };
 }
 
+function parseToolCallArgs(raw: unknown): Record<string, unknown> | string | null {
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (typeof raw !== 'string') return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? parsed : raw;
+  } catch {
+    return raw;
+  }
+}
+
+function parseSingleToolCall(tc: unknown): DevinChatMessageToolCall | null {
+  if (typeof tc !== 'object' || tc === null) return null;
+  const r = tc as Record<string, unknown>;
+  if (typeof r.id !== 'string' || typeof r.name !== 'string') return null;
+  return {
+    id: r.id,
+    name: r.name,
+    arguments: parseToolCallArgs(r.arguments),
+    index: typeof r.index === 'number' ? r.index : null,
+    kind: typeof r.kind === 'string' ? r.kind : null,
+  };
+}
+
+function parseEmbeddedToolCalls(chatMessage: unknown): DevinChatMessageToolCall[] | null {
+  if (typeof chatMessage !== 'object' || chatMessage === null) return null;
+  const calls = (chatMessage as Record<string, unknown>).tool_calls;
+  if (!Array.isArray(calls) || calls.length === 0) return null;
+  const parsed = calls
+    .map(parseSingleToolCall)
+    .filter((c): c is DevinChatMessageToolCall => c !== null);
+  return parsed.length > 0 ? parsed : null;
+}
+
+function parseEmbeddedToolCallId(chatMessage: unknown): string | null {
+  if (typeof chatMessage !== 'object' || chatMessage === null) return null;
+  const id = (chatMessage as Record<string, unknown>).tool_call_id;
+  return typeof id === 'string' ? id : null;
+}
+
+function parseGenerationModel(chatMessage: unknown): string | null {
+  if (typeof chatMessage !== 'object' || chatMessage === null) return null;
+  const meta = (chatMessage as Record<string, unknown>).metadata;
+  if (typeof meta !== 'object' || meta === null) return null;
+  const model = (meta as Record<string, unknown>).generation_model;
+  return typeof model === 'string' ? model : null;
+}
+
+function parseGenerationMetrics(chatMessage: unknown): DevinGenerationMetrics | null {
+  if (typeof chatMessage !== 'object' || chatMessage === null) return null;
+  const meta = (chatMessage as Record<string, unknown>).metadata;
+  if (typeof meta !== 'object' || meta === null) return null;
+  const m = (meta as Record<string, unknown>).metrics;
+  if (typeof m !== 'object' || m === null) return null;
+  const rec = m as Record<string, unknown>;
+  const ttftMs = typeof rec.ttft_ms === 'number' ? rec.ttft_ms : null;
+  const totalTimeMs = typeof rec.total_time_ms === 'number' ? rec.total_time_ms : null;
+  const inputTokens = typeof rec.input_tokens === 'number' ? rec.input_tokens : null;
+  const outputTokens = typeof rec.output_tokens === 'number' ? rec.output_tokens : null;
+  const cacheReadTokens = typeof rec.cache_read_tokens === 'number' ? rec.cache_read_tokens : null;
+  const cacheCreationTokens =
+    typeof rec.cache_creation_tokens === 'number' ? rec.cache_creation_tokens : null;
+  if (ttftMs === null && totalTimeMs === null && inputTokens === null && outputTokens === null) {
+    return null;
+  }
+  return { ttftMs, totalTimeMs, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
+}
+
 type MessageFields = Omit<DevinMessageLine, 'type' | 'ts' | 'order' | 'sessionId' | 'nodeId'>;
 
 function messageFields(row: RawDevinJsonlLine): MessageFields {
@@ -179,6 +251,10 @@ function messageFields(row: RawDevinJsonlLine): MessageFields {
     metadata,
     parsedMetadata: parseMessageNodeMetadata(metadata),
     subagent: parseSubagentExtensions(chatMessage),
+    toolCalls: parseEmbeddedToolCalls(chatMessage),
+    toolCallId: parseEmbeddedToolCallId(chatMessage),
+    generationModel: parseGenerationModel(chatMessage),
+    generationMetrics: parseGenerationMetrics(chatMessage),
   };
 }
 

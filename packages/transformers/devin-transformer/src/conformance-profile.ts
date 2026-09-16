@@ -16,10 +16,11 @@ import type { ConformanceProfile } from '@lucasschirm/sal-transformer-shared/con
  *   the three classify-time kinds so `checkPartialSnapshotsDoNotImplyRemovals`
  *   asserts the enriched `partial-classification` fixture retains them
  *   alongside its unclassified artifact.
- * - Sub Agent evidence is inline (`subagent_turn`/`detached_conversation`
- *   normalized events, DS-B28 (#294)) — Devin sub-agents are not distinct
- *   sessions, so there are no `session_relation` records or child session
- *   ids by design.
+ * - Sub Agent evidence: subagents are decomposed into canonical child
+ *   sessions (`session`, `session_relation`, turns, messages, invocations)
+ *   matching the Claude Code convention. Remaining detached messages that
+ *   cannot be attributed to a subagent are still emitted as inline
+ *   `detached_conversation` normalized events.
  * - Invocation payloads carry `name` for both skills and agents.
  * - Token identity: `inputTokens` (prompt) INCLUDES cache reads (#322/#323
  *   — ATIF `cached_tokens` is a subset of prompt), so
@@ -32,8 +33,8 @@ export const DEVIN_CONFORMANCE_PROFILE: ConformanceProfile = {
   metricPrefix: 'devin',
   completeComponentKinds: ['skill', 'tool', 'agent'],
   classificationComponentKinds: ['skill', 'agent', 'rule'],
-  subagentEvidence: 'inline-events',
-  inlineSubagentCategories: ['subagent_turn', 'detached_conversation'],
+  subagentEvidence: 'child-sessions',
+  inlineSubagentCategories: [],
   skillNameField: 'name',
   agentNameField: 'name',
   totalTokenFields: ['inputTokens', 'outputTokens'],

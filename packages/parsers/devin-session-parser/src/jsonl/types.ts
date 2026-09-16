@@ -124,6 +124,25 @@ export interface DevinSubagentExtensions {
   chainNodeId: number | null;
 }
 
+/** A tool call embedded within `chat_message.tool_calls` (OpenAI format). */
+export interface DevinChatMessageToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown> | string | null;
+  index: number | null;
+  kind: string | null;
+}
+
+/** Generation timing and token metrics from `chat_message.metadata.metrics`. */
+export interface DevinGenerationMetrics {
+  ttftMs: number | null;
+  totalTimeMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
+  cacheCreationTokens: number | null;
+}
+
 /** A parsed `message_nodes` row line. */
 export interface DevinMessageLine {
   type: 'message';
@@ -150,6 +169,14 @@ export interface DevinMessageLine {
    * carries none of them (the overwhelming majority of ordinary nodes).
    */
   subagent: DevinSubagentExtensions | null;
+  /** Tool calls embedded in `chat_message.tool_calls` (e.g. OpenAI format). */
+  toolCalls: DevinChatMessageToolCall[] | null;
+  /** Tool call id embedded in `chat_message.tool_call_id` (e.g. role: 'tool'). */
+  toolCallId: string | null;
+  /** Generation model from `chat_message.metadata.generation_model`. */
+  generationModel: string | null;
+  /** Generation metrics from `chat_message.metadata.metrics`. */
+  generationMetrics: DevinGenerationMetrics | null;
 }
 
 /** A parsed `tool_call_state` row line: no timestamp column exists upstream. */

@@ -574,3 +574,116 @@ describe('parseDevinJsonlText', () => {
     expect(result.warnings).toHaveLength(0);
   });
 });
+
+describe('parseDevinJsonlLine — embedded tool_calls and metrics', () => {
+  it('parses embedded tool_calls on assistant message', () => {
+    const chatMessage = JSON.stringify({
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        {
+          id: 'functions.find_file:0',
+          name: 'find_file_by_name',
+          arguments: { pattern: 'src/*' },
+          index: 0,
+          kind: 'function',
+        },
+      ],
+      metadata: {
+        generation_model: 'swe-1-7-medium',
+        metrics: {
+          input_tokens: 100,
+          output_tokens: 20,
+          cache_read_tokens: 5,
+          cache_creation_tokens: null,
+          total_time_ms: 500,
+          ttft_ms: 150,
+        },
+      },
+    });
+    const result = parseDevinJsonlLine(
+      line({
+        type: 'message',
+        ts: null,
+        order: 1,
+        row_id: 10,
+        session_id: 's',
+        node_id: 5,
+        parent_node_id: 4,
+        chat_message: chatMessage,
+      }),
+      1,
+    );
+    if (!('line' in result) || result.line.type !== 'message') throw new Error('expected message');
+    expect(result.line.toolCalls).toHaveLength(1);
+    expect(result.line.toolCalls?.[0]).toEqual({
+      id: 'functions.find_file:0',
+      name: 'find_file_by_name',
+      arguments: { pattern: 'src/*' },
+      index: 0,
+      kind: 'function',
+    });
+    expect(result.line.generationModel).toBe('swe-1-7-medium');
+    expect(result.line.generationMetrics).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 5,
+      cacheCreationTokens: null,
+      totalTimeMs: 500,
+      ttftMs: 150,
+    });
+  });
+
+  it('parses embedded tool_call_id on tool message', () => {
+    const chatMessage = JSON.stringify({
+      role: 'tool',
+      content: 'file contents',
+      tool_call_id: 'functions.find_file:0',
+    });
+    const result = parseDevinJsonlLine(
+      line({
+        type: 'message',
+        ts: null,
+        order: 2,
+        row_id: 11,
+        session_id: 's',
+        node_id: 6,
+        parent_node_id: 5,
+        chat_message: chatMessage,
+      }),
+      2,
+    );
+    if (!('line' in result) || result.line.type !== 'message') throw new Error('expected message');
+    expect(result.line.toolCallId).toBe('functions.find_file:0');
+    expect(result.line.toolCalls).toBeNull();
+  });
+
+  it('handles JSON string arguments in tool_calls', () => {
+    const chatMessage = JSON.stringify({
+      role: 'assistant',
+      content: '',
+      tool_calls: [
+        {
+          id: 'call-1',
+          name: 'read',
+          arguments: JSON.stringify({ file_path: '/path/to/file' }),
+        },
+      ],
+    });
+    const result = parseDevinJsonlLine(
+      line({
+        type: 'message',
+        ts: null,
+        order: 3,
+        row_id: 12,
+        session_id: 's',
+        node_id: 7,
+        parent_node_id: 6,
+        chat_message: chatMessage,
+      }),
+      3,
+    );
+    if (!('line' in result) || result.line.type !== 'message') throw new Error('expected message');
+    expect(result.line.toolCalls?.[0]?.arguments).toEqual({ file_path: '/path/to/file' });
+  });
+});

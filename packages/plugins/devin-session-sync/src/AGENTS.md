@@ -95,3 +95,14 @@ the byte/duration fields the Devin pipeline doesn't track with zeros
 path added to this plugin MUST call `emitTelemetry` on both success and
 failure — a sync that silently succeeds without a telemetry record is a
 bug, not a feature.
+
+## Sub Agents & Subsession Representation
+
+Devin CLI executes subagents via `run_subagent`, storing intermediate
+conversations as trees within `message_nodes` in `sessions.db`. The sync
+extractor preserves these trees in `transcript.jsonl`. Downstream transformers
+decompose each subagent into a canonical child session (`sessions`,
+`session_summaries`, `session_relations`) with its own tool invocations and
+metrics, maintaining strict metric disjointness between root-agent and child
+subsession metrics across all harnesses.
+
