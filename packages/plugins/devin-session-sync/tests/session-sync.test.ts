@@ -1055,6 +1055,25 @@ describe('runDevinSessionSync', () => {
     });
 
     expect(outcome.errors).toContain('SYNC_FILE_TOO_LARGE');
+
+    // The persisted SyncRun must carry the discovery error too — the run
+    // record is written by uploadManifestSafely, so the discovery errors
+    // had to be merged into deltaResult BEFORE the manifest upload.
+    const runLog = JSON.parse(
+      await fsp.readFile(path.join(dataDir, 'manifest-runs.json'), 'utf8'),
+    ) as Record<
+      string,
+      Array<{ errors?: string[]; errorDetails?: Array<{ code: string; message: string }> }>
+    >;
+    const runs = runLog['sess-1'] ?? [];
+    expect(runs.length).toBeGreaterThan(0);
+    const lastRun = runs[runs.length - 1];
+    expect(lastRun?.errors).toContain('SYNC_FILE_TOO_LARGE');
+    expect(
+      lastRun?.errorDetails?.some(
+        (d) => d.code === 'SYNC_FILE_TOO_LARGE' && d.message.includes('AGENTS.md'),
+      ),
+    ).toBe(true);
   });
 
   it(

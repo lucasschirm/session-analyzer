@@ -180,6 +180,24 @@ describe('buildManifest', () => {
     expect(manifest.artifacts).toHaveLength(2);
   });
 
+  it('reports no main transcript when the top-level transcript is absent — a subdirectory artifact is not the main transcript', () => {
+    // If the main transcript was skipped by a discovery limit, the first
+    // session-scoped artifact is a subagent transcript — mislabeling it as
+    // the main transcript would surface subagent content where the session
+    // transcript is expected.
+    const state = createEmptySyncState();
+    const subagentArtifact = makeArtifact({
+      scope: 'session',
+      relativePath: 'subagents/agent-1.jsonl',
+      sha256: 'agent-hash',
+    });
+
+    const manifest = buildManifest(makeSession(), [subagentArtifact], state, []);
+
+    expect(manifest.mainTranscriptRelativePath).toBeUndefined();
+    expect(manifest.artifacts).toHaveLength(1);
+  });
+
   it('includes syncError on failed artifacts and mainTranscriptError on the manifest', () => {
     const state = createEmptySyncState();
     const sessionArtifact = makeArtifact({

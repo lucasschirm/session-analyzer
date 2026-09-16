@@ -15,6 +15,15 @@ export class DiscoveryContext {
   totalBytes = 0;
   stopped = false;
 
+  /**
+   * Cumulative size of non-session artifacts, gated against
+   * `limits.maxTotalBytes`. Session artifacts are excluded: their size limit
+   * is enforced per-artifact on the compressed wire body in the storage
+   * adapter, so gating them on uncompressed bytes would drop compressible
+   * transcripts that would pass the adapter check.
+   */
+  private budgetedBytes = 0;
+
   constructor(readonly limits: SyncLimits = DEFAULT_SYNC_LIMITS) {}
 
   toResult(): DiscoveryResult {
@@ -80,6 +89,17 @@ export class DiscoveryContext {
     }
 
     if (this.artifacts.length >= this.limits.maxFiles) {
+      // Session-scoped artifacts skip rather than halting all remaining
+      // discovery — a count-limit rejection on one transcript must not
+      // prevent other session artifacts from being captured.
+      if (scope === 'session') {
+        this.addError({
+          code: 'SYNC_FILE_COUNT_EXCEEDED',
+          path: resolvedPath,
+          message: `File count would exceed the limit of ${this.limits.maxFiles}`,
+        });
+        return 'skipped';
+      }
       this.stop(
         'SYNC_FILE_COUNT_EXCEEDED',
         `File count would exceed the limit of ${this.limits.maxFiles}`,
@@ -87,20 +107,10 @@ export class DiscoveryContext {
       return 'stopped';
     }
 
-    if (this.totalBytes + size > this.limits.maxTotalBytes) {
-      // For session-scoped artifacts, skip the file rather than stopping all
-      // remaining discovery — a single large transcript must not prevent
-      // subagent transcripts and other session artifacts from being captured.
-      // The file is skipped (not loaded into memory), and the error is
-      // propagated to the outcome via discovery.errors.
-      if (scope === 'session') {
-        this.addError({
-          code: 'SYNC_TOTAL_SIZE_EXCEEDED',
-          path: resolvedPath,
-          message: `File size ${size} would exceed the total capture limit of ${this.limits.maxTotalBytes} bytes`,
-        });
-        return 'skipped';
-      }
+    // Session-scoped artifacts bypass the cumulative uncompressed budget:
+    // their authoritative size limit is the compressed-wire-body check in
+    // the storage adapter. They still count toward the reported totalBytes.
+    if (scope !== 'session' && this.budgetedBytes + size > this.limits.maxTotalBytes) {
       this.stop(
         'SYNC_TOTAL_SIZE_EXCEEDED',
         `Total capture size would exceed the limit of ${this.limits.maxTotalBytes} bytes`,
@@ -137,6 +147,9 @@ export class DiscoveryContext {
     });
 
     this.totalBytes += size;
+    if (scope !== 'session') {
+      this.budgetedBytes += size;
+    }
     return 'added';
   }
 
