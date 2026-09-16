@@ -166,8 +166,10 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // `response_dimensions` aggregate fields, byte-identical per tier), and
 // `model_usage`/`model_requests` are still not yet ingested by
 // `packages/db`. Forces a fresh generation on reprocess so no analysis
-// mixes pre-/post-fix `model_usage`/`message` evidence shapes.
-export const DEVIN_TRANSFORMER_VERSION = '0.12.0';
+// Bumped 0.12.0 -> 0.13.0: `sessionId` is now assigned directly from the
+// native session id produced by the parser rather than serialized as a
+// JSON stableId string. Forces a fresh generation on reprocess.
+export const DEVIN_TRANSFORMER_VERSION = '0.13.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly
@@ -448,7 +450,11 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       };
     }
 
-    const nativeSessionId = parsed.sessionLine?.id ?? 'unknown';
+    const nativeSessionId =
+      parsed.sessionLine?.id ??
+      parsed.orderedMessages[0]?.sessionId ??
+      bundle.sourceIdentity?.sessionId ??
+      'unknown';
     const sessionId = deriveSessionId(context, bundle.sourceIdentity, nativeSessionId);
 
     const spine = buildSessionSpine(
