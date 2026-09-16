@@ -32,6 +32,7 @@ function makeMessage(
     metadata: null,
     parsedMetadata: null,
     subagent: null,
+    chatUsage: null,
     toolCalls: null,
     toolCallId: null,
     generationModel: null,
