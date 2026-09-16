@@ -21,10 +21,15 @@ import type { ConformanceProfile } from '@lucasschirm/sal-transformer-shared/con
  *   sessions, so there are no `session_relation` records or child session
  *   ids by design.
  * - Invocation payloads carry `name` for both skills and agents.
- * - Token identity: `inputTokens` (prompt) INCLUDES cache reads (#322/#323
- *   — ATIF `cached_tokens` is a subset of prompt), so
- *   `devin:tokens:total` = inputTokens + outputTokens. The claude identity
- *   additionally sums cache fields because its `inputTokens` excludes them.
+ * - Token identity: `model_usage.inputTokens` is cache-EXCLUSIVE (the shared
+ *   payload contract claude already uses), with the cached subset carried
+ *   in `cacheReadTokens`. `devin:tokens:total` = prompt + completion where
+ *   prompt = input + cached, so the per-record token identity is the same
+ *   four-field sum claude uses
+ *   (`inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens`).
+ *   This replaced the earlier `inputTokens = prompt` (cache-inclusive)
+ *   shape, which made the generic `context-timing` sum of input + cacheRead
+ *   double-count the cache reads.
  * - Count families: only `turns:count` exists today (file operations,
  *   commands, and validations are tracked as #360).
  */
@@ -36,6 +41,6 @@ export const DEVIN_CONFORMANCE_PROFILE: ConformanceProfile = {
   inlineSubagentCategories: ['subagent_turn', 'detached_conversation'],
   skillNameField: 'name',
   agentNameField: 'name',
-  totalTokenFields: ['inputTokens', 'outputTokens'],
+  totalTokenFields: ['inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens'],
   countMetricFamilies: [['turns:count', 'turn']],
 };

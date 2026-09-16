@@ -124,11 +124,22 @@ describe('DevinTransformer.transform', () => {
     );
     expect(findMetric(result, 'devin:tokens:prompt:root_only')?.exact).toBe(true);
     // The non-cumulative `model` dimension is skipped, and the session-level
-    // model_usage record carries the aggregate.
+    // model_usage record carries the aggregate. Its `inputTokens` is
+    // cache-EXCLUSIVE (the shared payload contract), so it holds just the
+    // `input_tokens` uid — the cached subset lives in `cacheReadTokens`;
+    // summing input + cacheRead + cacheCreate must not double-count it.
     const usage = result.evidence.filter((r) => r.recordType === 'model_usage');
     expect(usage.length).toBe(1);
-    const usagePayload = usage[0]?.payload as { inputTokens?: number | null } | undefined;
-    expect(usagePayload?.inputTokens).toBe(3265287 + 37556736);
+    const usagePayload = usage[0]?.payload as
+      | {
+          inputTokens?: number | null;
+          cacheReadTokens?: number | null;
+        }
+      | undefined;
+    expect(usagePayload?.inputTokens).toBe(3265287);
+    expect(usagePayload?.cacheReadTokens).toBe(37556736);
+    // Session-level aggregate is never turn-scoped.
+    expect(usage[0]?.parentId).toBeUndefined();
   });
 
   it('anchors the main chain on the INTEGER main_chain_id, beating a larger orphan tree (#324)', () => {

@@ -36,6 +36,7 @@ export {
 // ---- devin-session-jsonl/v1 line parsing ---------------------------------
 export { parseDevinJsonlLine, parseDevinJsonlText } from './jsonl/parse-line.js';
 export type {
+  DevinChatMessageUsage,
   DevinJsonlLineType,
   DevinJsonlParseResult,
   DevinJsonlParseWarning,

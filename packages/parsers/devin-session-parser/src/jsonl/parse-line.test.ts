@@ -377,6 +377,105 @@ describe('parseDevinJsonlLine — subagent/* chat_message extensions (DS-B28/#29
   });
 });
 
+describe('parseDevinJsonlLine — chat_message.metadata per-request usage (context-growth fix)', () => {
+  function usageLine(chatMessageMetadata: unknown): ReturnType<typeof parseDevinJsonlLine> {
+    return parseDevinJsonlLine(
+      line({
+        type: 'message',
+        ts: null,
+        order: 1,
+        row_id: 24,
+        session_id: 'brassy-humor',
+        node_id: 24,
+        parent_node_id: 22,
+        chat_message: JSON.stringify({
+          message_id: 'msg-24',
+          role: 'assistant',
+          content: '',
+          metadata: chatMessageMetadata,
+        }),
+        created_at: null,
+        metadata: null,
+      }),
+      2,
+    );
+  }
+
+  it('parses request_id, generation_model, and every metrics field', () => {
+    const result = usageLine({
+      num_tokens: 315,
+      request_id: 'a2d9eea9-27cc-43b4-aee8-2a2c7479205a',
+      generation_model: 'swe-2-high',
+      metrics: {
+        ttft_ms: 2970,
+        input_tokens: 2454,
+        output_tokens: 315,
+        cache_read_tokens: 44288,
+        cache_creation_tokens: 12,
+        tokens_per_sec: 1285.7,
+      },
+    });
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({
+      chatUsage: {
+        requestId: 'a2d9eea9-27cc-43b4-aee8-2a2c7479205a',
+        generationModel: 'swe-2-high',
+        inputTokens: 2454,
+        outputTokens: 315,
+        cacheReadTokens: 44288,
+        cacheCreationTokens: 12,
+      },
+    });
+  });
+
+  it('keeps individually-missing metric fields null (missing is never zero)', () => {
+    const result = usageLine({
+      request_id: 'req-1',
+      metrics: { input_tokens: 14558, output_tokens: 112, cache_read_tokens: null },
+    });
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({
+      chatUsage: {
+        requestId: 'req-1',
+        generationModel: null,
+        inputTokens: 14558,
+        outputTokens: 112,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+      },
+    });
+  });
+
+  it('is null for an ordinary node carrying no usage metadata', () => {
+    const none = usageLine(undefined);
+    if (!('line' in none)) throw new Error('expected a line');
+    expect(none.line).toMatchObject({ chatUsage: null });
+    const extensionsOnly = usageLine({ extensions: { 'subagent/agent_id': 'abc' } });
+    if (!('line' in extensionsOnly)) throw new Error('expected a line');
+    expect(extensionsOnly.line).toMatchObject({ chatUsage: null });
+  });
+
+  it('degrades non-object and non-numeric values to null without throwing', () => {
+    const result = usageLine({ request_id: 42, generation_model: {}, metrics: 'nope' });
+    if (!('line' in result)) throw new Error('expected a line');
+    expect(result.line).toMatchObject({ chatUsage: null });
+    const badFields = usageLine({
+      request_id: 'req-2',
+      metrics: { input_tokens: 'many', output_tokens: null, cache_read_tokens: 'lots' },
+    });
+    if (!('line' in badFields)) throw new Error('expected a line');
+    expect(badFields.line).toMatchObject({
+      chatUsage: {
+        requestId: 'req-2',
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+      },
+    });
+  });
+});
+
 describe('parseDevinJsonlLine — tool_call', () => {
   it('parses a valid tool_call line preserving the ACP kind', () => {
     const callJson = JSON.stringify({ toolCallId: 'call-1', title: 'Edit file', kind: 'edit' });

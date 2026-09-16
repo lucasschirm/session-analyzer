@@ -1,4 +1,4 @@
-import type { DevinToolCallLine } from '@lucasschirm/sal-devin-session-parser';
+import type { DevinMessageLine, DevinToolCallLine } from '@lucasschirm/sal-devin-session-parser';
 import { describe, expect, it } from 'vitest';
 import { getDevinMetricCapabilities } from '../../src/capabilities.js';
 import { classifyDevinArtifacts } from '../../src/classification.js';
@@ -113,7 +113,9 @@ describe('Internal token usage', () => {
     expect(result.records[0]?.payload).toMatchObject({
       model: 'glm-5-2',
       requestOrder: 9,
-      inputTokens: 18071,
+      // ATIF `promptTokens` (18071) is cache-inclusive; the shared payload
+      // contract is cache-EXCLUSIVE `inputTokens` (18071 - 11874).
+      inputTokens: 6197,
       outputTokens: 59,
       cacheReadTokens: 11874,
       tokenValuesExact: true,
@@ -123,7 +125,8 @@ describe('Internal token usage', () => {
     expect(result.records[1]?.payload).toMatchObject({
       model: 'swe-1-7',
       requestOrder: 11,
-      inputTokens: 17033,
+      // Cache-exclusive input: 17033 prompt - 11136 cached.
+      inputTokens: 5897,
       outputTokens: 37,
       cacheReadTokens: 11136,
       tokenValuesExact: true,
@@ -195,10 +198,11 @@ describe('Internal token usage', () => {
       effort: 'Low',
       normalizedEffort: 'low',
     });
-    // Tier-2/3 fallback: the single session-level aggregate is linked to
-    // the first message's turn so the context-timing computation can
-    // attribute its usage via byTurn (not only byOrder).
-    expect(result.records[0]?.parentId).toBeDefined();
+    // Tier-3/4 fallback: the single session-level aggregate is deliberately
+    // NOT linked to any turn. It carries whole-session cumulative totals; a
+    // turn parent would attribute the entire session's context volume to
+    // message #1 and fabricate a matching compaction on message #2.
+    expect(result.records[0]?.parentId).toBeUndefined();
   });
 
   it('marks a step record inexact when any individual metrics field is missing', () => {
@@ -276,7 +280,11 @@ describe('Internal token usage', () => {
     ] as unknown as Parameters<typeof buildTokenUsageRecords>[5]);
 
     expect(result.records.length).toBe(1);
-    expect(result.records[0]?.payload).toMatchObject({ model: 'devin-default', requestOrder: 1 });
+    expect(result.records[0]?.payload).toMatchObject({ model: 'devin-default' });
+    // No per-message `requestOrder`: a numeric order would let the
+    // context-timing `byOrder` fallback bind this session total to message #1.
+    const aggregatePayload = (result.records[0]?.payload ?? {}) as { requestOrder?: unknown };
+    expect(aggregatePayload.requestOrder).toBeUndefined();
     expect(result.prompt).toBe(100);
   });
 
@@ -377,6 +385,201 @@ describe('Internal token usage', () => {
     // Step 3 (index 3) is beyond orderedMessages length → no parentId.
     expect(result.records[1]?.parentId).toBeUndefined();
     expect(result.records[1]?.payload).toMatchObject({ requestOrder: 4 });
+  });
+});
+
+describe('Per-message model_usage tier (transcript-only context growth)', () => {
+  function message(nodeId: number, chatUsage: unknown): DevinMessageLine {
+    return {
+      type: 'message',
+      nodeId,
+      chatUsage,
+      chatMessage: { message_id: `msg-${nodeId}`, role: 'assistant' },
+      role: 'assistant',
+      parsedMetadata: null,
+    } as unknown as DevinMessageLine;
+  }
+
+  const models = [{ modelUid: 'swe-2-high', label: 'SWE-2 High' }] as unknown as Parameters<
+    typeof buildTokenUsageRecords
+  >[3];
+
+  it('emits one record per metered message, parented to its own turn, with cache-exclusive input', () => {
+    const session = { id: 's1', metadata: null, model: null } as unknown as Parameters<
+      typeof buildTokenUsageRecords
+    >[1];
+    const orderedMessages = [
+      message(10, null),
+      message(11, {
+        requestId: 'req-11',
+        generationModel: 'swe-2-high',
+        inputTokens: 14558,
+        outputTokens: 112,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+      }),
+      message(12, {
+        requestId: 'req-12',
+        generationModel: 'swe-2-high',
+        inputTokens: 2454,
+        outputTokens: 315,
+        cacheReadTokens: 44288,
+        cacheCreationTokens: null,
+      }),
+    ] as unknown as Parameters<typeof buildTokenUsageRecords>[5];
+
+    const result = buildTokenUsageRecords(
+      's1',
+      session,
+      undefined,
+      models,
+      'artifact-1',
+      orderedMessages,
+    );
+
+    const requestRecords = result.records.filter((r) => r.recordType === 'model_request');
+    // Per-message records are `model_request`; a session aggregate
+    // `model_usage` record accompanies them for the token identity.
+    expect(requestRecords).toHaveLength(2);
+    expect(result.records.filter((r) => r.recordType === 'model_usage')).toHaveLength(1);
+    expect(requestRecords[0]?.sourceField).toBe('chat_message.metrics');
+    expect(requestRecords[0]?.payload).toMatchObject({
+      requestOrder: 2,
+      requestId: 'req-11',
+      model: 'swe-2-high',
+      inputTokens: 14558,
+      outputTokens: 112,
+      cacheReadTokens: null,
+      tokenValuesExact: true,
+      effort: 'High',
+      normalizedEffort: 'high',
+    });
+    expect(requestRecords[0]?.parentId).toBeDefined();
+    expect(requestRecords[1]?.payload).toMatchObject({
+      requestOrder: 3,
+      requestId: 'req-12',
+      inputTokens: 2454,
+      outputTokens: 315,
+      cacheReadTokens: 44288,
+    });
+    // Each record links to a DIFFERENT turn — never one shared aggregate.
+    expect(requestRecords[0]?.parentId).not.toBe(requestRecords[1]?.parentId);
+    // requestOrder tracks the message's 1-based position, so a metered
+    // message after an unmetered one keeps its absolute (gapped) order
+    // rather than being renumbered.
+    expect(
+      requestRecords.map((r) => (r.payload as { requestOrder?: number }).requestOrder),
+    ).toEqual([2, 3]);
+  });
+
+  it('skips messages with no usage and messages whose metrics are entirely null', () => {
+    const session = { id: 's1', metadata: null, model: null } as unknown as Parameters<
+      typeof buildTokenUsageRecords
+    >[1];
+    const orderedMessages = [
+      message(1, null),
+      message(2, {
+        requestId: null,
+        generationModel: null,
+        inputTokens: null,
+        outputTokens: null,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+      }),
+      message(3, {
+        requestId: 'req-3',
+        generationModel: null,
+        inputTokens: 5,
+        outputTokens: 1,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+      }),
+    ] as unknown as Parameters<typeof buildTokenUsageRecords>[5];
+
+    const result = buildTokenUsageRecords(
+      's1',
+      session,
+      undefined,
+      models,
+      'artifact-1',
+      orderedMessages,
+    );
+    const requestRecords = result.records.filter((r) => r.recordType === 'model_request');
+    expect(requestRecords).toHaveLength(1);
+    expect(requestRecords[0]?.payload).toMatchObject({ requestOrder: 3, inputTokens: 5 });
+  });
+
+  it('gives ATIF step metrics precedence over per-message metrics', () => {
+    const session = { id: 's1', metadata: null, model: 'glm-5-2' } as unknown as Parameters<
+      typeof buildTokenUsageRecords
+    >[1];
+    const atif = {
+      finalMetrics: {
+        totalPromptTokens: 100,
+        totalCompletionTokens: 50,
+        totalCachedTokens: 10,
+        totalSteps: 1,
+      },
+      steps: [
+        {
+          timestamp: null,
+          role: null,
+          text: null,
+          stepId: 7,
+          generationModel: 'glm-5-2',
+          metrics: { promptTokens: 100, completionTokens: 50, cachedTokens: 10 },
+        },
+      ],
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[2];
+    const orderedMessages = [
+      message(1, {
+        requestId: 'req-1',
+        generationModel: 'swe-2-high',
+        inputTokens: 999,
+        outputTokens: 999,
+        cacheReadTokens: null,
+        cacheCreationTokens: null,
+      }),
+    ] as unknown as Parameters<typeof buildTokenUsageRecords>[5];
+
+    const result = buildTokenUsageRecords(
+      's1',
+      session,
+      atif,
+      models,
+      'artifact-1',
+      orderedMessages,
+    );
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.sourceField).toBe('atif_step');
+    expect(result.records[0]?.payload).toMatchObject({ inputTokens: 90, requestOrder: 7 });
+  });
+
+  it('leaves the session aggregate turn-unscoped when no per-message metrics exist', () => {
+    const session = {
+      id: 'brassy-humor',
+      metadata: null,
+      model: 'swe-2-high',
+    } as unknown as Parameters<typeof buildTokenUsageRecords>[1];
+    const orderedMessages = [message(3, null), message(4, null)] as unknown as Parameters<
+      typeof buildTokenUsageRecords
+    >[5];
+    const result = buildTokenUsageRecords(
+      's1',
+      session,
+      undefined,
+      models,
+      'artifact-1',
+      orderedMessages,
+    );
+
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0]?.sourceField).toBe('final_metrics');
+    // Regression: the whole-session aggregate must never be attributed to a
+    // single turn (the old first-turn linkage put ~50.2M tokens on message #1).
+    expect(result.records[0]?.parentId).toBeUndefined();
+    const aggregatePayload = (result.records[0]?.payload ?? {}) as { requestId?: string };
+    expect(aggregatePayload.requestId).toBe('brassy-humor');
   });
 });
 

@@ -330,7 +330,7 @@ describe('processing-version', () => {
     expect(counts['message']).toBe(1);
   });
 
-  it('regenerates sessions whose context series carries no context signal (v15 heal)', async () => {
+  it('regenerates pre-0.15.0 devin sessions from retained artifacts (v16 context-evidence heal)', async () => {
     const now = Date.now();
     await executor.exec(`
       INSERT INTO tenants (id, name, created_at, updated_at) VALUES ('tenant-5', 'T5', ${now}, ${now});
@@ -367,14 +367,16 @@ describe('processing-version', () => {
     const regen = vi.fn(async (_sessionId: string) => true);
     await rebuildAnalyticsDerivedData(executor, undefined, { regenerateSession: regen });
 
-    // Only the pre-0.14.0 devin all-null series is flagged for re-ingest:
-    // sess-ok's negative-encoded compaction entry counts as a real context
-    // signal, sess-healed's all-null series under 0.14.0 genuinely has no
-    // context signal, and sess-nondevin's all-null series is excluded by the
-    // `harness = 'devin'` predicate — non-devin sessions never emit the
-    // checkpoint, so re-ingesting them would be pure waste on every bump.
-    expect(regen).toHaveBeenCalledTimes(1);
+    // All devin sessions below the per-message context-evidence floor
+    // (0.15.0) re-ingest: sess-empty (0.13.0) and sess-healed (0.14.0).
+    // sess-ok (claude) and sess-nondevin (claude, 0.1.0) are excluded by the
+    // `harness = 'devin'` predicate — non-devin sessions never emit this
+    // evidence.
+    expect(regen).toHaveBeenCalledTimes(2);
     expect(regen).toHaveBeenCalledWith('sess-empty');
+    expect(regen).toHaveBeenCalledWith('sess-healed');
+    expect(regen).not.toHaveBeenCalledWith('sess-ok');
+    expect(regen).not.toHaveBeenCalledWith('sess-nondevin');
   });
 
   describe('stale component-data regeneration', () => {

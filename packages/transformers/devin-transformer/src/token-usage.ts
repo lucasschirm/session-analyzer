@@ -8,7 +8,7 @@ import type {
 } from '@lucasschirm/sal-devin-session-parser';
 import type { NormalizedEvidenceRecord } from '@lucasschirm/sal-transformer-shared';
 import { resolveDevinEffortForModel } from './effort.js';
-import { chatMessageText, provenanceForArtifact, stableId } from './session-spine.js';
+import { provenanceForArtifact, stableId } from './session-spine.js';
 
 export interface TokenUsageResult {
   readonly records: readonly NormalizedEvidenceRecord[];
@@ -68,11 +68,32 @@ function sumUidDimensions(dimensions: unknown[]): {
   return { input, output, cachedInput };
 }
 
+/**
+ * Cache-exclusive input tokens from a cache-inclusive prompt count and its
+ * cache-read subset. ATIF reports `promptTokens`/`totalPromptTokens` as
+ * INCLUDING cache reads, whereas the shared `model_usage`/`model_request`
+ * payload contract (and Devin's own `response_dimensions.input_tokens` /
+ * `chat_message.metadata.metrics.input_tokens`, both verified cache-exclusive)
+ * is that `inputTokens` EXCLUDES cache reads. Keeping one contract across
+ * harnesses is what lets `context-timing.ts` sum in + cacheRead + cacheCreate
+ * without double-counting the cached subset.
+ *
+ * When either side is unknown, the prompt is returned as-is — no fabricated
+ * subtraction (`missing-is-never-zero`); the accompanying `tokenValuesExact:
+ * false` flags the value as not certified.
+ */
+function cacheExclusiveInput(prompt: number | null, cached: number | null): number | null {
+  if (prompt === null) return null;
+  if (cached === null) return prompt;
+  return Math.max(prompt - cached, 0);
+}
+
 /** The pre-#322 flat-key probe, kept only as a fallback for unobserved shapes. */
 function sumFlatKeyDimensions(dimensions: unknown[]): {
   prompt: number | null;
   completion: number | null;
   cached: number | null;
+  input: number | null;
 } {
   let prompt = 0;
   let completion = 0;
@@ -97,7 +118,9 @@ function sumFlatKeyDimensions(dimensions: unknown[]): {
       any = true;
     }
   }
-  return any ? { prompt, completion, cached } : { prompt: null, completion: null, cached: null };
+  return any
+    ? { prompt, completion, cached, input: prompt }
+    : { prompt: null, completion: null, cached: null, input: null };
 }
 
 /**
@@ -115,6 +138,7 @@ function sumResponseDimensions(dimensions: unknown[]): {
   prompt: number | null;
   completion: number | null;
   cached: number | null;
+  input: number | null;
 } {
   const uid = sumUidDimensions(dimensions);
   if (uid.input === null && uid.output === null && uid.cachedInput === null) {
@@ -122,19 +146,21 @@ function sumResponseDimensions(dimensions: unknown[]): {
   }
   const prompt =
     uid.input !== null ? uid.input + (uid.cachedInput ?? 0) : (uid.cachedInput ?? null);
-  return { prompt, completion: uid.output, cached: uid.cachedInput };
+  return { prompt, completion: uid.output, cached: uid.cachedInput, input: uid.input };
 }
 
 function tokensFromAtif(finalMetrics: AtifFinalMetrics): {
   prompt: number | null;
   completion: number | null;
   cached: number | null;
+  input: number | null;
   steps: number | null;
 } {
   return {
     prompt: finalMetrics.totalPromptTokens,
     completion: finalMetrics.totalCompletionTokens,
     cached: finalMetrics.totalCachedTokens,
+    input: cacheExclusiveInput(finalMetrics.totalPromptTokens, finalMetrics.totalCachedTokens),
     steps: finalMetrics.totalSteps,
   };
 }
@@ -143,12 +169,13 @@ function tokensFromMetadata(metadata: Record<string, unknown>): {
   prompt: number | null;
   completion: number | null;
   cached: number | null;
+  input: number | null;
 } {
   const responseDimensions = metadata.response_dimensions;
   if (Array.isArray(responseDimensions) && responseDimensions.length > 0) {
     return sumResponseDimensions(responseDimensions);
   }
-  return { prompt: null, completion: null, cached: null };
+  return { prompt: null, completion: null, cached: null, input: null };
 }
 
 /**
@@ -186,7 +213,10 @@ function totalFromParts(prompt: number | null, completion: number | null): numbe
 }
 
 interface TokenAggregate {
+  /** Cache-inclusive prompt — the `devin:tokens:prompt` meaning. */
   prompt: number | null;
+  /** Cache-exclusive input — the `model_usage.inputTokens` payload meaning. */
+  input: number | null;
   completion: number | null;
   cached: number | null;
   steps: number | null;
@@ -241,8 +271,9 @@ function effortPayloadFields(
   return { effort: result.raw, normalizedEffort: result.normalized };
 }
 
-/** Assembles a `model_usage` evidence record, sharing the provenance shape. */
+/** Assembles a usage evidence record, sharing the provenance shape. */
 function usageRecord(
+  recordType: 'model_usage' | 'model_request',
   recordId: string,
   sessionId: string,
   sourceEventId: string,
@@ -253,7 +284,7 @@ function usageRecord(
 ): NormalizedEvidenceRecord {
   return {
     recordId,
-    recordType: 'model_usage',
+    recordType,
     sessionId,
     parentId,
     sourceEventId,
@@ -292,7 +323,10 @@ function stepUsageRecord(
     requestId: `${sessionId}:step:${requestOrder}`,
     model: resolveModelId(step.generationModel, models),
     provider: 'unknown',
-    inputTokens: metrics.promptTokens,
+    // ATIF `promptTokens` INCLUDES its cached subset; the shared payload
+    // contract is cache-EXCLUSIVE `inputTokens`, so subtract the reported
+    // cache reads (see `cacheExclusiveInput`).
+    inputTokens: cacheExclusiveInput(metrics.promptTokens, metrics.cachedTokens),
     outputTokens: metrics.completionTokens,
     cacheCreationTokens: null,
     cacheReadTokens: metrics.cachedTokens,
@@ -303,6 +337,7 @@ function stepUsageRecord(
   };
   const recordId = stableId('model_usage', { session: sessionId, step: requestOrder });
   return usageRecord(
+    'model_usage',
     recordId,
     sessionId,
     sourceEventId,
@@ -339,23 +374,42 @@ function buildStepRecords(
   return records;
 }
 
-/** Tiers 2/3: a single session-level aggregate record (unchanged behavior). */
+/**
+ * Tiers 3/4: the single session-level aggregate record. Used only when
+ * neither per-ATIF-step metrics nor per-message metrics are available.
+ *
+ * This record is deliberately NOT parented to a turn AND carries no
+ * `requestOrder`. It holds whole-session cumulative totals, so binding it to
+ * any single message — via a turn `parentId` (as an earlier fix did,
+ * linking it to the first turn) or via the context-timing computation's
+ * `byOrder` fallback (which binds `requestOrder: 1` to message #1) —
+ * attributes the entire session's context volume, often tens of millions of
+ * tokens, to message #1 and fabricates a matching compaction on message #2.
+ * Session totals are surfaced through `TokenUsageResult`/metric values,
+ * which cite this record by id; the context chart falls back to
+ * `numTokensPreceding` checkpoints instead.
+ */
 function sessionLevelRecord(
   sessionId: string,
   session: DevinSessionLine | undefined,
   models: readonly DevinModelRecord[],
   rootArtifactId: string,
   aggregate: TokenAggregate,
-  parentId?: string,
 ): NormalizedEvidenceRecord {
   const sourceEventId = session?.id ?? 'unknown';
   const resolvedModel = resolveModel(session, models);
   const payload = {
-    requestOrder: 1,
+    // No `requestOrder`: this is a session-scoped aggregate, not a message
+    // request. A numeric order would make the context-timing computation's
+    // `byOrder` fallback bind the whole-session total to whichever message
+    // holds that ordinal (message #1 for `1`) even without a `parentId`.
     requestId: sourceEventId,
     model: resolvedModel,
     provider: 'unknown',
-    inputTokens: aggregate.prompt,
+    // Cache-exclusive input, matching the shared `inputTokens` contract
+    // (Devin's `input_tokens` uid already excludes cache reads; `prompt`
+    // above is the cache-inclusive metric meaning).
+    inputTokens: aggregate.input,
     outputTokens: aggregate.completion,
     cacheCreationTokens: null,
     cacheReadTokens: aggregate.cached,
@@ -366,32 +420,125 @@ function sessionLevelRecord(
   };
   const recordId = stableId('model_usage', { session: sessionId });
   return usageRecord(
+    'model_usage',
     recordId,
     sessionId,
     sourceEventId,
     'final_metrics',
     rootArtifactId,
     payload,
-    parentId,
   );
 }
 
 /**
- * Three-tier fallback (richest available source wins), per DS-B25's
+ * Tier 2: one `model_request` record per `message_nodes` row that carries its
+ * own per-request usage (`chat_message.metadata.metrics` + `request_id` +
+ * `generation_model`, parsed onto `DevinMessageLine.chatUsage`). This is the
+ * richest source on transcript-only bundles (no ATIF), and unlike the
+ * session aggregate it is genuinely per-message: each record is parented to
+ * its own turn and its values are that request's, never cumulative.
+ *
+ * Typed `model_request` (not `model_usage`) deliberately: the per-message
+ * `chat_message.metadata.metrics` sums do not exactly equal the harness's own
+ * cumulative `response_dimensions` session total, so they must not enter the
+ * `model_usage` set that `devin:tokens:total` is reconciled against. The
+ * session aggregate stays a single `model_usage` record (below) for the token
+ * identity; these `model_request` records feed the context-growth computation
+ * only (it accepts both types).
+ *
+ * `requestOrder` is the message's 1-based ordinal in `orderedMessages` —
+ * the exact ordinal `buildSessionSpine` assigns that message's turn — so
+ * `resolveMessageRequest` resolves it via both `byTurn` and `byOrder`.
+ * Messages whose metrics bag is present but entirely null are skipped (no
+ * fabricated zero-usage request, per `missing-is-never-zero`).
+ */
+function buildMessageUsageRecords(
+  sessionId: string,
+  orderedMessages: readonly DevinMessageLine[],
+  models: readonly DevinModelRecord[],
+  rootArtifactId: string,
+): NormalizedEvidenceRecord[] {
+  const records: NormalizedEvidenceRecord[] = [];
+  orderedMessages.forEach((message, index) => {
+    const usage = message.chatUsage;
+    if (!usage) return;
+    const hasAnyToken =
+      usage.inputTokens !== null ||
+      usage.outputTokens !== null ||
+      usage.cacheReadTokens !== null ||
+      usage.cacheCreationTokens !== null;
+    if (!hasAnyToken) return;
+    const requestOrder = index + 1;
+    // Prefer the harness's own request id for provenance; fall back to a
+    // node-scoped id (never the bare session id, which would collide with
+    // the session-level aggregate record).
+    const sourceEventId = usage.requestId ?? `${sessionId}:msg:${message.nodeId}`;
+    const resolvedModel = resolveModelId(usage.generationModel, models);
+    const payload = {
+      requestOrder,
+      requestId: sourceEventId,
+      model: resolvedModel,
+      provider: 'unknown',
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cacheCreationTokens: usage.cacheCreationTokens,
+      cacheReadTokens: usage.cacheReadTokens,
+      // Exact only when both the prompt and completion sides were reported
+      // (`cache_*` fields are independently nullable), mirroring
+      // `stepMetricsAreExact`.
+      tokenValuesExact: usage.inputTokens !== null && usage.outputTokens !== null,
+      cost: null,
+      costExact: false,
+      ...effortPayloadFields(usage.generationModel, models),
+    };
+    const recordId = stableId('model_request', {
+      session: sessionId,
+      msgId: message.nodeId,
+    });
+    records.push(
+      usageRecord(
+        'model_request',
+        recordId,
+        sessionId,
+        sourceEventId,
+        'chat_message.metrics',
+        rootArtifactId,
+        payload,
+        stableId('turn', { session: sessionId, nodeId: message.nodeId }),
+      ),
+    );
+  });
+  return records;
+}
+
+/**
+ * Four-tier fallback (richest available source wins), per DS-B25's
  * per-turn-model-attribution fix:
  * 1. Per-ATIF-step `model_usage` records when at least one step carries
  *    real `metrics` (a genuine agent-generation step) — attributes usage to
  *    the model that actually generated each turn instead of collapsing the
  *    whole session onto whichever model happened to be active last.
- * 2. `atif.finalMetrics`-only aggregate when `atif` is present but no step
+ * 2. Per-message `model_request` records from `chat_message.metadata.metrics`
+ *    when no ATIF step carries metrics — transcript-only bundles still get
+ *    genuine per-request attribution (each record parented to its own
+ *    turn), instead of one cumulative session total.
+ * 3. `atif.finalMetrics`-only aggregate when `atif` is present but no step
  *    has usable `metrics` (degenerate/older-schema ATIF).
- * 3. `session.metadata.response_dimensions`-based aggregate when `atif` is
- *    absent entirely.
+ * 4. `session.metadata.response_dimensions`-based aggregate when `atif` is
+ *    absent and no message carries metrics.
+ *
+ * When tier 2 applies, its per-message `model_request` records are emitted
+ * ALONGSIDE the single `model_usage` session aggregate (not instead of it):
+ * the aggregate keeps `devin:tokens:*`'s provenance and token identity
+ * pointing at the harness-reported cumulative totals, while the per-request
+ * records feed the context-growth chart.
  *
  * The top-level aggregate fields (`prompt`/`completion`/`cached`/`total`/
- * `steps`/`exact`) are unchanged across all three tiers — they still source
- * from `atif.finalMetrics` whenever `atif` is present, regardless of which
- * tier populates `records[]`.
+ * `steps`/`exact`) are unchanged across all tiers — they still source from
+ * `atif.finalMetrics` whenever `atif` is present, regardless of which tier
+ * populates `records[]`. The single aggregate record is intentionally never
+ * parented to a turn and carries no `requestOrder` (see
+ * `sessionLevelRecord`).
  */
 export function buildTokenUsageRecords(
   sessionId: string,
@@ -408,28 +555,19 @@ export function buildTokenUsageRecords(
   const stepRecords = atif
     ? buildStepRecords(sessionId, atif.steps, models, rootArtifactId, orderedMessages)
     : [];
+  // Tier 2 runs only when tier 1 produced nothing; it is the richest
+  // per-message source on transcript-only bundles.
+  const messageRecords =
+    stepRecords.length > 0
+      ? []
+      : buildMessageUsageRecords(sessionId, orderedMessages, models, rootArtifactId);
+  const aggregateRecord = sessionLevelRecord(sessionId, session, models, rootArtifactId, aggregate);
   const records =
     stepRecords.length > 0
       ? stepRecords
-      : [
-          // Tier 2/3 fallback: a single session-level aggregate. Link it to
-          // the first turn so the context-timing computation can attribute
-          // the aggregate's token usage to the first message (requestOrder=1
-          // already aligns with the first message via byOrder). Without a
-          // parentId the record is unreachable through byTurn, leaving every
-          // subsequent message to inherit the first message's context value
-          // via carry-forward — the flat-chart bug.
-          sessionLevelRecord(
-            sessionId,
-            session,
-            models,
-            rootArtifactId,
-            aggregate,
-            orderedMessages[0]
-              ? stableId('turn', { session: sessionId, nodeId: orderedMessages[0].nodeId })
-              : undefined,
-          ),
-        ];
+      : messageRecords.length > 0
+        ? [...messageRecords, aggregateRecord]
+        : [aggregateRecord];
 
   return {
     records,
