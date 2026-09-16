@@ -193,18 +193,18 @@ describe('buildManifest', () => {
       state,
       sessionArtifact,
       'SYNC_FILE_TOO_LARGE',
-      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
     );
 
     const manifest = buildManifest(makeSession(), [sessionArtifact], state, []);
 
     expect(manifest.mainTranscriptRelativePath).toBe('transcript.jsonl');
     expect(manifest.mainTranscriptError).toBe(
-      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
     );
     expect(manifest.artifacts[0]?.status).toBe('failed');
     expect(manifest.artifacts[0]?.syncError).toBe(
-      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
     );
   });
 

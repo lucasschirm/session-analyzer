@@ -764,6 +764,16 @@ export async function runSessionEndUploadLoop(options: {
       continue;
     }
 
+    // Skip artifacts that failed with SYNC_FILE_TOO_LARGE and haven't
+    // changed — retrying the same content will always fail the compressed-
+    // size check, and the failure is already recorded in the manifest.
+    const sameContent = record?.lastDiscoveredHash === artifact.sha256;
+    if (record?.lastError === 'SYNC_FILE_TOO_LARGE' && sameContent) {
+      run.filesSkipped += 1;
+      skipped.push(artifact);
+      continue;
+    }
+
     run.filesChanged += 1;
     run.bytesChanged += resultItem.size;
 

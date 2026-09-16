@@ -154,13 +154,13 @@ describe('StateStore', () => {
       state,
       artifact,
       'SYNC_FILE_TOO_LARGE',
-      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
     );
 
     const record = getArtifactRecord(state, artifact);
     expect(record?.lastError).toBe('SYNC_FILE_TOO_LARGE');
     expect(record?.lastErrorMessage).toBe(
-      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
     );
   });
 

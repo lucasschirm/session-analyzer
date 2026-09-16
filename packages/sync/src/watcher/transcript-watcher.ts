@@ -611,12 +611,15 @@ export class TranscriptWatcher {
       return;
     }
 
-    const maxTranscriptBytes = config.limits.maxTranscriptBytes;
     if (!this.offsets[relativePath]) {
       this.offsets[relativePath] = { offset: 0, lastProcessedSize: stat.size };
     }
     const fileState = this.offsets[relativePath] as WatcherFileOffset;
-    const targetSize = Math.min(stat.size, maxTranscriptBytes);
+    // Read the full file size — the compressed-size check happens in the
+    // storage adapter, not here. Capping the read at maxTranscriptBytes
+    // would silently truncate large transcripts that compress under the
+    // limit.
+    const targetSize = stat.size;
 
     if (fileState.offset >= targetSize) {
       fileState.lastProcessedSize = stat.size;

@@ -88,6 +88,19 @@ export class DiscoveryContext {
     }
 
     if (this.totalBytes + size > this.limits.maxTotalBytes) {
+      // For session-scoped artifacts, skip the file rather than stopping all
+      // remaining discovery — a single large transcript must not prevent
+      // subagent transcripts and other session artifacts from being captured.
+      // The file is skipped (not loaded into memory), and the error is
+      // propagated to the outcome via discovery.errors.
+      if (scope === 'session') {
+        this.addError({
+          code: 'SYNC_TOTAL_SIZE_EXCEEDED',
+          path: resolvedPath,
+          message: `File size ${size} would exceed the total capture limit of ${this.limits.maxTotalBytes} bytes`,
+        });
+        return 'skipped';
+      }
       this.stop(
         'SYNC_TOTAL_SIZE_EXCEEDED',
         `Total capture size would exceed the limit of ${this.limits.maxTotalBytes} bytes`,

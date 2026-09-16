@@ -265,6 +265,18 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
     const record = getArtifactRecord(state, item.artifact);
     const pending = isArtifactPending(record, item.artifact.sha256);
     if (pending) {
+      // Skip artifacts that failed with SYNC_FILE_TOO_LARGE and haven't
+      // changed — retrying the same content will always fail the compressed-
+      // size check, and the failure is already recorded in the manifest.
+      // The artifact is retried when its content hash changes.
+      // Other non-retryable errors (e.g. SYNC_AUTH_FAILED) are NOT skipped
+      // here — they are systemic and may resolve when credentials are fixed.
+      const sameContent = record?.lastDiscoveredHash === item.artifact.sha256;
+      if (record?.lastError === 'SYNC_FILE_TOO_LARGE' && sameContent) {
+        result.filesSkipped += 1;
+        result.skipped.push(item.artifact);
+        continue;
+      }
       result.filesChanged += 1;
       result.bytesChanged += item.size;
       changed.push(item);
