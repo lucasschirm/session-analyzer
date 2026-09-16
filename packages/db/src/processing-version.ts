@@ -398,7 +398,7 @@ async function backfillContextSeries(
     step: 'Backfilling context series',
     completed: 0,
     total,
-    phase: 3,
+    phase: 4,
     totalPhases: REBUILD_PHASES,
     unit: 'sessions processed',
   });
@@ -436,7 +436,7 @@ async function backfillContextSeries(
         step: 'Backfilling context series',
         completed,
         total,
-        phase: 3,
+        phase: 4,
         totalPhases: REBUILD_PHASES,
         unit: 'sessions processed',
       });
@@ -445,24 +445,51 @@ async function backfillContextSeries(
 }
 
 /**
+ * The Devin transformer version that first emits `numTokensPreceding` on
+ * message evidence (see `DEVIN_TRANSFORMER_VERSION` 0.14.0). Series written
+ * by an older generation can gain a context signal on re-ingest; series
+ * written by 0.14.0+ that are still all-null genuinely have no signal.
+ */
+const CONTEXT_CHECKPOINT_TRANSFORMER_VERSION = '0.14.0';
+
+function semverBelow(version: string, floor: string): boolean {
+  const parse = (v: string) => v.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const a = parse(version);
+  const b = parse(floor);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) < (b[i] ?? 0);
+  }
+  return false;
+}
+
+/**
  * Sessions whose current-generation `session_context_series` row carries no
- * context signal at all (every `context_tokens[i]` null). These predate the
- * `numTokensPreceding` fallback (v15) and cannot be backfilled from skeleton
- * `normalized_events` — they re-ingest from retained artifacts instead.
+ * context signal at all (every `context_tokens[i]` null) AND whose generation
+ * predates the `numTokensPreceding` checkpoint fallback. These predate v15
+ * and cannot be backfilled from skeleton `normalized_events` — they re-ingest
+ * from retained artifacts instead. Scoped to `devin` sessions on pre-0.14.0
+ * generations so sessions that legitimately have no context signal (and
+ * non-devin sessions, which never emit the checkpoint) are not re-ingested
+ * pointlessly on every future version bump.
  */
 async function listSessionsWithEmptyContextSeries(
   executor: SqliteExecutor,
 ): Promise<readonly string[]> {
   const { rows } = await executor.exec(
-    `SELECT scs.session_id, scs.context_tokens
+    `SELECT scs.session_id, scs.context_tokens, g.transformer_version
      FROM session_context_series scs
      JOIN sessions s ON s.id = scs.session_id
        AND COALESCE(s.current_generation_id, '') = COALESCE(scs.generation_id, '')
+       AND s.harness = 'devin'
+     JOIN transformation_generations g ON g.id = scs.generation_id
      ORDER BY scs.session_id`,
     [],
   );
   const stale: string[] = [];
   for (const row of rows) {
+    if (!semverBelow(String(row.transformer_version), CONTEXT_CHECKPOINT_TRANSFORMER_VERSION)) {
+      continue;
+    }
     let values: unknown;
     try {
       values = JSON.parse(String(row.context_tokens));
@@ -481,6 +508,12 @@ async function listSessionsWithEmptyContextSeries(
  * per-node checkpoint fallback (Devin `numTokensPreceding`, v15) materializes
  * real context values. Per-session failures are isolated — a session that
  * cannot be regenerated keeps its existing (empty) series.
+ *
+ * Runs BEFORE {@link listSessionsForRebuild}, alongside the other
+ * regeneration steps, so the rebuild snapshot picks up the fresh
+ * `current_generation_id` produced by re-ingest — regenerating after the
+ * snapshot would make the rollup pass re-apply contributions under the
+ * superseded generation and double-count those sessions.
  */
 async function regenerateEmptyContextSeries(
   executor: SqliteExecutor,
@@ -504,7 +537,7 @@ async function regenerateEmptyContextSeries(
       step: 'Regenerating context series',
       completed,
       total,
-      phase: 4,
+      phase: 3,
       totalPhases: REBUILD_PHASES,
       unit: 'sessions',
     });
@@ -541,21 +574,23 @@ export async function rebuildAnalyticsDerivedData(
   // touched — ingestion only fills empty title fields.
   await regenerateUntitledSessionTitles(executor, onProgress, deps);
 
+  // Step 3: regenerate sessions whose context series carries no context
+  // signal at all (predates the numTokensPreceding fallback, v15) — skeleton
+  // normalized_events cannot recover it, so they re-ingest from artifacts.
+  // Like steps 1-2 this runs before the rebuild snapshot below so the
+  // rollup pass sees the fresh current_generation_id.
+  await regenerateEmptyContextSeries(executor, onProgress, deps);
+
   const sessions = await listSessionsForRebuild(executor);
   if (sessions.length === 0) {
     await setStoredProcessingVersion(executor, ANALYTICS_PROCESSING_VERSION);
     return;
   }
 
-  // Step 3: materialize context-growth series for sessions whose current
+  // Step 4: materialize context-growth series for sessions whose current
   // generation predates the table, so the context chart reads
   // session_context_series instead of normalized_events.
   await backfillContextSeries(executor, onProgress);
-
-  // Step 4: regenerate sessions whose context series carries no context
-  // signal at all (predates the numTokensPreceding fallback, v15) — skeleton
-  // normalized_events cannot recover it, so they re-ingest from artifacts.
-  await regenerateEmptyContextSeries(executor, onProgress, deps);
 
   // Group sessions by (portfolioId, projectId, analysisReleaseId) so we can
   // rebuild rollups once per project+release after re-applying all session
