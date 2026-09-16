@@ -31,6 +31,10 @@ function node(
     metadata: metadata ? JSON.stringify(metadata) : null,
     parsedMetadata,
     subagent: null,
+    toolCalls: null,
+    toolCallId: null,
+    generationModel: null,
+    generationMetrics: null,
   };
 }
 

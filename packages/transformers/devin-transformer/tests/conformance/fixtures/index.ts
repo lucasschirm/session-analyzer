@@ -1411,8 +1411,8 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
     fixture(
       'complete-session',
       'The devin complete fixture (#308): tool/skill/agent invocations, cogs- and ' +
-        'tool_call_state-derived components, inline Sub Agent evidence (detached ' +
-        'conversation), and exactly-reconciling ATIF token totals — makes ' +
+        'tool_call_state-derived components, canonical child session Sub Agent evidence, and ' +
+        'exactly-reconciling ATIF token totals — makes ' +
         'toolSkillAgentSubAgentDistinct and rootOnlyAndInclusiveNoDoubleCount run for devin.',
       completeSessionBundle,
       ['root', 'subagent', 'complete', 'deterministic'],

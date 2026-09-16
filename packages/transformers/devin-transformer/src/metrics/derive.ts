@@ -286,7 +286,7 @@ function metricProvenanceFor(value: DevinMetricValue, recordId: string): MetricP
 export function deriveDevinMetrics(
   session: DevinSessionLine | undefined,
   atif: AtifTranscript | undefined,
-  orderedMessages: readonly DevinMessageLine[],
+  _orderedMessages: readonly DevinMessageLine[],
   evidence: readonly NormalizedEvidenceRecord[],
   tokenUsage: DevinTokenUsage,
   rootArtifactId: string,

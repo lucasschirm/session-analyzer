@@ -1,5 +1,4 @@
 import type { DevinMessageLine, DevinToolCallLine } from '@lucasschirm/sal-devin-session-parser';
-import type { NormalizedEvidenceRecord } from '@lucasschirm/sal-transformer-shared';
 import { describe, expect, it } from 'vitest';
 import {
   buildSubagentChildSessions,
@@ -45,7 +44,7 @@ function makeSubagentResultMessage(
   nodeId: number,
   parentNodeId: number | null,
   agentId: string,
-  chainNodeId: number,
+  chainNodeId: number | null,
   toolCallId: string,
 ): DevinMessageLine {
   return makeMessage(nodeId, parentNodeId, 'tool', 'Subagent result', {
@@ -74,8 +73,11 @@ function makeToolCallLine(
     call: {
       toolCallId,
       title: `tool call ${toolCallId}`,
+      kind: 'execute',
+      rawKind: null,
+      content: null,
       rawInput: rawInput ?? null,
-      meta: { 'cognition.ai/inferenceToolName': inferenceToolName },
+      inferenceToolName,
     },
     update: null,
   };
@@ -151,6 +153,33 @@ describe('identifySubagents', () => {
     const result = identifySubagents(orderedMessages, []);
     expect(result).toEqual([]);
   });
+
+  it('deduplicates subagents by agentId preferring entry with non-null chainNodeId', () => {
+    const orderedMessages = [
+      makeMessage(1, null, 'user', 'Hello'),
+      makeSubagentResultMessage(2, 1, 'agent-01', null, 'tc-agent-1'), // chainNodeId: null
+      makeMessage(3, 2, 'tool', 'Subagent result 2', {
+        subagent: {
+          agentId: 'agent-01',
+          profileName: 'Explore',
+          model: 'Subagent Default',
+          chainNodeId: 43,
+        },
+        toolCallId: 'tc-agent-1',
+      }),
+    ];
+    const toolCalls = [
+      makeToolCallLine('tc-agent-1', 'run_subagent', {
+        profile: 'subagent_explore',
+        task: 'Find files',
+      }),
+    ];
+
+    const result = identifySubagents(orderedMessages, toolCalls);
+    expect(result).toHaveLength(1);
+    expect(result[0].agentId).toBe('agent-01');
+    expect(result[0].chainNodeId).toBe(43);
+  });
 });
 
 describe('buildSubagentChildSessions', () => {
@@ -224,11 +253,18 @@ describe('buildSubagentChildSessions', () => {
     }
 
     // session_relation should link to root
-    const relation = result.records.find((r) => r.recordType === 'session_relation')!;
-    expect((relation.payload as Record<string, unknown>).rootSessionId).toBe(rootSessionId);
-    expect((relation.payload as Record<string, unknown>).parentSessionId).toBe(rootSessionId);
-    expect((relation.payload as Record<string, unknown>).nativeInclusionSemantics).toBe('subagent');
-    expect((relation.payload as Record<string, unknown>).depth).toBe(1);
+    const relation = result.records.find((r) => r.recordType === 'session_relation');
+    expect(relation).toBeDefined();
+    expect((relation?.payload as Record<string, unknown> | undefined)?.rootSessionId).toBe(
+      rootSessionId,
+    );
+    expect((relation?.payload as Record<string, unknown> | undefined)?.parentSessionId).toBe(
+      rootSessionId,
+    );
+    expect(
+      (relation?.payload as Record<string, unknown> | undefined)?.nativeInclusionSemantics,
+    ).toBe('subagent');
+    expect((relation?.payload as Record<string, unknown> | undefined)?.depth).toBe(1);
 
     // Should have 4 turns (one per message in the subtree)
     const turns = result.records.filter((r) => r.recordType === 'turn');
@@ -244,6 +280,26 @@ describe('buildSubagentChildSessions', () => {
     expect((invocations[0].payload as Record<string, unknown>).name).toBe('find_file_by_name');
     expect((invocations[0].payload as Record<string, unknown>).kind).toBe('tool');
     expect((invocations[0].payload as Record<string, unknown>).origin).toBe('subagent');
+    expect((invocations[0].payload as Record<string, unknown>).resultId).toBe('func.find:0');
+    expect((invocations[0].payload as Record<string, unknown>).status).toBe('success');
+
+    // Should have both input and result payloads for correlated tool call
+    const payloads = result.records.filter((r) => r.recordType === 'payload');
+    expect(payloads).toHaveLength(2);
+    const inputPayload = payloads.find(
+      (p) => (p.payload as Record<string, unknown>).payloadType === 'input',
+    );
+    const resultPayload = payloads.find(
+      (p) => (p.payload as Record<string, unknown>).payloadType === 'result',
+    );
+    expect(inputPayload).toBeDefined();
+    expect(resultPayload).toBeDefined();
+    expect((inputPayload?.payload as Record<string, unknown> | undefined)?.toolUseId).toBe(
+      'func.find:0',
+    );
+    expect((resultPayload?.payload as Record<string, unknown> | undefined)?.toolUseId).toBe(
+      'func.find:0',
+    );
   });
 
   it('returns empty result when no subagents are identified', () => {
@@ -375,5 +431,111 @@ describe('buildSubagentChildSessions', () => {
     expect(result.summaries).toHaveLength(2);
     expect(result.consumedNodeIds.size).toBe(6);
     expect(result.summaries[0].sessionId).not.toBe(result.summaries[1].sessionId);
+  });
+
+  it('handles tool calls without matching tool results with status unknown and no result payload', () => {
+    const subagents = [
+      {
+        agentId: 'agent-01',
+        profileName: 'Explore',
+        model: null,
+        chainNodeId: 41,
+        toolCallId: 'tc-1',
+        rawInputProfile: null,
+        taskDescription: 'Task',
+      },
+    ];
+
+    const detachedMessages = [
+      makeMessage(40, null, 'user', 'Task prompt'),
+      // Assistant calls tool, but no tool result message follows
+      makeAssistantWithToolCalls(41, 40, [
+        { id: 'func.pending:0', name: 'pending_tool', arguments: {} },
+      ]),
+    ];
+
+    const result = buildSubagentChildSessions(
+      rootSessionId,
+      sourceId,
+      envId,
+      projectId,
+      subagents,
+      detachedMessages,
+      rootArtifactId,
+    );
+
+    const invocations = result.records.filter((r) => r.recordType === 'invocation');
+    expect(invocations).toHaveLength(1);
+    expect((invocations[0].payload as Record<string, unknown>).resultId).toBeUndefined();
+    expect((invocations[0].payload as Record<string, unknown>).status).toBe('unknown');
+
+    const payloads = result.records.filter((r) => r.recordType === 'payload');
+    expect(payloads).toHaveLength(1);
+    expect((payloads[0].payload as Record<string, unknown>).payloadType).toBe('input');
+  });
+
+  it('carries timestamp in message payload when createdAt is present', () => {
+    const subagents = [
+      {
+        agentId: 'agent-01',
+        profileName: 'Explore',
+        model: null,
+        chainNodeId: 40,
+        toolCallId: 'tc-1',
+        rawInputProfile: null,
+        taskDescription: 'Task',
+      },
+    ];
+
+    const detachedMessages = [makeMessage(40, null, 'user', 'Prompt', { createdAt: 1722520800 })];
+
+    const result = buildSubagentChildSessions(
+      rootSessionId,
+      sourceId,
+      envId,
+      projectId,
+      subagents,
+      detachedMessages,
+      rootArtifactId,
+    );
+
+    const messageRecord = result.records.find((r) => r.recordType === 'message');
+    expect(messageRecord).toBeDefined();
+    expect((messageRecord?.payload as Record<string, unknown> | undefined)?.timestamp).toBe(
+      new Date(1722520800 * 1000).toISOString(),
+    );
+  });
+
+  it('terminates gracefully when detached message tree contains a cycle', () => {
+    const subagents = [
+      {
+        agentId: 'agent-01',
+        profileName: 'Explore',
+        model: null,
+        chainNodeId: 41,
+        toolCallId: 'tc-1',
+        rawInputProfile: null,
+        taskDescription: 'Task',
+      },
+    ];
+
+    // Cycle: 40 -> 41 -> 40
+    const detachedMessages = [
+      makeMessage(40, 41, 'user', 'Prompt 40'),
+      makeMessage(41, 40, 'assistant', 'Response 41'),
+    ];
+
+    const result = buildSubagentChildSessions(
+      rootSessionId,
+      sourceId,
+      envId,
+      projectId,
+      subagents,
+      detachedMessages,
+      rootArtifactId,
+    );
+
+    expect(result.summaries).toHaveLength(1);
+    expect(result.consumedNodeIds.size).toBe(2);
   });
 });

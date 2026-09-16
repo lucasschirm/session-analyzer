@@ -110,21 +110,38 @@ function taskDescriptionForToolCall(
   return null;
 }
 
-/** Identifies all subagent groups from main-chain tool results. */
+/** Identifies all subagent groups from main-chain tool results, deduplicated by agentId. */
 export function identifySubagents(
   orderedMessages: readonly DevinMessageLine[],
   toolCalls: readonly DevinToolCallLine[],
 ): SubagentIdentity[] {
   const resultMsgs = findSubagentResultMessages(orderedMessages);
-  return resultMsgs.map((m) => ({
-    agentId: m.subagent!.agentId!,
-    profileName: m.subagent!.profileName,
-    model: m.subagent!.model,
-    chainNodeId: m.subagent!.chainNodeId,
-    toolCallId: m.toolCallId!,
-    rawInputProfile: rawInputProfileForToolCall(toolCalls, m.toolCallId!),
-    taskDescription: taskDescriptionForToolCall(toolCalls, m.toolCallId!),
-  }));
+  const byAgentId = new Map<string, SubagentIdentity>();
+
+  for (const m of resultMsgs) {
+    if (!m.subagent?.agentId || !m.toolCallId) continue;
+    const agentId = m.subagent.agentId;
+    const toolCallId = m.toolCallId;
+    const identity: SubagentIdentity = {
+      agentId,
+      profileName: m.subagent.profileName,
+      model: m.subagent.model,
+      chainNodeId: m.subagent.chainNodeId,
+      toolCallId,
+      rawInputProfile: rawInputProfileForToolCall(toolCalls, toolCallId),
+      taskDescription: taskDescriptionForToolCall(toolCalls, toolCallId),
+    };
+
+    const existing = byAgentId.get(agentId);
+    if (!existing) {
+      byAgentId.set(agentId, identity);
+    } else if (existing.chainNodeId === null && identity.chainNodeId !== null) {
+      // Prefer entry with resolved chainNodeId
+      byAgentId.set(agentId, identity);
+    }
+  }
+
+  return Array.from(byAgentId.values());
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +154,12 @@ function findSubtreeRootId(
   nodeMap: ReadonlyMap<number, DevinMessageLine>,
 ): number {
   let current = leafNodeId;
+  const visited = new Set<number>();
   for (;;) {
+    if (visited.has(current)) {
+      return current;
+    }
+    visited.add(current);
     const node = nodeMap.get(current);
     if (!node || node.parentNodeId === null || !nodeMap.has(node.parentNodeId)) {
       return current;
@@ -153,9 +175,13 @@ function collectSubtree(
   nodeMap: ReadonlyMap<number, DevinMessageLine>,
 ): DevinMessageLine[] {
   const result: DevinMessageLine[] = [];
+  const visited = new Set<number>();
   const stack = [rootId];
   while (stack.length > 0) {
-    const id = stack.pop()!;
+    const id = stack.pop();
+    if (id === undefined) break;
+    if (visited.has(id)) continue;
+    visited.add(id);
     const node = nodeMap.get(id);
     if (node) result.push(node);
     for (const childId of childrenByParent.get(id) ?? []) {
@@ -186,7 +212,7 @@ function buildChildSessionRecords(
   childSessionId: string,
   rootSessionId: string,
   identity: SubagentIdentity,
-  childMessages: readonly DevinMessageLine[],
+  _childMessages: readonly DevinMessageLine[],
   rootArtifactId: string,
 ): NormalizedEvidenceRecord[] {
   const records: NormalizedEvidenceRecord[] = [];
@@ -255,6 +281,11 @@ function buildChildTurnAndMessageRecords(
       payload: { role, ordinal: turnOrdinal, nodeId: message.nodeId },
     });
 
+    const timestamp =
+      typeof message.createdAt === 'number' && Number.isFinite(message.createdAt)
+        ? new Date(message.createdAt * 1000).toISOString()
+        : undefined;
+
     records.push({
       recordId: stableId('message', { session: childSessionId, nodeId: message.nodeId }),
       recordType: 'message',
@@ -268,6 +299,7 @@ function buildChildTurnAndMessageRecords(
         messageId: eventId,
         nodeId: message.nodeId,
         content: chatMessageText(message.chatMessage),
+        ...(timestamp ? { timestamp } : {}),
         storage: 'artifact-blob',
         path: rootArtifactId,
       },
@@ -297,27 +329,42 @@ function buildChildInvocationRecords(
   const records: NormalizedEvidenceRecord[] = [];
   const seen = new Set<string>();
 
+  // Map toolCallId -> tool result message for correlation
+  const resultMessageByToolCallId = new Map<string, DevinMessageLine>();
+  for (const message of childMessages) {
+    if (message.toolCallId) {
+      resultMessageByToolCallId.set(message.toolCallId, message);
+    }
+  }
+
   for (const message of childMessages) {
     if (!message.toolCalls) continue;
     for (const tc of message.toolCalls) {
       if (seen.has(tc.id)) continue;
       seen.add(tc.id);
-      records.push(...buildSingleInvocation(childSessionId, rootSessionId, tc, rootArtifactId));
+      const resultMessage = resultMessageByToolCallId.get(tc.id);
+      records.push(
+        ...buildSingleInvocation(childSessionId, rootSessionId, tc, resultMessage, rootArtifactId),
+      );
     }
   }
 
   return records;
 }
 
-/** Builds invocation + input payload for one embedded tool call. */
+/** Builds invocation + input (and optional result) payload for one embedded tool call. */
 function buildSingleInvocation(
   childSessionId: string,
   rootSessionId: string,
   tc: DevinChatMessageToolCall,
+  resultMessage: DevinMessageLine | undefined,
   rootArtifactId: string,
 ): NormalizedEvidenceRecord[] {
   const invocationId = stableId('invocation', { session: childSessionId, tool: tc.id });
   const records: NormalizedEvidenceRecord[] = [];
+  const hasResult = resultMessage !== undefined;
+  const resultId = hasResult ? tc.id : undefined;
+  const status = hasResult ? 'success' : 'unknown';
 
   records.push({
     recordId: invocationId,
@@ -331,8 +378,8 @@ function buildSingleInvocation(
       name: tc.name,
       target: resolveToolTarget(tc),
       startId: tc.id,
-      resultId: tc.id,
-      status: 'unknown',
+      resultId,
+      status,
       origin: 'subagent',
       rootSessionId,
     },
@@ -358,6 +405,30 @@ function buildSingleInvocation(
       contentKind: 'unknown',
     },
   });
+
+  if (hasResult) {
+    const resultEventId = messageId(resultMessage);
+    records.push({
+      recordId: stableId('payload', { session: childSessionId, tool: tc.id, type: 'result' }),
+      recordType: 'payload',
+      sessionId: childSessionId,
+      parentId: invocationId,
+      sourceEventId: tc.id,
+      sourceField: 'chat_message.tool_call_id',
+      provenance: provenanceForArtifact(rootArtifactId, resultEventId, 'chat_message'),
+      payload: {
+        payloadType: 'result',
+        toolUseId: tc.id,
+        sourceEventId: tc.id,
+        bytes: byteLength(resultMessage.chatMessage),
+        tokens: 0,
+        tokenSource: 'estimated',
+        mediaCount: 0,
+        structureCount: 0,
+        contentKind: 'unknown',
+      },
+    });
+  }
 
   return records;
 }

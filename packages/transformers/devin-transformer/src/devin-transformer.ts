@@ -180,7 +180,9 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // Root-only metrics now strictly measure root-agent activity; subagent
 // tool calls are scoped to the child session. `buildToolInvocationRecords`
 // now attaches `childSessionId` to `run_subagent` invocations.
-// Forces a fresh generation on reprocess.
+// Accompanied by `DEVIN_METRIC_DEFINITION_VERSION` bump 0.4.0 -> 0.5.0 (see
+// comparability.ts) because inclusive metric populations now encompass
+// child sessions. Forces a fresh generation on reprocess.
 export const DEVIN_TRANSFORMER_VERSION = '0.13.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported

@@ -8,7 +8,7 @@ import type {
 } from '@lucasschirm/sal-devin-session-parser';
 import type { NormalizedEvidenceRecord } from '@lucasschirm/sal-transformer-shared';
 import { resolveDevinEffortForModel } from './effort.js';
-import { chatMessageText, provenanceForArtifact, stableId } from './session-spine.js';
+import { provenanceForArtifact, stableId } from './session-spine.js';
 
 export interface TokenUsageResult {
   readonly records: readonly NormalizedEvidenceRecord[];
