@@ -376,7 +376,7 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
       result.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveErrorCode(err);
       const message = err instanceof Error ? err.message : String(err);
-      recordArtifactFailure(state, manifestArtifact, code);
+      recordArtifactFailure(state, manifestArtifact, code, message);
       result.filesFailed += 1;
       result.failed.push(manifestArtifact);
       if (!result.errors.includes(code)) {

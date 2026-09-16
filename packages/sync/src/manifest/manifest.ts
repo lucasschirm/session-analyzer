@@ -125,7 +125,8 @@ export class ManifestGenerator {
         return { ok: true as const, putResult };
       } catch (err) {
         const code = resolveErrorCode(err);
-        recordArtifactFailure(state, manifestArtifact, code);
+        const message = err instanceof Error ? err.message : String(err);
+        recordArtifactFailure(state, manifestArtifact, code, message);
         return { ok: false as const, err };
       }
     });

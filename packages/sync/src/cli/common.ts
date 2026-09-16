@@ -795,7 +795,7 @@ export async function runSessionEndUploadLoop(options: {
       run.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveStorageError(err);
       const message = err instanceof Error ? err.message : String(err);
-      recordArtifactFailure(state, artifact, code);
+      recordArtifactFailure(state, artifact, code, message);
       run.filesFailed += 1;
       run.errors = run.errors ?? [];
       if (!run.errors.includes(code)) {

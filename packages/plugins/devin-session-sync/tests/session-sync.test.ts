@@ -1024,6 +1024,39 @@ describe('runDevinSessionSync', () => {
     expect(events[events.length - 1]).toBe('failure');
   });
 
+  it('propagates discovery errors into the outcome (SYNC_FILE_TOO_LARGE for workspace artifacts)', async () => {
+    // A workspace artifact exceeding maxFileBytes is rejected at discovery
+    // with SYNC_FILE_TOO_LARGE. The Devin plugin must propagate discovery
+    // errors into the outcome so they are visible in telemetry/CLI output,
+    // matching the shared Claude path.
+    const storage = new RecordingStorageAdapter();
+    const events: string[] = [];
+
+    // Create a workspace file matching the Devin allowlist (AGENTS.md) but
+    // larger than maxFileBytes so discovery rejects it with SYNC_FILE_TOO_LARGE.
+    const workspaceDir = path.join(homeDir, 'workspace');
+    await fsp.mkdir(workspaceDir, { recursive: true });
+    await fsp.writeFile(path.join(workspaceDir, 'AGENTS.md'), Buffer.alloc(2_000_000));
+
+    const outcome = await runDevinSessionSync({
+      models: devinModelsCaptureOptions,
+      tables: sessionTables,
+      schemaDescriptor: SCHEMA_DESCRIPTOR,
+      sessionId: 'sess-1',
+      cwd: workspaceDir,
+      config: { ...baseConfig, limits: { ...baseConfig.limits, maxFileBytes: 1_000_000 } },
+      dataDir,
+      storageAdapter: storage,
+      trigger: 'manual',
+      profile: DevinHarnessProfile,
+      homeDir,
+      dataRoot: homeDir,
+      onProgress: (event) => events.push(event.type),
+    });
+
+    expect(outcome.errors).toContain('SYNC_FILE_TOO_LARGE');
+  });
+
   it(
     'produces internally-consistent, distinctly-keyed manifests when the same ' +
       'Devin session id is synced under two different projects (DS-B23/#275 regression)',
