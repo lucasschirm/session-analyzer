@@ -251,7 +251,8 @@ test.describe('Project Sessions Table (UX-030)', () => {
     const ths = table.locator('th');
     await expect(ths.nth(0)).toHaveText('Title');
     await expect(ths.nth(1)).toHaveText('Start date');
-    await expect(ths.nth(2)).toHaveText('Sub agents');
+    await expect(ths.nth(2)).toHaveText('Sync');
+    await expect(ths.nth(3)).toHaveText('Sub agents');
 
     // Verify session row and title (not raw UUID)
     const firstRow = table.locator('tbody tr').first();

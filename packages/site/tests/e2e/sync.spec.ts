@@ -1500,6 +1500,7 @@ test('UX-040: failed sessions surface in cherry-pick and are excluded from bulk 
   const projectId = 'ux040-proj';
   const failedSessionId = 'e2e-failed-session';
   const healthySessionId = 'e2e-claude-session';
+  const noTranscriptSessionId = 'e2e-notranscript-session';
   const bucket = new FixtureBucket();
   bucket.addProject(projectId, 'UX-040 Project', '');
   bucket.addSession(projectId, healthySessionId, {
@@ -1529,6 +1530,19 @@ test('UX-040: failed sessions surface in cherry-pick and are excluded from bulk 
   });
   // The manifest lists transcript.jsonl, but every GET for it 404s.
   bucket.setHttpError(transcriptFileKey(projectId, failedSessionId), 404);
+  // A session whose manifest captures no transcript at all (e.g. the syncing
+  // machine had no sessions.db rows to materialize transcript.jsonl from):
+  // surfaces as transcript_unavailable, never as a silent success.
+  bucket.addSession(projectId, noTranscriptSessionId, {
+    files: [
+      {
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        content: fixtureBuffer('claude-session.jsonl'),
+      },
+    ],
+    transcriptsCaptured: false,
+  });
   attachLoggers(page);
 
   // Save the connection (no sync); vault creation is prompted by the save.
@@ -1548,11 +1562,15 @@ test('UX-040: failed sessions surface in cherry-pick and are excluded from bulk 
   const sessionsPage = page.locator('storage-sessions-page');
   const healthyRow = sessionsPage.locator(`tr[data-key="${projectId}:${healthySessionId}"]`);
   const failedRow = sessionsPage.locator(`tr[data-key="${projectId}:${failedSessionId}"]`);
+  const noTranscriptRow = sessionsPage.locator(
+    `tr[data-key="${projectId}:${noTranscriptSessionId}"]`,
+  );
   await expect(failedRow).toBeVisible({ timeout: 15000 });
   await expect(healthyRow).toBeVisible();
+  await expect(noTranscriptRow).toBeVisible();
 
   await sessionsPage.getByRole('button', { name: 'Select visible' }).click();
-  await sessionsPage.getByRole('button', { name: /Sync \(2\) Selected/ }).click();
+  await sessionsPage.getByRole('button', { name: /Sync \(3\) Selected/ }).click();
   await waitForSyncIdle(page);
 
   // The healthy session synced; the failed one is isolated, styled with the
@@ -1561,6 +1579,21 @@ test('UX-040: failed sessions surface in cherry-pick and are excluded from bulk 
   await expect(failedRow).toHaveClass(/row-failed/);
   await expect(failedRow.locator('.badge-failed')).toContainText('Failed');
   await expect(failedRow.locator('.error-viewer-btn')).toBeVisible();
+
+  // The transcript-less session is now treated as a sync failure (status
+  // 'failed' with details "Main transcript not uploaded") so the standard
+  // failed-session exclusion gate prevents auto-retry. It surfaces with the
+  // same Failed badge and View error affordance as the download failure —
+  // never a silent "Not synced".
+  await expect(noTranscriptRow.locator('.badge-failed')).toContainText('Failed', {
+    timeout: 15000,
+  });
+  await noTranscriptRow.locator('.error-viewer-btn').click();
+  const noTranscriptDialog = page.getByRole('dialog', { name: 'Session sync error details' });
+  await expect(noTranscriptDialog).toBeVisible();
+  await expect(noTranscriptDialog).toContainText('Main transcript not uploaded');
+  await noTranscriptDialog.press('Escape');
+  await expect(noTranscriptDialog).toBeHidden();
 
   // The error modal shows the stored failure log (DOWNLOAD_FAILED details),
   // dismissible via Escape with focus handed to the dialog.
@@ -1571,14 +1604,15 @@ test('UX-040: failed sessions surface in cherry-pick and are excluded from bulk 
   await errorDialog.press('Escape');
   await expect(errorDialog).toBeHidden();
 
-  // A bulk sync without "Include sessions failed importing" must skip the
-  // failed session entirely: zero S3 GETs mention it. The healthy session is
-  // also untouched (in-sync fingerprint skip), so the run is a no-op listing.
+  // A bulk sync without "Include sessions failed importing" must skip both
+  // failed sessions entirely: zero S3 GETs mention either. The healthy session
+  // is also untouched (in-sync fingerprint skip), so the run is a no-op listing.
   bucket.clearRequests();
   await openConnectModal(page);
   await clickRowSyncAndConfirm(page);
   await waitForSyncIdle(page);
   expect(bucket.getRequests({ method: 'GET', key: failedSessionId })).toHaveLength(0);
+  expect(bucket.getRequests({ method: 'GET', key: noTranscriptSessionId })).toHaveLength(0);
 
   // Explicit cherry-pick retry still targets the failed session: selecting it
   // queues a targeted run that re-fetches its manifest (bypasses the gate).

@@ -539,10 +539,22 @@ describe('SyncManager session failure isolation', () => {
     // @ts-expect-error — testing private method
     await manager.handleSessionFound(run as never, project, mockWorker, { sessionId: 's-synced' });
 
+    // 4. Legacy 'transcript_unavailable' row -> sync: false (treated as failed)
+    // @ts-expect-error — mock return
+    mockDb.getSessionBySyncId.mockResolvedValueOnce({
+      id: 's4-id',
+      sync_status: 'transcript_unavailable',
+    });
+    // @ts-expect-error — testing private method
+    await manager.handleSessionFound(run as never, project, mockWorker, {
+      sessionId: 's-notranscript',
+    });
+
     expect(postedToWorker).toEqual([
       expect.objectContaining({ sessionId: 's-new', sync: true }),
       expect.objectContaining({ sessionId: 's-failed', sync: false }),
       expect.objectContaining({ sessionId: 's-synced', sync: false }),
+      expect.objectContaining({ sessionId: 's-notranscript', sync: false }),
     ]);
   });
 
@@ -749,6 +761,45 @@ describe('SyncManager session failure isolation', () => {
       manifest,
       undefined,
     );
+  });
+
+  it('handleTranscriptUnavailable persists the status and pushes a warning toast', async () => {
+    const mockDb = createMockDb();
+    const postedToWorker: Array<{ sessionId: string; sync: boolean }> = [];
+    const mockWorker = {
+      postMessage: (msg: { sessionId: string; sync: boolean }) => postedToWorker.push(msg),
+      terminate: vi.fn(),
+    } as unknown as Worker;
+    const warnings: string[] = [];
+    const manager = createManager({ dbClient: mockDb, onWarning: (w) => warnings.push(w) });
+    const project = createTestProject(mockWorker);
+    const sessionState = { syncStatus: 'pending' };
+
+    // @ts-expect-error — testing private method
+    await manager.handleTranscriptUnavailable(
+      { warnings: [] } as never,
+      project as never,
+      sessionState as never,
+      { id: 'local-1' } as never,
+      mockWorker,
+      'sess-notranscript',
+    );
+
+    // Transcript-unavailable is now treated as a sync failure so the standard
+    // failed-session exclusion gate prevents auto-retry.
+    expect(sessionState.syncStatus).toBe('failed');
+    expect(project.sessionsFailed).toBe(1);
+    expect(mockDb.setSessionSyncStatus).toHaveBeenCalledWith(
+      'local-1',
+      'failed',
+      'Main transcript not uploaded',
+    );
+    expect(warnings).toEqual([
+      'sess-notranscript: no main transcript uploaded — session not synced',
+    ]);
+    expect(postedToWorker).toEqual([
+      expect.objectContaining({ sessionId: 'sess-notranscript', sync: false }),
+    ]);
   });
 
   it('isolateWorkerMessageError isolates unexpected session-level message errors', async () => {

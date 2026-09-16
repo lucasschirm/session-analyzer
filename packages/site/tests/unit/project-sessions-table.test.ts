@@ -42,11 +42,11 @@ describe('project-sessions-table', () => {
     },
   ];
 
-  it('renders columns: title, start date, sub agents', async () => {
+  it('renders columns: title, start date, sync, sub agents', async () => {
     const el = await mountTable({ sessions: mockSessions });
     const root = el.shadowRoot as ShadowRoot;
     const headers = Array.from(root.querySelectorAll('th')).map((th) => th.textContent?.trim());
-    expect(headers).toEqual(['Title', 'Start date', 'Sub agents']);
+    expect(headers).toEqual(['Title', 'Start date', 'Sync', 'Sub agents']);
 
     const rows = Array.from(root.querySelectorAll('tbody tr'));
     expect(rows.length).toBe(2);
@@ -59,6 +59,28 @@ describe('project-sessions-table', () => {
 
     const secondRowSubagents = rows[1]?.querySelector('.subagents-badge')?.textContent?.trim();
     expect(secondRowSubagents).toBe('0');
+  });
+
+  it('renders sync status badges from syncStatuses map', async () => {
+    const syncStatuses = new Map([
+      ['sess-1', { syncStatus: 'in_sync' as const, syncDetails: undefined }],
+      ['sess-2', { syncStatus: 'failed' as const, syncDetails: 'Main transcript not uploaded' }],
+    ]);
+    const el = await mountTable({ sessions: mockSessions, syncStatuses });
+    const root = el.shadowRoot as ShadowRoot;
+    const badges = Array.from(root.querySelectorAll('.sync-badge'));
+    expect(badges.length).toBe(2);
+    expect(badges[0]?.textContent?.trim()).toBe('Synced');
+    expect(badges[0]?.classList.contains('sync-badge-synced')).toBe(true);
+    expect(badges[1]?.textContent?.trim()).toBe('Failed');
+    expect(badges[1]?.classList.contains('sync-badge-failed')).toBe(true);
+    expect(badges[1]?.getAttribute('title')).toBe('Main transcript not uploaded');
+  });
+
+  it('renders no sync badge when session has no sync status entry', async () => {
+    const el = await mountTable({ sessions: mockSessions });
+    const root = el.shadowRoot as ShadowRoot;
+    expect(root.querySelectorAll('.sync-badge').length).toBe(0);
   });
 
   it('renders empty state when no sessions found', async () => {

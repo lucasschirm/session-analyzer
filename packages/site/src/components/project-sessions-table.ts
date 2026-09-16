@@ -1,9 +1,10 @@
 import type { ProjectSessionListItem } from '@lucasschirm/sal-db';
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, type TemplateResult } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { formatDateTime, formatSessionTitle } from '../lib/format';
 import { navigateTo } from '../router';
+import type { SessionSyncStatus } from '../types';
 
 /**
  * Project sessions table component.
@@ -83,6 +84,43 @@ export class ProjectSessionsTable extends LitElement {
       text-align: right;
     }
 
+    .col-sync-status {
+      min-width: 100px;
+      white-space: nowrap;
+    }
+
+    .sync-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      background: var(--md-sys-color-surface, #171a21);
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+    }
+
+    .sync-badge-synced {
+      background: rgba(52, 168, 83, 0.15);
+      color: #81c995;
+      border-color: rgba(52, 168, 83, 0.3);
+    }
+
+    .sync-badge-failed {
+      background: rgba(237, 78, 80, 0.15);
+      color: #f28b82;
+      border-color: rgba(237, 78, 80, 0.3);
+    }
+
+    .sync-badge-syncing {
+      background: rgba(79, 140, 255, 0.15);
+      color: #8ab4ff;
+      border-color: rgba(79, 140, 255, 0.3);
+    }
+
     .session-title-link {
       color: var(--md-sys-color-primary, #4f8cff);
       text-decoration: none;
@@ -144,6 +182,10 @@ export class ProjectSessionsTable extends LitElement {
 
   @property({ type: String }) searchQuery = '';
 
+  @property({ type: Object })
+  syncStatuses: Map<string, { syncStatus: SessionSyncStatus; syncDetails: string | undefined }> =
+    new Map();
+
   private handleSessionClick(e: Event, sessionId: string): void {
     if (e instanceof MouseEvent) {
       if (
@@ -159,6 +201,24 @@ export class ProjectSessionsTable extends LitElement {
     }
     e.preventDefault();
     navigateTo(`/sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  private renderSyncStatusBadge(sessionId: string): TemplateResult {
+    const entry = this.syncStatuses.get(sessionId);
+    if (!entry) return html``;
+    const status = entry.syncStatus;
+    const isFailed = status === 'failed' || status === 'transcript_unavailable';
+    const isSynced = status === 'in_sync';
+    const isSyncing = status === 'pending' || status === 'processing';
+    const label = isFailed ? 'Failed' : isSynced ? 'Synced' : isSyncing ? 'Syncing' : '';
+    if (!label) return html``;
+    const cls = isFailed
+      ? 'sync-badge-failed'
+      : isSynced
+        ? 'sync-badge-synced'
+        : 'sync-badge-syncing';
+    const title = entry.syncDetails ?? label;
+    return html`<span class="sync-badge ${cls}" title=${title}>${label}</span>`;
   }
 
   render() {
@@ -184,6 +244,7 @@ export class ProjectSessionsTable extends LitElement {
             <tr>
               <th scope="col" class="col-title">Title</th>
               <th scope="col" class="col-start-date">Start date</th>
+              <th scope="col" class="col-sync-status">Sync</th>
               <th scope="col" class="col-subagents">Sub agents</th>
             </tr>
           </thead>
@@ -208,6 +269,9 @@ export class ProjectSessionsTable extends LitElement {
                     </td>
                     <td class="col-start-date" title=${session.startedAt ?? ''}>
                       ${formatDateTime(session.startedAt)}
+                    </td>
+                    <td class="col-sync-status">
+                      ${this.renderSyncStatusBadge(session.sessionId)}
                     </td>
                     <td class="col-subagents">
                       <span class="subagents-badge ${subagentCount > 0 ? 'has-subagents' : ''}">

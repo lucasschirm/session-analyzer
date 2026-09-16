@@ -232,6 +232,25 @@ export class ProjectSyncStatusModal extends ModalBase {
     }
   }
 
+  private stateLabel(status: SessionStatus): string {
+    switch (status) {
+      case 'pending':
+        return 'Pending';
+      case 'processing':
+        return 'Processing';
+      case 'in_sync':
+        return 'Synced';
+      case 'failed':
+        return 'Failed';
+      case 'skipped':
+        return 'Skipped';
+      case 'transcript_unavailable':
+        return 'No transcript uploaded — session not synced';
+      default:
+        return '';
+    }
+  }
+
   private sessionStatus(session: SessionSnapshot): SessionStatus {
     if (session.status === 'transcript_unavailable') return 'transcript_unavailable';
     if (['pending', 'processing', 'in_sync', 'failed', 'skipped'].includes(session.status)) {
@@ -246,7 +265,7 @@ export class ProjectSyncStatusModal extends ModalBase {
     return html`
       <li class="session-item">
         <span class="session-state">
-          <span class=${classMap(stateClasses)}>
+          <span class=${classMap(stateClasses)} title=${this.stateLabel(status)}>
             ${this.stateIcon(status)}
           </span>
           <span class="session-id" title=${session.sessionId}>${session.sessionId}</span>

@@ -953,6 +953,39 @@ export class DatabaseManager {
   }
 
   /**
+   * Returns a map of `sync_session_id -> { syncStatus, syncDetails }` for every
+   * session in the given project that has a `sync_session_id`. Used by the
+   * project sessions page to cross-reference sync status from the control DB
+   * against analytics-DB session rows (matched by remote session id).
+   */
+  listProjectSessionSyncStatuses(
+    projectId: string,
+  ): Map<string, { syncStatus: SessionSyncStatus; syncDetails: string | undefined }> {
+    const rows = this.requireDb().selectObjects(
+      `SELECT sync_session_id, sync_status, sync_details
+       FROM sessions
+       WHERE project_id = ? AND sync_session_id IS NOT NULL`,
+      [projectId],
+    ) as unknown as Array<{
+      sync_session_id: string;
+      sync_status: string | null;
+      sync_details: string | null;
+    }>;
+    const map = new Map<
+      string,
+      { syncStatus: SessionSyncStatus; syncDetails: string | undefined }
+    >();
+    for (const row of rows) {
+      if (!row.sync_session_id || !isSessionSyncStatus(row.sync_status)) continue;
+      map.set(row.sync_session_id, {
+        syncStatus: row.sync_status,
+        syncDetails: row.sync_details ?? undefined,
+      });
+    }
+    return map;
+  }
+
+  /**
    * Inserts a sync stub or updates an existing session's stub-relevant
    * columns. Parsed-content columns are never overwritten by this call.
    */

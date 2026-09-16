@@ -52,6 +52,7 @@ export type DbRequest =
   | { id: number; type: 'setProjectSyncStatus'; projectId: string; status: 'in_sync' | 'syncing' }
   | { id: number; type: 'backfillReadableIds' }
   | { id: number; type: 'getSessionBySyncId'; projectId: string; syncSessionId: string }
+  | { id: number; type: 'listProjectSessionSyncStatuses'; projectId: string }
   | { id: number; type: 'upsertSessionStub'; stub: SessionStub }
   | {
       id: number;
