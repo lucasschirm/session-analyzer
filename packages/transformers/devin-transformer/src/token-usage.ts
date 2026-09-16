@@ -483,10 +483,12 @@ function buildMessageUsageRecords(
       outputTokens: usage.outputTokens,
       cacheCreationTokens: usage.cacheCreationTokens,
       cacheReadTokens: usage.cacheReadTokens,
-      // Exact only when both the prompt and completion sides were reported
+      // Exact only when prompt, completion, and cache-read were all reported
       // (`cache_*` fields are independently nullable), mirroring
-      // `stepMetricsAreExact`.
-      tokenValuesExact: usage.inputTokens !== null && usage.outputTokens !== null,
+      // `stepMetricsAreExact`. A record with an unknown cache side must not be
+      // certified exact.
+      tokenValuesExact:
+        usage.inputTokens !== null && usage.outputTokens !== null && usage.cacheReadTokens !== null,
       cost: null,
       costExact: false,
       ...effortPayloadFields(usage.generationModel, models),

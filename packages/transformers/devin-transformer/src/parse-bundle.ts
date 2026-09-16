@@ -334,18 +334,23 @@ function buildMainChain(
  * Grouped by `messageId()` (the real `chat_message.message_id`, falling
  * back to a synthetic `node-<id>` when absent — the same key
  * `session-spine.ts` already uses for `sourceEventId`). Within a group with
- * more than one member, the entry with the more POPULATED `parsedMetadata`
- * is kept — see `metadataRichness()`; a copy with `parsedMetadata: null`
- * always loses to one with any populated metadata, and when BOTH copies
- * carry non-null metadata, the one with more actually-populated fields wins
- * (never discard the more complete record, per `missing-is-never-zero`'s
- * spirit — this is what makes "the kept copy is the metadata-richer one"
- * literally true, not just true when one side is fully absent). Ties
- * (including "neither has any populated field") break on the lower `nodeId`
- * for determinism. Every dropped duplicate's `nodeId` is redirected to the
- * kept entry's `nodeId` in every OTHER message's `parentNodeId` field, so a
- * hypothetical future child of a dropped duplicate stays correctly attached
- * to the tree rather than becoming a spurious orphan root.
+ * more than one member, the entry with the more POPULATED evidence is
+ * kept — see `messageRichness()`, which scores the row-level
+ * `parsedMetadata` plus the chat_message-carried `chatUsage` and `subagent`
+ * fields. A copy with `parsedMetadata: null` always loses to one with any
+ * populated metadata, and when BOTH copies carry non-null metadata, the one
+ * with more actually-populated fields wins (never discard the more complete
+ * record, per `missing-is-never-zero`'s spirit — this is what makes "the
+ * kept copy is the richer one" literally true, not just true when one side
+ * is fully absent). Crucially the score also spans `chatUsage`: without it, a
+ * duplicate pair whose lower-`nodeId` copy carried row metadata but NO
+ * per-request metrics would beat the metrics-bearing copy and silently drop
+ * that request's usage from the context-growth chart. Ties break on the
+ * lower `nodeId` for determinism. Every dropped duplicate's `nodeId` is
+ * redirected to the kept entry's `nodeId` in every OTHER message's
+ * `parentNodeId` field, so a hypothetical future child of a dropped
+ * duplicate stays correctly attached to the tree rather than becoming a
+ * spurious orphan root.
  */
 function groupByMessageId(messages: readonly DevinMessageLine[]): Map<string, DevinMessageLine[]> {
   const groups = new Map<string, DevinMessageLine[]>();
@@ -375,8 +380,37 @@ function metadataRichness(metadata: DevinMessageNodeMetadata | null): number {
   return score;
 }
 
+/**
+ * Total evidence richness of a message: the row-level `parsedMetadata`
+ * score plus every populated `chat_message`-carried signal (`chatUsage`
+ * per-request metrics, `subagent` extension tags). The `chatUsage` term is
+ * load-bearing for the context-growth pipeline: a duplicate pair must never
+ * keep a metadata-bearing copy that lacks per-request usage over the copy
+ * that actually carries it.
+ */
+function messageRichness(message: DevinMessageLine): number {
+  let score = metadataRichness(message.parsedMetadata);
+  const usage = message.chatUsage;
+  if (usage) {
+    score++;
+    if (usage.inputTokens !== null) score++;
+    if (usage.outputTokens !== null) score++;
+    if (usage.cacheReadTokens !== null) score++;
+    if (usage.cacheCreationTokens !== null) score++;
+  }
+  const subagent = message.subagent;
+  if (subagent) {
+    score++;
+    if (subagent.agentId !== null) score++;
+    if (subagent.profileName !== null) score++;
+    if (subagent.model !== null) score++;
+    if (subagent.chainNodeId !== null) score++;
+  }
+  return score;
+}
+
 /** Picks one canonical message per `messageId()` group: the entry with the
- * higher `metadataRichness()` score, tie-broken by lower `nodeId`. Returns
+ * higher `messageRichness()` score, tie-broken by lower `nodeId`. Returns
  * the kept node ids plus a `droppedNodeId -> canonicalNodeId` redirect map
  * for every other group member. */
 function resolveCanonicalNodes(groups: Map<string, DevinMessageLine[]>): {
@@ -391,7 +425,7 @@ function resolveCanonicalNodes(groups: Map<string, DevinMessageLine[]>): {
       continue;
     }
     const sorted = [...group].sort((a, b) => {
-      const richnessDiff = metadataRichness(b.parsedMetadata) - metadataRichness(a.parsedMetadata);
+      const richnessDiff = messageRichness(b) - messageRichness(a);
       return richnessDiff !== 0 ? richnessDiff : a.nodeId - b.nodeId;
     });
     keepNodeIds.add(sorted[0].nodeId);

@@ -450,7 +450,8 @@ describe('Per-message model_usage tier (transcript-only context growth)', () => 
       inputTokens: 14558,
       outputTokens: 112,
       cacheReadTokens: null,
-      tokenValuesExact: true,
+      // cacheReadTokens is null, so the record is not certified exact.
+      tokenValuesExact: false,
       effort: 'High',
       normalizedEffort: 'high',
     });
