@@ -98,6 +98,53 @@ function promptLine(sessionId: string, id: number, content: string, ts: number):
 }
 
 /**
+ * Creates a message line with arbitrary `chat_message.metadata.extensions`
+ * (e.g. `subagent/*` tags) and optional `tool_call_id` — needed for
+ * subagent tool-result messages and detached-tree assistant messages with
+ * embedded tool_calls.
+ */
+function messageLineWithExtensions(
+  sessionId: string,
+  nodeId: number,
+  parentNodeId: number | null,
+  role: string,
+  content: string,
+  extensions: Record<string, unknown>,
+  options?: {
+    toolCallId?: string;
+    toolCalls?: { id: string; name: string; arguments: Record<string, unknown> }[];
+  },
+): string {
+  const chatMessage: Record<string, unknown> = {
+    message_id: `msg-${nodeId}`,
+    role,
+    content,
+    metadata: { extensions },
+  };
+  if (options?.toolCallId) chatMessage.tool_call_id = options.toolCallId;
+  if (options?.toolCalls) {
+    chatMessage.tool_calls = options.toolCalls.map((tc, i) => ({
+      id: tc.id,
+      name: tc.name,
+      arguments: tc.arguments,
+      index: i,
+      kind: 'function',
+    }));
+  }
+  return devinJsonlLine('message', {
+    ts: null,
+    order: nodeId + 1,
+    row_id: nodeId,
+    session_id: sessionId,
+    node_id: nodeId,
+    parent_node_id: parentNodeId,
+    chat_message: JSON.stringify(chatMessage),
+    created_at: null,
+    metadata: null,
+  });
+}
+
+/**
  * `_meta["cognition.ai/inferenceToolName"]` must be nested under `_meta` on
  * BOTH `tool_call_json` and `tool_call_update_json` — `parseAcpToolCallUpdate`'s
  * `extractInferenceToolName` only reads `record._meta`, never a top-level
@@ -1156,19 +1203,67 @@ export const noRootBundle: UnknownArtifactBundle = bundle([
 
 // The devin 'complete' fixture (#308): every invocation domain (tool, skill,
 // agent), transform-time components from cogs (skill + MCP wrapper tools)
-// and tool_call_state (agent), inline Sub Agent evidence (a detached
-// conversation subtree), and ATIF final metrics whose token identity
+// and tool_call_state (agent), canonical child session decomposition (a
+// main-chain tool-result with `subagent/*` extensions pointing to a detached
+// subtree via `chain_node_id`), and ATIF final metrics whose token identity
 // reconciles exactly (prompt 100 incl. 10 cached + completion 50 = total
 // 150 = the session-level model_usage inputTokens + outputTokens). Enables
 // toolSkillAgentSubAgentDistinct and rootOnlyAndInclusiveNoDoubleCount to
 // actually run for devin instead of reporting `unverified`.
 const completeSessionTranscript = [
-  sessionLine(sessionId, 3, undefined, [mcpAllowListCog, skillCog]),
+  sessionLine(sessionId, 4, undefined, [mcpAllowListCog, skillCog]),
+  // Main chain: user -> assistant -> assistant -> tool-result(run_subagent) -> done
   messageLine(sessionId, 1, null, 'user', 'Invoke a skill and a subagent'),
   messageLine(sessionId, 2, 1, 'assistant', 'On it'),
-  messageLine(sessionId, 3, 2, 'assistant', 'Done'),
-  messageLine(sessionId, 40, 999, 'user', 'Detached subagent task prompt'),
-  messageLine(sessionId, 41, 40, 'assistant', 'Detached subagent result'),
+  messageLine(sessionId, 3, 2, 'assistant', 'Calling subagent'),
+  // Tool result on main chain with subagent/* extensions — the trigger for
+  // subagent identification. chain_node_id=43 points to the leaf of the
+  // detached subtree; tool_call_id matches the run_subagent tool_call line.
+  messageLineWithExtensions(
+    sessionId,
+    4,
+    3,
+    'tool',
+    'Subagent agent_id=test-agent-01 completed successfully',
+    {
+      'subagent/agent_id': 'test-agent-01',
+      'subagent/profile_name': 'Explore',
+      'subagent/model': 'Subagent Default',
+      'subagent/chain_node_id': 43,
+    },
+    { toolCallId: 'tc-agent-1' },
+  ),
+  // Detached subtree (nodes 40-43): the subagent's own conversation with
+  // embedded tool_calls on assistant messages and tool_call_id on tool results.
+  messageLine(sessionId, 40, null, 'system', 'You are an explore subagent'),
+  messageLineWithExtensions(
+    sessionId,
+    41,
+    40,
+    'assistant',
+    'Let me search for files',
+    {},
+    {
+      toolCalls: [
+        {
+          id: 'functions.find_file_by_name:0',
+          name: 'find_file_by_name',
+          arguments: { pattern: 'test' },
+        },
+      ],
+    },
+  ),
+  messageLineWithExtensions(
+    sessionId,
+    42,
+    41,
+    'tool',
+    'Found: test.ts',
+    {},
+    { toolCallId: 'functions.find_file_by_name:0' },
+  ),
+  messageLine(sessionId, 43, 42, 'assistant', 'I found the file'),
+  // Tool call lines from tool_call_state (root agent's tool calls)
   toolCallLine(sessionId, 'tc-skill-1', 'execute', 'Invoked skill add-e2e-test', 'success', {
     inferenceToolName: 'skill',
     rawInput: { command: 'invoke', skill: 'add-e2e-test' },
@@ -1386,8 +1481,8 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
     fixture(
       'complete-session',
       'The devin complete fixture (#308): tool/skill/agent invocations, cogs- and ' +
-        'tool_call_state-derived components, inline Sub Agent evidence (detached ' +
-        'conversation), and exactly-reconciling ATIF token totals — makes ' +
+        'tool_call_state-derived components, canonical child session Sub Agent evidence, and ' +
+        'exactly-reconciling ATIF token totals — makes ' +
         'toolSkillAgentSubAgentDistinct and rootOnlyAndInclusiveNoDoubleCount run for devin.',
       completeSessionBundle,
       ['root', 'subagent', 'complete', 'deterministic'],

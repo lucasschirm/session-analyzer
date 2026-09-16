@@ -172,6 +172,11 @@ function turnRecordIds(evidence: readonly NormalizedEvidenceRecord[], sessionId:
     .map((r) => r.recordId);
 }
 
+/** Counts turn records across ALL sessions in the evidence pool. */
+function allTurnRecordIds(evidence: readonly NormalizedEvidenceRecord[]): string[] {
+  return evidence.filter((r) => r.recordType === 'turn').map((r) => r.recordId);
+}
+
 function invocationRecordIds(
   evidence: readonly NormalizedEvidenceRecord[],
   sessionId: string,
@@ -184,6 +189,16 @@ function invocationRecordIds(
         r.sessionId === sessionId &&
         (r.payload as { kind?: string }).kind === kind,
     )
+    .map((r) => r.recordId);
+}
+
+/** Counts invocation records of a given kind across ALL sessions. */
+function allInvocationRecordIds(
+  evidence: readonly NormalizedEvidenceRecord[],
+  kind: 'tool' | 'skill' | 'agent',
+): string[] {
+  return evidence
+    .filter((r) => r.recordType === 'invocation' && (r.payload as { kind?: string }).kind === kind)
     .map((r) => r.recordId);
 }
 
@@ -271,7 +286,7 @@ function metricProvenanceFor(value: DevinMetricValue, recordId: string): MetricP
 export function deriveDevinMetrics(
   session: DevinSessionLine | undefined,
   atif: AtifTranscript | undefined,
-  orderedMessages: readonly DevinMessageLine[],
+  _orderedMessages: readonly DevinMessageLine[],
   evidence: readonly NormalizedEvidenceRecord[],
   tokenUsage: DevinTokenUsage,
   rootArtifactId: string,
@@ -389,10 +404,13 @@ export function deriveDevinMetrics(
     effortChangesMetricValue(def, effortResult, effortProvenance, tokenRecordIds),
   );
 
-  // Turns
-  const turnIds = turnRecordIds(evidence, rootSessionId);
-  pushForBothScopes('devin:turns:count', (_scope, def) => {
-    const count = orderedMessages.length;
+  // Turns — scope-aware: root_only counts root session turns only;
+  // inclusive counts turns across all sessions (root + children).
+  const rootTurnIds = turnRecordIds(evidence, rootSessionId);
+  const inclusiveTurnIds = allTurnRecordIds(evidence);
+  pushForBothScopes('devin:turns:count', (scope, def) => {
+    const ids = scope === 'root_only' ? rootTurnIds : inclusiveTurnIds;
+    const count = ids.length;
     const value = count > 0 ? count : null;
     const exact = value !== null;
     const reason = value === null ? 'no message_nodes on main chain' : undefined;
@@ -400,7 +418,7 @@ export function deriveDevinMetrics(
       definition: def,
       value,
       exact,
-      evidenceRecordIds: turnIds.length > 0 ? turnIds : [tokenRecordId],
+      evidenceRecordIds: ids.length > 0 ? ids : [tokenRecordId],
       provenance: [{ artifactId: rootArtifactId, path: rootArtifactId }],
       estimationMethod: exact ? 'count_of_message_nodes' : 'missing_message_nodes',
       unavailableReason: reason,
@@ -410,17 +428,17 @@ export function deriveDevinMetrics(
   const sessionIds = sessionRecordIds(evidence, rootSessionId);
   const fallbackEvidence = sessionIds.length > 0 ? sessionIds : [tokenRecordId];
 
-  // Invocations
-  const toolIds = invocationRecordIds(evidence, rootSessionId, 'tool');
-  pushForBothScopes('devin:invocations:tool', (_scope, def) => {
-    const count = toolIds.length;
-    const value = count;
-    const exact = true;
+  // Invocations — scope-aware: root_only counts root session invocations;
+  // inclusive counts across all sessions (root + children).
+  const rootToolIds = invocationRecordIds(evidence, rootSessionId, 'tool');
+  const inclusiveToolIds = allInvocationRecordIds(evidence, 'tool');
+  pushForBothScopes('devin:invocations:tool', (scope, def) => {
+    const ids = scope === 'root_only' ? rootToolIds : inclusiveToolIds;
     return createMetricValue({
       definition: def,
-      value,
-      exact,
-      evidenceRecordIds: toolIds,
+      value: ids.length,
+      exact: true,
+      evidenceRecordIds: ids.length > 0 ? ids : fallbackEvidence,
       provenance: [{ artifactId: rootArtifactId, path: rootArtifactId }],
       dimensionValue: 'tool',
       estimationMethod: 'count_of_tool_call_records',
@@ -437,31 +455,35 @@ export function deriveDevinMetrics(
   // calls to point at): falls back to session/token evidence, same pattern
   // duration/cost already use below, so `must reference evidence`
   // (conformance) always holds without pretending a call happened.
-  const skillIds = invocationRecordIds(evidence, rootSessionId, 'skill');
-  pushForBothScopes('devin:invocations:skill', (_scope, def) =>
-    createMetricValue({
+  const rootSkillIds = invocationRecordIds(evidence, rootSessionId, 'skill');
+  const inclusiveSkillIds = allInvocationRecordIds(evidence, 'skill');
+  pushForBothScopes('devin:invocations:skill', (scope, def) => {
+    const ids = scope === 'root_only' ? rootSkillIds : inclusiveSkillIds;
+    return createMetricValue({
       definition: def,
-      value: skillIds.length,
+      value: ids.length,
       exact: true,
-      evidenceRecordIds: skillIds.length > 0 ? skillIds : fallbackEvidence,
+      evidenceRecordIds: ids.length > 0 ? ids : fallbackEvidence,
       provenance: [{ artifactId: rootArtifactId, path: rootArtifactId }],
       dimensionValue: 'skill',
       estimationMethod: 'count_of_tool_call_records',
-    }),
-  );
+    });
+  });
 
-  const agentIds = invocationRecordIds(evidence, rootSessionId, 'agent');
-  pushForBothScopes('devin:invocations:agent', (_scope, def) =>
-    createMetricValue({
+  const rootAgentIds = invocationRecordIds(evidence, rootSessionId, 'agent');
+  const inclusiveAgentIds = allInvocationRecordIds(evidence, 'agent');
+  pushForBothScopes('devin:invocations:agent', (scope, def) => {
+    const ids = scope === 'root_only' ? rootAgentIds : inclusiveAgentIds;
+    return createMetricValue({
       definition: def,
-      value: agentIds.length,
+      value: ids.length,
       exact: true,
-      evidenceRecordIds: agentIds.length > 0 ? agentIds : fallbackEvidence,
+      evidenceRecordIds: ids.length > 0 ? ids : fallbackEvidence,
       provenance: [{ artifactId: rootArtifactId, path: rootArtifactId }],
       dimensionValue: 'agent',
       estimationMethod: 'count_of_tool_call_records',
-    }),
-  );
+    });
+  });
 
   // Duration
   const timestamps = sessionTimestamps(session, atif);

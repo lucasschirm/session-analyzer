@@ -44,8 +44,13 @@ declare const console:
  * sum). Those sessions re-ingest from their retained artifacts so the new
  * per-message `model_request` tier and cache-exclusive payload materialize;
  * the v15 empty-series heal is subsumed by this broader pre-0.15.0 floor.
+ *
+ * v17: Devin subagent decomposition into canonical child sessions.
+ * Subagents are now decomposed into child SessionSummary rows and scoped
+ * evidence records, rather than keeping them inline. Inclusive metrics
+ * aggregate across root and child sessions.
  */
-export const ANALYTICS_PROCESSING_VERSION = 16;
+export const ANALYTICS_PROCESSING_VERSION = 17;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.

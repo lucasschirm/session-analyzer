@@ -3,6 +3,7 @@ import { DevinTransformer } from '../../src/index.js';
 import {
   authoritativeChainBundle,
   compactionBoundaryBundle,
+  completeSessionBundle,
   defaultContext,
   linearBundle,
   messageNodeReplayBundle,
@@ -205,6 +206,28 @@ describe('DevinTransformer.transform', () => {
         expect(inclusive?.value).toBe(metric.value);
       }
     }
+  });
+
+  it('emits diverging root and inclusive metrics when subagents are present', () => {
+    const result = DevinTransformer.transform(completeSessionBundle, defaultContext);
+    expect(result.errors).toEqual([]);
+    expect(result.sessionSummaries.length).toBeGreaterThan(1);
+
+    const rootTurns = findMetric(result, 'devin:turns:count:root_only');
+    const inclusiveTurns = findMetric(result, 'devin:turns:count:inclusive');
+    expect(rootTurns).toBeDefined();
+    expect(inclusiveTurns).toBeDefined();
+    expect(rootTurns?.value).toBe(4);
+    expect(inclusiveTurns?.value).toBe(8);
+    expect(Number(inclusiveTurns?.value)).toBeGreaterThan(Number(rootTurns?.value));
+
+    const rootTools = findMetric(result, 'devin:invocations:tool:root_only');
+    const inclusiveTools = findMetric(result, 'devin:invocations:tool:inclusive');
+    expect(rootTools).toBeDefined();
+    expect(inclusiveTools).toBeDefined();
+    expect(rootTools?.value).toBe(1);
+    expect(inclusiveTools?.value).toBe(2);
+    expect(Number(inclusiveTools?.value)).toBeGreaterThan(Number(rootTools?.value));
   });
 
   it('produces distinct comparability groups for each metric', () => {

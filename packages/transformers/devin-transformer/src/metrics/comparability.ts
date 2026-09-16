@@ -36,7 +36,15 @@ import {
  * turn/message populations — pre-/post-fix values must never aggregate
  * together (the #294 precedent).
  */
-export const DEVIN_METRIC_DEFINITION_VERSION = '0.4.0';
+/**
+ * Bumped 0.4.0 -> 0.5.0: canonical Sub Agent decomposition and scope-aware
+ * metrics (`devin:turns:count:inclusive`, `devin:invocations:*:inclusive`).
+ * Previously, inclusive metrics were identical to root_only. Now, inclusive
+ * metrics aggregate across the root session and all decomposed child sessions.
+ * Pre- and post-decomposition values measure different populations and must
+ * never aggregate together within the same comparability group.
+ */
+export const DEVIN_METRIC_DEFINITION_VERSION = '0.5.0';
 export const DEVIN_NATIVE_MAPPING_VERSION = 'devin-0.1.0';
 export const DEVIN_STATISTICAL_POLICY_ID = 'devin-default';
 export const DEVIN_PROVENANCE_REQUIREMENT = 'source_artifact_event_field';

@@ -9,6 +9,7 @@
 import { mapDevinRole } from '../message/role-map.js';
 import { parseAcpToolCall, parseAcpToolCallUpdate } from '../tool-call/acp-parse.js';
 import type {
+  DevinChatMessageToolCall,
   DevinChatMessageUsage,
   DevinJsonlParseResult,
   DevinJsonlParseWarning,
@@ -164,6 +165,48 @@ function parseSubagentExtensions(chatMessage: unknown): DevinSubagentExtensions 
   return { agentId, profileName, model, chainNodeId };
 }
 
+function parseToolCallArgs(raw: unknown): Record<string, unknown> | string | null {
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (typeof raw !== 'string') return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? parsed : raw;
+  } catch {
+    return raw;
+  }
+}
+
+function parseSingleToolCall(tc: unknown): DevinChatMessageToolCall | null {
+  if (typeof tc !== 'object' || tc === null) return null;
+  const r = tc as Record<string, unknown>;
+  if (typeof r.id !== 'string' || typeof r.name !== 'string') return null;
+  return {
+    id: r.id,
+    name: r.name,
+    arguments: parseToolCallArgs(r.arguments),
+    index: typeof r.index === 'number' ? r.index : null,
+    kind: typeof r.kind === 'string' ? r.kind : null,
+  };
+}
+
+function parseEmbeddedToolCalls(chatMessage: unknown): DevinChatMessageToolCall[] | null {
+  if (typeof chatMessage !== 'object' || chatMessage === null) return null;
+  const calls = (chatMessage as Record<string, unknown>).tool_calls;
+  if (!Array.isArray(calls) || calls.length === 0) return null;
+  const parsed = calls
+    .map(parseSingleToolCall)
+    .filter((c): c is DevinChatMessageToolCall => c !== null);
+  return parsed.length > 0 ? parsed : null;
+}
+
+function parseEmbeddedToolCallId(chatMessage: unknown): string | null {
+  if (typeof chatMessage !== 'object' || chatMessage === null) return null;
+  const id = (chatMessage as Record<string, unknown>).tool_call_id;
+  return typeof id === 'string' ? id : null;
+}
+
 /**
  * Parses `chat_message.metadata`'s per-request usage keys: `request_id`,
  * `generation_model`, and the nested `metrics` bag. Never throws: a
@@ -212,6 +255,8 @@ function messageFields(row: RawDevinJsonlLine): MessageFields {
     parsedMetadata: parseMessageNodeMetadata(metadata),
     subagent: parseSubagentExtensions(chatMessage),
     chatUsage: parseChatMessageUsage(chatMessage),
+    toolCalls: parseEmbeddedToolCalls(chatMessage),
+    toolCallId: parseEmbeddedToolCallId(chatMessage),
   };
 }
 

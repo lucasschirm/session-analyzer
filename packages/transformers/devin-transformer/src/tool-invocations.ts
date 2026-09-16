@@ -84,7 +84,7 @@ function toolStatus(
   return 'unknown';
 }
 
-function byteLength(value: unknown): number {
+export function byteLength(value: unknown): number {
   if (typeof value === 'string') return value.length;
   try {
     return JSON.stringify(value).length;
@@ -97,6 +97,7 @@ export function buildToolInvocationRecords(
   sessionId: string,
   toolCalls: readonly DevinToolCallLine[],
   rootArtifactId: string,
+  childSessionIdByToolCallId?: ReadonlyMap<string, string>,
 ): ToolInvocationResult {
   const records: NormalizedEvidenceRecord[] = [];
   let toolCount = 0;
@@ -109,6 +110,7 @@ export function buildToolInvocationRecords(
     const { kind, name, target: domainTarget } = invocationKindAndName(call, update);
     const target = kind === 'tool' ? toolTarget(call) : domainTarget;
     const status = toolStatus(update);
+    const childSessionId = childSessionIdByToolCallId?.get(toolCallId);
 
     records.push({
       recordId: stableId('invocation', { session: sessionId, tool: toolCallId }),
@@ -131,6 +133,7 @@ export function buildToolInvocationRecords(
         status,
         origin: 'root',
         rootSessionId: sessionId,
+        ...(childSessionId ? { childSessionId } : {}),
       },
     });
 

@@ -181,7 +181,7 @@ function buildManifestArtifacts(hashed: HashResult[], state: SyncState): Manifes
 
 export function buildSessionManifest(
   session: SessionData,
-  run: SyncRun,
+  _run: SyncRun,
   artifacts: ManifestArtifact[],
   options?: { pluginVersion?: string; transcriptsCaptured?: boolean },
 ): SyncManifest {

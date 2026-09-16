@@ -131,11 +131,15 @@ export function getDevinMetricDefinitions(): readonly MetricDefinition[] {
         'sum',
       ),
     );
+    const turnsDesc =
+      scope === 'root_only'
+        ? 'Count of turns derived from the message_nodes main chain. Scope: root_only.'
+        : 'Count of turns across the root main chain and all decomposed child subagent sessions. Scope: inclusive.';
     defs.push(
       metricDefinition(
         `devin:turns:count:${scope}`,
         `Turn count (${scopeLabel})`,
-        `Count of turns derived from the message_nodes main chain. Scope: ${scopeLabel}.`,
+        turnsDesc,
         'session_shape',
         'count',
         'integer',
@@ -146,11 +150,15 @@ export function getDevinMetricDefinitions(): readonly MetricDefinition[] {
       ),
     );
 
+    const toolDesc =
+      scope === 'root_only'
+        ? 'Count of ACP tool calls with kind edit/execute/search on the root session. Skill and Agent invocations are excluded. Scope: root_only.'
+        : 'Count of tool calls across root ACP calls and child subagent embedded tool calls. Skill and Agent invocations are excluded. Scope: inclusive.';
     defs.push(
       metricDefinition(
         `devin:invocations:tool:${scope}`,
         `Tool invocations (${scopeLabel})`,
-        `Count of ACP tool calls with kind edit/execute/search. Skill and Agent invocations are excluded. Scope: ${scopeLabel}.`,
+        toolDesc,
         'invocations',
         'count',
         'integer',
@@ -160,11 +168,15 @@ export function getDevinMetricDefinitions(): readonly MetricDefinition[] {
         'sum',
       ),
     );
+    const skillDesc =
+      scope === 'root_only'
+        ? 'Count of Skill invocations from root tool_call_state functions.skill:* ACP calls. Scope: root_only.'
+        : 'Count of Skill invocations across root and child subagent sessions. Scope: inclusive.';
     defs.push(
       metricDefinition(
         `devin:invocations:skill:${scope}`,
         `Skill invocations (${scopeLabel})`,
-        `Count of Skill invocations from tool_call_state functions.skill:* ACP calls. Scope: ${scopeLabel}.`,
+        skillDesc,
         'invocations',
         'count',
         'integer',
@@ -174,11 +186,15 @@ export function getDevinMetricDefinitions(): readonly MetricDefinition[] {
         'sum',
       ),
     );
+    const agentDesc =
+      scope === 'root_only'
+        ? 'Count of Agent invocations from root tool_call_state functions.run_subagent:* ACP calls. Scope: root_only.'
+        : 'Count of Agent invocations across root and child subagent sessions. Scope: inclusive.';
     defs.push(
       metricDefinition(
         `devin:invocations:agent:${scope}`,
         `Agent invocations (${scopeLabel})`,
-        `Count of Agent invocations from tool_call_state functions.run_subagent:* ACP calls. Scope: ${scopeLabel}.`,
+        agentDesc,
         'invocations',
         'count',
         'integer',

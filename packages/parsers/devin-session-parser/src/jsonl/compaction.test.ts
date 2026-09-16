@@ -32,6 +32,8 @@ function node(
     parsedMetadata,
     subagent: null,
     chatUsage: null,
+    toolCalls: null,
+    toolCallId: null,
   };
 }
 

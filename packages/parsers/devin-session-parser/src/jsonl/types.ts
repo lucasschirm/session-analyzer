@@ -124,6 +124,15 @@ export interface DevinSubagentExtensions {
   chainNodeId: number | null;
 }
 
+/** A tool call embedded within `chat_message.tool_calls` (OpenAI format). */
+export interface DevinChatMessageToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown> | string | null;
+  index: number | null;
+  kind: string | null;
+}
+
 /**
  * Parsed shape of the per-request usage Devin CLI stamps on a message's own
  * `chat_message.metadata` object: `request_id`, `generation_model`, and the
@@ -194,6 +203,10 @@ export interface DevinMessageLine {
    * real model invocation" without inspecting every field.
    */
   chatUsage: DevinChatMessageUsage | null;
+  /** Tool calls embedded in `chat_message.tool_calls` (e.g. OpenAI format). */
+  toolCalls: DevinChatMessageToolCall[] | null;
+  /** Tool call id embedded in `chat_message.tool_call_id` (e.g. role: 'tool'). */
+  toolCallId: string | null;
 }
 
 /** A parsed `tool_call_state` row line: no timestamp column exists upstream. */

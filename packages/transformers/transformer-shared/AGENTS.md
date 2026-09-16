@@ -74,6 +74,7 @@ Claude conformance fixtures/data) live in
   wall-clock time.
 - **Cross-harness comparability**: metrics keyed by `comparability_group_id`;
   mixed groups never aggregate.
+- **Canonical Subsession Decomposition & Metric Disjointness**: Every transformer plugin must decompose subagents into canonical child sessions (`sessions`, `session_summaries`, `session_relations`) with their own lifecycle and evidence. Root-only metrics measure strictly root-agent activity (never aggregating child tool executions or tokens); child subagent sessions measure their own activity; inclusive metrics and rollups sum across children.
 - **Session failure isolation**: A transformation error or invalid artifact bundle in one session must produce structured session issues and never impede or crash transformation of other sessions.
 
 ## Key relationships

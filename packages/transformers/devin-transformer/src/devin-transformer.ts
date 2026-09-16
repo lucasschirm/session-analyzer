@@ -29,6 +29,11 @@ import { parseDevinBundle } from './parse-bundle.js';
 import { deriveDevinSessionComponents, hasModelSentToolDefinitions } from './session-components.js';
 import { buildSessionSpine, deriveSessionId, resolveSourceIdentity } from './session-spine.js';
 import { buildDevinSubagentEvidence } from './subagent-evidence.js';
+import {
+  buildSubagentChildSessions,
+  deriveChildSessionId,
+  identifySubagents,
+} from './subagent-spine.js';
 import { buildTokenUsageRecords } from './token-usage.js';
 import { buildToolInvocationRecords } from './tool-invocations.js';
 
@@ -212,7 +217,18 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // completion — only the evidence-record payload contract changed. Forces a
 // fresh generation on reprocess so no analysis mixes pre-/post-fix
 // `model_usage` shapes.
-export const DEVIN_TRANSFORMER_VERSION = '0.15.0';
+// Bumped 0.15.0 -> 0.16.0: subagents are now decomposed into canonical
+// child sessions (`session`, `session_relation`, turns, messages,
+// invocations) mirroring the Claude Code convention, instead of inline
+// `subagent_turn`/`detached_conversation` normalized events. The
+// conformance profile changed from `inline-events` to `child-sessions`.
+// Root-only metrics now strictly measure root-agent activity; subagent
+// tool calls are scoped to the child session. `buildToolInvocationRecords`
+// now attaches `childSessionId` to `run_subagent` invocations.
+// Accompanied by `DEVIN_METRIC_DEFINITION_VERSION` bump 0.4.0 -> 0.5.0 (see
+// comparability.ts) because inclusive metric populations now encompass
+// child sessions. Forces a fresh generation on reprocess.
+export const DEVIN_TRANSFORMER_VERSION = '0.16.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly
@@ -507,7 +523,40 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       parsed.atif?.steps ?? [],
       rootArtifactId,
     );
-    const toolResult = buildToolInvocationRecords(sessionId, parsed.toolCalls, rootArtifactId);
+    // Identify subagents from main-chain tool results
+    const sourceIdentity = resolveSourceIdentity(context, bundle.sourceIdentity);
+    const subagents = identifySubagents(parsed.orderedMessages, parsed.toolCalls);
+
+    // Decompose subagents into canonical child sessions
+    const subagentResult = buildSubagentChildSessions(
+      sessionId,
+      sourceIdentity.sourceId,
+      sourceIdentity.environmentId,
+      sourceIdentity.projectId,
+      subagents,
+      parsed.detachedMessages,
+      rootArtifactId,
+    );
+
+    // Build childSessionId map for linking root invocations to child sessions
+    const childSessionIdByToolCallId = new Map<string, string>();
+    for (const identity of subagents) {
+      const childId = deriveChildSessionId(
+        sessionId,
+        sourceIdentity.sourceId,
+        sourceIdentity.environmentId,
+        sourceIdentity.projectId,
+        identity.agentId,
+      );
+      childSessionIdByToolCallId.set(identity.toolCallId, childId);
+    }
+
+    const toolResult = buildToolInvocationRecords(
+      sessionId,
+      parsed.toolCalls,
+      rootArtifactId,
+      childSessionIdByToolCallId,
+    );
     const tokenResult = buildTokenUsageRecords(
       sessionId,
       parsed.sessionLine,
@@ -528,14 +577,19 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       parsed.prompts,
       rootArtifactId,
     );
-    const subagentRecords = buildDevinSubagentEvidence(
+
+    // Pass only unconsumed detached messages to the fallback evidence builder
+    const remainingDetached = parsed.detachedMessages.filter(
+      (m) => !subagentResult.consumedNodeIds.has(m.nodeId),
+    );
+    const subagentEvidenceRecords = buildDevinSubagentEvidence(
       sessionId,
-      parsed.detachedMessages,
+      remainingDetached,
       rootArtifactId,
     );
-    const sourceId = resolveSourceIdentity(context, bundle.sourceIdentity).sourceId;
+
     const sessionComponents = deriveDevinSessionComponents(
-      sourceId,
+      sourceIdentity.sourceId,
       parsed.sessionLine?.cogsJson,
       parsed.toolCalls,
       rootArtifactId,
@@ -553,7 +607,8 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       ...toolResult.records,
       ...tokenResult.records,
       ...compactionRecords,
-      ...subagentRecords,
+      ...subagentEvidenceRecords,
+      ...subagentResult.records,
     ];
 
     const tokenUsage = {
@@ -590,7 +645,7 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       ontologyVersion: DEVIN_ONTOLOGY_VERSION,
       metricDefinitionVersion: DEVIN_METRIC_DEFINITION_VERSION,
       evidence: allEvidence,
-      sessionSummaries: [spine.summary],
+      sessionSummaries: [spine.summary, ...subagentResult.summaries],
       componentSummaries: merged.components,
       metricValues: metrics.metricValues as readonly DevinMetricValue[],
       distributions: [],

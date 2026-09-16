@@ -1,5 +1,5 @@
 import type { MetricCapability, UnknownArtifactBundle } from '@lucasschirm/sal-transformer-shared';
-import { comparabilityGroupFor } from './metrics/comparability.js';
+import { comparabilityGroupFor, DEVIN_METRIC_DEFINITION_VERSION } from './metrics/comparability.js';
 import { definitionFor, getDevinMetricDefinitions } from './metrics/definitions.js';
 import { type DevinParsedBundle, parseDevinBundle } from './parse-bundle.js';
 
@@ -112,7 +112,7 @@ export function getDevinMetricCapabilities(bundle?: UnknownArtifactBundle): Metr
   if (!bundle) {
     return definitions.map((d) => ({
       metricId: d.metricId,
-      definitionVersion: '0.1.0',
+      definitionVersion: DEVIN_METRIC_DEFINITION_VERSION,
       state: 'partial' as const,
       reason: 'no bundle supplied to evaluate evidence',
       comparabilityGroupId: comparabilityGroupFor(d, {}),
@@ -123,7 +123,7 @@ export function getDevinMetricCapabilities(bundle?: UnknownArtifactBundle): Metr
   if (!parsed.rootTranscriptText) {
     return definitions.map((d) => ({
       metricId: d.metricId,
-      definitionVersion: '0.1.0',
+      definitionVersion: DEVIN_METRIC_DEFINITION_VERSION,
       state: 'unavailable' as const,
       reason: 'no root transcript artifact found',
       comparabilityGroupId: comparabilityGroupFor(d, {}),
@@ -134,7 +134,7 @@ export function getDevinMetricCapabilities(bundle?: UnknownArtifactBundle): Metr
     const { state, reason } = capabilityStateFor(d.metricId, parsed);
     return {
       metricId: d.metricId,
-      definitionVersion: '0.1.0',
+      definitionVersion: DEVIN_METRIC_DEFINITION_VERSION,
       state,
       reason,
       comparabilityGroupId: comparabilityGroupFor(d, {}),
