@@ -9,6 +9,7 @@
 import { mapDevinRole } from '../message/role-map.js';
 import { parseAcpToolCall, parseAcpToolCallUpdate } from '../tool-call/acp-parse.js';
 import type {
+  DevinChatMessageUsage,
   DevinJsonlParseResult,
   DevinJsonlParseWarning,
   DevinMessageLine,
@@ -163,6 +164,37 @@ function parseSubagentExtensions(chatMessage: unknown): DevinSubagentExtensions 
   return { agentId, profileName, model, chainNodeId };
 }
 
+/**
+ * Parses `chat_message.metadata`'s per-request usage keys: `request_id`,
+ * `generation_model`, and the nested `metrics` bag. Never throws: a
+ * non-object `chatMessage`/`metadata`/`metrics` degrades field-by-field to
+ * `null`. Returns `null` (not a mostly-null object) when none of the three
+ * sources are present, matching `parseSubagentExtensions`'s contract so
+ * callers can use `chatUsage !== null` as the "this is a model invocation"
+ * signal.
+ */
+function parseChatMessageUsage(chatMessage: unknown): DevinChatMessageUsage | null {
+  if (typeof chatMessage !== 'object' || chatMessage === null) return null;
+  const metadata = (chatMessage as Record<string, unknown>).metadata;
+  if (typeof metadata !== 'object' || metadata === null) return null;
+  const meta = metadata as Record<string, unknown>;
+  const metrics =
+    typeof meta.metrics === 'object' && meta.metrics !== null
+      ? (meta.metrics as Record<string, unknown>)
+      : null;
+  const requestId = typeof meta.request_id === 'string' ? meta.request_id : null;
+  const generationModel = typeof meta.generation_model === 'string' ? meta.generation_model : null;
+  if (requestId === null && generationModel === null && metrics === null) return null;
+  return {
+    requestId,
+    generationModel,
+    inputTokens: metrics ? num(metrics, 'input_tokens') : null,
+    outputTokens: metrics ? num(metrics, 'output_tokens') : null,
+    cacheReadTokens: metrics ? num(metrics, 'cache_read_tokens') : null,
+    cacheCreationTokens: metrics ? num(metrics, 'cache_creation_tokens') : null,
+  };
+}
+
 type MessageFields = Omit<DevinMessageLine, 'type' | 'ts' | 'order' | 'sessionId' | 'nodeId'>;
 
 function messageFields(row: RawDevinJsonlLine): MessageFields {
@@ -179,6 +211,7 @@ function messageFields(row: RawDevinJsonlLine): MessageFields {
     metadata,
     parsedMetadata: parseMessageNodeMetadata(metadata),
     subagent: parseSubagentExtensions(chatMessage),
+    chatUsage: parseChatMessageUsage(chatMessage),
   };
 }
 

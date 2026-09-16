@@ -1,7 +1,11 @@
 import { runTransformerConformanceSuite } from '@lucasschirm/sal-transformer-shared/conformance';
 import { describe, expect, it } from 'vitest';
 import { DEVIN_CONFORMANCE_PROFILE, DevinTransformer } from '../../src/index.js';
-import { configComponentsBundle, devinConformanceFixtures } from '../conformance/fixtures/index.js';
+import {
+  configComponentsBundle,
+  devinConformanceFixtures,
+  tier2ContextBundle,
+} from '../conformance/fixtures/index.js';
 
 describe('DevinTransformer conformance', () => {
   it('passes the shared transformer conformance suite (strict: unverified fails)', () => {
@@ -18,6 +22,44 @@ describe('DevinTransformer conformance', () => {
     // #308: every canonical invariant must actually execute for devin —
     // `unverified` means a missing fixture silently disabled a check.
     expect(report.invariants.filter((i) => i.status === 'unverified')).toEqual([]);
+  });
+
+  // The `tier2-context` fixture is part of the strict suite above, so the
+  // context-ordering invariants run on the transcript-only per-message path
+  // (not only on ATIF aggregates). This additionally pins the evidence shape
+  // that keeps the token identity reconcilable.
+  it('emits per-message model_request records while keeping the session aggregate turn-unscoped', () => {
+    const result = DevinTransformer.transform(
+      tier2ContextBundle,
+      devinConformanceFixtures.fixtures[0].context,
+    );
+    const requests = result.evidence.filter((r) => r.recordType === 'model_request');
+    const aggregates = result.evidence.filter((r) => r.recordType === 'model_usage');
+    expect(requests).toHaveLength(2);
+    expect(aggregates).toHaveLength(1);
+    for (const request of requests) {
+      expect(request.parentId).toBeDefined();
+      expect((request.payload as { requestId?: string }).requestId).toMatch(/^req-/);
+    }
+
+    const aggregate = aggregates[0];
+    expect(aggregate?.parentId).toBeUndefined();
+    expect(
+      (aggregate?.payload as { requestOrder?: number } | undefined)?.requestOrder,
+    ).toBeUndefined();
+
+    // Token identity: the `model_usage` aggregate's fields must sum to
+    // `devin:tokens:total` even though the per-message requests do not (they
+    // come from a different source and must not enter this reconciliation).
+    const fields = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens'];
+    const usageSum = aggregates.reduce((sum, record) => {
+      const payload = record.payload as Record<string, number | null>;
+      return sum + fields.reduce((rowSum, field) => rowSum + (payload[field] ?? 0), 0);
+    }, 0);
+    const total = result.metricValues.find(
+      (m) => m.metricId === 'devin:tokens:total:root_only',
+    )?.value;
+    expect(usageSum).toBe(total);
   });
 
   for (const fixture of devinConformanceFixtures.fixtures) {
@@ -66,9 +108,13 @@ describe('DevinTransformer conformance', () => {
       (sum, r) => sum + ((r.payload as { cacheReadTokens: number }).cacheReadTokens ?? 0),
       0,
     );
-    expect(inputSum).toBe(35104);
+    // ATIF `promptTokens` is cache-inclusive; the payload's `inputTokens` is
+    // cache-exclusive, so input + cached must reconstruct the 35104 prompt
+    // total (and input + output + cacheRead + cacheCreate the session total).
+    expect(inputSum).toBe(35104 - 23010);
     expect(outputSum).toBe(96);
     expect(cachedSum).toBe(23010);
+    expect(inputSum + cachedSum).toBe(35104);
   });
 
   it('DS-B31 (#290): the model-switch fixture attaches a non-null, label-derived effort to both steps and reports one transition', () => {

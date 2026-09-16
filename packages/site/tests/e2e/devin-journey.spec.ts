@@ -121,14 +121,19 @@ test.describe('Devin model-switch session: context growth, tools, and drawer', (
     await assertNoErrorBoundary(chart);
 
     // Data correctness via the accessible table fallback. The modelSwitch
-    // fixture has two ATIF agent-generation steps with per-step metrics:
+    // fixture has two ATIF agent-generation steps with per-step metrics.
+    // ATIF's `prompt_tokens` is cache-INCLUSIVE, and the `inputTokens`
+    // payload field is now cache-EXCLUSIVE (shared contract), so
+    // `context = (prompt - cached) + cached = prompt`:
     //   step 1 (glm-5-2): prompt 18071 / cached 11874 / completion 59
-    //     -> context = 18071 + 11874 = 29945
+    //     -> context = 18071
     //   step 2 (swe-1-7): prompt 17033 / cached 11136 / completion 37
-    //     -> context = 17033 + 11136 = 28169
+    //     -> context = 17033
     // The flat-chart bug produced a single context value for all four
     // points; the fix links each per-step usage record to its turn via
-    // parentId so the context level changes between the two steps.
+    // parentId so the context level changes between the two steps. (The
+    // earlier `prompt + cached` values asserted here double-counted the
+    // cached subset.)
     await chart.locator('summary', { hasText: 'View as table' }).click();
     const rows = chart.locator('tbody tr');
     await expect(rows.first()).toBeVisible({ timeout: 10000 });
@@ -138,8 +143,8 @@ test.describe('Devin model-switch session: context growth, tools, and drawer', (
     // (2 user + 2 assistant) → 2 rows per context level. Editing the
     // fixture's message count or per-step token values requires updating
     // these assertions.
-    await expect(chart.locator('tbody tr', { hasText: 'context 29,945 tokens' })).toHaveCount(2);
-    await expect(chart.locator('tbody tr', { hasText: 'context 28,169 tokens' })).toHaveCount(2);
+    await expect(chart.locator('tbody tr', { hasText: 'context 18,071 tokens' })).toHaveCount(2);
+    await expect(chart.locator('tbody tr', { hasText: 'context 17,033 tokens' })).toHaveCount(2);
 
     // Generation tokens are attributed per-step, not session-aggregate.
     await expect(chart.locator('tbody tr', { hasText: 'generation 59 tokens' })).toHaveCount(1);

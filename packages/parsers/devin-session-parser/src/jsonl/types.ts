@@ -124,6 +124,43 @@ export interface DevinSubagentExtensions {
   chainNodeId: number | null;
 }
 
+/**
+ * Parsed shape of the per-request usage Devin CLI stamps on a message's own
+ * `chat_message.metadata` object: `request_id`, `generation_model`, and the
+ * `metrics` bag (`input_tokens` / `output_tokens` / `cache_read_tokens` /
+ * `cache_creation_tokens`).
+ *
+ * This is the **third** distinct devin metadata namespace, and it is neither
+ * of the other two: `DevinMessageNodeMetadata` is the row-level
+ * `message_nodes.metadata` column; `DevinSubagentExtensions` reads the
+ * `subagent/*` keys under `chat_message.metadata.extensions`; this one reads
+ * the sibling `metrics`/`request_id`/`generation_model` keys directly under
+ * `chat_message.metadata`.
+ *
+ * These are **per model request**, not cumulative — the raw row-level
+ * `message_nodes.metadata.num_tokens_preceding` is a context-size checkpoint,
+ * whereas these count exactly one inference. Every field stays `null` when
+ * the source doesn't carry it (`.agents/rules/missing-is-never-zero.md`),
+ * and `inputTokens` EXCLUDES cache reads (verified against real sessions:
+ * 14,558 input alongside 44,288 cache_read on the same request), matching
+ * claude's `inputTokens` field semantics.
+ */
+export interface DevinChatMessageUsage {
+  /** `chat_message.metadata.request_id` — identifies this one inference. */
+  requestId: string | null;
+  /** `chat_message.metadata.generation_model` — the raw model label for this
+   *  request, resolved against the catalog by the transformer, never here. */
+  generationModel: string | null;
+  /** `metrics.input_tokens` — prompt tokens EXCLUDING cache reads. */
+  inputTokens: number | null;
+  /** `metrics.output_tokens` — generated completion tokens. */
+  outputTokens: number | null;
+  /** `metrics.cache_read_tokens` — cache-hit subset of the prompt. */
+  cacheReadTokens: number | null;
+  /** `metrics.cache_creation_tokens` — cache-write tokens. */
+  cacheCreationTokens: number | null;
+}
+
 /** A parsed `message_nodes` row line. */
 export interface DevinMessageLine {
   type: 'message';
@@ -150,6 +187,13 @@ export interface DevinMessageLine {
    * carries none of them (the overwhelming majority of ordinary nodes).
    */
   subagent: DevinSubagentExtensions | null;
+  /**
+   * Per-request usage from `chat_message.metadata` (`metrics` +
+   * `request_id` + `generation_model`). `null` when the node carries none of
+   * the three, so callers can treat `chatUsage !== null` as "this node is a
+   * real model invocation" without inspecting every field.
+   */
+  chatUsage: DevinChatMessageUsage | null;
 }
 
 /** A parsed `tool_call_state` row line: no timestamp column exists upstream. */
