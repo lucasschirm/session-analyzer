@@ -41,17 +41,14 @@ export function resolveSourceIdentity(
 }
 
 export function deriveSessionId(
-  context: TransformContext,
+  _context: TransformContext,
   source: SourceIdentity | undefined,
   nativeSessionId: string,
 ): string {
-  const s = resolveSourceIdentity(context, source);
-  return stableId('session', {
-    source: s.sourceId,
-    env: s.environmentId,
-    project: s.projectId,
-    session: nativeSessionId,
-  });
+  if (nativeSessionId && nativeSessionId !== 'unknown') {
+    return nativeSessionId;
+  }
+  return source?.sessionId ?? nativeSessionId ?? 'unknown';
 }
 
 function sessionTimestamps(
