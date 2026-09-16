@@ -128,6 +128,91 @@ describe('context-timing computation', () => {
     expect(points[0]?.inputTokens).toBeNull();
   });
 
+  it('uses numTokensPreceding as the context source when no model request resolves', () => {
+    // Devin transcript-only sessions emit a single session-level model_usage
+    // record with all-null token fields; the per-node numTokensPreceding
+    // checkpoint is the only real context signal.
+    const records: TimingSourceRecord[] = [
+      record({
+        eventType: 'message',
+        recordId: 'm-1',
+        payload: { role: 'user', timestamp: '2026-08-01T10:00:00.000Z' },
+      }),
+      record({
+        eventType: 'message',
+        recordId: 'm-2',
+        payload: {
+          role: 'assistant',
+          timestamp: '2026-08-01T10:00:01.000Z',
+          numTokensPreceding: 18997,
+        },
+      }),
+      record({
+        eventType: 'model_usage',
+        recordId: 'req-1',
+        sourceEventId: 'sess-1',
+        payload: { requestOrder: 1, model: 'unknown', inputTokens: null, outputTokens: null },
+      }),
+    ];
+    const points = computeContextTimingPoints(records);
+    expect(points).toHaveLength(2);
+    expect(points[1]?.contextTokens).toBe(18997);
+    // m-1 carries no checkpoint → carry-forward fill inherits m-2's context.
+    expect(points[0]?.contextTokens).toBe(18997);
+  });
+
+  it('falls back to numTokensPreceding when the resolved request has all-null context fields', () => {
+    const records: TimingSourceRecord[] = [
+      record({
+        eventType: 'turn',
+        recordId: 't-1',
+        payload: { ordinal: 1, role: 'assistant', timestamp: '2026-08-01T10:00:00.000Z' },
+      }),
+      record({
+        eventType: 'message',
+        recordId: 'm-1',
+        parentId: 't-1',
+        payload: {
+          role: 'assistant',
+          timestamp: '2026-08-01T10:00:00.000Z',
+          numTokensPreceding: 42000,
+        },
+      }),
+      record({
+        eventType: 'model_usage',
+        recordId: 'req-1',
+        parentId: 't-1',
+        payload: { requestOrder: 1, model: 'unknown', inputTokens: null, cacheReadTokens: null },
+      }),
+    ];
+    const points = computeContextTimingPoints(records);
+    expect(points[0]?.contextTokens).toBe(42000);
+  });
+
+  it('prefers resolved request context over numTokensPreceding when both exist', () => {
+    const records: TimingSourceRecord[] = [
+      record({
+        eventType: 'message',
+        recordId: 'm-1',
+        sourceEventId: 'a-1',
+        payload: {
+          role: 'assistant',
+          timestamp: '2026-08-01T10:00:00.000Z',
+          numTokensPreceding: 42000,
+        },
+      }),
+      record({
+        eventType: 'model_usage',
+        recordId: 'req-1',
+        sourceEventId: 'a-1',
+        payload: { inputTokens: 1000, outputTokens: 10 },
+      }),
+    ];
+    const points = computeContextTimingPoints(records);
+    expect(points[0]?.contextTokens).toBe(1000);
+    expect(points[0]?.generationTokens).toBe(10);
+  });
+
   it('detects compaction via consecutive context drops when no compaction record exists', () => {
     const records: TimingSourceRecord[] = [
       record({

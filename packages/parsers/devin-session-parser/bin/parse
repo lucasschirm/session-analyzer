@@ -1,0 +1,62 @@
+#!/usr/bin/env node
+/**
+ * CLI: parse a `devin-session-jsonl/v1` transcript into JSON.
+ *
+ * Usage:
+ *   bin/parse <transcript.jsonl> > parsed.json
+ *
+ * Requires the package to be built first (`pnpm build` -> dist/).
+ * Output: the full `DevinJsonlParseResult` plus derived compaction
+ * boundaries and a per-message context-growth projection
+ * (`numTokensPreceding`) for quick inspection.
+ */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const dist = join(here, '..', 'dist', 'index.js');
+const { parseDevinJsonlText, detectCompactionBoundaries, computePrunedNodeIds } = await import(
+  dist
+);
+
+const input = process.argv[2];
+if (!input) {
+  console.error('usage: bin/parse <transcript.jsonl>');
+  process.exit(2);
+}
+
+const text = readFileSync(input, 'utf8');
+const result = parseDevinJsonlText(text);
+
+const messages = result.lines.filter((l) => l.type === 'message');
+const boundaries = detectCompactionBoundaries(messages).map((b) => ({
+  ...b,
+  pruned: computePrunedNodeIds(messages, b.anchorNodeId),
+}));
+
+const contextGrowth = messages.map((m) => ({
+  order: m.order,
+  nodeId: m.nodeId,
+  parentNodeId: m.parentNodeId,
+  role: m.role,
+  createdAt: m.createdAt,
+  numTokensPreceding: m.parsedMetadata?.numTokensPreceding ?? null,
+  summarizedFrom: m.parsedMetadata?.summarizedFrom ?? null,
+  isSystemPrefix: m.parsedMetadata?.isSystemPrefix ?? null,
+}));
+
+process.stdout.write(
+  JSON.stringify(
+    {
+      ...result,
+      derived: {
+        messageCount: messages.length,
+        compactionBoundaries: boundaries,
+        contextGrowth,
+      },
+    },
+    null,
+    2,
+  ) + '\n',
+);

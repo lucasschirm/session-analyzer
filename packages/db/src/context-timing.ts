@@ -138,6 +138,13 @@ interface TimingMessage {
   content: string;
   model?: string;
   turnOrdinal?: number;
+  /**
+   * Harness-reported per-node context-size checkpoint (Devin
+   * `num_tokens_preceding`). Used as the context source when no resolved
+   * model request carries context fields — the only signal on
+   * transcript-only Devin sessions.
+   */
+  numTokensPreceding?: number;
 }
 
 export interface RawTimingPoint {
@@ -223,6 +230,10 @@ function parseTimingMessage(
     model: asOptionalString(payload.model) ?? undefined,
     turnOrdinal:
       turn?.ordinal ?? (typeof payload.ordinal === 'number' ? payload.ordinal : undefined),
+    numTokensPreceding:
+      typeof payload.numTokensPreceding === 'number' && Number.isFinite(payload.numTokensPreceding)
+        ? payload.numTokensPreceding
+        : undefined,
   };
 }
 
@@ -290,9 +301,9 @@ function createRawTimingPoint(msg: TimingMessage, req?: TimingRequest): RawTimin
     return {
       msg,
       req,
-      contextTokens: null,
+      contextTokens: msg.numTokensPreceding ?? null,
       generationTokens: null,
-      totalTokens: null,
+      totalTokens: msg.numTokensPreceding ?? null,
       compactedTokens: null,
     };
   }
@@ -300,7 +311,7 @@ function createRawTimingPoint(msg: TimingMessage, req?: TimingRequest): RawTimin
     req.inputTokens != null || req.cacheReadTokens != null || req.cacheCreationTokens != null;
   const contextTokens = hasContext
     ? asNumber(req.inputTokens) + asNumber(req.cacheReadTokens) + asNumber(req.cacheCreationTokens)
-    : null;
+    : (msg.numTokensPreceding ?? null);
   const generationTokens = asOptionalNumber(req.outputTokens) ?? null;
   const totalTokens =
     contextTokens !== null ? contextTokens + (generationTokens ?? 0) : generationTokens;
