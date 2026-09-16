@@ -49,6 +49,28 @@ describe('session-context-drawer', () => {
     expect(shadow(drawer).querySelector('.drawer-panel')).toBeNull();
   });
 
+  it('labels the Tool / Skill / Agent domain of a classified message', async () => {
+    const drawer = Object.assign(document.createElement('session-context-drawer'), {
+      message: { ...sampleMessage, invocationKind: 'skill' },
+    }) as SessionContextDrawer;
+    await mount(drawer);
+    const root = shadow(drawer);
+
+    const badge = root.querySelector('.kind-badge');
+    expect(badge?.textContent?.trim()).toBe('skill message');
+    expect(badge?.getAttribute('data-kind')).toBe('skill');
+  });
+
+  it('renders no domain badge for a message the transformer left unclassified', async () => {
+    const drawer = Object.assign(document.createElement('session-context-drawer'), {
+      message: sampleMessage,
+    }) as SessionContextDrawer;
+    await mount(drawer);
+    const root = shadow(drawer);
+
+    expect(root.querySelector('.kind-badge')).toBeNull();
+  });
+
   it('renders message header, role badge, and token stats when message is provided', async () => {
     const drawer = Object.assign(document.createElement('session-context-drawer'), {
       message: sampleMessage,
@@ -146,22 +168,25 @@ describe('session-context-drawer', () => {
     expect(prevSpy).toHaveBeenCalled();
   });
 
-  it('traps focus to close-button when Tab is pressed on the boundary', async () => {
+  it('wraps focus back to the close button when Tab is pressed on the last control', async () => {
     const drawer = Object.assign(document.createElement('session-context-drawer'), {
       message: sampleMessage,
     }) as SessionContextDrawer;
     await mount(drawer);
     const root = shadow(drawer);
     const closeBtn = root.querySelector('.close-button') as HTMLButtonElement;
+    const focusables = Array.from(root.querySelectorAll('button')) as HTMLButtonElement[];
+    const last = focusables[focusables.length - 1] as HTMLButtonElement;
 
-    closeBtn.focus();
-    expect(root.activeElement).toBe(closeBtn);
+    last.focus();
+    expect(root.activeElement).toBe(last);
 
     const event = new KeyboardEvent('keydown', { key: 'Tab', cancelable: true });
     const prevSpy = vi.spyOn(event, 'preventDefault');
     window.dispatchEvent(event);
 
     expect(prevSpy).toHaveBeenCalled();
+    expect(root.activeElement).toBe(closeBtn);
   });
 
   it('traps focus to close-button when Shift+Tab is pressed on the boundary', async () => {
@@ -216,5 +241,119 @@ describe('session-context-drawer', () => {
     const root = shadow(drawer);
 
     expect(root.textContent).not.toContain('Compacted Tokens');
+  });
+
+  describe('parsed / raw content toggle', () => {
+    function toggleButtons(root: ShadowRoot): HTMLButtonElement[] {
+      return Array.from(root.querySelectorAll('.view-toggle button')) as HTMLButtonElement[];
+    }
+
+    function parsedButton(root: ShadowRoot): HTMLButtonElement {
+      return toggleButtons(root).find(
+        (b) => b.textContent?.trim() === 'Parsed',
+      ) as HTMLButtonElement;
+    }
+
+    function rawButton(root: ShadowRoot): HTMLButtonElement {
+      return toggleButtons(root).find((b) => b.textContent?.trim() === 'Raw') as HTMLButtonElement;
+    }
+
+    async function drawerWith(message: ContextTimingPoint | null = sampleMessage) {
+      const drawer = Object.assign(document.createElement('session-context-drawer'), {
+        message,
+      }) as SessionContextDrawer;
+      await mount(drawer);
+      return { drawer, root: shadow(drawer) };
+    }
+
+    it('is on parsed by default and renders the markdown body', async () => {
+      const { root } = await drawerWith();
+
+      expect(parsedButton(root).getAttribute('aria-pressed')).toBe('true');
+      expect(rawButton(root).getAttribute('aria-pressed')).toBe('false');
+      expect(root.querySelector('.content-box strong')?.textContent).toBe('fix');
+      expect(root.querySelector('pre.raw-json')).toBeNull();
+    });
+
+    it('shows the message record as formatted JSON when raw is clicked', async () => {
+      const drawer = Object.assign(document.createElement('session-context-drawer'), {
+        message: sampleMessage,
+      }) as SessionContextDrawer;
+      await mount(drawer);
+      const root = shadow(drawer);
+
+      rawButton(root).click();
+      await drawer.updateComplete;
+
+      const pre = root.querySelector('pre.raw-json');
+      expect(pre).not.toBeNull();
+      expect(pre?.textContent).toBe(JSON.stringify(sampleMessage, null, 2));
+      // Formatted, not minified: the JSON is indented and multi-line.
+      expect(pre?.textContent).toContain('\n  "messageId": "msg-42",');
+      expect(parsedButton(root).getAttribute('aria-pressed')).toBe('false');
+      expect(rawButton(root).getAttribute('aria-pressed')).toBe('true');
+      // The parsed markdown is gone, not merely hidden behind the JSON.
+      expect(root.querySelector('.content-box strong')).toBeNull();
+    });
+
+    it('switches back to the parsed view', async () => {
+      const drawer = Object.assign(document.createElement('session-context-drawer'), {
+        message: sampleMessage,
+      }) as SessionContextDrawer;
+      await mount(drawer);
+      const root = shadow(drawer);
+
+      rawButton(root).click();
+      await drawer.updateComplete;
+      parsedButton(root).click();
+      await drawer.updateComplete;
+
+      expect(root.querySelector('pre.raw-json')).toBeNull();
+      expect(root.querySelector('.content-box strong')?.textContent).toBe('fix');
+    });
+
+    it('keeps the JSON view available for a message with no content', async () => {
+      const drawer = Object.assign(document.createElement('session-context-drawer'), {
+        message: { ...sampleMessage, content: undefined },
+      }) as SessionContextDrawer;
+      await mount(drawer);
+      const root = shadow(drawer);
+
+      expect(root.querySelector('.content-box')?.textContent).toContain(
+        'No content recorded for this message.',
+      );
+
+      rawButton(root).click();
+      await drawer.updateComplete;
+
+      expect(root.querySelector('pre.raw-json')?.textContent).toContain('"contextTokens": 1200');
+      expect(root.textContent).not.toContain('No content recorded');
+    });
+
+    it('resets to parsed when a different message is selected', async () => {
+      const drawer = Object.assign(document.createElement('session-context-drawer'), {
+        message: sampleMessage,
+      }) as SessionContextDrawer;
+      await mount(drawer);
+      const root = shadow(drawer);
+
+      rawButton(root).click();
+      await drawer.updateComplete;
+      expect(root.querySelector('pre.raw-json')).not.toBeNull();
+
+      drawer.message = { ...sampleMessage, messageId: 'msg-43', content: 'Next **message**' };
+      await drawer.updateComplete;
+
+      expect(root.querySelector('pre.raw-json')).toBeNull();
+      expect(parsedButton(root).getAttribute('aria-pressed')).toBe('true');
+      expect(root.querySelector('.content-box strong')?.textContent).toBe('message');
+    });
+
+    it('exposes the toggle as a labelled group for assistive technology', async () => {
+      const { root } = await drawerWith();
+      const group = root.querySelector('.view-toggle');
+      expect(group?.getAttribute('role')).toBe('group');
+      expect(group?.getAttribute('aria-label')).toBe('Message content format');
+    });
   });
 });

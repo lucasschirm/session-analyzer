@@ -104,7 +104,7 @@ describe('PIPE-020: devin file-backed skill/agent/rule config components (#342)'
     expect(ruleItems[0]?.sessionCount).toBe(2);
   });
 
-  it('exposes exactly the three file-backed components — no bogus or duplicate entries leak through', async () => {
+  it('exposes the three file-backed components plus the invoked tool — no bogus or duplicate entries leak through', async () => {
     const { harness, orchestrator } = await setupPipeline();
     const { bundle } = await buildDevinManifestBundle({ useConfigComponentsBundle: true });
 
@@ -113,7 +113,14 @@ describe('PIPE-020: devin file-backed skill/agent/rule config components (#342)'
 
     const dataSource = createAnalyticsDataSource(harness);
     const utilization = await dataSource.portfolio.getComponentUtilization({});
-    expect(utilization.items).toHaveLength(3);
-    expect(utilization.items.map((i) => i.kind).sort()).toEqual(['agent', 'rule', 'skill']);
+    // The config fixture rides on the linear transcript, whose single
+    // `EditFile` tool call is an INVOKED tool: usage proves availability, so it
+    // gets a component identity too instead of being counted by no component at
+    // all (which is what left the session's utilization panel at 0 used).
+    expect(utilization.items).toHaveLength(4);
+    expect(utilization.items.map((i) => i.kind).sort()).toEqual(['agent', 'rule', 'skill', 'tool']);
+    const toolItem = utilization.items.find((i) => i.kind === 'tool');
+    expect(toolItem?.name).toBe('tool/EditFile');
+    expect(toolItem?.sessionCount).toBe(1);
   });
 });

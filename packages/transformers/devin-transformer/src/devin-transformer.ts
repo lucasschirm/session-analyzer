@@ -20,6 +20,7 @@ import {
   completenessFromComponents,
 } from './classification.js';
 import { buildDevinCompactionRecords } from './compaction.js';
+import { buildComponentEvidenceLinkRecords } from './component-evidence-links.js';
 import {
   DEVIN_METRIC_DEFINITION_VERSION,
   type DevinMetricValue,
@@ -228,7 +229,19 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // Accompanied by `DEVIN_METRIC_DEFINITION_VERSION` bump 0.4.0 -> 0.5.0 (see
 // comparability.ts) because inclusive metric populations now encompass
 // child sessions. Forces a fresh generation on reprocess.
-export const DEVIN_TRANSFORMER_VERSION = '0.16.0';
+// Bumped 0.16.0 -> 0.17.0: component usage attribution. (1) Every root-session
+// `invocation` now emits a `component_evidence_link`, which is the only
+// "used" signal `session_component_stats` (and therefore the Available / Used /
+// Unused utilization views) reads — before this every Devin component was
+// reported as declared-but-unused, and the session's Tool / Skill / Agent
+// activity drill-down was always empty. (2) Invoked tools/skills/agents get a
+// component identity of their own, so usage can never be attributed to a
+// component that availability never offered. (3) `message` payloads carry
+// `invocationKind` (Tool / Skill / Agent, from the node's own
+// `chat_message.tool_calls` / `tool_call_id`). `DEVIN_METRIC_DEFINITION_VERSION`
+// is unchanged: no metric changed meaning, only which components and messages
+// exist. Forces a fresh generation on reprocess.
+export const DEVIN_TRANSFORMER_VERSION = '0.17.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly
@@ -601,10 +614,21 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       toolResult.records,
       hasModelSentToolDefinitions(parsed.atif?.toolDefinitions ?? []),
     );
+    // Attribute the root session's invocations back to the components they
+    // exercised. Without these links `session_component_stats` stays empty and
+    // every Devin component reports as declared-but-unused in the Available /
+    // Used / Unused utilization views, no matter how much it ran.
+    const componentLinkRecords = buildComponentEvidenceLinkRecords(
+      sessionId,
+      merged.components,
+      toolResult.records,
+      rootArtifactId,
+    );
 
     const allEvidence: NormalizedEvidenceRecord[] = [
       ...spine.records,
       ...toolResult.records,
+      ...componentLinkRecords,
       ...tokenResult.records,
       ...compactionRecords,
       ...subagentEvidenceRecords,

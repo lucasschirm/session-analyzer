@@ -53,6 +53,15 @@ export interface ChartBucket {
   readonly label: string;
   readonly series?: string;
   readonly evidenceLink?: ChartEvidenceLink;
+  /**
+   * Optional per-bucket fill color, for charts that encode a category *within*
+   * a series (e.g. a context-growth bar colored by the message's Tool / Skill /
+   * Agent domain) while keeping one legend entry per series. Never the only
+   * carrier of that category: the same value must appear in `label` and the
+   * textual/table fallback, per the color-independence invariant in
+   * `components/charts/AGENTS.md`.
+   */
+  readonly color?: string;
 }
 
 export interface ChartAnnotation {
@@ -134,7 +143,15 @@ export function stateIcon(state: ChartState): string {
 
 export function formatChartValue(value: number | null, unit = ''): string {
   if (value === null || Number.isNaN(value)) return '—';
-  const formatted = formatCompactNumber(value);
+  // Minutes are always presented whole ("62.683 minutes" -> "63 minutes").
+  // Session duration is a wall-clock difference whose fractional part carries
+  // nothing a reader can act on, and the metric card labels the unit explicitly.
+  // Display-side rounding only — the stored metric value is never changed
+  // (packages/site/src/lib/AGENTS.md: formatting is presentation, not
+  // derivation).
+  const effective =
+    unit === 'minutes' || unit === 'minute' || unit === 'min' ? Math.round(value) : value;
+  const formatted = formatCompactNumber(effective);
   if (unit === 'usd') return `$${formatted}`;
   if (unit === 'percent' || unit === 'ratio') return `${formatted}${unit === 'percent' ? '%' : ''}`;
   if (unit && unit !== 'count') return `${formatted} ${unit}`;

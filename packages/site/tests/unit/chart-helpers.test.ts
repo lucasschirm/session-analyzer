@@ -102,6 +102,17 @@ describe('formatChartValue', () => {
   it('formats with empty unit as plain number', () => {
     expect(formatChartValue(100, '')).toBe('100');
   });
+
+  it('presents minute values as whole minutes, never a fraction', () => {
+    // "Session duration (min)" is the only metric family in this unit; its
+    // fractional part carries nothing actionable (62.683 minutes -> 63 minutes).
+    expect(formatChartValue(62.683, 'minutes')).toBe('63 minutes');
+    expect(formatChartValue(62.4, 'minutes')).toBe('62 minutes');
+    expect(formatChartValue(0.5, 'minutes')).toBe('1 minutes');
+    expect(formatChartValue(12, 'min')).toBe('12 min');
+    // Display-only: other units keep their exact value.
+    expect(formatChartValue(62.683, 'ms')).toBe('62.683 ms');
+  });
 });
 
 describe('toTableRows', () => {
@@ -202,6 +213,34 @@ describe('textualSummary', () => {
 });
 
 describe('toEChartsOption', () => {
+  it('carries a per-bucket fill color as an itemStyle without dropping the evidence link', () => {
+    const series = makeSeries({
+      chartType: 'stacked_bar',
+      buckets: [
+        makeBucket({
+          x: 'a',
+          y: 10,
+          label: 'A',
+          series: 'Context',
+          color: '#a78bfa',
+          evidenceLink: { label: 'A', href: '#/sessions/s1#msg-a' },
+        }),
+        makeBucket({ x: 'b', y: 20, label: 'B', series: 'Context' }),
+      ],
+    });
+    const option = toEChartsOption(series) as {
+      series: Array<{ data: (unknown | { value: number; itemStyle?: unknown })[] }>;
+    };
+    const data = option.series[0]?.data ?? [];
+    expect(data[0]).toMatchObject({
+      value: 10,
+      itemStyle: { color: '#a78bfa' },
+      evidenceLink: { label: 'A', href: '#/sessions/s1#msg-a' },
+    });
+    // An uncolored bucket stays a bare number: the series color still applies.
+    expect(data[1]).toBe(20);
+  });
+
   it.each([
     'time_series',
     'stacked_bar',

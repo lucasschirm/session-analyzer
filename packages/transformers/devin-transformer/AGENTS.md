@@ -24,7 +24,9 @@ src/
 ├── subagent-evidence.ts     # Legacy/fallback subagent turn and detached conversation evidence
 ├── tool-invocations.ts      # Tool, skill, and agent invocation evidence records
 ├── token-usage.ts           # Token usage and model_usage evidence records
-├── session-components.ts    # Session component derivation (cogs, tools, agents)
+├── session-components.ts    # Session component derivation (cogs, tools, agents, invoked components)
+├── component-evidence-links.ts # Attributes invocations back to the components they used
+├── message-classification.ts   # Per-message Tool / Skill / Agent domain classification
 ├── config-components.ts     # File-backed skill, agent, rule components
 ├── compaction.ts            # Compaction evidence records
 ├── effort.ts                # Reasoning effort extraction and normalization
@@ -61,6 +63,13 @@ tests/
   to the child session id.
 - **Session failure isolation**: A transformation error in one session must produce
   structured issues and never impede or crash transformation of other sessions.
+- **Usage is always attributable**: every root-session `invocation` emits a
+  `component_evidence_link` to a component that exists in `componentSummaries`,
+  and every invoked tool/skill/agent gets a component identity of its own.
+  Declared availability is never a prerequisite for something that ran —
+  otherwise `session_component_stats` stays empty and the Available / Used /
+  Unused views report every component as unused (`component-evidence-links.ts`,
+  `extractInvokedComponents` in `session-components.ts`).
 
 ## Key relationships
 

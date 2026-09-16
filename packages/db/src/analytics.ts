@@ -188,6 +188,14 @@ export interface ContextTimingPoint {
   readonly messageIndex?: number;
   readonly messageId?: string;
   readonly role?: string;
+  /**
+   * Which Tool / Skill / Agent domain this message belongs to, as classified
+   * by the harness transformer from the message's own tool-call evidence
+   * (`.agents/rules/analytics-domain-distinctions.md`). `undefined` means the
+   * transcript carries no tool relationship for this message — a plain user
+   * or assistant turn — which is never the same thing as `'tool'`.
+   */
+  readonly invocationKind?: 'tool' | 'skill' | 'agent';
   readonly model?: string;
   readonly timestamp?: string;
   readonly totalTokens: number | null;
@@ -235,6 +243,12 @@ export interface RootChildBreakdown {
 export interface ComponentFactRow {
   readonly componentId: string;
   readonly kind: string;
+  /**
+   * Human-readable `kind/nativeId` label (see `componentDisplayName`), never
+   * the raw canonical component id — the session page renders this column
+   * directly (`.agents/rules/never-display-raw-ids.md`).
+   */
+  readonly displayName: string;
   readonly invocationCount: number;
   readonly outcome: 'success' | 'failure' | 'partial' | 'unknown';
   readonly metricValues: readonly MetricValueDto[];

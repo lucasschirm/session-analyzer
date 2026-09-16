@@ -1,11 +1,12 @@
 import type { ContextTimingPoint } from '@lucasschirm/sal-db';
 import { css, html, LitElement, type PropertyValues } from 'lit';
-import { customElement, property, query } from 'lit/decorators.js';
+import { customElement, property, query, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { formatChartValue } from '../../components/charts/chart-types';
 import { formatDateTime } from '../../lib/format';
 import { renderMarkdown } from '../../lib/markdown';
+import { CONTEXT_BAR_COLORS } from './session-evidence-chart-helpers';
 
 /**
  * Slide-in drawer displaying full details for a selected message in a session:
@@ -101,6 +102,24 @@ export class SessionContextDrawer extends LitElement {
       background: rgba(255, 184, 108, 0.1);
     }
 
+    /* Tool / Skill / Agent domain badge: the same classification the context
+       growth chart colors by, spelled out in text. Its colors come from
+       CONTEXT_BAR_COLORS (session-evidence-chart-helpers.ts) and are applied
+       inline, so this file never restates a palette of its own. */
+    .kind-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      background: var(--md-sys-color-surface, #171a21);
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      text-transform: capitalize;
+    }
+
     .close-button {
       background: transparent;
       border: none;
@@ -178,6 +197,59 @@ export class SessionContextDrawer extends LitElement {
       display: flex;
       flex-direction: column;
       gap: 8px;
+    }
+
+    .content-heading-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    /* Parsed (rendered markdown) vs raw (formatted JSON) view toggle. */
+    .view-toggle {
+      display: inline-flex;
+      border: 1px solid var(--md-sys-color-outline, #2a303c);
+      border-radius: 8px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .view-toggle button {
+      background: var(--md-sys-color-surface, #171a21);
+      border: none;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      padding: 6px 14px;
+      text-transform: uppercase;
+    }
+
+    .view-toggle button + button {
+      border-left: 1px solid var(--md-sys-color-outline, #2a303c);
+    }
+
+    .view-toggle button:hover {
+      background: var(--md-sys-color-surface-container-hover, #262d3a);
+      color: var(--md-sys-color-on-surface, #e6e9ef);
+    }
+
+    .view-toggle button[aria-pressed='true'] {
+      background: var(--md-sys-color-primary, #4f8cff);
+      color: var(--md-sys-color-on-primary, #fff);
+    }
+
+    /* Raw view: the message record as formatted JSON. The .content-box pre rule
+       above already supplies the monospace box, border, and horizontal scroll;
+       this only pins the layout so JSON indentation survives. */
+    .content-box pre.raw-json {
+      margin: 0;
+      white-space: pre;
+      word-break: normal;
     }
 
     .section-heading {
@@ -258,6 +330,14 @@ export class SessionContextDrawer extends LitElement {
 
   @property({ attribute: false }) message: ContextTimingPoint | null = null;
 
+  /**
+   * Which view of the message body is shown: `false` renders the parsed
+   * (markdown-formatted) content, `true` the raw message record as formatted
+   * JSON. Defaults to parsed and resets whenever a different message is
+   * selected, so opening the next bar never inherits the previous choice.
+   */
+  @state() private showingRaw = false;
+
   @query('.close-button') private closeButtonEl?: HTMLButtonElement;
   @query('.drawer-body') private drawerBodyEl?: HTMLElement;
 
@@ -268,6 +348,7 @@ export class SessionContextDrawer extends LitElement {
   willUpdate(changed: PropertyValues<this>): void {
     super.willUpdate(changed);
     if (changed.has('message')) {
+      this.showingRaw = false;
       this.cachedRenderedHtml = this.message?.content ? renderMarkdown(this.message.content) : null;
     }
   }
@@ -394,23 +475,79 @@ export class SessionContextDrawer extends LitElement {
     `;
   }
 
+  private setView(raw: boolean): void {
+    this.showingRaw = raw;
+  }
+
+  /** The selected message record, pretty-printed. `ContextTimingPoint` is the
+   *  canonical per-message fact set the read contract exposes, so this is the
+   *  message as the analytics layer actually stores and serves it. */
+  private get rawJson(): string {
+    if (!this.message) return '';
+    try {
+      return JSON.stringify(this.message, null, 2);
+    } catch {
+      return '"<unserializable message>"';
+    }
+  }
+
   private renderContent() {
     return html`
       <div class="content-section">
-        <h3 class="section-heading">Message Content</h3>
+        <div class="content-heading-row">
+          <h3 class="section-heading">Message Content</h3>
+          <div class="view-toggle" role="group" aria-label="Message content format">
+            <button
+              type="button"
+              aria-pressed=${!this.showingRaw}
+              @click=${() => this.setView(false)}
+            >
+              Parsed
+            </button>
+            <button
+              type="button"
+              aria-pressed=${this.showingRaw}
+              @click=${() => this.setView(true)}
+            >
+              Raw
+            </button>
+          </div>
+        </div>
         <div class="content-box">
-          ${this.cachedRenderedHtml ? unsafeHTML(this.cachedRenderedHtml) : html`<p class="empty-text">No content recorded for this message.</p>`}
+          ${
+            this.showingRaw
+              ? html`<pre class="raw-json">${this.rawJson}</pre>`
+              : this.cachedRenderedHtml
+                ? unsafeHTML(this.cachedRenderedHtml)
+                : html`<p class="empty-text">No content recorded for this message.</p>`
+          }
         </div>
       </div>
     `;
   }
 
-  private renderHeader(index: number, role: string) {
+  private renderHeader(
+    index: number,
+    role: string,
+    invocationKind?: ContextTimingPoint['invocationKind'],
+  ) {
+    const kindColor = invocationKind ? CONTEXT_BAR_COLORS[invocationKind] : undefined;
     return html`
       <div class="drawer-header">
         <div class="header-info">
           <h2 class="drawer-title">Message #${index}</h2>
           <span class=${classMap({ 'role-badge': true, [role]: Boolean(role) })}>${role}</span>
+          ${
+            invocationKind && kindColor
+              ? html`<span
+                  class="kind-badge"
+                  data-kind=${invocationKind}
+                  style="color: ${kindColor}; border-color: ${kindColor}; background: color-mix(in srgb, ${kindColor} 12%, transparent)"
+                >
+                  ${invocationKind} message
+                </span>`
+              : ''
+          }
         </div>
         <button class="close-button" type="button" aria-label="Close message details" @click=${this.close}>
           ✕
@@ -428,7 +565,7 @@ export class SessionContextDrawer extends LitElement {
     return html`
       <div class="drawer-backdrop" @click=${this.close} aria-hidden="true"></div>
       <aside class="drawer-panel" role="dialog" aria-modal="true" aria-label="Message ${index} details">
-        ${this.renderHeader(index, role)}
+        ${this.renderHeader(index, role, m.invocationKind)}
         <div class="drawer-body">
           <div class="stats-grid">
             ${this.renderTokenStats(m)}

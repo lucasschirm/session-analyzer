@@ -49,8 +49,20 @@ declare const console:
  * Subagents are now decomposed into child SessionSummary rows and scoped
  * evidence records, rather than keeping them inline. Inclusive metrics
  * aggregate across root and child sessions.
+ *
+ * v18: Devin component usage attribution. The transformer now emits
+ * `component_evidence_link` records for root-session Tool/Skill/Agent
+ * invocations and gives every *invoked* component an identity (declared
+ * availability alone was never a prerequisite for something to run). Existing
+ * Devin generations carry no `session_component_stats` at all, so Available /
+ * Used / Unused utilization and the session's Tool / Skill / Agent activity
+ * drill-down reported 0 used for every component. Step 1 of the rebuild
+ * already re-ingests exactly those sessions from their retained artifacts;
+ * the same pass re-materializes `session_context_series`, which now also
+ * carries the per-message Tool/Skill/Agent classification (`point_meta.ik`)
+ * the context growth chart colors by.
  */
-export const ANALYTICS_PROCESSING_VERSION = 17;
+export const ANALYTICS_PROCESSING_VERSION = 18;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.

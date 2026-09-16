@@ -195,8 +195,14 @@ test.describe('Full user journey', () => {
       page.locator('session-evidence-view').getByRole('heading', { level: 1 }),
     ).toBeVisible({ timeout: 10000 });
 
-    // The Evidence section should be present with its tab list.
-    await expect(page.getByRole('heading', { name: 'Evidence', exact: true })).toBeVisible();
+    // The session overview keeps its own sections after going back, and the
+    // removed Evidence rows section does not come back: the transcript is
+    // reached from the header action instead.
+    await expect(page.locator('component-utilization-panel .panel-title')).toContainText(
+      'Session Component Availability & Invocations',
+    );
+    await expect(page.getByRole('heading', { name: 'Evidence', exact: true })).toHaveCount(0);
+    await expect(page.locator('session-evidence-evidence')).toHaveCount(0);
   });
 
   test('uploads every supported format via manual import', async ({ page }) => {
@@ -228,8 +234,14 @@ test.describe('Rich session dashboard', () => {
       page.locator('session-evidence-view').getByRole('heading', { name: 'Rich Session Demo' }),
     ).toBeVisible();
 
-    // The Evidence section should be present.
-    await expect(page.getByRole('heading', { name: 'Evidence', exact: true })).toBeVisible();
+    // Transcript content is a drill-down from the header action, not a section
+    // on the overview; the Evidence rows section is gone.
+    await page.getByRole('link', { name: 'View Full Transcript' }).click();
+    await expect(page.getByRole('heading', { name: 'Transcript' })).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(page.locator('session-evidence-transcript')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Evidence', exact: true })).toHaveCount(0);
   });
 });
 
@@ -292,8 +304,10 @@ test.describe('Subagent folder ingestion', () => {
       page.locator('session-evidence-view').getByRole('heading', { level: 1 }),
     ).toBeVisible();
 
-    // The Evidence section should be present.
-    await expect(page.getByRole('heading', { name: 'Evidence', exact: true })).toBeVisible();
+    // The Tool / Skill / Agent activity section is present; the Evidence rows
+    // section is gone.
+    await expect(page.getByText('Tool / Skill / Agent activity')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Evidence', exact: true })).toHaveCount(0);
   });
 
   test('re-importing the same session updates it in place', async ({ page }) => {

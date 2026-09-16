@@ -9,6 +9,7 @@ import {
   skillCogOnlyBundle,
   skillInvocationOnlyBundle,
   toolDefinitionsBundle,
+  usageAttributionBundle,
 } from '../conformance/fixtures/index.js';
 
 function componentsByKind(result: ReturnType<typeof DevinTransformer.transform>, kind: string) {
@@ -116,12 +117,17 @@ describe('DevinTransformer session components (DS-F11 #288)', () => {
     expect(skillMetric?.value).toBe(0);
   });
 
-  it('counts a functions.skill invocation with no matching skill/<name> cog', () => {
+  it('derives a skill component from an invocation with no matching skill/<name> cog', () => {
     const result = DevinTransformer.transform(skillInvocationOnlyBundle, defaultContext);
-    // No cogs_json at all in this bundle: no skill component is derived...
-    expect(componentsByKind(result, 'skill')).toHaveLength(0);
-    // ...but the invocation-count metric still counts the call from
-    // tool_call_state alone.
+    // No cogs_json at all in this bundle, so nothing declares the skill —
+    // but a skill that was invoked was available by definition, and the
+    // Available/Used/Unused utilization views need a component identity to
+    // attribute that usage to. Declared availability alone is never a
+    // prerequisite for a component to exist.
+    const skills = componentsByKind(result, 'skill');
+    expect(skills).toHaveLength(1);
+    expect(skills[0].identity.nativeId).toBe('add-e2e-test');
+    // The invocation-count metric still counts the call from tool_call_state.
     const skillMetric = result.metricValues.find(
       (m) => m.metricId === 'devin:invocations:skill:root_only',
     );
@@ -201,6 +207,42 @@ describe('DevinTransformer session components (DS-F11 #288)', () => {
     const payload = invocation?.payload as { kind?: string; name?: string } | undefined;
     expect(payload?.kind).toBe('skill');
     expect(payload?.name).toBe('add-e2e-test');
+  });
+
+  it('gives an invoked builtin tool a component identity no promoted availability list offers', () => {
+    // usageAttributionBundle invokes `exec`, a builtin that the cogs rule
+    // promoted to components (MCP wrapper names only) never offers. A tool
+    // that ran was available by definition, and without an identity there is
+    // nothing for its usage to be attributed to.
+    const result = DevinTransformer.transform(usageAttributionBundle, defaultContext);
+    const exec = componentsByKind(result, 'tool').find((t) => t.identity.nativeId === 'exec');
+    expect(exec).toBeDefined();
+    expect(exec?.sessionScoped).toBe(true);
+    expect(exec?.componentId).toBe('tool:{"name":"exec","source":"test-source"}');
+  });
+
+  it('counts a declared-and-invoked component exactly once, and keeps the MCP wrapper set', () => {
+    const result = DevinTransformer.transform(usageAttributionBundle, defaultContext);
+    // 4 promoted MCP wrappers + the invoked `exec`.
+    expect(
+      componentsByKind(result, 'tool')
+        .map((t) => t.identity.nativeId)
+        .sort(),
+    ).toEqual(['exec', 'mcp_call_tool', 'mcp_list_servers', 'mcp_list_tools', 'mcp_read_resource']);
+    // The skill is BOTH declared by a `skill/add-e2e-test` cog and invoked —
+    // one identity, not two, so utilization can report it as available AND used.
+    expect(componentsByKind(result, 'skill')).toHaveLength(1);
+    const nativeIds = result.componentSummaries.map((c) => c.identity.nativeId);
+    expect(nativeIds).toEqual([...new Set(nativeIds)]);
+  });
+
+  it('never promotes the skill/run_subagent dispatchers into the generic tool pool', () => {
+    const result = DevinTransformer.transform(usageAttributionBundle, defaultContext);
+    expect(
+      componentsByKind(result, 'tool').filter((t) =>
+        ['skill', 'run_subagent'].includes(t.identity.nativeId ?? ''),
+      ),
+    ).toEqual([]);
   });
 
   it('produces stable componentIds across two runs of the same bundle', () => {

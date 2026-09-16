@@ -36,22 +36,53 @@ function rawInputString(call: DevinToolCallLine['call'], field: string): string 
  * Skill/Agent-into-tool conflation this function exists to fix, just for a
  * narrower trigger (no update record instead of no `_meta` at all).
  */
-function invocationKindAndName(
+/**
+ * The three component domains a Devin invocation can belong to
+ * (`.agents/rules/analytics-domain-distinctions.md`). Exported so
+ * `message-classification.ts` and `session-components.ts` resolve a native
+ * tool name to the same domain instead of restating the mapping.
+ */
+export type DevinInvocationKind = 'tool' | 'skill' | 'agent';
+
+/**
+ * Native Devin tool names that are domain dispatchers rather than generic
+ * tools: `skill` invokes a Skill and `run_subagent` an Agent. They are the
+ * only names `invocationKindForToolName` maps away from `tool`, and the
+ * single list every module uses to keep them out of the generic tool pool.
+ */
+export const DISPATCHER_TOOL_NAMES = ['skill', 'run_subagent'] as const;
+
+/**
+ * Maps one native Devin inference tool name to its canonical domain. `skill`
+ * dispatches to a Skill and `run_subagent` to an Agent — neither is ever
+ * folded into the generic `tool` pool. Single source of truth for every
+ * Devin-side domain dispatch (`tool-invocations.ts`,
+ * `message-classification.ts`, and the `NON_GENERIC_TOOL_NAMES` exclusion in
+ * `session-components.ts` all read it).
+ */
+export function invocationKindForToolName(name: string | null | undefined): DevinInvocationKind {
+  if (name === 'skill') return 'skill';
+  if (name === 'run_subagent') return 'agent';
+  return 'tool';
+}
+
+export function invocationKindAndName(
   call: DevinToolCallLine['call'],
   update: DevinToolCallLine['update'],
-): { kind: 'tool' | 'skill' | 'agent'; name: string; target?: string } {
+): { kind: DevinInvocationKind; name: string; target?: string } {
   const inferenceToolName = update?.inferenceToolName ?? call?.inferenceToolName;
-  if (inferenceToolName === 'skill') {
-    return { kind: 'skill', name: rawInputString(call, 'skill') ?? toolName(call, update) };
+  switch (invocationKindForToolName(inferenceToolName)) {
+    case 'skill':
+      return { kind: 'skill', name: rawInputString(call, 'skill') ?? toolName(call, update) };
+    case 'agent':
+      return {
+        kind: 'agent',
+        name: rawInputString(call, 'profile') ?? toolName(call, update),
+        target: rawInputString(call, 'title'),
+      };
+    default:
+      return { kind: 'tool', name: toolName(call, update) };
   }
-  if (inferenceToolName === 'run_subagent') {
-    return {
-      kind: 'agent',
-      name: rawInputString(call, 'profile') ?? toolName(call, update),
-      target: rawInputString(call, 'title'),
-    };
-  }
-  return { kind: 'tool', name: toolName(call, update) };
 }
 
 function toolTarget(call: DevinToolCallLine['call']): string | undefined {
