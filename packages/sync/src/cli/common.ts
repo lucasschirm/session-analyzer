@@ -391,7 +391,10 @@ export function normalizeTrigger(value: unknown): SyncTrigger {
 }
 
 export function buildStorageAdapter(config: SyncConfig): StorageAdapter {
-  return buildStorageAdapterFromStorage(config.storage, { retries: config.retries });
+  return buildStorageAdapterFromStorage(config.storage, {
+    retries: config.retries,
+    maxTranscriptBytes: config.limits.maxTranscriptBytes,
+  });
 }
 
 export function buildStorageAdapterFromStorage(
@@ -792,7 +795,7 @@ export async function runSessionEndUploadLoop(options: {
       run.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveStorageError(err);
       const message = err instanceof Error ? err.message : String(err);
-      recordArtifactFailure(state, artifact, code);
+      recordArtifactFailure(state, artifact, code, message);
       run.filesFailed += 1;
       run.errors = run.errors ?? [];
       if (!run.errors.includes(code)) {

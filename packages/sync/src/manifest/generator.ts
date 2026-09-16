@@ -62,7 +62,11 @@ export function buildManifestArtifacts(
     }
     const record = getArtifactRecord(state, artifact);
     const status = resolveArtifactStatus(record, artifact.sha256);
-    result.push({ ...artifact, status });
+    result.push({
+      ...artifact,
+      status,
+      syncError: status === 'failed' ? record?.lastErrorMessage : undefined,
+    });
   }
 
   return result;
@@ -102,6 +106,7 @@ export function buildManifest(
     pluginVersion: options?.pluginVersion ?? DEFAULT_PLUGIN_VERSION,
     transcriptsCaptured: options?.captureTranscripts ?? true,
     mainTranscriptRelativePath: mainTranscript?.relativePath,
+    mainTranscriptError: mainTranscript?.syncError,
     artifacts,
     syncRunsCount: runs.length,
     updatedAt: new Date().toISOString(),

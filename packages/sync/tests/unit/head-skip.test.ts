@@ -497,4 +497,36 @@ describe('runSessionEndUploadLoop HEAD skip', () => {
     expect(record?.status).toBe('uploaded');
     expect(record?.lastUploadedHash).toBe(result.uploaded[0].sha256);
   });
+
+  it('persists lastErrorMessage when an upload fails', async () => {
+    const state = createEmptySyncState();
+    const failingAdapter: StorageAdapter = {
+      headObject: async () => undefined,
+      putObject: async () => {
+        throw new StorageError('SYNC_STORAGE_ERROR', 'upload failed', true);
+      },
+    };
+    const candidate = makeCandidate();
+    const hashed = hashCandidate(candidate);
+    const candidateResults: CandidateResult[] = [
+      { candidate, sha256: hashed.artifact.sha256, size: hashed.size },
+    ];
+
+    const result = await runSessionEndUploadLoop({
+      state,
+      candidateResults,
+      storageAdapter: failingAdapter,
+      config: {
+        timeouts: { syncTimeoutMs: 5000, hookUploadTimeoutMs: 5000, sessionEndBudgetMs: 30000 },
+      } as unknown as SyncConfig,
+      deadline: Date.now() + 10000,
+      start: Date.now(),
+    });
+
+    expect(result.failed).toHaveLength(1);
+    const record = getArtifactRecord(state, result.failed[0]);
+    expect(record?.status).toBe('failed');
+    expect(record?.lastError).toBe('SYNC_STORAGE_ERROR');
+    expect(record?.lastErrorMessage).toBe('upload failed');
+  });
 });

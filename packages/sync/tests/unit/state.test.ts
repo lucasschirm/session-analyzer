@@ -107,6 +107,26 @@ describe('StateStore', () => {
     expect(getArtifactRecord(state, a1)?.lastUploadedHash).toBe('h1');
   });
 
+  it('clears lastError and lastErrorMessage on successful upload', async () => {
+    const state = createEmptySyncState();
+    const artifact = makeArtifact();
+
+    recordArtifactDiscovered(state, artifact);
+    recordArtifactFailure(state, artifact, 'SYNC_FILE_TOO_LARGE', 'too big');
+
+    const record = getArtifactRecord(state, artifact);
+    expect(record?.lastError).toBe('SYNC_FILE_TOO_LARGE');
+    expect(record?.lastErrorMessage).toBe('too big');
+
+    recordArtifactUploading(state, artifact);
+    advanceLastUploadedHash(state, artifact);
+
+    const uploaded = getArtifactRecord(state, artifact);
+    expect(uploaded?.status).toBe('uploaded');
+    expect(uploaded?.lastError).toBeUndefined();
+    expect(uploaded?.lastErrorMessage).toBeUndefined();
+  });
+
   it('records failures and retries without advancing lastUploadedHash', async () => {
     const state = createEmptySyncState();
     const artifact = makeArtifact();
@@ -123,6 +143,39 @@ describe('StateStore', () => {
 
     recordArtifactFailure(state, artifact, 'SYNC_STORAGE_ERROR');
     expect(getArtifactRecord(state, artifact)?.attemptCount).toBe(2);
+  });
+
+  it('records lastErrorMessage alongside lastError when provided', async () => {
+    const state = createEmptySyncState();
+    const artifact = makeArtifact();
+
+    recordArtifactDiscovered(state, artifact);
+    recordArtifactFailure(
+      state,
+      artifact,
+      'SYNC_FILE_TOO_LARGE',
+      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+    );
+
+    const record = getArtifactRecord(state, artifact);
+    expect(record?.lastError).toBe('SYNC_FILE_TOO_LARGE');
+    expect(record?.lastErrorMessage).toBe(
+      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+    );
+  });
+
+  it('clears lastErrorMessage when the content hash changes', async () => {
+    const state = createEmptySyncState();
+    const oldVersion = makeArtifact({ sha256: 'h1' });
+    recordArtifactDiscovered(state, oldVersion);
+    recordArtifactFailure(state, oldVersion, 'SYNC_FILE_TOO_LARGE', 'too big');
+
+    const newVersion = makeArtifact({ sha256: 'h2' });
+    recordArtifactDiscovered(state, newVersion);
+
+    const record = getArtifactRecord(state, newVersion);
+    expect(record?.lastError).toBeUndefined();
+    expect(record?.lastErrorMessage).toBeUndefined();
   });
 
   it('resets attemptCount and lastError when the content hash changes', async () => {

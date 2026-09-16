@@ -542,7 +542,7 @@ describe('discoverSession', () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it('enforces the transcript byte limit', async () => {
+  it('does not enforce the transcript byte limit at discovery (checked after compression at upload)', async () => {
     const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
     await writeFile(transcriptPath, Buffer.alloc(101));
 
@@ -556,8 +556,12 @@ describe('discoverSession', () => {
       DEFAULT_HARNESS_PROFILE,
     );
 
-    expect(result.artifacts).toHaveLength(0);
-    expect(result.errors[0]?.code).toBe('SYNC_FILE_TOO_LARGE');
+    // Session-scoped artifacts are no longer size-checked at discovery —
+    // the check moved to the storage adapter so it runs against the
+    // compressed (gzip) wire body, not the uncompressed on-disk file.
+    expect(result.artifacts).toHaveLength(1);
+    expect(result.artifacts[0]?.scope).toBe('session');
+    expect(result.errors).toHaveLength(0);
   });
 
   it('enforces the JSONL line byte limit', async () => {

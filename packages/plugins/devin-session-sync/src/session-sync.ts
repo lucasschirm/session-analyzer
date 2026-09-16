@@ -652,6 +652,7 @@ async function uploadSessionArtifacts(
   options: DevinSessionSyncOptions,
   candidateResults: CandidateResult[],
   profile: HarnessProfile,
+  discoveryErrors: DiscoveryResult['errors'],
 ): Promise<DevinSessionSyncOutcome> {
   const stateStore = new StateStore(options.dataDir);
   await stateStore.ensureDirectories();
@@ -690,6 +691,16 @@ async function uploadSessionArtifacts(
     failed: deltaResult.failed,
   });
   const errors = await uploadManifestSafely(options, session, deltaResult, manifestArtifacts);
+
+  // Propagate discovery errors (e.g. SYNC_FILE_TOO_LARGE for oversized
+  // workspace/global artifacts) to the outcome so they are visible in
+  // telemetry and CLI output — matching the Claude plugin's runFullSync
+  // path, which merges discovery.errors into deltaResult.errors.
+  for (const error of discoveryErrors) {
+    if (!errors.includes(error.code)) {
+      errors.push(error.code);
+    }
+  }
 
   return {
     sessionId: options.sessionId,
@@ -754,7 +765,12 @@ export async function runDevinSessionSync(
   );
 
   emitProgress(options, 'progress', `uploading ${candidateResults.length} artifact(s)`);
-  const outcome = await uploadSessionArtifacts(options, candidateResults, profile);
+  const outcome = await uploadSessionArtifacts(
+    options,
+    candidateResults,
+    profile,
+    discovery.errors,
+  );
   if (modelsError && !outcome.warnings.includes(modelsError)) {
     outcome.warnings.push(modelsError);
   }

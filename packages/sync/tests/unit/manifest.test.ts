@@ -180,6 +180,34 @@ describe('buildManifest', () => {
     expect(manifest.artifacts).toHaveLength(2);
   });
 
+  it('includes syncError on failed artifacts and mainTranscriptError on the manifest', () => {
+    const state = createEmptySyncState();
+    const sessionArtifact = makeArtifact({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      sha256: 'session-hash',
+    });
+
+    recordArtifactDiscovered(state, sessionArtifact);
+    recordArtifactFailure(
+      state,
+      sessionArtifact,
+      'SYNC_FILE_TOO_LARGE',
+      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+    );
+
+    const manifest = buildManifest(makeSession(), [sessionArtifact], state, []);
+
+    expect(manifest.mainTranscriptRelativePath).toBe('transcript.jsonl');
+    expect(manifest.mainTranscriptError).toBe(
+      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+    );
+    expect(manifest.artifacts[0]?.status).toBe('failed');
+    expect(manifest.artifacts[0]?.syncError).toBe(
+      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+    );
+  });
+
   it('aggregates per-trigger sync-run metrics', () => {
     const runs: SyncRun[] = [
       makeRun('session-start', { filesDiscovered: 10, filesUploaded: 10 }),
@@ -320,6 +348,8 @@ describe('ManifestGenerator', () => {
     expect(manifestRecord).toBeDefined();
     expect(manifestRecord?.status).toBe('failed');
     expect(manifestRecord?.lastUploadedHash).toBeUndefined();
+    expect(manifestRecord?.lastError).toBe('SYNC_STORAGE_ERROR');
+    expect(manifestRecord?.lastErrorMessage).toBe('simulated manifest upload failure');
 
     // Recovery: a later manual or SessionStart sync can regenerate and re-upload.
     const successAdapter = new InMemoryStorageAdapter();

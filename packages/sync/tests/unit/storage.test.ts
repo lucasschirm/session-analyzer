@@ -690,6 +690,52 @@ describe('S3StorageAdapter', () => {
     expect(gunzipSync(body)).toEqual(Buffer.from(input.body));
   });
 
+  it('throws SYNC_FILE_TOO_LARGE when a session artifact exceeds maxTranscriptBytes (compressed)', async () => {
+    const adapter = new S3StorageAdapter(baseConfig, { maxTranscriptBytes: 10 });
+    const input = makeInput({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      body: textBody('x'.repeat(100)),
+    });
+
+    await expect(adapter.putObject(input)).rejects.toThrow(StorageError);
+    await expect(adapter.putObject(input)).rejects.toMatchObject({
+      code: 'SYNC_FILE_TOO_LARGE',
+      retryable: false,
+    });
+    await expect(adapter.putObject(input)).rejects.toThrow(/compressed size/);
+  });
+
+  it('does not enforce maxTranscriptBytes for workspace-scoped artifacts', async () => {
+    const adapter = new S3StorageAdapter(baseConfig, { maxTranscriptBytes: 10 });
+    const body = textBody('x'.repeat(100));
+    const input = makeInput({
+      scope: 'workspace',
+      relativePath: '.claude/settings.json',
+      body,
+      contentSha256: sha256Hex(body),
+    });
+
+    // Workspace artifacts use content-addressed storage keys; we only need
+    // to confirm the upload succeeds (no SYNC_FILE_TOO_LARGE) — the limit
+    // applies only to session-scoped transcripts.
+    const result = await adapter.putObject(input);
+    expect(result.key).toBeTruthy();
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not enforce maxTranscriptBytes when not configured', async () => {
+    const adapter = new S3StorageAdapter(baseConfig);
+    const input = makeInput({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      body: textBody('x'.repeat(100)),
+    });
+
+    const result = await adapter.putObject(input);
+    expect(result.key).toBe('proj-1/sess-1/transcript.jsonl');
+  });
+
   it('getObject decompresses gzip-encoded objects', async () => {
     const plain = new TextEncoder().encode('hello gzip');
     sendSpy.mockResolvedValueOnce({

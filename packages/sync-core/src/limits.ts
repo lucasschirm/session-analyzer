@@ -10,7 +10,7 @@ export interface SyncLimits {
 export const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 export const DEFAULT_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 export const DEFAULT_MAX_FILES = 1000;
-export const DEFAULT_MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
+export const DEFAULT_MAX_TRANSCRIPT_BYTES = 100 * 1024 * 1024;
 export const DEFAULT_MAX_JSON_DEPTH = 128;
 export const DEFAULT_MAX_JSONL_LINE_BYTES = 1024 * 1024;
 

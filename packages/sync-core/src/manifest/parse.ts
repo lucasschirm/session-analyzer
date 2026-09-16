@@ -69,6 +69,7 @@ const KNOWN_ARTIFACT_FIELDS = [
   'encoding',
   'collectionOutcome',
   'collectionReason',
+  'syncError',
 ];
 
 const KNOWN_SYNC_RUN_FIELDS = [
@@ -115,6 +116,7 @@ const KNOWN_TOP_LEVEL_FIELDS = [
   'pluginVersion',
   'transcriptsCaptured',
   'mainTranscriptRelativePath',
+  'mainTranscriptError',
   'expectedCategoryCoverage',
   'categoryCoverage',
   'sourceTombstones',
@@ -262,6 +264,7 @@ function parseArtifact(input: unknown): ManifestArtifact {
     encoding: assertOptionalString(record.encoding, 'artifact.encoding'),
     collectionOutcome,
     collectionReason: assertOptionalString(record.collectionReason, 'artifact.collectionReason'),
+    syncError: assertOptionalString(record.syncError, 'artifact.syncError'),
     ...collectExtras(record, KNOWN_ARTIFACT_FIELDS),
   } as unknown as ManifestArtifact;
 }
@@ -482,6 +485,7 @@ function buildSyncManifest(
       record.mainTranscriptRelativePath,
       'mainTranscriptRelativePath',
     ),
+    mainTranscriptError: assertOptionalString(record.mainTranscriptError, 'mainTranscriptError'),
     expectedCategoryCoverage,
     categoryCoverage: resolvedCategoryCoverage,
     sourceTombstones,
