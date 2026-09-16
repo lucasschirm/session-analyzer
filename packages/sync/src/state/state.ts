@@ -24,6 +24,7 @@ export interface ArtifactStateRecord {
   lastUploadedHash?: string;
   lastUploadedAt?: string;
   lastError?: SyncErrorCode;
+  lastErrorMessage?: string;
   attemptCount: number;
   status: ArtifactStateStatus;
 }
@@ -185,6 +186,7 @@ function updateArtifactRecord(
     lastUploadedHash: existing?.lastUploadedHash,
     lastUploadedAt: existing?.lastUploadedAt,
     lastError: isNewVersion ? undefined : existing.lastError,
+    lastErrorMessage: isNewVersion ? undefined : existing.lastErrorMessage,
     attemptCount: isNewVersion ? 0 : (existing.attemptCount ?? 0),
     ...patch,
   };
@@ -257,11 +259,12 @@ export function advanceLastUploadedHash(
   return recordArtifactUploaded(state, artifact, hash, uploadedAt);
 }
 
-/** Record a failed upload, incrementing attemptCount and storing the error code. */
+/** Record a failed upload, incrementing attemptCount and storing the error code and message. */
 export function recordArtifactFailure(
   state: SyncState,
   artifact: ArtifactIdentity,
   error: SyncErrorCode,
+  message?: string,
 ): ArtifactStateRecord {
   const existing = getArtifactRecord(state, artifact);
   const isNewVersion = !existing || existing.lastDiscoveredHash !== artifact.sha256;
@@ -269,6 +272,7 @@ export function recordArtifactFailure(
   return updateArtifactRecord(state, artifact, {
     status: 'failed',
     lastError: error,
+    lastErrorMessage: message,
     attemptCount: nextAttempt,
   });
 }

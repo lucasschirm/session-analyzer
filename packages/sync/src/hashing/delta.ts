@@ -169,7 +169,12 @@ function buildManifestArtifacts(hashed: HashResult[], state: SyncState): Manifes
         status = 'skipped';
       }
     }
-    return { ...item.artifact, size: item.size, status };
+    return {
+      ...item.artifact,
+      size: item.size,
+      status,
+      syncError: status === 'failed' ? record?.lastErrorMessage : undefined,
+    };
   });
 }
 
@@ -197,6 +202,7 @@ export function buildSessionManifest(
     pluginVersion: options?.pluginVersion ?? DEFAULT_PLUGIN_VERSION,
     transcriptsCaptured: options?.transcriptsCaptured ?? true,
     mainTranscriptRelativePath: mainTranscript?.relativePath,
+    mainTranscriptError: mainTranscript?.syncError,
     artifacts,
     syncRunsCount: 1,
     updatedAt: new Date().toISOString(),
@@ -327,7 +333,7 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
       result.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveErrorCode(err);
       const message = err instanceof Error ? err.message : String(err);
-      recordArtifactFailure(state, item.artifact, code);
+      recordArtifactFailure(state, item.artifact, code, message);
       result.filesFailed += 1;
       result.failed.push(item.artifact);
       if (!result.errors.includes(code)) {

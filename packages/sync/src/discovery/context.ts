@@ -64,14 +64,17 @@ export class DiscoveryContext {
     const size = validated.stat.size;
     const relativePath =
       storageRelativePath ?? validated.relativePath ?? path.relative(root, resolvedPath);
-    const maxFileBytes =
-      scope === 'session' ? this.limits.maxTranscriptBytes : this.limits.maxFileBytes;
 
-    if (size > maxFileBytes) {
+    // Session-scoped artifacts (transcripts) are size-checked after gzip
+    // compression in the storage adapter, not here — checking the uncompressed
+    // on-disk size would silently drop transcripts that compress well under
+    // the limit. Non-session artifacts are still checked here against
+    // `maxFileBytes` since they are never compressed.
+    if (scope !== 'session' && size > this.limits.maxFileBytes) {
       this.addError({
         code: 'SYNC_FILE_TOO_LARGE',
         path: resolvedPath,
-        message: `File size ${size} exceeds the ${scope === 'session' ? 'transcript' : 'file'} limit of ${maxFileBytes} bytes`,
+        message: `File size ${size} exceeds the file limit of ${this.limits.maxFileBytes} bytes`,
       });
       return 'skipped';
     }

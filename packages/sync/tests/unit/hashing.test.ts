@@ -211,6 +211,24 @@ describe('processDelta', () => {
     expect(record?.attemptCount).toBe(1);
   });
 
+  it('persists the upload error message into lastErrorMessage', async () => {
+    const state = createEmptySyncState();
+    const uploader = vi.fn().mockRejectedValue(new Error('Transcript too large'));
+    const candidate = makeCandidate({ content: 'hello' });
+
+    const result = await processDelta({
+      state,
+      trigger: 'stop',
+      candidates: [candidate],
+      uploader,
+    });
+
+    expect(result.filesFailed).toBe(1);
+    const record = getArtifactRecord(state, result.failed[0]);
+    expect(record?.lastError).toBe('SYNC_STORAGE_ERROR');
+    expect(record?.lastErrorMessage).toBe('Transcript too large');
+  });
+
   it('re-detects a previously failed artifact on the next trigger', async () => {
     const state = createEmptySyncState();
     const failing = vi.fn().mockRejectedValue(new Error('upload failed'));

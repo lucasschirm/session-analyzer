@@ -391,7 +391,10 @@ export function normalizeTrigger(value: unknown): SyncTrigger {
 }
 
 export function buildStorageAdapter(config: SyncConfig): StorageAdapter {
-  return buildStorageAdapterFromStorage(config.storage, { retries: config.retries });
+  return buildStorageAdapterFromStorage(config.storage, {
+    retries: config.retries,
+    maxTranscriptBytes: config.limits.maxTranscriptBytes,
+  });
 }
 
 export function buildStorageAdapterFromStorage(

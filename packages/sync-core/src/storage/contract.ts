@@ -153,6 +153,13 @@ export interface StorageAdapterOptions {
   retries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  /**
+   * Maximum size in bytes for a session-scoped transcript artifact, checked
+   * against the wire body (compressed when gzip is enabled). When the body
+   * exceeds this limit the adapter throws `SYNC_FILE_TOO_LARGE` so the delta
+   * engine records a proper failed-artifact with the error message.
+   */
+  maxTranscriptBytes?: number;
 }
 
 /**

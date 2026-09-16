@@ -75,7 +75,10 @@ function contentTypeFor(relativePath: string): string {
 
 function buildStorageAdapter(config: SyncConfig): StorageAdapter {
   if (config.storage.type === 's3') {
-    return new S3StorageAdapter(config.storage, { retries: config.retries });
+    return new S3StorageAdapter(config.storage, {
+      retries: config.retries,
+      maxTranscriptBytes: config.limits.maxTranscriptBytes,
+    });
   }
   throw new StorageError(
     'SYNC_CONFIG_MISSING',

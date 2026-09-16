@@ -50,6 +50,8 @@ export interface SyncManifest {
   transcriptsCaptured: boolean;
   /** Relative path within the `session` scope of the primary transcript artifact. */
   mainTranscriptRelativePath?: string;
+  /** Error message when the main transcript artifact failed to sync. */
+  mainTranscriptError?: string;
   expectedCategoryCoverage?: readonly string[];
   categoryCoverage?: Record<string, CategoryCoverageDetail>;
   sourceTombstones?: SourceTombstone[];
