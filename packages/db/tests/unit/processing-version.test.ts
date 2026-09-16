@@ -344,20 +344,24 @@ describe('processing-version', () => {
         VALUES
           ('sess-empty', 'proj-5', 'src-5', 'devin', 'native-empty', NULL, ${now}, 'final', 'Empty session', ${now}, ${now}),
           ('sess-ok', 'proj-5', 'src-5', 'claude-code', 'native-ok', NULL, ${now}, 'final', 'Ok session', ${now}, ${now}),
-          ('sess-healed', 'proj-5', 'src-5', 'devin', 'native-healed', NULL, ${now}, 'final', 'Healed session', ${now}, ${now});
+          ('sess-healed', 'proj-5', 'src-5', 'devin', 'native-healed', NULL, ${now}, 'final', 'Healed session', ${now}, ${now}),
+          ('sess-nondevin', 'proj-5', 'src-5', 'claude-code', 'native-nondevin', NULL, ${now}, 'final', 'Non-devin session', ${now}, ${now});
       INSERT INTO transformation_generations (id, session_id, analysis_release_id, parser_version, transformer_version, ontology_version, metric_version, schema_version, status, source_availability, created_at)
         VALUES
           ('gen-empty', 'sess-empty', 'rel-5', '1.0', '0.13.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now}),
           ('gen-ok', 'sess-ok', 'rel-5', '1.0', '1.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now}),
-          ('gen-healed', 'sess-healed', 'rel-5', '1.0', '0.14.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now});
+          ('gen-healed', 'sess-healed', 'rel-5', '1.0', '0.14.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now}),
+          ('gen-nondevin', 'sess-nondevin', 'rel-5', '1.0', '0.1.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now});
       UPDATE sessions SET current_generation_id = 'gen-empty' WHERE id = 'sess-empty';
       UPDATE sessions SET current_generation_id = 'gen-ok' WHERE id = 'sess-ok';
       UPDATE sessions SET current_generation_id = 'gen-healed' WHERE id = 'sess-healed';
+      UPDATE sessions SET current_generation_id = 'gen-nondevin' WHERE id = 'sess-nondevin';
       INSERT INTO session_context_series (id, session_id, generation_id, message_count, context_tokens, generation_tokens, point_meta, models, created_at, updated_at)
         VALUES
           ('scs-empty', 'sess-empty', 'gen-empty', 3, '[null,null,null]', '[null,null,null]', '[]', '[]', ${now}, ${now}),
           ('scs-ok', 'sess-ok', 'gen-ok', 3, '[400,600,-200]', '[40,null,10]', '[]', '[]', ${now}, ${now}),
-          ('scs-healed', 'sess-healed', 'gen-healed', 3, '[null,null,null]', '[null,null,null]', '[]', '[]', ${now}, ${now});
+          ('scs-healed', 'sess-healed', 'gen-healed', 3, '[null,null,null]', '[null,null,null]', '[]', '[]', ${now}, ${now}),
+          ('scs-nondevin', 'sess-nondevin', 'gen-nondevin', 3, '[null,null,null]', '[null,null,null]', '[]', '[]', ${now}, ${now});
     `);
 
     const regen = vi.fn(async (_sessionId: string) => true);
@@ -365,9 +369,10 @@ describe('processing-version', () => {
 
     // Only the pre-0.14.0 devin all-null series is flagged for re-ingest:
     // sess-ok's negative-encoded compaction entry counts as a real context
-    // signal (and it isn't a devin session anyway), while sess-healed's
-    // all-null series under 0.14.0 genuinely has no context signal — no
-    // point re-ingesting it on every future version bump.
+    // signal, sess-healed's all-null series under 0.14.0 genuinely has no
+    // context signal, and sess-nondevin's all-null series is excluded by the
+    // `harness = 'devin'` predicate — non-devin sessions never emit the
+    // checkpoint, so re-ingesting them would be pure waste on every bump.
     expect(regen).toHaveBeenCalledTimes(1);
     expect(regen).toHaveBeenCalledWith('sess-empty');
   });

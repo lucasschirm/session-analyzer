@@ -617,7 +617,7 @@ export async function rebuildAnalyticsDerivedData(
 
   // Step 5: re-apply rollup contributions per session. This repopulates the
   // model dimension from model_requests and is the bulk of the work.
-  // We pass skipBucketRecompute: true because Step 3 recomputes all project and
+  // We pass skipBucketRecompute: true because Step 6 recomputes all project and
   // portfolio rollups in bulk in a single efficient pass.
   // Sessions are processed in batches per transaction to eliminate thousands of
   // intermediate OPFS disk sync flushes while preserving Session Failure Isolation.
