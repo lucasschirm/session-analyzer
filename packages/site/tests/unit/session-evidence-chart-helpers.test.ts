@@ -1,20 +1,19 @@
 import type {
   ComponentFactPage,
+  ContextTimingPoint,
   ContextTimingSeries,
-  RootChildBreakdown,
   SessionEvidenceSummary,
-  SessionTree,
 } from '@lucasschirm/sal-db';
 import { describe, expect, it } from 'vitest';
 import { toEChartsOption } from '../../src/components/charts/chart-helpers';
 import {
+  CONTEXT_BAR_COLORS,
+  CONTEXT_KIND_LEGEND,
   componentFactsToChartSeries,
   componentFactsToRows,
   contextGrowthToChartSeries,
   contextTimingToChartSeries,
   evidenceToTableRows,
-  rootChildToChartSeries,
-  sessionTreeToRows,
   summaryToMetricCards,
 } from '../../src/pages/session-evidence/session-evidence-chart-helpers';
 import type { SessionEvidenceParams } from '../../src/pages/session-evidence/session-evidence-params';
@@ -329,8 +328,9 @@ describe('componentFactsToChartSeries and componentFactsToRows', () => {
     const page: ComponentFactPage = {
       items: [
         {
-          componentId: 'Bash',
+          componentId: 'comp-9f2a1b',
           kind: 'tool',
+          displayName: 'tool/Bash',
           invocationCount: 10,
           outcome: 'success',
           metricValues: [
@@ -361,87 +361,102 @@ describe('componentFactsToChartSeries and componentFactsToRows', () => {
 
     const chartSeries = componentFactsToChartSeries(page);
     expect(chartSeries.seriesId).toBe('component-facts');
-    expect(chartSeries.buckets[0].x).toBe('Bash');
+    // The rendered label is `kind/nativeId`, never the raw component id
+    // (.agents/rules/never-display-raw-ids.md).
+    expect(chartSeries.buckets[0].x).toBe('tool/Bash');
     expect(chartSeries.buckets[0].y).toBe(10);
     expect(chartSeries.buckets[0].series).toBe('tool');
 
     const rows = componentFactsToRows(page);
     expect(rows).toHaveLength(1);
-    expect(rows[0].componentId).toBe('Bash');
+    expect(rows[0].componentId).toBe('comp-9f2a1b');
+    expect(rows[0].displayName).toBe('tool/Bash');
     expect(rows[0].kind).toBe('tool');
     expect(rows[0].invocations).toBe(10);
     expect(rows[0].metrics).toContain('Invocations: 10');
   });
 });
 
-describe('rootChildToChartSeries and sessionTreeToRows', () => {
-  it('converts root child breakdown into chart series', () => {
-    const breakdown: RootChildBreakdown = {
-      token: {
-        analysisReleaseId: 'rel-1',
-        generationId: 'gen-1',
-        comparabilityGroupId: 'grp',
-        eligibleN: 2,
-        knownN: 2,
-        unknownCount: 0,
-        coverage: 'complete',
-        measurementClass: 'observed',
-        confidence: 'high',
-        metricVersion: '1.0.0',
-        evidenceLinks: [],
+describe('contextGrowthToChartSeries message domains', () => {
+  function points(): ContextTimingPoint[] {
+    return [
+      {
+        turnNumber: 1,
+        messageIndex: 1,
+        messageId: 'm1',
+        role: 'user',
+        totalTokens: 100,
+        contextTokens: 100,
+        generationTokens: null,
       },
-      root: {
-        sessionId: 'root-s',
-        childCount: 2,
-        isRoot: true,
-        contributionMetrics: [],
+      {
+        turnNumber: 2,
+        messageIndex: 2,
+        messageId: 'm2',
+        role: 'assistant',
+        invocationKind: 'skill',
+        totalTokens: 200,
+        contextTokens: 200,
+        generationTokens: null,
       },
-      children: [
-        {
-          sessionId: 'child-1',
-          childCount: 0,
-          isRoot: false,
-          contributionMetrics: [],
-        },
-      ],
-    };
+      {
+        turnNumber: 3,
+        messageIndex: 3,
+        messageId: 'm3',
+        role: 'assistant',
+        invocationKind: 'tool',
+        totalTokens: 300,
+        contextTokens: 300,
+        generationTokens: null,
+      },
+      {
+        turnNumber: 4,
+        messageIndex: 4,
+        messageId: 'm4',
+        role: 'assistant',
+        invocationKind: 'agent',
+        totalTokens: 400,
+        contextTokens: 400,
+        generationTokens: null,
+      },
+    ];
+  }
 
-    const chart = rootChildToChartSeries(breakdown);
-    expect(chart.seriesId).toBe('root-child');
-    expect(chart.buckets).toHaveLength(2);
-    expect(chart.buckets[0].series).toBe('root');
-    expect(chart.buckets[1].series).toBe('child');
+  it('keeps plain messages on the default series color and tints Tool/Skill/Agent bars', () => {
+    const series = contextGrowthToChartSeries(
+      { points: points() } as unknown as ContextTimingSeries,
+      's1',
+    );
+    const context = series.buckets.filter((b) => b.series === 'Context');
+    expect(context).toHaveLength(4);
+    // A regular message carries no override at all: the series color (#4f8cff,
+    // the color these charts had before per-message domains existed) wins.
+    expect(context[0]?.color).toBeUndefined();
+    expect(context[1]?.color).toBe(CONTEXT_BAR_COLORS.skill);
+    expect(context[2]?.color).toBe(CONTEXT_BAR_COLORS.tool);
+    expect(context[3]?.color).toBe(CONTEXT_BAR_COLORS.agent);
   });
 
-  it('converts tree to flattened row views', () => {
-    const tree: SessionTree = {
-      rootSessionId: 'root-s',
-      nodes: [
-        {
-          sessionId: 'root-s',
-          generationToken: 'gen-1',
-          children: [
-            {
-              sessionId: 'sub-1',
-              generationToken: 'gen-1',
-              children: [],
-            },
-          ],
-        },
-      ],
-    };
-
-    const rows = sessionTreeToRows(tree);
-    expect(rows).toHaveLength(2);
-    expect(rows[0].sessionId).toBe('root-s');
-    expect(rows[0].isRoot).toBe(true);
-    expect(rows[1].sessionId).toBe('sub-1');
-    expect(rows[1].isRoot).toBe(false);
-    expect(rows[1].depth).toBe(1);
+  it('names the domain in the bucket label so color is never the only carrier', () => {
+    const series = contextGrowthToChartSeries(
+      { points: points() } as unknown as ContextTimingSeries,
+      's1',
+    );
+    const skill = series.buckets.find((b) => b.x === '#2 assistant');
+    expect(skill?.label).toContain('skill invocation');
+    // A plain message keeps the exact label it always had.
+    const plain = series.buckets.find((b) => b.x === '#1 user');
+    expect(plain?.label).toBe('Message #1 (user): context 100 tokens');
   });
 
-  it('handles null tree gracefully', () => {
-    expect(sessionTreeToRows(null)).toEqual([]);
+  it('documents every color in the legend rendered beside the chart', () => {
+    const legendKinds = CONTEXT_KIND_LEGEND.map((entry) => entry.kind);
+    expect(legendKinds).toEqual(['message', 'tool', 'skill', 'agent']);
+    for (const kind of ['tool', 'skill', 'agent'] as const) {
+      expect(CONTEXT_KIND_LEGEND.find((e) => e.kind === kind)?.color).toBe(
+        CONTEXT_BAR_COLORS[kind],
+      );
+    }
   });
 });
 
@@ -509,5 +524,51 @@ describe('summaryToMetricCards', () => {
     expect(cards[0].metricId).toBe('total_tokens');
     expect(cards[0].value).toBe('5,000');
     expect(cards[0].sub).toContain('n=10');
+  });
+
+  it('renders the session duration card in whole minutes', () => {
+    const summary = {
+      token: {
+        analysisReleaseId: 'rel-1',
+        generationId: 'gen-1',
+        comparabilityGroupId: 'grp',
+        eligibleN: 1,
+        knownN: 1,
+        unknownCount: 0,
+        coverage: 'complete',
+        measurementClass: 'derived',
+        confidence: 'high',
+        metricVersion: '1.0.0',
+        evidenceLinks: [],
+      },
+      sessionId: 's1',
+      rootSessionId: 's1',
+      harness: 'devin',
+      headlineMetrics: [
+        {
+          metricId: 'devin:duration:wall_ms:root_only',
+          label: 'Session duration (root-only)',
+          value: 62.683,
+          unit: 'minutes',
+          isExact: true,
+          eligibleN: 1,
+          knownN: 1,
+          unknownCount: 0,
+          coverage: 'complete' as const,
+          measurementClass: 'derived' as const,
+          confidence: 'high' as const,
+          metricVersion: '1.0.0',
+          analysisReleaseId: 'rel-1',
+          generationId: 'gen-1',
+          comparabilityGroupId: 'grp',
+          evidenceLinks: [],
+        },
+      ],
+    } as unknown as SessionEvidenceSummary;
+
+    const cards = summaryToMetricCards(summary, {});
+    expect(cards[0].label).toBe('Session duration (min)');
+    // "62.683 minutes" on a metric card is noise, not precision.
+    expect(cards[0].value).toBe('63 minutes');
   });
 });

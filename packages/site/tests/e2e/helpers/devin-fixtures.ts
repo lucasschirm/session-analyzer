@@ -2,6 +2,7 @@ import type { UnknownArtifactBundle } from '@lucasschirm/sal-transformer-shared'
 import {
   linearBundle,
   modelSwitchBundle,
+  usageAttributionBundle,
 } from '../../../../transformers/devin-transformer/tests/conformance/fixtures/index.js';
 
 export interface DevinFileSpec {
@@ -52,6 +53,20 @@ export function devinLinearFiles(): DevinFileSpec[] {
  */
 export function devinModelSwitchFiles(): DevinFileSpec[] {
   return bundleToFiles(modelSwitchBundle);
+}
+
+/**
+ * The model-switch bundle (UX-037/UX-038) plus the usage-attribution bundle:
+ * messages that dispatch tools through `chat_message.tool_calls` (OpenAI
+ * format), an answering tool-result node, a skill cog + skill invocation, and
+ * an `exec` call that no promoted availability list offers.
+ *
+ * Used by E2E specs that need the per-message Tool / Skill / Agent context-bar
+ * colors and the Available / Used / Unused attribution to be observable, not
+ * just unit-tested (`UX-039`).
+ */
+export function devinUsageAttributionFiles(): DevinFileSpec[] {
+  return bundleToFiles(usageAttributionBundle);
 }
 
 /**

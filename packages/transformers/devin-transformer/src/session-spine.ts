@@ -7,6 +7,7 @@ import type {
   TransformContext,
 } from '@lucasschirm/sal-transformer-shared';
 import { truncateSessionTitle } from '@lucasschirm/sal-transformer-shared';
+import { classifyDevinMessageKinds } from './message-classification.js';
 
 export interface DevinSessionSpine {
   readonly records: readonly NormalizedEvidenceRecord[];
@@ -184,6 +185,7 @@ export function buildSessionSpine(
 ): DevinSessionSpine {
   const { start, end } = sessionTimestamps(session, atifSteps);
   const records: NormalizedEvidenceRecord[] = [];
+  const messageKinds = classifyDevinMessageKinds(orderedMessages);
 
   records.push({
     recordId: stableId('session', { session: sessionId }),
@@ -258,6 +260,14 @@ export function buildSessionSpine(
         messageId: eventId,
         nodeId: message.nodeId,
         parentNodeId: message.parentNodeId,
+        // Which of the four Tool/Skill/Agent domains this conversation node
+        // belongs to, derived from its own `chat_message.tool_calls` (or, for
+        // a tool-result node, the call its `tool_call_id` answers). Absent for
+        // every other node — the read path renders those as plain messages,
+        // never as an implied tool call.
+        ...(messageKinds.has(message.nodeId)
+          ? { invocationKind: messageKinds.get(message.nodeId) }
+          : {}),
         // Carry the chat_message text so the context-timing computation can
         // populate `content` on ContextTimingPoint without a blob round-trip.
         // The drawer's on-demand hydration remains the fallback for sessions

@@ -80,6 +80,21 @@ const baseDataZoom = [
   },
 ];
 
+/**
+ * Turns one bucket into its ECharts data item: a bare number when nothing
+ * beyond the value has to be carried, otherwise an object preserving the
+ * evidence link (click-through) and/or the per-bucket fill color.
+ */
+function dataItem(bucket: ChartBucket | undefined): unknown {
+  if (!bucket || bucket.y === null) return null;
+  if (!bucket.evidenceLink && !bucket.color) return bucket.y;
+  return {
+    value: bucket.y,
+    ...(bucket.evidenceLink ? { evidenceLink: bucket.evidenceLink } : {}),
+    ...(bucket.color ? { itemStyle: { color: bucket.color } } : {}),
+  };
+}
+
 function buildSeries(
   type: 'line' | 'bar',
   xAxisData: string[],
@@ -111,17 +126,7 @@ function buildSeries(
       stack: stacked ? 'total' : undefined,
       areaStyle: area ? {} : undefined,
       emphasis: { focus: 'series' },
-      data: xAxisData.map((x) => {
-        const b = byX.get(x);
-        if (!b || b.y === null) return null;
-        if (b.evidenceLink) {
-          return {
-            value: b.y,
-            evidenceLink: b.evidenceLink,
-          };
-        }
-        return b.y;
-      }),
+      data: xAxisData.map((x) => dataItem(byX.get(x))),
     };
   });
 }
@@ -191,17 +196,7 @@ function histogramOption(series: ChartSeries): EChartsCoreOption {
       {
         name: series.label,
         type: 'bar',
-        data: xAxisData.map((x) => {
-          const b = byX.get(x);
-          if (!b || b.y === null) return null;
-          if (b.evidenceLink) {
-            return {
-              value: b.y,
-              evidenceLink: b.evidenceLink,
-            };
-          }
-          return b.y;
-        }),
+        data: xAxisData.map((x) => dataItem(byX.get(x))),
       },
     ],
     animation: false,

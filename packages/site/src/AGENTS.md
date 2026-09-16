@@ -67,11 +67,10 @@ src/
 │   │   ├── project-behavior-chart-helpers.ts
 │   │   └── project-behavior-params.ts
 │   ├── session-evidence/          # Session Evidence analytics view
+│   │   ├── session-context-drawer.ts
 │   │   ├── session-evidence-chart-helpers.ts
-│   │   ├── session-evidence-evidence.ts
 │   │   ├── session-evidence-params.ts
 │   │   ├── session-evidence-transcript.ts
-│   │   ├── session-evidence-tree.ts
 │   │   └── session-evidence-view.ts
 ├── sync/                          # Remote sync orchestration
 │   ├── credential-crypto.ts       # Vault key management: passkey hashing, encrypt/decrypt helpers, and unlock state for S3 credentials

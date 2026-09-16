@@ -73,18 +73,22 @@ describe('PIPE-014: devin drill-down data presence and missing-data reporting', 
     expect(messages).toContain('Hello');
     expect(messages).toContain('Hi there');
 
-    // Evidence and component-fact drill-down are currently empty. The
-    // ingestion pipeline persists raw evidence but does not yet populate the
-    // turns/messages/invocations or session_component_stats tables. The DTOs
-    // return empty items rather than erroring, which is the current
-    // missing-data report.
+    // Evidence drill-down is still empty: ingestion persists raw evidence but
+    // does not populate the evidence-pages source tables. Component facts, on
+    // the other hand, ARE populated — they aggregate `session_component_stats`,
+    // which ingestion derives from the transformer's `component_evidence_link`
+    // records (0.17.0). The linear fixture's single `EditFile` call therefore
+    // reaches the Tool / Skill / Agent activity drill-down instead of nothing.
     const evidence = await dataSource.session.getEvidencePages(receipt.sessionId, {});
     expect(evidence.items).toEqual([]);
     expect(evidence.nextCursor).toBeUndefined();
     expect(evidence.previousCursor).toBeUndefined();
 
     const componentFacts = await dataSource.session.getComponentFacts(receipt.sessionId, {});
-    expect(componentFacts.items).toEqual([]);
+    expect(componentFacts.items).toHaveLength(1);
+    expect(componentFacts.items[0]?.kind).toBe('tool');
+    expect(componentFacts.items[0]?.displayName).toBe('tool/EditFile');
+    expect(componentFacts.items[0]?.invocationCount).toBe(1);
 
     // Sanity check: the raw evidence does contain the tool invocation and
     // message records that the drill-down tables would consume once populated.

@@ -4,10 +4,8 @@ import type {
   ContextTimingSeries,
   EvidencePage,
   MetricValueDto,
-  RootChildBreakdown,
   ScopeUtilizationReportDto,
   SessionEvidenceSummary,
-  SessionTree,
   SessionValidationSummary,
 } from '@lucasschirm/sal-db';
 import type { LitElement } from 'lit';
@@ -18,10 +16,8 @@ import type { SessionEvidenceView } from '../../src/pages/session-evidence/sessi
 const sessionMock = vi.hoisted(() => ({
   getSummary: vi.fn(),
   getContextTimingSeries: vi.fn(),
-  getRootChildBreakdown: vi.fn(),
   getComponentFacts: vi.fn(),
   getValidationSummary: vi.fn(),
-  getEvidencePages: vi.fn(),
   getTranscriptPages: vi.fn(),
   getUtilizationReport: vi.fn(),
 }));
@@ -151,53 +147,29 @@ function contextTimingFixture(overrides: Partial<ContextTimingSeries> = {}): Con
   };
 }
 
-function rootChildFixture(overrides: Partial<RootChildBreakdown> = {}): RootChildBreakdown {
-  return {
-    token: tokenFixture(),
-    root: {
-      sessionId: 's1',
-      isRoot: true,
-      childCount: 2,
-      contributionMetrics: [metricValueFixture({ value: 100 })],
-    },
-    children: [
-      {
-        sessionId: 's2',
-        isRoot: false,
-        childCount: 0,
-        contributionMetrics: [metricValueFixture({ value: 50 })],
-      },
-      {
-        sessionId: 's3',
-        isRoot: false,
-        childCount: 0,
-        contributionMetrics: [metricValueFixture({ value: 30 })],
-      },
-    ],
-    ...overrides,
-  };
-}
-
 function componentFactFixture(overrides: Partial<ComponentFactPage> = {}): ComponentFactPage {
   return {
     items: [
       {
-        componentId: 'read_file',
+        componentId: 'comp-read-file',
         kind: 'tool',
+        displayName: 'tool/read_file',
         invocationCount: 3,
         outcome: 'success',
         metricValues: [metricValueFixture({ value: 3, label: 'Invocations' })],
       },
       {
-        componentId: 'Skill',
+        componentId: 'comp-skill',
         kind: 'skill',
+        displayName: 'skill/add-e2e-test',
         invocationCount: 2,
         outcome: 'success',
         metricValues: [metricValueFixture({ value: 2, label: 'Invocations' })],
       },
       {
-        componentId: 'Agent',
+        componentId: 'comp-agent',
         kind: 'agent',
+        displayName: 'agent/pr-review',
         invocationCount: 1,
         outcome: 'success',
         metricValues: [metricValueFixture({ value: 1, label: 'Invocations' })],
@@ -215,32 +187,6 @@ function validationFixture(
   return {
     token: tokenFixture(),
     validations: [{ validationType: 'schema', status: 'passed', count: 1 }],
-    ...overrides,
-  };
-}
-
-function evidencePageFixture(overrides: Partial<EvidencePage> = {}): EvidencePage {
-  return {
-    items: [
-      {
-        evidenceId: 'e1',
-        entityType: 'invocation',
-        turnNumber: 1,
-        timestamp: new Date(1_700_000_000_000).toISOString(),
-        summary: 'Invocation (tool): success',
-        evidenceLinks: [],
-      },
-      {
-        evidenceId: 'e2',
-        entityType: 'file_operation',
-        summary: 'File read (success)',
-        evidenceLinks: [],
-      },
-    ],
-    nextCursor: undefined,
-    previousCursor: undefined,
-    generationToken: 'gen-1',
-    analysisReleaseToken: 'rel-1',
     ...overrides,
   };
 }
@@ -269,23 +215,6 @@ function transcriptPageFixture(overrides: Partial<EvidencePage> = {}): EvidenceP
     previousCursor: undefined,
     generationToken: 'gen-1',
     analysisReleaseToken: 'rel-1',
-    ...overrides,
-  };
-}
-
-function sessionTreeFixture(overrides: Partial<SessionTree> = {}): SessionTree {
-  return {
-    rootSessionId: 's1',
-    nodes: [
-      {
-        sessionId: 's1',
-        children: [
-          { sessionId: 's2', children: [], generationToken: 'gen-1' },
-          { sessionId: 's3', children: [], generationToken: 'gen-1' },
-        ],
-        generationToken: 'gen-1',
-      },
-    ],
     ...overrides,
   };
 }
@@ -383,13 +312,10 @@ function utilizationFixture(): ScopeUtilizationReportDto {
 function stubSessionLoad(): void {
   sessionMock.getSummary.mockResolvedValue(summaryFixture());
   sessionMock.getContextTimingSeries.mockResolvedValue(contextTimingFixture());
-  sessionMock.getRootChildBreakdown.mockResolvedValue(rootChildFixture());
   sessionMock.getComponentFacts.mockResolvedValue(componentFactFixture());
   sessionMock.getValidationSummary.mockResolvedValue(validationFixture());
-  sessionMock.getEvidencePages.mockResolvedValue(evidencePageFixture());
   sessionMock.getTranscriptPages.mockResolvedValue(transcriptPageFixture());
   sessionMock.getUtilizationReport.mockResolvedValue(utilizationFixture());
-  searchMock.getRootSessionTree.mockResolvedValue(sessionTreeFixture());
 }
 
 beforeEach(() => {
@@ -404,7 +330,7 @@ afterEach(() => {
 });
 
 describe('session-evidence-view', () => {
-  it('loads and renders summary, timing, tree, components, validation, evidence', async () => {
+  it('loads and renders summary, component availability, timing, components, validation', async () => {
     const view = Object.assign(document.createElement('session-evidence-view'), {
       sessionId: 's1',
     }) as SessionEvidenceView;
@@ -413,18 +339,24 @@ describe('session-evidence-view', () => {
 
     expect(root.querySelector('h1')?.textContent).toContain('Quarterly report analysis');
     expect(root.textContent).toContain('Context and request timing');
-    expect(root.textContent).toContain('Root and child sessions');
     expect(root.textContent).toContain('Tool / Skill / Agent activity');
     expect(root.textContent).toContain('Validation');
-    expect(root.textContent).toContain('Evidence');
+    expect(allChildTexts(root, 'component-utilization-panel').join(' ')).toContain(
+      'Session Component Availability & Invocations',
+    );
+
+    // Removed sections stay removed: the session page leads with the metrics,
+    // component availability, and context growth, and the evidence rows and
+    // session tree no longer have a place on it.
+    expect(root.textContent).not.toContain('Root and child sessions');
+    expect(root.querySelector('session-evidence-tree')).toBeNull();
+    expect(root.querySelector('session-evidence-evidence')).toBeNull();
+    // The transcript is reached from the header action, not shown inline.
+    expect(root.querySelector('session-evidence-transcript')).toBeNull();
 
     const cardTexts = allChildTexts(root, 'metrics-card').join(' ');
     expect(cardTexts).toContain('Total Tokens');
 
-    const tree = root.querySelector('session-evidence-tree');
-    expect(tree).not.toBeNull();
-
-    expect(searchMock.getRootSessionTree).toHaveBeenCalledWith('s1');
     expect(sessionMock.getSummary).toHaveBeenCalledWith('s1', expect.any(Object));
   });
 
@@ -523,49 +455,9 @@ describe('session-evidence-view', () => {
     expect(panel?.textContent).toContain('I am here to help');
   });
 
-  it('renders the root/child session tree', async () => {
-    const view = Object.assign(document.createElement('session-evidence-view'), {
-      sessionId: 's1',
-    }) as SessionEvidenceView;
-    await mount(view);
-    const root = view.shadowRoot as ShadowRoot;
-
-    const tree = root.querySelector('session-evidence-tree');
-    expect(tree).not.toBeNull();
-    const treeText = (tree as LitElement)?.shadowRoot?.textContent ?? '';
-    expect(treeText).toContain('s2');
-    expect(treeText).toContain('s3');
-  });
-
-  it('renders paginated evidence rows with cursor navigation', async () => {
-    sessionMock.getEvidencePages.mockResolvedValue(
-      evidencePageFixture({ nextCursor: '2', previousCursor: undefined }),
-    );
-
-    const view = Object.assign(document.createElement('session-evidence-view'), {
-      sessionId: 's1',
-    }) as SessionEvidenceView;
-    await mount(view);
-    const root = view.shadowRoot as ShadowRoot;
-
-    const evidenceEl = root.querySelector('session-evidence-evidence') as LitElement | null;
-    expect(evidenceEl).not.toBeNull();
-    const evidenceText = evidenceEl?.shadowRoot?.textContent ?? '';
-    expect(evidenceText).toContain('Invocation (tool): success');
-    const nextButton = evidenceEl?.shadowRoot?.querySelector(
-      'button:not(:disabled)',
-    ) as HTMLButtonElement | null;
-    expect(nextButton).not.toBeNull();
-    expect(nextButton?.textContent?.trim()).toBe('Next');
-
-    nextButton?.click();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(window.location.hash).toContain('cursor=2');
-  });
-
-  it('renders paginated transcript with chat-like markdown messages', async () => {
+  it('renders the transcript, and only the transcript, for ?view=transcript', async () => {
     sessionMock.getTranscriptPages.mockResolvedValue(transcriptPageFixture({ nextCursor: '2' }));
+    window.location.hash = '#/sessions/s1?view=transcript';
 
     const view = Object.assign(document.createElement('session-evidence-view'), {
       sessionId: 's1',
@@ -573,25 +465,32 @@ describe('session-evidence-view', () => {
     await mount(view);
     const root = view.shadowRoot as ShadowRoot;
 
-    const tab = Array.from(root.querySelectorAll('a.view-tab')).find(
-      (a) => a.textContent?.trim() === 'Transcript',
-    ) as HTMLAnchorElement | undefined;
-    tab?.click();
-    window.dispatchEvent(new HashChangeEvent('hashchange'));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await flush(view);
-
-    expect(window.location.hash).toContain('view=transcript');
     expect(sessionMock.getTranscriptPages).toHaveBeenCalled();
     const transcriptEl = root.querySelector('session-evidence-transcript') as LitElement | null;
     expect(transcriptEl).not.toBeNull();
     const transcriptText = transcriptEl?.shadowRoot?.textContent ?? '';
     expect(transcriptText).toContain('Hello');
     expect(transcriptText).toContain('world');
+
+    // The Evidence section is gone: no evidence rows, no Evidence/Transcript
+    // tabs, and no second fetch of the evidence page.
+    expect(root.querySelector('session-evidence-evidence')).toBeNull();
+    expect(root.textContent).not.toContain('Evidence');
+    expect(root.querySelector('a.back-link[href="#/"]')).not.toBeNull();
+
+    // Paging the transcript keeps the view parameter and advances the cursor.
+    const nextButton = transcriptEl?.shadowRoot?.querySelector(
+      'button:not(:disabled)',
+    ) as HTMLButtonElement | null;
+    expect(nextButton?.textContent?.trim()).toBe('Next');
+    nextButton?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.location.hash).toContain('view=transcript');
+    expect(window.location.hash).toContain('cursor=2');
   });
 
   it('resolves deleted/superseded evidence to a tombstone', async () => {
-    sessionMock.getEvidencePages.mockResolvedValue({
+    sessionMock.getTranscriptPages.mockResolvedValue({
       items: [
         {
           evidenceId: 'tombstone-s1',
@@ -603,6 +502,7 @@ describe('session-evidence-view', () => {
       generationToken: 'gen-1',
       analysisReleaseToken: 'rel-1',
     });
+    window.location.hash = '#/sessions/s1?view=transcript';
     sessionMock.getSummary.mockResolvedValue(
       summaryFixture({
         headlineMetrics: [],
@@ -617,9 +517,9 @@ describe('session-evidence-view', () => {
     const root = view.shadowRoot as ShadowRoot;
 
     expect(root.textContent).toContain('deleted or superseded');
-    const evidenceEl = root.querySelector('session-evidence-evidence') as LitElement | null;
-    const evidenceText = evidenceEl?.shadowRoot?.textContent ?? '';
-    expect(evidenceText).toContain('no longer available');
+    const transcriptEl = root.querySelector('session-evidence-transcript') as LitElement | null;
+    const transcriptText = transcriptEl?.shadowRoot?.textContent ?? '';
+    expect(transcriptText).toContain('no longer available');
   });
 
   it('shows loading and empty states', async () => {
@@ -629,12 +529,8 @@ describe('session-evidence-view', () => {
       generationToken: 'gen-1',
       analysisReleaseToken: 'rel-1',
     });
+    window.location.hash = '#/sessions/s1?view=transcript';
     sessionMock.getValidationSummary.mockResolvedValue(validationFixture({ validations: [] }));
-    sessionMock.getEvidencePages.mockResolvedValue({
-      items: [],
-      generationToken: 'gen-1',
-      analysisReleaseToken: 'rel-1',
-    });
     sessionMock.getTranscriptPages.mockResolvedValue({
       items: [],
       generationToken: 'gen-1',
@@ -649,9 +545,9 @@ describe('session-evidence-view', () => {
 
     expect(root.textContent).toContain('No component activity');
     expect(root.textContent).toContain('No validation records');
-    const evidenceEl = root.querySelector('session-evidence-evidence') as LitElement | null;
-    const evidenceText = evidenceEl?.shadowRoot?.textContent ?? '';
-    expect(evidenceText).toContain('No evidence rows');
+    const transcriptEl = root.querySelector('session-evidence-transcript') as LitElement | null;
+    const transcriptText = transcriptEl?.shadowRoot?.textContent ?? '';
+    expect(transcriptText).toContain('No transcript messages');
   });
 
   it('keeps Tool, Skill, and Agent distinct in the component table', async () => {
@@ -669,6 +565,11 @@ describe('session-evidence-view', () => {
     expect(kinds).toContain('skill');
     expect(kinds).toContain('agent');
     expect(rows.length).toBe(3);
+    // The "Component" column renders the `kind/nativeId` label, never the raw
+    // canonical id (.agents/rules/never-display-raw-ids.md).
+    const cells = rows.map((row) => row.querySelectorAll('td')[1]?.textContent?.trim());
+    expect(cells).toContain('skill/add-e2e-test');
+    expect(cells.some((cell) => cell?.startsWith('comp-'))).toBe(false);
   });
 
   it('renames the session from the header and shows the new title', async () => {
@@ -728,13 +629,10 @@ describe('session-evidence-view', () => {
   it('shows an error when the data source fails', async () => {
     sessionMock.getSummary.mockRejectedValue(new Error('summary failed'));
     sessionMock.getContextTimingSeries.mockRejectedValue(new Error('timing failed'));
-    sessionMock.getRootChildBreakdown.mockRejectedValue(new Error('tree failed'));
     sessionMock.getComponentFacts.mockRejectedValue(new Error('components failed'));
     sessionMock.getValidationSummary.mockRejectedValue(new Error('validation failed'));
-    sessionMock.getEvidencePages.mockRejectedValue(new Error('evidence failed'));
     sessionMock.getTranscriptPages.mockRejectedValue(new Error('transcript failed'));
     sessionMock.getUtilizationReport.mockRejectedValue(new Error('utilization failed'));
-    searchMock.getRootSessionTree.mockRejectedValue(new Error('tree search failed'));
 
     const view = Object.assign(document.createElement('session-evidence-view'), {
       sessionId: 's1',

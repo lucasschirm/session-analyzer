@@ -977,6 +977,71 @@ export const interruptedSkillCallBundle: UnknownArtifactBundle = bundle([
 ]);
 
 /**
+ * Session component usage attribution. `exec` is a real builtin that the
+ * session invokes, but the cogs rule promoted to `tool` components is
+ * deliberately limited to the MCP wrapper names — so before invoked
+ * components earned an identity of their own, this call was counted by a
+ * metric and by no component at all, and the session's Available / Used /
+ * Unused panel reported every tool as unused.
+ *
+ * Also carries the OpenAI-format `chat_message.tool_calls` of the assistant
+ * nodes and the `tool_call_id` of the node answering the `exec` call, so the
+ * per-message Tool / Skill / Agent classification (`invocationKind`) has real
+ * shapes to resolve: node 2 and node 4 are the calls, node 3 inherits `tool`
+ * from the call it answers, node 1 stays unclassified.
+ */
+const usageAttributionTranscript = [
+  sessionLine(sessionId, 4, undefined, [mcpAllowListCog, skillCog]),
+  messageLine(sessionId, 1, null, 'user', 'List the files, then run the skill'),
+  messageLineWithExtensions(
+    sessionId,
+    2,
+    1,
+    'assistant',
+    'Running exec',
+    {},
+    {
+      toolCalls: [{ id: 'exec:0#a1', name: 'exec', arguments: { command: 'ls' } }],
+    },
+  ),
+  messageLineWithExtensions(
+    sessionId,
+    3,
+    2,
+    'tool',
+    'a.txt\nb.txt',
+    {},
+    {
+      toolCallId: 'exec:0#a1',
+    },
+  ),
+  messageLineWithExtensions(
+    sessionId,
+    4,
+    3,
+    'assistant',
+    'Invoking the skill',
+    {},
+    {
+      toolCalls: [{ id: 'skill:0#a2', name: 'skill', arguments: { skill: 'add-e2e-test' } }],
+    },
+  ),
+  toolCallLine(sessionId, 'exec:0#a1', 'execute', 'Ran ls', 'success', {
+    inferenceToolName: 'exec',
+    rawInput: { command: 'ls' },
+  }),
+  toolCallLine(sessionId, 'skill:0#a2', 'execute', 'Invoked skill add-e2e-test', 'success', {
+    inferenceToolName: 'skill',
+    rawInput: { command: 'invoke', skill: 'add-e2e-test' },
+  }),
+].join('\n');
+
+export const usageAttributionBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', usageAttributionTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+]);
+
+/**
  * DS-B28 (#294): a session with BOTH a foreground and a background
  * `run_subagent` invocation, each already carrying the synthetic
  * prompt/result `message` lines exactly as `jsonl-writer.ts`'s
@@ -1523,6 +1588,15 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
         'per-message evidence rather than only ATIF aggregates.',
       tier2ContextBundle,
       ['root', 'deterministic'],
+    ),
+    fixture(
+      'usage-attribution',
+      'A session that invokes a builtin tool (`exec`) which no promoted availability list ' +
+        'offers, alongside a skill invocation, an answering tool-result node, and OpenAI-format ' +
+        'chat_message.tool_calls — exercises invoked-component identity, ' +
+        'component_evidence_link usage attribution, and per-message invocationKind.',
+      usageAttributionBundle,
+      ['root', 'components', 'invocations', 'deterministic'],
     ),
   ],
 };

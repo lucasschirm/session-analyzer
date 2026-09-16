@@ -2,6 +2,11 @@ import type { DevinCog, DevinToolCallLine } from '@lucasschirm/sal-devin-session
 import { parseDevinCogsJson } from '@lucasschirm/sal-devin-session-parser';
 import type { ComponentIdentity, ComponentSummary } from '@lucasschirm/sal-transformer-shared';
 import { stableId } from './session-spine.js';
+import {
+  type DevinInvocationKind,
+  DISPATCHER_TOOL_NAMES,
+  invocationKindAndName,
+} from './tool-invocations.js';
 
 /**
  * Derives `Skill`/`Tool`(MCP-wrapper-availability)/`Agent` `ComponentSummary`
@@ -35,7 +40,7 @@ const MCP_WRAPPER_TOOL_NAMES: ReadonlySet<string> = new Set([
  * `run_subagent` invocations are `skill`/`agent` domain records, never
  * generic tools — matching `invocationKindAndName` in tool-invocations.ts.
  */
-const NON_GENERIC_TOOL_NAMES: ReadonlySet<string> = new Set(['skill', 'run_subagent']);
+const NON_GENERIC_TOOL_NAMES: ReadonlySet<string> = new Set(DISPATCHER_TOOL_NAMES);
 
 /** True when the ATIF tool_definitions list contains at least one generic
  *  tool name (i.e. something beyond the skill/run_subagent dispatchers). */
@@ -67,6 +72,24 @@ export function componentIdentity(
   };
 }
 
+/**
+ * The one place a Devin component's canonical id formula is written down.
+ * `agent` components are keyed on `profile` (their native name) and `tool`/
+ * `skill` components on `name`, so a declared component (cogs allowlist,
+ * ATIF `tool_definitions`, `run_subagent` profile) and the invocation that
+ * exercises it always resolve to the SAME identity — which is what lets
+ * `component-evidence-links.ts` attribute usage back to availability.
+ */
+export function devinComponentId(
+  sourceId: string,
+  kind: DevinInvocationKind,
+  name: string,
+): string {
+  return kind === 'agent'
+    ? stableId('agent', { source: sourceId, profile: name })
+    : stableId(kind, { source: sourceId, name });
+}
+
 function skillNames(cogs: readonly DevinCog[]): Set<string> {
   const names = new Set<string>();
   for (const cog of cogs) {
@@ -82,7 +105,7 @@ export function extractSkillComponents(
   rootArtifactId: string,
 ): ComponentSummary[] {
   return [...skillNames(cogs)].map((name) => {
-    const componentId = stableId('skill', { source: sourceId, name });
+    const componentId = devinComponentId(sourceId, 'skill', name);
     return {
       componentId,
       kind: 'skill',
@@ -119,7 +142,7 @@ export function extractMcpToolComponents(
   rootArtifactId: string,
 ): ComponentSummary[] {
   return [...mcpWrapperToolNames(cogs)].map((name) => {
-    const componentId = stableId('tool', { source: sourceId, name });
+    const componentId = devinComponentId(sourceId, 'tool', name);
     return {
       componentId,
       kind: 'tool',
@@ -147,7 +170,7 @@ export function extractToolDefinitionComponents(
   return [...names]
     .filter((name) => name.length > 0 && !NON_GENERIC_TOOL_NAMES.has(name))
     .map((name) => {
-      const componentId = stableId('tool', { source: sourceId, name });
+      const componentId = devinComponentId(sourceId, 'tool', name);
       return {
         componentId,
         kind: 'tool' as const,
@@ -191,7 +214,7 @@ export function extractAgentComponents(
   rootArtifactId: string,
 ): ComponentSummary[] {
   return [...subagentProfiles(toolCalls)].map((profile) => {
-    const componentId = stableId('agent', { source: sourceId, profile });
+    const componentId = devinComponentId(sourceId, 'agent', profile);
     return {
       componentId,
       kind: 'agent',
@@ -205,10 +228,57 @@ export function extractAgentComponents(
 }
 
 /**
+ * One component per distinct `(kind, name)` actually exercised by a
+ * `tool_call_state` record. Declared availability (`cogs_json` allowlist,
+ * ATIF `tool_definitions`) is only ever a subset of what a session really
+ * ran: the cogs rule promoted to `tool` components is deliberately limited to
+ * the 4 MCP wrapper names (DS-F11 (#288) §4 noise avoidance), so a session
+ * that spent its time in `exec`/`read`/`edit` had those tools invoked and
+ * metric-counted but present in no component identity at all — the Session
+ * Component Availability & Invocations panel could then never show them as
+ * used. A tool that ran was by definition available, so every invoked
+ * skill/agent/tool gets an identity, deduped against the declared ones (same
+ * `devinComponentId` formula, so an invoked MCP wrapper collapses into the
+ * declared record rather than duplicating it).
+ */
+export function extractInvokedComponents(
+  sourceId: string,
+  toolCalls: readonly DevinToolCallLine[],
+  rootArtifactId: string,
+): ComponentSummary[] {
+  const byId = new Map<string, ComponentSummary>();
+  for (const call of toolCalls) {
+    if (!call.call) continue;
+    const { kind, name } = invocationKindAndName(call.call, call.update);
+    if (!name) continue;
+    const componentId = devinComponentId(sourceId, kind, name);
+    if (byId.has(componentId)) continue;
+    byId.set(componentId, {
+      componentId,
+      kind,
+      identity: componentIdentity(
+        componentId,
+        name,
+        kind === 'tool' && MCP_WRAPPER_TOOL_NAMES.has(name) ? 'mcp' : undefined,
+      ),
+      sourceArtifactIds: [rootArtifactId],
+      // Invocation evidence is runtime data for this session, never a durable
+      // environment declaration.
+      sessionScoped: true,
+    });
+  }
+  return [...byId.values()];
+}
+
+/**
  * Derives all `cogs_json`/`tool_call_state`-sourced components for one
  * session. `sourceId` is the harness-scoped ingestion source id (never the
  * session id) — see the module doc comment above for why component
  * identity must be keyed on it instead.
+ *
+ * Declared and invoked sets are unioned and deduped by `componentId`, so a
+ * component offered *and* used appears exactly once (and utilization can
+ * report it as both available and used instead of picking one of the two).
  */
 export function deriveDevinSessionComponents(
   sourceId: string,
@@ -221,14 +291,22 @@ export function deriveDevinSessionComponents(
   // Prefer the model-sent tool schema list (ATIF agent.tool_definitions).
   // When ATIF carries no tool_definitions — JSONL-only sessions, or older
   // ATIF that predates the field — fall back to the declared cogs allowlist
-  // so tool availability isn't lost entirely.
-  const toolComponents =
+  // so tool availability isn't lost entirely. Invoked tools are added on top
+  // of either branch (see `extractInvokedComponents`).
+  const declaredComponents =
     toolDefinitions.length > 0
       ? extractToolDefinitionComponents(sourceId, toolDefinitions, rootArtifactId)
       : extractMcpToolComponents(sourceId, cogs, rootArtifactId);
-  return [
+  const components = [
     ...extractSkillComponents(sourceId, cogs, rootArtifactId),
-    ...toolComponents,
+    ...declaredComponents,
     ...extractAgentComponents(sourceId, toolCalls, rootArtifactId),
+    ...extractInvokedComponents(sourceId, toolCalls, rootArtifactId),
   ];
+  const seen = new Set<string>();
+  return components.filter((component) => {
+    if (seen.has(component.componentId)) return false;
+    seen.add(component.componentId);
+    return true;
+  });
 }

@@ -2,10 +2,7 @@ import type {
   ComponentFactPage,
   ContextTimingSeries,
   MetricValueDto,
-  RootChildBreakdown,
   SessionEvidenceSummary,
-  SessionTree,
-  SessionTreeNode,
 } from '@lucasschirm/sal-db';
 import type {
   ChartBucket,
@@ -19,6 +16,40 @@ import type { MetricCardView } from '../portfolio/portfolio-chart-helpers';
 import type { SessionEvidenceParams } from './session-evidence-params';
 import { evidenceLinkHref } from './session-evidence-params';
 
+/**
+ * Fill colors for the context-growth `Context` segment, keyed on the message
+ * domain the transformer classified it into
+ * (`.agents/rules/analytics-domain-distinctions.md`). `message` is the plain
+ * no-tool case and is also the series color the chart always had, so an
+ * unclassified bar is rendered exactly as before.
+ *
+ * Color is never the only carrier: every bucket label repeats the domain in
+ * text, the view renders `CONTEXT_KIND_LEGEND` beside the chart, and the
+ * message drawer shows a matching badge (components/charts/AGENTS.md
+ * color-independence invariant).
+ */
+export const CONTEXT_BAR_COLORS: Record<'message' | 'tool' | 'skill' | 'agent', string> = {
+  message: '#4f8cff',
+  tool: '#facc15',
+  skill: '#a78bfa',
+  agent: '#f472b6',
+};
+
+const CONTEXT_KIND_LABELS: Record<'message' | 'tool' | 'skill' | 'agent', string> = {
+  message: 'Message',
+  tool: 'Tool call',
+  skill: 'Skill call',
+  agent: 'Agent call',
+};
+
+export const CONTEXT_KIND_LEGEND: readonly { kind: string; label: string; color: string }[] = (
+  ['message', 'tool', 'skill', 'agent'] as const
+).map((kind) => ({ kind, label: CONTEXT_KIND_LABELS[kind], color: CONTEXT_BAR_COLORS[kind] }));
+
+function kindSuffix(kind: 'tool' | 'skill' | 'agent' | undefined): string {
+  return kind ? `, ${kind} invocation` : '';
+}
+
 export function contextGrowthToChartSeries(
   series: ContextTimingSeries,
   sessionId = '',
@@ -29,16 +60,18 @@ export function contextGrowthToChartSeries(
   for (const point of series.points) {
     const idx = point.messageIndex ?? point.turnNumber;
     const role = point.role ?? 'message';
+    const kindLabel = kindSuffix(point.invocationKind);
     const x = `#${idx} ${role}`;
     const evidenceLink: ChartEvidenceLink = {
-      label: `Message #${idx} (${role})`,
+      label: `Message #${idx} (${role}${kindLabel})`,
       href: sessionId ? `#/sessions/${sessionId}#msg-${point.messageId ?? idx}` : '',
     };
     buckets.push({
       x,
       y: point.contextTokens,
-      label: `Message #${idx} (${role}): context ${formatChartValue(point.contextTokens)} tokens`,
+      label: `Message #${idx} (${role}${kindLabel}): context ${formatChartValue(point.contextTokens)} tokens`,
       series: 'Context',
+      color: point.invocationKind ? CONTEXT_BAR_COLORS[point.invocationKind] : undefined,
       evidenceLink,
     });
 
@@ -56,7 +89,7 @@ export function contextGrowthToChartSeries(
       buckets.push({
         x,
         y: removedTokens,
-        label: `Message #${idx} (${role}): compacted ${formatChartValue(removedTokens)} tokens`,
+        label: `Message #${idx} (${role}${kindLabel}): compacted ${formatChartValue(removedTokens)} tokens`,
         series: 'Compacted',
         evidenceLink,
       });
@@ -66,7 +99,7 @@ export function contextGrowthToChartSeries(
       buckets.push({
         x,
         y: point.generationTokens,
-        label: `Message #${idx} (${role}): generation ${formatChartValue(point.generationTokens)} tokens`,
+        label: `Message #${idx} (${role}${kindLabel}): generation ${formatChartValue(point.generationTokens)} tokens`,
         series: 'Generation',
         evidenceLink,
       });
@@ -84,7 +117,7 @@ export function contextGrowthToChartSeries(
     xLabel: 'Message',
     yLabel: 'Tokens',
     seriesOrder: ['Context', 'Compacted', 'Generation'],
-    colors: ['#4f8cff', '#ffb86c', '#3ecf8e'],
+    colors: [CONTEXT_BAR_COLORS.message, '#ffb86c', '#3ecf8e'],
     buckets,
   };
 }
@@ -125,9 +158,11 @@ export function contextTimingToChartSeries(series: ContextTimingSeries): ChartSe
 
 export function componentFactsToChartSeries(page: ComponentFactPage): ChartSeries {
   const buckets: ChartBucket[] = page.items.map((row) => ({
-    x: row.componentId,
+    // `kind/nativeId` label, never the raw canonical component id
+    // (`.agents/rules/never-display-raw-ids.md`).
+    x: row.displayName,
     y: row.invocationCount,
-    label: `${row.componentId} — ${row.invocationCount} invocations (${row.outcome})`,
+    label: `${row.displayName} — ${row.invocationCount} invocations (${row.outcome})`,
     series: row.kind,
   }));
 
@@ -137,32 +172,6 @@ export function componentFactsToChartSeries(page: ComponentFactPage): ChartSerie
     chartType: 'stacked_bar',
     xLabel: 'Artifact',
     yLabel: 'Invocations',
-    buckets,
-  };
-}
-
-export function rootChildToChartSeries(breakdown: RootChildBreakdown): ChartSeries {
-  const buckets: ChartBucket[] = [
-    {
-      x: breakdown.root.sessionId,
-      y: breakdown.root.childCount,
-      label: `Root ${breakdown.root.sessionId} — ${breakdown.root.childCount} children`,
-      series: 'root',
-    },
-    ...breakdown.children.map((child) => ({
-      x: child.sessionId,
-      y: child.childCount,
-      label: `Child ${child.sessionId} — ${child.childCount} children`,
-      series: 'child',
-    })),
-  ];
-
-  return {
-    seriesId: 'root-child',
-    label: 'Root and child contribution',
-    chartType: 'stacked_bar',
-    xLabel: 'Session',
-    yLabel: 'Children',
     buckets,
   };
 }
@@ -190,6 +199,7 @@ export function summaryToMetricCards(
 
 export interface ComponentRowView {
   readonly componentId: string;
+  readonly displayName: string;
   readonly kind: string;
   readonly invocations: number;
   readonly outcome: string;
@@ -199,6 +209,7 @@ export interface ComponentRowView {
 export function componentFactsToRows(page: ComponentFactPage): ComponentRowView[] {
   return page.items.map((row) => ({
     componentId: row.componentId,
+    displayName: row.displayName,
     kind: row.kind,
     invocations: row.invocationCount,
     outcome: row.outcome,
@@ -206,42 +217,6 @@ export function componentFactsToRows(page: ComponentFactPage): ComponentRowView[
       .map((m) => `${m.label}: ${formatChartValue(m.value, m.unit)}`)
       .join(' • '),
   }));
-}
-
-export interface TreeRowView {
-  readonly sessionId: string;
-  readonly depth: number;
-  readonly isRoot: boolean;
-  readonly href: string;
-}
-
-function flattenNode(node: SessionTreeNode, depth: number, isRoot: boolean): TreeRowView[] {
-  const href = `#/sessions/${node.sessionId}?generation=${encodeURIComponent(node.generationToken)}`;
-  const rows: TreeRowView[] = [
-    {
-      sessionId: node.sessionId,
-      depth,
-      isRoot,
-      href,
-    },
-  ];
-  for (const child of node.children) {
-    rows.push(...flattenNode(child, depth + 1, false));
-  }
-  return rows;
-}
-
-function flattenTree(tree: SessionTree): TreeRowView[] {
-  const rows: TreeRowView[] = [];
-  for (const node of tree.nodes) {
-    rows.push(...flattenNode(node, 0, tree.rootSessionId === node.sessionId));
-  }
-  return rows;
-}
-
-export function sessionTreeToRows(tree: SessionTree | null): TreeRowView[] {
-  if (!tree) return [];
-  return flattenTree(tree);
 }
 
 export function evidenceToTableRows(

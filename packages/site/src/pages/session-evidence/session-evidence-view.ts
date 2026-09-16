@@ -3,16 +3,13 @@ import type {
   ContextTimingPoint,
   ContextTimingSeries,
   EvidencePage,
-  RootChildBreakdown,
   ScopeUtilizationReportDto,
   SessionEvidenceSummary,
   SessionEvidenceView as SessionEvidenceViewApi,
-  SessionTree,
   SessionValidationSummary,
 } from '@lucasschirm/sal-db';
 import { css, html, type PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import type {
   ChartClickDetail,
@@ -26,6 +23,7 @@ import '../../components/component-utilization-panel';
 import { analyticsClient } from '../../db/analytics-client';
 import { navigateTo } from '../../router';
 import {
+  CONTEXT_KIND_LEGEND,
   componentFactsToChartSeries,
   componentFactsToRows,
   contextGrowthToChartSeries,
@@ -37,9 +35,7 @@ import {
   sessionEvidenceParamsToQuery,
 } from './session-evidence-params';
 import './session-context-drawer';
-import './session-evidence-evidence';
 import './session-evidence-transcript';
-import './session-evidence-tree';
 
 type LoadState = 'idle' | 'loading' | 'ok' | 'empty' | 'partial' | 'error';
 
@@ -390,30 +386,34 @@ export class SessionEvidenceView extends PageLitElement {
       font-weight: 600;
     }
 
-    .view-tabs {
+    .section-header {
       display: flex;
-      gap: 8px;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
     }
 
-    .view-tab {
-      padding: 8px 14px;
-      font-size: 14px;
+    .kind-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      font-size: 12px;
+      color: var(--md-sys-color-on-surface-variant, #9aa4b2);
+    }
+
+    .kind-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .kind-swatch {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
       border: 1px solid var(--md-sys-color-outline, #2a303c);
-      border-radius: 8px;
-      background: var(--md-sys-color-surface, #171a21);
-      color: var(--md-sys-color-on-surface, #e6e9ef);
-      cursor: pointer;
-      text-decoration: none;
-    }
-
-    .view-tab:hover {
-      background: var(--md-sys-color-surface-container-hover, #262d3a);
-    }
-
-    .view-tab.active {
-      background: var(--md-sys-color-primary, #4f8cff);
-      color: var(--md-sys-color-on-primary, #fff);
-      border-color: var(--md-sys-color-primary, #4f8cff);
     }
   `,
   ];
@@ -434,17 +434,11 @@ export class SessionEvidenceView extends PageLitElement {
 
   @state() private contextTiming: PanelState<ContextTimingSeries> = { data: null, state: 'idle' };
 
-  @state() private rootChild: PanelState<RootChildBreakdown> = { data: null, state: 'idle' };
-
   @state() private componentFacts: PanelState<ComponentFactPage> = { data: null, state: 'idle' };
 
   @state() private validation: PanelState<SessionValidationSummary> = { data: null, state: 'idle' };
 
-  @state() private evidence: PanelState<EvidencePage> = { data: null, state: 'idle' };
-
   @state() private transcript: PanelState<EvidencePage> = { data: null, state: 'idle' };
-
-  @state() private sessionTree: PanelState<SessionTree> = { data: null, state: 'idle' };
 
   @state() private utilization: PanelState<ScopeUtilizationReportDto> = {
     data: null,
@@ -517,56 +511,37 @@ export class SessionEvidenceView extends PageLitElement {
     const query = sessionEvidenceParamsToQuery(params);
 
     const sessionApi: SessionEvidenceViewApi = analyticsClient.session;
-    const searchApi = analyticsClient.search;
 
-    const [
-      summary,
-      contextTiming,
-      rootChild,
-      componentFacts,
-      validation,
-      evidence,
-      transcript,
-      sessionTree,
-      utilization,
-    ] = await Promise.allSettled([
-      sessionApi.getSummary(this.sessionId, query),
-      sessionApi.getContextTimingSeries(this.sessionId, query),
-      sessionApi.getRootChildBreakdown(this.sessionId, query),
-      sessionApi.getComponentFacts(this.sessionId, query),
-      sessionApi.getValidationSummary(this.sessionId, query),
-      sessionApi.getEvidencePages(this.sessionId, query),
-      sessionApi.getTranscriptPages(this.sessionId, query),
-      searchApi.getRootSessionTree(this.sessionId),
-      sessionApi.getUtilizationReport(this.sessionId, query),
-    ]);
+    const [summary, contextTiming, componentFacts, validation, transcript, utilization] =
+      await Promise.allSettled([
+        sessionApi.getSummary(this.sessionId, query),
+        sessionApi.getContextTimingSeries(this.sessionId, query),
+        sessionApi.getComponentFacts(this.sessionId, query),
+        sessionApi.getValidationSummary(this.sessionId, query),
+        sessionApi.getTranscriptPages(this.sessionId, query),
+        sessionApi.getUtilizationReport(this.sessionId, query),
+      ]);
 
     if (requestId !== this.currentRequestId) return;
 
     this.summary = panelStateFromResult(summary);
     this.contextTiming = panelStateFromResult(contextTiming);
-    this.rootChild = panelStateFromResult(rootChild);
     this.componentFacts = panelStateFromResult(componentFacts);
     this.validation = panelStateFromResult(validation);
-    this.evidence = panelStateFromResult(evidence);
     this.transcript = panelStateFromResult(transcript);
-    this.sessionTree = panelStateFromResult(sessionTree);
     this.utilization = panelStateFromResult(utilization);
 
-    this.isTombstone =
-      hasTombstone(this.evidence) ||
-      hasTombstone(this.transcript) ||
-      this.summary.data?.token.knownN === 0;
+    // A tombstone is surfaced by every session read path from the same
+    // `session_read_state` lookup, so the transcript page alone answers
+    // "is this session's evidence gone?" — no second (rendered-nowhere) read.
+    this.isTombstone = hasTombstone(this.transcript) || this.summary.data?.token.knownN === 0;
 
     const states = [
       this.summary.state,
       this.contextTiming.state,
-      this.rootChild.state,
       this.componentFacts.state,
       this.validation.state,
-      this.evidence.state,
       this.transcript.state,
-      this.sessionTree.state,
       this.utilization.state,
     ];
 
@@ -607,12 +582,9 @@ export class SessionEvidenceView extends PageLitElement {
     navigateTo(`/sessions/${this.sessionId}${hash}`);
   }
 
-  private handlePageChange(
-    detail: { cursor?: string; direction: 'next' | 'previous' },
-    view: 'evidence' | 'transcript',
-  ): void {
+  private handlePageChange(detail: { cursor?: string; direction: 'next' | 'previous' }): void {
     this.updateParams({
-      view,
+      view: 'transcript',
       cursor: detail.cursor,
     });
   }
@@ -734,7 +706,7 @@ export class SessionEvidenceView extends PageLitElement {
             • Session ID: ${this.sessionId}
           </p>
         </div>
-        <a class="transcript-link" href="#/sessions/${this.sessionId}/transcript">
+        <a class="transcript-link" href="#/sessions/${this.sessionId}?view=transcript">
           View Full Transcript
         </a>
       </div>
@@ -828,28 +800,23 @@ export class SessionEvidenceView extends PageLitElement {
     return html`
       <div class="section" id="context-growth">
         <h2>Context and request timing</h2>
+        <div class="kind-legend" aria-hidden="true">
+          ${CONTEXT_KIND_LEGEND.map(
+            (entry) => html`
+                <span class="kind-legend-item">
+                  <span class="kind-swatch" style="background: ${entry.color}"></span>
+                  ${entry.label}
+                </span>
+              `,
+          )}
+        </div>
         <analytics-chart
           title="Context growth across session"
-          description="Context size (in tokens) for each message in chronological order, showing active context and tokens removed by compaction. Click any bar to view message details."
+          description="Context size (in tokens) for each message in chronological order, showing active context and tokens removed by compaction. Each bar is labeled with the message's Tool / Skill / Agent domain, and colored to match. Click any bar to view message details."
           .series=${this.cachedContextTimingSeries}
           .state=${this.chartState(this.contextTiming.state)}
           @chart-click=${this.handleBarClick}
         ></analytics-chart>
-      </div>
-    `;
-  }
-
-  private renderRootChild() {
-    return html`
-      <div class="section">
-        <h2>Root and child sessions</h2>
-        ${
-          this.rootChild.data
-            ? html`
-              <session-evidence-tree .tree=${this.sessionTree.data}></session-evidence-tree>
-            `
-            : html`<p class="notice">No tree data available.</p>`
-        }
       </div>
     `;
   }
@@ -871,7 +838,7 @@ export class SessionEvidenceView extends PageLitElement {
     const series = componentFactsToChartSeries(this.componentFacts.data);
 
     return html`
-      <div class="section">
+      <div class="section" id="component-activity">
         <h2>Tool / Skill / Agent activity</h2>
         <p class="notice">
           Tool, Skill, Agent, and Sub Agent are distinct kinds. The table and
@@ -886,7 +853,7 @@ export class SessionEvidenceView extends PageLitElement {
           <thead>
             <tr>
               <th scope="col">Kind</th>
-              <th scope="col">Artifact</th>
+              <th scope="col">Component</th>
               <th scope="col">Invocations</th>
               <th scope="col">Outcome</th>
               <th scope="col">Metrics</th>
@@ -899,7 +866,7 @@ export class SessionEvidenceView extends PageLitElement {
               (row) => html`
                 <tr>
                   <td><span class="kind-badge">${row.kind}</span></td>
-                  <td>${row.componentId}</td>
+                  <td>${row.displayName}</td>
                   <td>${row.invocations}</td>
                   <td>${row.outcome}</td>
                   <td>${row.metrics}</td>
@@ -941,80 +908,39 @@ export class SessionEvidenceView extends PageLitElement {
     `;
   }
 
-  private renderEvidenceTabs() {
-    const currentView = this.params.view ?? 'evidence';
-    return html`
-      <div class="view-tabs" role="tablist" aria-label="Evidence view">
-        <a
-          class=${classMap({ 'view-tab': true, active: currentView === 'evidence' })}
-          href="#/sessions/${this.sessionId}?view=evidence"
-          @click=${(e: Event) => {
-            e.preventDefault();
-            this.updateParams({ view: 'evidence' });
-          }}
-        >
-          Evidence
-        </a>
-        <a
-          class=${classMap({ 'view-tab': true, active: currentView === 'transcript' })}
-          href="#/sessions/${this.sessionId}?view=transcript"
-          @click=${(e: Event) => {
-            e.preventDefault();
-            this.updateParams({ view: 'transcript' });
-          }}
-        >
-          Transcript
-        </a>
-      </div>
-    `;
-  }
-
-  private renderEvidenceSection() {
-    const currentView = this.params.view ?? 'evidence';
+  /**
+   * The message transcript is reached from the header's "View Full
+   * Transcript" action (`?view=transcript`), not from a section on the
+   * overview itself — the session page leads with metrics, component
+   * availability, and context growth.
+   */
+  private renderTranscriptSection() {
     return html`
       <div class="section">
-        <h2>Evidence</h2>
-        ${this.renderEvidenceTabs()}
-        ${
-          currentView === 'transcript'
-            ? html`
-              <session-evidence-transcript
-                .page=${this.transcript.data}
-                .loading=${this.transcript.state === 'loading'}
-                .state=${
-                  this.transcript.state === 'error'
-                    ? 'error'
-                    : hasTombstone(this.transcript)
-                      ? 'tombstone'
-                      : this.transcript.data?.items.length === 0
-                        ? 'empty'
-                        : 'ok'
-                }
-                @page-change=${(e: CustomEvent) => this.handlePageChange(e.detail, 'transcript')}
-              ></session-evidence-transcript>
-            `
-            : html`
-              <session-evidence-evidence
-                .page=${this.evidence.data}
-                .loading=${this.evidence.state === 'loading'}
-                .state=${
-                  this.evidence.state === 'error'
-                    ? 'error'
-                    : hasTombstone(this.evidence)
-                      ? 'tombstone'
-                      : this.evidence.data?.items.length === 0
-                        ? 'empty'
-                        : 'ok'
-                }
-                @page-change=${(e: CustomEvent) => this.handlePageChange(e.detail, 'evidence')}
-              ></session-evidence-evidence>
-            `
-        }
+        <div class="section-header">
+          <h2>Transcript</h2>
+          <a class="back-link" href="#/sessions/${this.sessionId}">← Back to session overview</a>
+        </div>
+        <session-evidence-transcript
+          .page=${this.transcript.data}
+          .loading=${this.transcript.state === 'loading'}
+          .state=${
+            this.transcript.state === 'error'
+              ? 'error'
+              : hasTombstone(this.transcript)
+                ? 'tombstone'
+                : this.transcript.data?.items.length === 0
+                  ? 'empty'
+                  : 'ok'
+          }
+          @page-change=${(e: CustomEvent) => this.handlePageChange(e.detail)}
+        ></session-evidence-transcript>
       </div>
     `;
   }
 
   render() {
+    const showTranscript = this.params.view === 'transcript';
     return html`
       <div class="session-evidence session-evidence-view">
         ${this.renderBackLink()}
@@ -1040,10 +966,9 @@ export class SessionEvidenceView extends PageLitElement {
           heading="Session Component Availability & Invocations"
         ></component-utilization-panel>
         ${this.renderContextTiming()}
-        ${this.renderRootChild()}
         ${this.renderComponentFacts()}
         ${this.renderValidation()}
-        ${this.renderEvidenceSection()}
+        ${showTranscript ? this.renderTranscriptSection() : ''}
         <session-context-drawer
           .message=${this.selectedMessage}
           @drawer-close=${this.handleDrawerClose}

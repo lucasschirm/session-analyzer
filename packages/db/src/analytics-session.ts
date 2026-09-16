@@ -735,9 +735,15 @@ async function getComponentFacts(
   const items: ComponentFactRow[] = [];
   if (state.status === 'ok') {
     const stats = await SessionComponentStatStore.listBySession(queryable, sessionId);
+    // Resolved once: `getById` is keyed on (portfolio, id), so passing an empty
+    // portfolio here would silently return nothing and every row would fall
+    // back to rendering its raw canonical component id.
+    const portfolioId = await resolvePortfolioId(queryable, query);
     for (const stat of stats) {
       if (query?.generationId && stat.generationId !== query.generationId) continue;
-      const identity = await ComponentIdentityStore.getById(queryable, '', stat.componentId);
+      const identity = portfolioId
+        ? await ComponentIdentityStore.getById(queryable, portfolioId, stat.componentId)
+        : undefined;
       const token = makeToken(
         tokens.analysisReleaseId,
         tokens.generationId,
@@ -769,6 +775,12 @@ async function getComponentFacts(
       items.push({
         componentId: stat.componentId,
         kind: identity?.kind ?? stat.kind ?? 'unknown',
+        displayName: componentDisplayName(
+          identity?.kind ?? stat.kind ?? 'unknown',
+          identity?.nativeId ?? '',
+          identity?.displayName ?? '',
+          stat.componentId,
+        ),
         invocationCount: stat.invocationCount,
         outcome,
         metricValues,

@@ -139,6 +139,13 @@ interface TimingMessage {
   model?: string;
   turnOrdinal?: number;
   /**
+   * Tool / Skill / Agent domain the transformer classified this message into
+   * from its own tool-call evidence (`message` payload `invocationKind`).
+   * `undefined` when the transcript records no tool relationship for the node
+   * — a plain message, never a defaulted `'tool'`.
+   */
+  invocationKind?: 'tool' | 'skill' | 'agent';
+  /**
    * Harness-reported per-node context-size checkpoint (Devin
    * `num_tokens_preceding`). Used as the context source when no resolved
    * model request carries context fields — the only signal on
@@ -206,6 +213,10 @@ function parseTimingRequest(payload: Record<string, unknown>): TimingRequest {
   };
 }
 
+function asInvocationKind(value: unknown): 'tool' | 'skill' | 'agent' | undefined {
+  return value === 'tool' || value === 'skill' || value === 'agent' ? value : undefined;
+}
+
 function parseTimingMessage(
   recordId: string,
   parentId: string | null | undefined,
@@ -227,6 +238,7 @@ function parseTimingMessage(
     role,
     timestamp: ts,
     content: formatMessageContent(payload.content),
+    invocationKind: asInvocationKind(payload.invocationKind),
     model: asOptionalString(payload.model) ?? undefined,
     turnOrdinal:
       turn?.ordinal ?? (typeof payload.ordinal === 'number' ? payload.ordinal : undefined),
@@ -436,6 +448,7 @@ export function toContextTimingPoint(raw: RawTimingPoint, index: number): Contex
     messageIndex: index + 1,
     messageId: msg.id,
     role: msg.role,
+    invocationKind: msg.invocationKind,
     model: (req ? asOptionalString(req.model) : msg.model) ?? undefined,
     timestamp: msg.timestamp,
     totalTokens,
@@ -478,6 +491,9 @@ export function computeContextTimingPoints(
 /** Sparse per-point metadata stored in `session_context_series.point_meta`. */
 interface ContextPointMeta {
   role?: string;
+  /** Tool / Skill / Agent domain classified for this message by the harness
+   *  transformer; absent for a plain message. */
+  ik?: 'tool' | 'skill' | 'agent';
   msgId?: string;
   src?: string;
   ts?: string;
@@ -535,6 +551,7 @@ export function encodeContextSeries(rawPoints: readonly RawTimingPoint[]): Encod
   rawPoints.forEach((raw, index) => {
     const { msg, req } = raw;
     const meta: ContextPointMeta = { role: msg.role, msgId: msg.id };
+    if (msg.invocationKind) meta.ik = msg.invocationKind;
     if (msg.sourceEventId) meta.src = msg.sourceEventId;
     if (msg.timestamp) meta.ts = msg.timestamp;
     const model = (req ? asOptionalString(req.model) : msg.model) ?? undefined;
@@ -620,6 +637,7 @@ export function decodeContextSeries(row: {
       messageIndex: i + 1,
       messageId: typeof meta.msgId === 'string' ? meta.msgId : undefined,
       role,
+      invocationKind: asInvocationKind(meta.ik),
       model: typeof meta.model === 'string' ? meta.model : undefined,
       timestamp: typeof meta.ts === 'string' ? meta.ts : undefined,
       content: typeof meta.cnt === 'string' ? meta.cnt : undefined,
