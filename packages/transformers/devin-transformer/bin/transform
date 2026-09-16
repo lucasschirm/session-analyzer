@@ -1,0 +1,58 @@
+#!/usr/bin/env node
+/**
+ * CLI: transform a `devin-session-jsonl/v1` transcript through the Devin
+ * transformer into a `TransformResult` JSON document.
+ *
+ * Usage:
+ *   bin/transform <transcript.jsonl> > transformed.json
+ *   bin/transform <bundle.json>     > transformed.json   # { artifacts: [{relativePath, content}] }
+ *
+ * Requires the package (and workspace deps) to be built first
+ * (`pnpm build` -> dist/). The input transcript is wrapped in a minimal
+ * `UnknownArtifactBundle` — the same input `transform()` receives in
+ * production, where the transformer runs `parseDevinBundle` itself (i.e.
+ * this output is literally "the transformed JSON from the parsed" lines).
+ */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const { DevinTransformer } = await import(join(here, '..', 'dist', 'index.js'));
+
+const input = process.argv[2];
+if (!input) {
+  console.error('usage: bin/transform <transcript.jsonl | bundle.json>');
+  process.exit(2);
+}
+
+const raw = readFileSync(input, 'utf8');
+
+let bundle;
+try {
+  const parsed = JSON.parse(raw);
+  if (parsed && Array.isArray(parsed.artifacts)) {
+    bundle = parsed;
+  }
+} catch {
+  // not JSON — treat as JSONL below
+}
+if (!bundle) {
+  bundle = {
+    artifacts: [{ relativePath: 'transcript.jsonl', content: raw }],
+  };
+}
+
+const context = {
+  parserId: 'devin-session-jsonl',
+  parserVersion: 'cli',
+  sourceFingerprint: 'cli',
+};
+
+const detection = DevinTransformer.detect(bundle);
+const classification = DevinTransformer.classifyArtifacts(bundle);
+const result = DevinTransformer.transform(bundle, context);
+
+process.stdout.write(
+  JSON.stringify({ detection, classification, result }, null, 2) + '\n',
+);

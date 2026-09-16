@@ -128,6 +128,106 @@ function bundleWithMissingAnchorNode(): UnknownArtifactBundle {
   };
 }
 
+/** A `/compact` that restarts the conversation under a NEW node-forest root
+ * (real session `lucky-squid`, anchors 777/1075): the `summarized_from`
+ * output node lives in a detached continuation tree, not on the main chain.
+ * Boundary detection must still emit the record — scanning only
+ * `orderedMessages` dropped 2 of 5 compactions on that session. */
+function bundleWithDetachedCompactionOutput(): UnknownArtifactBundle {
+  const sessionId = 'detached-compaction';
+  const transcript = [
+    rawLine('session', {
+      ts: 100,
+      order: 1,
+      id: sessionId,
+      working_directory: '/w',
+      backend_type: 'devin',
+      model: 'devin-default',
+      agent_mode: 'auto',
+      created_at: 100,
+      last_activity_at: 200,
+      title: 'detached compaction',
+      main_chain_id: 2,
+      metadata: null,
+    }),
+    rawLine('message', {
+      ts: null,
+      order: 2,
+      row_id: 1,
+      session_id: sessionId,
+      node_id: 1,
+      parent_node_id: null,
+      chat_message: JSON.stringify({ message_id: 'm1', role: 'user', content: 'hi' }),
+      created_at: 500,
+      metadata: JSON.stringify({
+        summarized_from: null,
+        num_tokens_preceding: null,
+        is_system_prefix: null,
+      }),
+    }),
+    rawLine('message', {
+      ts: null,
+      order: 3,
+      row_id: 2,
+      session_id: sessionId,
+      node_id: 2,
+      parent_node_id: 1,
+      chat_message: JSON.stringify({ message_id: 'm2', role: 'assistant', content: 'answer' }),
+      created_at: 501,
+      metadata: JSON.stringify({
+        summarized_from: null,
+        num_tokens_preceding: 40000,
+        is_system_prefix: null,
+      }),
+    }),
+    // Post-compaction continuation: Devin restarts the conversation under a
+    // new root — node 10 has parent_node_id null, so its subtree (incl. the
+    // summarized_from output node 11) lands in detachedMessages.
+    rawLine('message', {
+      ts: null,
+      order: 4,
+      row_id: 10,
+      session_id: sessionId,
+      node_id: 10,
+      parent_node_id: null,
+      chat_message: JSON.stringify({ message_id: 'm10', role: 'system', content: 'prefix' }),
+      created_at: 600,
+      metadata: JSON.stringify({
+        summarized_from: null,
+        num_tokens_preceding: null,
+        is_system_prefix: true,
+      }),
+    }),
+    rawLine('message', {
+      ts: null,
+      order: 5,
+      row_id: 11,
+      session_id: sessionId,
+      node_id: 11,
+      parent_node_id: 10,
+      chat_message: JSON.stringify({ message_id: 'm11', role: 'assistant', content: 'summary' }),
+      created_at: 601,
+      metadata: JSON.stringify({
+        summarized_from: 2,
+        num_tokens_preceding: null,
+        is_system_prefix: null,
+      }),
+    }),
+  ].join('\n');
+  return {
+    artifacts: [
+      { relativePath: 'transcript.jsonl', content: transcript, mediaType: 'application/jsonl' },
+    ],
+    sourceIdentity: {
+      sourceId: 'test-source',
+      environmentId: 'test-env',
+      projectId: 'test-proj',
+      sessionId: 'test-sess',
+    },
+    sourceFingerprint: 'fp-test',
+  };
+}
+
 function compactionRecords(result: ReturnType<typeof DevinTransformer.transform>) {
   return result.evidence.filter(
     (r) =>
@@ -191,6 +291,22 @@ describe('DevinTransformer — compaction evidence (DS-B27 / #287)', () => {
     expect(record.provenance.artifactId).toBeTruthy();
     expect(record.provenance.path).toBeTruthy();
     expect(record.provenance.sourceField).toBe('metadata.summarized_from');
+  });
+
+  it('emits a compaction record when the summarized_from output node lives in a detached tree', () => {
+    const result = DevinTransformer.transform(bundleWithDetachedCompactionOutput(), defaultContext);
+    const records = compactionRecords(result);
+    expect(records).toHaveLength(1);
+    const payload = records[0]?.payload as {
+      anchorNodeId?: number;
+      preTokens?: number;
+      timestampMs?: number;
+    };
+    expect(payload.anchorNodeId).toBe(2);
+    // preTokens resolves from the anchor node's num_tokens_preceding.
+    expect(payload.preTokens).toBe(40000);
+    // Timestamp comes from the output node's own created_at (601s).
+    expect(payload.timestampMs).toBe(601_000);
   });
 
   it('emits no compaction records for a session with no compaction boundary', () => {

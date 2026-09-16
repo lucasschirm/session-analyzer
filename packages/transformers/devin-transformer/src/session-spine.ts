@@ -264,6 +264,17 @@ export function buildSessionSpine(
         // whose message payloads predate this field (reprocessed generations
         // pick it up automatically via the processing-version bump).
         content: chatMessageText(message.chatMessage),
+        // Devin's own per-node context-size checkpoint
+        // (`message_nodes.metadata.num_tokens_preceding`) — the only context
+        // signal on transcript-only sessions (no ATIF, no
+        // response_dimensions), where the single session-level `model_usage`
+        // record carries all-null tokens and the context-growth chart would
+        // otherwise render 0 for every message. Emitted only when populated;
+        // absent stays absent (missing-is-never-zero).
+        ...(message.parsedMetadata?.numTokensPreceding !== null &&
+        message.parsedMetadata?.numTokensPreceding !== undefined
+          ? { numTokensPreceding: message.parsedMetadata.numTokensPreceding }
+          : {}),
         timestamp:
           typeof message.createdAt === 'number' && Number.isFinite(message.createdAt)
             ? new Date(message.createdAt * 1000).toISOString()

@@ -169,7 +169,22 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // Bumped 0.12.0 -> 0.13.0: `sessionId` is now assigned directly from the
 // native session id produced by the parser rather than serialized as a
 // JSON stableId string. Forces a fresh generation on reprocess.
-export const DEVIN_TRANSFORMER_VERSION = '0.13.0';
+// Bumped 0.13.0 -> 0.14.0: two context-growth evidence fixes (real session
+// `lucky-squid`, transcript-only bundle: no ATIF, null
+// `sessions.metadata.response_dimensions`). (1) `buildSessionSpine`'s
+// `message` payload now carries `numTokensPreceding` (the per-node
+// `message_nodes.metadata.num_tokens_preceding` checkpoint) when populated —
+// previously the ONLY context signal on such sessions was a single
+// session-level `model_usage` record with every token field null, so
+// `session_context_series` encoded all-null context and the chart rendered
+// 0 for every message. (2) `buildDevinCompactionRecords` now scans
+// `orderedMessages` + `detachedMessages` — a `/compact` can restart the
+// main conversation under a new node-forest root, landing `summarized_from`
+// output nodes in `detachedMessages` and silently dropping those
+// boundaries (3 of 5 emitted before). No `DEVIN_METRIC_DEFINITION_VERSION`
+// bump: no metric's formula, population, or comparability group changed.
+// Forces a fresh generation on reprocess.
+export const DEVIN_TRANSFORMER_VERSION = '0.14.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly
@@ -473,9 +488,15 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       rootArtifactId,
       parsed.orderedMessages,
     );
+    // Boundary detection scans ordered AND detached messages: a `/compact`
+    // can restart the main conversation under a NEW node-forest root
+    // (`parent_node_id: null`), landing the `summarized_from` output nodes in
+    // `detachedMessages` (real session `lucky-squid`: anchors 777/1075's
+    // outputs 823/1118 under roots 787/1085). Scanning only `orderedMessages`
+    // silently dropped those boundaries — 3 of 5 compactions emitted.
     const compactionRecords = buildDevinCompactionRecords(
       sessionId,
-      parsed.orderedMessages,
+      [...parsed.orderedMessages, ...parsed.detachedMessages],
       parsed.prompts,
       rootArtifactId,
     );
