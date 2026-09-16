@@ -245,6 +245,7 @@ export function recordArtifactUploaded(
     lastUploadedHash: uploadedHash,
     lastUploadedAt: uploadedAtTime,
     lastError: undefined,
+    lastErrorMessage: undefined,
     attemptCount: 0,
   });
 }

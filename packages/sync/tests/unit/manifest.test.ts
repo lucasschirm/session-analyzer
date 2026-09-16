@@ -348,6 +348,8 @@ describe('ManifestGenerator', () => {
     expect(manifestRecord).toBeDefined();
     expect(manifestRecord?.status).toBe('failed');
     expect(manifestRecord?.lastUploadedHash).toBeUndefined();
+    expect(manifestRecord?.lastError).toBe('SYNC_STORAGE_ERROR');
+    expect(manifestRecord?.lastErrorMessage).toBe('simulated manifest upload failure');
 
     // Recovery: a later manual or SessionStart sync can regenerate and re-upload.
     const successAdapter = new InMemoryStorageAdapter();

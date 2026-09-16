@@ -107,6 +107,26 @@ describe('StateStore', () => {
     expect(getArtifactRecord(state, a1)?.lastUploadedHash).toBe('h1');
   });
 
+  it('clears lastError and lastErrorMessage on successful upload', async () => {
+    const state = createEmptySyncState();
+    const artifact = makeArtifact();
+
+    recordArtifactDiscovered(state, artifact);
+    recordArtifactFailure(state, artifact, 'SYNC_FILE_TOO_LARGE', 'too big');
+
+    const record = getArtifactRecord(state, artifact);
+    expect(record?.lastError).toBe('SYNC_FILE_TOO_LARGE');
+    expect(record?.lastErrorMessage).toBe('too big');
+
+    recordArtifactUploading(state, artifact);
+    advanceLastUploadedHash(state, artifact);
+
+    const uploaded = getArtifactRecord(state, artifact);
+    expect(uploaded?.status).toBe('uploaded');
+    expect(uploaded?.lastError).toBeUndefined();
+    expect(uploaded?.lastErrorMessage).toBeUndefined();
+  });
+
   it('records failures and retries without advancing lastUploadedHash', async () => {
     const state = createEmptySyncState();
     const artifact = makeArtifact();
