@@ -184,7 +184,35 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // boundaries (3 of 5 emitted before). No `DEVIN_METRIC_DEFINITION_VERSION`
 // bump: no metric's formula, population, or comparability group changed.
 // Forces a fresh generation on reprocess.
-export const DEVIN_TRANSFORMER_VERSION = '0.14.0';
+// Bumped 0.14.0 -> 0.15.0: context-growth correctness for transcript-only
+// sessions (`brassy-humor`). (1) `buildTokenUsageRecords` gained tier 2:
+// per-message `model_request` records sourced from
+// `chat_message.metadata.metrics` (+ `request_id`/`generation_model`,
+// parsed onto `DevinMessageLine.chatUsage`), each parented to its own turn
+// and carrying that request's real input/output/cache counts. They are
+// typed `model_request` (not `model_usage`) because their sums do not equal
+// the harness-reported cumulative session total, so they must not enter the
+// `devin:tokens:total` reconciliation set; the single session `model_usage`
+// aggregate is still emitted alongside them. Previously such bundles fell
+// straight through to that aggregate alone, so the context chart showed one
+// flat checkpoint value for every message. (2) The session aggregate is no
+// longer parented to the first turn and no longer carries `requestOrder` —
+// that binding (directly, or via the context-timing `byOrder` fallback)
+// dumped the whole-session cumulative total (~50.2M tokens) onto message #1
+// and fabricated a matching "compaction" on message #2. It now stays
+// session-scoped (metrics still cite it by id); messages fall back to
+// `numTokensPreceding`. (3) `model_usage.inputTokens` is now cache-EXCLUSIVE
+// for every tier (ATIF's `promptTokens` had its cached subset subtracted;
+// the metadata/ATIF aggregates previously wrote prompt = input + cached into
+// `inputTokens` while also setting `cacheReadTokens`), so the generic
+// context sum (input + cacheRead + cacheCreation) no longer double-counts
+// cache reads. `DEVIN_METRIC_DEFINITION_VERSION` is unchanged:
+// `devin:tokens:prompt` still means cache-inclusive input
+// (`TokenUsageResult.prompt`), and `devin:tokens:total` is still prompt +
+// completion — only the evidence-record payload contract changed. Forces a
+// fresh generation on reprocess so no analysis mixes pre-/post-fix
+// `model_usage` shapes.
+export const DEVIN_TRANSFORMER_VERSION = '0.15.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly

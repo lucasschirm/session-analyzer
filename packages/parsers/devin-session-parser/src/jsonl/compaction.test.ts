@@ -31,6 +31,7 @@ function node(
     metadata: metadata ? JSON.stringify(metadata) : null,
     parsedMetadata,
     subagent: null,
+    chatUsage: null,
   };
 }
 

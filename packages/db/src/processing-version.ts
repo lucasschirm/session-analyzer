@@ -37,8 +37,15 @@ declare const console:
  * context series). Existing all-null series rows cannot be recomputed from
  * skeleton normalized_events — the rebuild regenerates those sessions from
  * their retained artifacts instead.
+ *
+ * v16: Devin context-growth correctness. Pre-0.15.0 generations carry either
+ * the flat chart (no per-message usage) or the misattributed session total
+ * (aggregate parented to the first turn, cache double-counted on the context
+ * sum). Those sessions re-ingest from their retained artifacts so the new
+ * per-message `model_request` tier and cache-exclusive payload materialize;
+ * the v15 empty-series heal is subsumed by this broader pre-0.15.0 floor.
  */
-export const ANALYTICS_PROCESSING_VERSION = 15;
+export const ANALYTICS_PROCESSING_VERSION = 16;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.
@@ -445,12 +452,16 @@ async function backfillContextSeries(
 }
 
 /**
- * The Devin transformer version that first emits `numTokensPreceding` on
- * message evidence (see `DEVIN_TRANSFORMER_VERSION` 0.14.0). Series written
- * by an older generation can gain a context signal on re-ingest; series
- * written by 0.14.0+ that are still all-null genuinely have no signal.
+ * The Devin transformer version that first emits per-message `model_request`
+ * records from `chat_message.metadata.metrics`, drops the session-level
+ * aggregate's first-turn `parentId`/`requestOrder`, and writes cache-exclusive
+ * `inputTokens` (see `DEVIN_TRANSFORMER_VERSION` 0.15.0). Sessions on an older
+ * generation keep the old context-growth evidence — a flat chart, or the
+ * whole-session total attributed to message #1 with cache double-counted — so
+ * they re-ingest from their retained artifacts. This subsumes the v15
+ * empty-series heal: a pre-0.14.0 all-null series is also below this floor.
  */
-const CONTEXT_CHECKPOINT_TRANSFORMER_VERSION = '0.14.0';
+const PER_MESSAGE_CONTEXT_TRANSFORMER_VERSION = '0.15.0';
 
 function semverBelow(version: string, floor: string): boolean {
   const parse = (v: string) => v.split('.').map((part) => Number.parseInt(part, 10) || 0);
@@ -463,51 +474,34 @@ function semverBelow(version: string, floor: string): boolean {
 }
 
 /**
- * Sessions whose current-generation `session_context_series` row carries no
- * context signal at all (every `context_tokens[i]` null) AND whose generation
- * predates the `numTokensPreceding` checkpoint fallback. These predate v15
- * and cannot be backfilled from skeleton `normalized_events` — they re-ingest
- * from retained artifacts instead. Scoped to `devin` sessions on pre-0.14.0
- * generations so sessions that legitimately have no context signal (and
- * non-devin sessions, which never emit the checkpoint) are not re-ingested
- * pointlessly on every future version bump.
+ * Devin sessions whose current generation predates the per-message context
+ * evidence contract (transformer < 0.15.0). Non-devin sessions are excluded
+ * — this evidence shape is Devin-specific.
  */
-async function listSessionsWithEmptyContextSeries(
+async function listSessionsWithOutdatedContextEvidence(
   executor: SqliteExecutor,
 ): Promise<readonly string[]> {
   const { rows } = await executor.exec(
-    `SELECT scs.session_id, scs.context_tokens, g.transformer_version
-     FROM session_context_series scs
-     JOIN sessions s ON s.id = scs.session_id
-       AND COALESCE(s.current_generation_id, '') = COALESCE(scs.generation_id, '')
+    `SELECT s.id, g.transformer_version
+     FROM sessions s
+     JOIN transformation_generations g
+       ON g.id = s.current_generation_id
+     WHERE s.current_generation_id IS NOT NULL
        AND s.harness = 'devin'
-     JOIN transformation_generations g ON g.id = scs.generation_id
-     ORDER BY scs.session_id`,
+     ORDER BY s.id`,
     [],
   );
-  const stale: string[] = [];
-  for (const row of rows) {
-    if (!semverBelow(String(row.transformer_version), CONTEXT_CHECKPOINT_TRANSFORMER_VERSION)) {
-      continue;
-    }
-    let values: unknown;
-    try {
-      values = JSON.parse(String(row.context_tokens));
-    } catch {
-      values = null;
-    }
-    if (!Array.isArray(values) || values.every((v) => v === null)) {
-      stale.push(String(row.session_id));
-    }
-  }
-  return stale;
+  return rows
+    .filter((row) =>
+      semverBelow(String(row.transformer_version), PER_MESSAGE_CONTEXT_TRANSFORMER_VERSION),
+    )
+    .map((row) => String(row.id));
 }
 
 /**
- * Re-ingests sessions whose context-growth series is entirely null so the
- * per-node checkpoint fallback (Devin `numTokensPreceding`, v15) materializes
- * real context values. Per-session failures are isolated — a session that
- * cannot be regenerated keeps its existing (empty) series.
+ * Re-ingests pre-0.15.0 Devin sessions so their context-growth evidence is
+ * rebuilt from retained artifacts. Per-session failures are isolated — a
+ * session that cannot be regenerated keeps its existing evidence.
  *
  * Runs BEFORE {@link listSessionsForRebuild}, alongside the other
  * regeneration steps, so the rebuild snapshot picks up the fresh
@@ -515,12 +509,12 @@ async function listSessionsWithEmptyContextSeries(
  * snapshot would make the rollup pass re-apply contributions under the
  * superseded generation and double-count those sessions.
  */
-async function regenerateEmptyContextSeries(
+async function regenerateOutdatedContextEvidence(
   executor: SqliteExecutor,
   onProgress: RebuildProgressCallback | undefined,
   deps?: AnalyticsRebuildDeps,
 ): Promise<void> {
-  const stale = await listSessionsWithEmptyContextSeries(executor);
+  const stale = await listSessionsWithOutdatedContextEvidence(executor);
   const total = stale.length;
   let completed = 0;
   for (const sessionId of stale) {
@@ -528,13 +522,13 @@ async function regenerateEmptyContextSeries(
       await deps?.regenerateSession?.(sessionId);
     } catch (err) {
       console?.warn?.(
-        `[rebuildAnalyticsDerivedData] Failed to regenerate context series for session ${sessionId}:`,
+        `[rebuildAnalyticsDerivedData] Failed to regenerate context evidence for session ${sessionId}:`,
         err,
       );
     }
     completed += 1;
     onProgress?.({
-      step: 'Regenerating context series',
+      step: 'Regenerating context evidence',
       completed,
       total,
       phase: 3,
@@ -574,12 +568,11 @@ export async function rebuildAnalyticsDerivedData(
   // touched — ingestion only fills empty title fields.
   await regenerateUntitledSessionTitles(executor, onProgress, deps);
 
-  // Step 3: regenerate sessions whose context series carries no context
-  // signal at all (predates the numTokensPreceding fallback, v15) — skeleton
-  // normalized_events cannot recover it, so they re-ingest from artifacts.
-  // Like steps 1-2 this runs before the rebuild snapshot below so the
-  // rollup pass sees the fresh current_generation_id.
-  await regenerateEmptyContextSeries(executor, onProgress, deps);
+  // Step 3: regenerate pre-0.15.0 Devin sessions so per-message context
+  // evidence (and the cache-exclusive aggregate) is rebuilt from retained
+  // artifacts. Like steps 1-2 this runs before the rebuild snapshot below so
+  // the rollup pass sees the fresh current_generation_id.
+  await regenerateOutdatedContextEvidence(executor, onProgress, deps);
 
   const sessions = await listSessionsForRebuild(executor);
   if (sessions.length === 0) {

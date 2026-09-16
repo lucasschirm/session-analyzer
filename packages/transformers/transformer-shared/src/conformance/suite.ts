@@ -159,10 +159,15 @@ function hasProvenance(record: NormalizedEvidenceRecord): boolean {
 /**
  * Harness-specific expectations for the shared invariants (#308, root cause
  * #248): metric ids are prefixed per harness, "complete" fixtures exhibit
- * different component/evidence surfaces, and token identities differ
- * (claude's `inputTokens` EXCLUDES cache reads; devin's prompt INCLUDES
- * them). Invariants 1/4/7 read these instead of hardcoding claude shapes,
- * so a second harness is actually verified rather than silently skipped.
+ * different component/evidence surfaces, and subagent evidence differs
+ * (claude models Sub Agents as child sessions; devin as inline events).
+ * Invariants 1/4/7 read these instead of hardcoding claude shapes, so a
+ * second harness is actually verified rather than silently skipped.
+ *
+ * Token identity is now ALSO shared rather than divergent: every harness's
+ * `model_usage`/`model_request` `inputTokens` is cache-EXCLUSIVE, with the
+ * cached subset in `cacheReadTokens`, so `totalTokenFields` sums the same
+ * four fields for both (see `checkTurnContextDoesNotExceedSessionTotal`).
  */
 export interface ConformanceProfile {
   /** Metric-id prefix, e.g. `claude` or `devin`. */
@@ -1064,6 +1069,220 @@ function checkEveryAggregateRetainsProvenance<TBundle extends UnknownArtifactBun
 }
 
 // ---------------------------------------------------------------------------
+// 11. Turn/message evidence is delivered in conversation order
+// ---------------------------------------------------------------------------
+
+function payloadField(record: NormalizedEvidenceRecord, field: string): unknown {
+  const payload = record.payload;
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  return (payload as Record<string, unknown>)[field];
+}
+
+function numericPayloadField(record: NormalizedEvidenceRecord, field: string): number | null {
+  const value = payloadField(record, field);
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Every session's `turn` records must carry `ordinal` values exactly
+ * `1..N` in emission order, and `message` records must appear in
+ * non-decreasing turn order. The context-timing computation re-sorts by
+ * ordinal, so a consumer cannot be corrupted by emission order alone — but
+ * an out-of-order or gapped ordinal sequence silently mislabels every
+ * downstream "message #N" and is the class of defect this invariant guards
+ * for every current and future harness.
+ */
+function checkTurnOrdinalsAreSequential<TBundle extends UnknownArtifactBundle>(
+  results: FixtureResult<TBundle>[],
+): InvariantReport {
+  const details: string[] = [];
+  let checkedSessions = 0;
+
+  for (const { result } of successful(results)) {
+    const turnsBySession = new Map<string, NormalizedEvidenceRecord[]>();
+    const ordinalsByTurnId = new Map<string, number>();
+    for (const record of result.evidence) {
+      if (record.recordType !== 'turn') continue;
+      const turns = turnsBySession.get(record.sessionId) ?? [];
+      turns.push(record);
+      turnsBySession.set(record.sessionId, turns);
+      const ordinal = numericPayloadField(record, 'ordinal');
+      if (ordinal !== null) ordinalsByTurnId.set(record.recordId, ordinal);
+    }
+
+    for (const [sessionId, turns] of turnsBySession) {
+      if (turns.length === 0) continue;
+      checkedSessions++;
+      const ordinals = turns.map((turn) => numericPayloadField(turn, 'ordinal'));
+      const expected = ordinals.map((_, index) => index + 1);
+      if (ordinals.some((value) => value === null)) {
+        return report('turnOrdinalsAreSequential', 'failed', [
+          `Session ${sessionId} has a turn without a numeric ordinal: ${JSON.stringify(ordinals)}`,
+        ]);
+      }
+      if (ordinals.join(',') !== expected.join(',')) {
+        return report('turnOrdinalsAreSequential', 'failed', [
+          `Session ${sessionId} turn ordinals are not sequential 1..N in delivery order.`,
+          `Expected: ${expected.join(',')}`,
+          `Actual:   ${ordinals.join(',')}`,
+        ]);
+      }
+
+      const messageOrdinals: number[] = [];
+      for (const record of result.evidence) {
+        if (record.recordType !== 'message' || record.sessionId !== sessionId) continue;
+        if (!record.parentId) continue;
+        const ordinal = ordinalsByTurnId.get(record.parentId);
+        if (ordinal !== undefined) messageOrdinals.push(ordinal);
+      }
+      for (let i = 1; i < messageOrdinals.length; i++) {
+        if (messageOrdinals[i] < messageOrdinals[i - 1]) {
+          return report('turnOrdinalsAreSequential', 'failed', [
+            `Session ${sessionId} message evidence is out of turn order.`,
+            `Message turn ordinals: ${messageOrdinals.join(',')}`,
+          ]);
+        }
+      }
+      details.push(`Session ${sessionId}: ${turns.length} turns ordinal 1..${turns.length}.`);
+    }
+  }
+
+  if (checkedSessions === 0) {
+    return report('turnOrdinalsAreSequential', 'unverified', [
+      'No fixture emitted turn records to order.',
+    ]);
+  }
+  return report('turnOrdinalsAreSequential', 'passed', details);
+}
+
+// ---------------------------------------------------------------------------
+// 12. Session-level usage aggregates are never attributed to a single turn
+// ---------------------------------------------------------------------------
+
+/**
+ * A `model_usage`/`model_request` record describes ONE model request when
+ * it is parented to a turn, so it must carry a per-request identity. A
+ * record whose `requestId` equals its own `sessionId` is a whole-session
+ * cumulative aggregate; it must never be attributed to a single turn —
+ * neither directly (`parentId` = a turn) nor indirectly by carrying a
+ * numeric `requestOrder` that the context-timing computation's `byOrder`
+ * fallback binds to message #1. Both shapes rendered ~50.2M tokens on one
+ * message and fabricated a matching "compaction" on the next. Absent
+ * `requestId` stays allowed (missing-is-never-zero); only the unambiguous
+ * aggregate signatures fail.
+ */
+function checkSessionAggregateUsageIsNotTurnScoped<TBundle extends UnknownArtifactBundle>(
+  results: FixtureResult<TBundle>[],
+): InvariantReport {
+  const details: string[] = [];
+  let checked = 0;
+
+  for (const { result } of successful(results)) {
+    const turnIds = new Set(
+      result.evidence.filter((r) => r.recordType === 'turn').map((r) => r.recordId),
+    );
+    for (const record of result.evidence) {
+      if (record.recordType !== 'model_usage' && record.recordType !== 'model_request') continue;
+      const requestId = payloadField(record, 'requestId');
+      const sessionScoped =
+        typeof requestId === 'string' && requestId.length > 0 && requestId === record.sessionId;
+      const requestOrder = numericPayloadField(record, 'requestOrder');
+      const turnScoped = Boolean(record.parentId && turnIds.has(record.parentId));
+
+      if (record.sourceField === 'final_metrics' && turnScoped) {
+        return report('sessionAggregateUsageIsNotTurnScoped', 'failed', [
+          `Record ${record.recordId} carries session-level final_metrics but is parented to a turn.`,
+        ]);
+      }
+      if (sessionScoped && requestOrder !== null) {
+        return report('sessionAggregateUsageIsNotTurnScoped', 'failed', [
+          `Record ${record.recordId} carries the session-scoped requestId ${String(requestId)} ` +
+            `with a per-message requestOrder ${requestOrder}; the context-timing byOrder fallback ` +
+            'would attribute the session aggregate to a single message.',
+        ]);
+      }
+      if (turnScoped) {
+        checked++;
+        if (sessionScoped) {
+          return report('sessionAggregateUsageIsNotTurnScoped', 'failed', [
+            `Record ${record.recordId} is parented to a turn but carries the session-scoped requestId ${String(requestId)}.`,
+          ]);
+        }
+      }
+    }
+    details.push(`${result.evidence.length} records scanned.`);
+  }
+
+  if (checked === 0) {
+    return report('sessionAggregateUsageIsNotTurnScoped', 'unverified', [
+      'No turn-parented usage records available to inspect.',
+    ]);
+  }
+  return report('sessionAggregateUsageIsNotTurnScoped', 'passed', [
+    `${checked} turn-scoped usage record(s) carry per-request identity.`,
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// 13. A turn-scoped context cannot exceed the session total
+// ---------------------------------------------------------------------------
+
+/**
+ * For every session with a `<prefix>:tokens:total:*` metric, each
+ * turn-parented usage record's context volume (`inputTokens +
+ * cacheReadTokens + cacheCreationTokens`) must not exceed that session's
+ * total. This is the generic double-count / misattribution detector: it
+ * fails when a session aggregate is dumped onto one turn (50.19M > 25.8M),
+ * and also when a harness writes a cache-inclusive `inputTokens` while also
+ * populating `cacheReadTokens`.
+ */
+function checkTurnContextDoesNotExceedSessionTotal<TBundle extends UnknownArtifactBundle>(
+  results: FixtureResult<TBundle>[],
+  profile: ConformanceProfile,
+): InvariantReport {
+  const details: string[] = [];
+  let checked = 0;
+
+  for (const { result } of successful(results)) {
+    const total = metricValue(result, `${profile.metricPrefix}:tokens:total:root_only`);
+    if (!total || typeof total.value !== 'number' || !Number.isFinite(total.value)) continue;
+    const root = result.sessionSummaries.find((s) => s.sessionId === s.rootSessionId);
+    const rootSessionId = root?.sessionId;
+    const turnIds = new Set(
+      result.evidence.filter((r) => r.recordType === 'turn').map((r) => r.recordId),
+    );
+    let sessionChecked = 0;
+    for (const record of result.evidence) {
+      if (record.recordType !== 'model_usage' && record.recordType !== 'model_request') continue;
+      if (!record.parentId || !turnIds.has(record.parentId)) continue;
+      if (rootSessionId && record.sessionId !== rootSessionId) continue;
+      const input = numericPayloadField(record, 'inputTokens') ?? 0;
+      const cacheRead = numericPayloadField(record, 'cacheReadTokens') ?? 0;
+      const cacheCreate = numericPayloadField(record, 'cacheCreationTokens') ?? 0;
+      const context = input + cacheRead + cacheCreate;
+      sessionChecked++;
+      checked++;
+      if (context > total.value) {
+        return report('turnContextDoesNotExceedSessionTotal', 'failed', [
+          `Record ${record.recordId} turn context ${context} exceeds the session total ${total.value}.`,
+          'A turn-scoped usage record must describe one request, never a session aggregate.',
+        ]);
+      }
+    }
+    if (sessionChecked > 0) {
+      details.push(`${sessionChecked} turn context(s) bounded by total ${total.value}.`);
+    }
+  }
+
+  if (checked === 0) {
+    return report('turnContextDoesNotExceedSessionTotal', 'unverified', [
+      'No fixture paired a session total with turn-scoped usage records.',
+    ]);
+  }
+  return report('turnContextDoesNotExceedSessionTotal', 'passed', details);
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -1092,6 +1311,9 @@ export function runTransformerConformanceSuite<TBundle extends UnknownArtifactBu
     checkUnavailableMetricsIncludeReason(results),
     checkOutputIsDeterministic(results, transformer),
     checkEveryAggregateRetainsProvenance(results),
+    checkTurnOrdinalsAreSequential(results),
+    checkSessionAggregateUsageIsNotTurnScoped(results),
+    checkTurnContextDoesNotExceedSessionTotal(results, profile),
   ];
 
   const failed = reports.filter((r) => r.status === 'failed');

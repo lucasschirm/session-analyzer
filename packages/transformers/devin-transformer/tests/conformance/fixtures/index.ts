@@ -426,6 +426,76 @@ export const metadataTokensBundle: UnknownArtifactBundle = bundle([
   artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
 ]);
 
+/**
+ * A `message` line whose `chat_message.metadata` carries Devin's real
+ * per-request usage bag (`metrics` + `request_id` + `generation_model`) — the
+ * tier-2 context-growth source. The generic `messageLine` helper omits it.
+ */
+function meteredMessageLine(
+  sessionNodeId: number,
+  parentNodeId: number | null,
+  metrics: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_creation_tokens: number | null;
+  },
+): string {
+  return devinJsonlLine('message', {
+    ts: null,
+    order: sessionNodeId + 1,
+    row_id: sessionNodeId,
+    session_id: sessionId,
+    node_id: sessionNodeId,
+    parent_node_id: parentNodeId,
+    chat_message: JSON.stringify({
+      message_id: `msg-${sessionNodeId}`,
+      role: 'assistant',
+      content: `turn ${sessionNodeId}`,
+      metadata: {
+        request_id: `req-${sessionNodeId}`,
+        generation_model: 'devin-default',
+        metrics,
+      },
+    }),
+    created_at: null,
+    metadata: null,
+  });
+}
+
+// Transcript-only session with per-message usage but NO ATIF — the tier-2
+// path. The session aggregate (from response_dimensions) is intentionally a
+// DIFFERENT total than the per-message sum, exercising the separation the
+// context-ordering invariants guard: per-message `model_request` records for
+// the chart, one session `model_usage` aggregate for the token identity.
+const tier2ContextTranscript = [
+  sessionLine(sessionId, 2, {
+    response_dimensions: [
+      { uid: 'input_tokens', kind: { CumulativeMetric: { value: 30 } } },
+      { uid: 'output_tokens', kind: { CumulativeMetric: { value: 9 } } },
+      { uid: 'cached_input_tokens', kind: { CumulativeMetric: { value: 5 } } },
+    ],
+  }),
+  meteredMessageLine(1, null, {
+    input_tokens: 10,
+    output_tokens: 4,
+    cache_read_tokens: 2,
+    cache_creation_tokens: null,
+  }),
+  meteredMessageLine(2, 1, {
+    input_tokens: 18,
+    output_tokens: 5,
+    cache_read_tokens: 3,
+    cache_creation_tokens: null,
+  }),
+].join('\n');
+
+export const tier2ContextBundle: UnknownArtifactBundle = bundle([
+  artifact('transcript.jsonl', tier2ContextTranscript, 'application/jsonl'),
+  artifact('native/models.json', modelsJson(), 'application/json'),
+  artifact('native/schema-descriptor.json', schemaDescriptor(true), 'application/json'),
+]);
+
 // The #309/#324 scenario the heuristic gets wrong: an orphaned sub-agent
 // tree (root's parent missing) LARGER than the true conversation. With the
 // INTEGER main_chain_id signal live (#324), the authoritative chain must
@@ -1348,6 +1418,16 @@ export const devinConformanceFixtures: TransformerFixtures<UnknownArtifactBundle
         'excluded) and the pre_session temporalRole they earn.',
       toolDefinitionsBundle,
       ['root', 'components', 'deterministic'],
+    ),
+    fixture(
+      'tier2-context',
+      'A transcript-only session (no ATIF) whose messages carry real ' +
+        'chat_message.metadata.metrics — the tier-2 per-message `model_request` path. ' +
+        'Exercises the context-ordering invariants (sequential turns, session aggregates ' +
+        'never turn-scoped, turn context bounded by the session total) against ' +
+        'per-message evidence rather than only ATIF aggregates.',
+      tier2ContextBundle,
+      ['root', 'deterministic'],
     ),
   ],
 };

@@ -350,6 +350,60 @@ describe('context-series encode/decode', () => {
     expect(decoded[2]?.transcriptIndex).toBe(2);
   });
 
+  it('does not attribute an unparented session-level aggregate to a message', () => {
+    // Regression (`brassy-humor` context growth): the Devin session-level
+    // aggregate used to be parented to the first turn (and/or carry
+    // requestOrder 1), so the whole-session total (~50.2M before the
+    // cache-exclusive payload fix) landed on message #1 and fabricated a
+    // matching compaction on message #2.
+    const records: TimingSourceRecord[] = [
+      record({ eventType: 'turn', recordId: 't-1', payload: { ordinal: 1, role: 'system' } }),
+      record({
+        eventType: 'message',
+        recordId: 'm-1',
+        parentId: 't-1',
+        sourceEventId: 'sys-1',
+        payload: { role: 'system', numTokensPreceding: 18639 },
+      }),
+      record({ eventType: 'turn', recordId: 't-2', payload: { ordinal: 2, role: 'assistant' } }),
+      record({
+        eventType: 'message',
+        recordId: 'm-2',
+        parentId: 't-2',
+        sourceEventId: 'a-1',
+        payload: { role: 'assistant' },
+      }),
+      record({
+        eventType: 'model_usage',
+        recordId: 'req-2',
+        parentId: 't-2',
+        sourceEventId: 'a-1',
+        payload: { requestOrder: 2, inputTokens: 20000, cacheReadTokens: 12000, outputTokens: 112 },
+      }),
+      // Session-level aggregate: NO parentId and NO requestOrder (the fixed
+      // transformer shape). Cache-exclusive input + cache reads.
+      record({
+        eventType: 'model_usage',
+        recordId: 'agg',
+        sourceEventId: 's1',
+        payload: {
+          requestId: 's1',
+          inputTokens: 1280062,
+          cacheReadTokens: 24456832,
+          outputTokens: 106335,
+        },
+      }),
+    ];
+
+    const points = computeContextTimingPoints(records);
+    // Message #1 keeps its own checkpoint — never the session aggregate.
+    expect(points[0]?.contextTokens).toBe(18639);
+    expect(points[1]?.contextTokens).toBe(32000);
+    // No session-scale context point and no phantom session-scale compaction.
+    expect(points.some((p) => (p.contextTokens ?? 0) > 1_000_000)).toBe(false);
+    expect(points.some((p) => (p.compactedTokens ?? 0) > 1_000_000)).toBe(false);
+  });
+
   it('collectSeriesModels unions model_request and model_usage payloads', () => {
     const records: TimingSourceRecord[] = [
       record({
