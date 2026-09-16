@@ -343,6 +343,7 @@ function buildManifestForSession(
     pluginVersion: DEFAULT_PLUGIN_VERSION,
     transcriptsCaptured: true,
     mainTranscriptRelativePath: mainTranscript?.relativePath,
+    mainTranscriptError: mainTranscript?.syncError,
     artifacts,
     syncRunsCount: 0,
   };

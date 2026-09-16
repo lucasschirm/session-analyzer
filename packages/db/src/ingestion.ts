@@ -1491,7 +1491,10 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
    * record JSON — tool args, usage objects, sub-agent payloads, message
    * bodies — never reaches SQLite. Only pointer/provenance fields are kept:
    * `storage`/`path` (blob resolution), `timestamp`/`role`/`ordinal`/
-   * `category` (ordering + record discrimination for legacy fallbacks).
+   * `category` (ordering + record discrimination for legacy fallbacks),
+   * `numTokensPreceding` (per-node context checkpoint — lets the
+   * normalized_events legacy read + backfill paths recover Devin's context
+   * signal exactly as the ingest-time computation does).
    */
   private toEvidenceSkeleton(record: NormalizedEvidenceRecord): Record<string, unknown> {
     const source =
@@ -1499,7 +1502,15 @@ export class DefaultIngestionOrchestrator implements IngestionOrchestrator {
         ? (record.payload as Record<string, unknown>)
         : {};
     const payload: Record<string, unknown> = {};
-    for (const key of ['storage', 'path', 'timestamp', 'role', 'ordinal', 'category']) {
+    for (const key of [
+      'storage',
+      'path',
+      'timestamp',
+      'role',
+      'ordinal',
+      'category',
+      'numTokensPreceding',
+    ]) {
       if (source[key] !== undefined) payload[key] = source[key];
     }
     if (record.recordType === 'message') {

@@ -27,4 +27,6 @@ export interface ManifestArtifact extends ArtifactIdentity {
   encoding?: string;
   collectionOutcome?: ArtifactCollectionOutcome;
   collectionReason?: string;
+  /** Error message when `status === 'failed'`; `undefined` otherwise. */
+  syncError?: string;
 }

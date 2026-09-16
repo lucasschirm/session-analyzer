@@ -258,6 +258,36 @@ describe('parseSyncManifest', () => {
     expect(artifact.collectionReason).toBe('allowed by policy');
   });
 
+  it('parses artifact syncError and manifest mainTranscriptError', () => {
+    const manifest = parseSyncManifest(
+      makeManifest(
+        {
+          mainTranscriptRelativePath: 'transcript.jsonl',
+          mainTranscriptError:
+            'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+          artifacts: [
+            makeArtifact({
+              scope: 'session',
+              relativePath: 'transcript.jsonl',
+              status: 'failed',
+              syncError:
+                'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+            }),
+          ],
+        },
+        MANIFEST_SCHEMA_VERSION_LATEST,
+      ),
+    );
+
+    expect(manifest.mainTranscriptRelativePath).toBe('transcript.jsonl');
+    expect(manifest.mainTranscriptError).toBe(
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+    );
+    expect(manifest.artifacts[0]?.syncError).toBe(
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+    );
+  });
+
   it('parses source tombstones', () => {
     const manifest = parseSyncManifest(
       makeManifest(

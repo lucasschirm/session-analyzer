@@ -115,55 +115,55 @@ describe('processing-version', () => {
       completed: 1,
       total: 1,
       phase: 2,
-      totalPhases: 5,
+      totalPhases: 6,
       unit: 'sessions',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(2, {
       step: 'Backfilling context series',
       completed: 0,
       total: 1,
-      phase: 3,
-      totalPhases: 5,
+      phase: 4,
+      totalPhases: 6,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(3, {
       step: 'Backfilling context series',
       completed: 1,
       total: 1,
-      phase: 3,
-      totalPhases: 5,
+      phase: 4,
+      totalPhases: 6,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(4, {
       step: 'Rebuilding session rollups',
       completed: 0,
       total: 1,
-      phase: 4,
-      totalPhases: 5,
+      phase: 5,
+      totalPhases: 6,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(5, {
       step: 'Rebuilding session rollups',
       completed: 1,
       total: 1,
-      phase: 4,
-      totalPhases: 5,
+      phase: 5,
+      totalPhases: 6,
       unit: 'sessions processed',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(6, {
       step: 'Recomputing project rollups',
       completed: 0,
       total: 1,
-      phase: 5,
-      totalPhases: 5,
+      phase: 6,
+      totalPhases: 6,
       unit: 'analytics calculations',
     });
     expect(progressSpy).toHaveBeenNthCalledWith(7, {
       step: 'Recomputing project rollups',
       completed: 1,
       total: 1,
-      phase: 5,
-      totalPhases: 5,
+      phase: 6,
+      totalPhases: 6,
       unit: 'analytics calculations',
     });
   });
@@ -328,6 +328,55 @@ describe('processing-version', () => {
     const counts = Object.fromEntries(rows.map((r) => [String(r.event_type), Number(r.c)]));
     expect(counts['component_evidence_link']).toBeUndefined();
     expect(counts['message']).toBe(1);
+  });
+
+  it('regenerates pre-0.15.0 devin sessions from retained artifacts (v16 context-evidence heal)', async () => {
+    const now = Date.now();
+    await executor.exec(`
+      INSERT INTO tenants (id, name, created_at, updated_at) VALUES ('tenant-5', 'T5', ${now}, ${now});
+      INSERT INTO portfolios (id, tenant_id, name, created_at, updated_at) VALUES ('port-5', 'tenant-5', 'P5', ${now}, ${now});
+      INSERT INTO ingestion_sources (id, portfolio_id, native_source_id, display_name, type, authority, created_at, updated_at)
+        VALUES ('src-5', 'port-5', 'native-5', 'Source 5', 'test', 'local', ${now}, ${now});
+      INSERT INTO projects (id, portfolio_id, name, created_at, updated_at) VALUES ('proj-5', 'port-5', 'Proj 5', ${now}, ${now});
+      INSERT INTO analysis_releases (id, ontology_version, metric_registry_version, statistical_policy_version, rollup_policy_version, mapping_version, created_at, is_default)
+        VALUES ('rel-5', '1.0', '1.0', '1.0', '1.0', '1.0', ${now}, 1);
+      INSERT INTO sessions (id, project_id, ingestion_source_id, harness, native_session_id, current_generation_id, occurrence_time, finality, ai_title, created_at, updated_at)
+        VALUES
+          ('sess-empty', 'proj-5', 'src-5', 'devin', 'native-empty', NULL, ${now}, 'final', 'Empty session', ${now}, ${now}),
+          ('sess-ok', 'proj-5', 'src-5', 'claude-code', 'native-ok', NULL, ${now}, 'final', 'Ok session', ${now}, ${now}),
+          ('sess-healed', 'proj-5', 'src-5', 'devin', 'native-healed', NULL, ${now}, 'final', 'Healed session', ${now}, ${now}),
+          ('sess-nondevin', 'proj-5', 'src-5', 'claude-code', 'native-nondevin', NULL, ${now}, 'final', 'Non-devin session', ${now}, ${now});
+      INSERT INTO transformation_generations (id, session_id, analysis_release_id, parser_version, transformer_version, ontology_version, metric_version, schema_version, status, source_availability, created_at)
+        VALUES
+          ('gen-empty', 'sess-empty', 'rel-5', '1.0', '0.13.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now}),
+          ('gen-ok', 'sess-ok', 'rel-5', '1.0', '1.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now}),
+          ('gen-healed', 'sess-healed', 'rel-5', '1.0', '0.14.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now}),
+          ('gen-nondevin', 'sess-nondevin', 'rel-5', '1.0', '0.1.0', '1.0', '1.0', '1.0', 'committed', 'local', ${now});
+      UPDATE sessions SET current_generation_id = 'gen-empty' WHERE id = 'sess-empty';
+      UPDATE sessions SET current_generation_id = 'gen-ok' WHERE id = 'sess-ok';
+      UPDATE sessions SET current_generation_id = 'gen-healed' WHERE id = 'sess-healed';
+      UPDATE sessions SET current_generation_id = 'gen-nondevin' WHERE id = 'sess-nondevin';
+      INSERT INTO session_context_series (id, session_id, generation_id, message_count, context_tokens, generation_tokens, point_meta, models, created_at, updated_at)
+        VALUES
+          ('scs-empty', 'sess-empty', 'gen-empty', 3, '[null,null,null]', '[null,null,null]', '[]', '[]', ${now}, ${now}),
+          ('scs-ok', 'sess-ok', 'gen-ok', 3, '[400,600,-200]', '[40,null,10]', '[]', '[]', ${now}, ${now}),
+          ('scs-healed', 'sess-healed', 'gen-healed', 3, '[null,null,null]', '[null,null,null]', '[]', '[]', ${now}, ${now}),
+          ('scs-nondevin', 'sess-nondevin', 'gen-nondevin', 3, '[null,null,null]', '[null,null,null]', '[]', '[]', ${now}, ${now});
+    `);
+
+    const regen = vi.fn(async (_sessionId: string) => true);
+    await rebuildAnalyticsDerivedData(executor, undefined, { regenerateSession: regen });
+
+    // All devin sessions below the per-message context-evidence floor
+    // (0.15.0) re-ingest: sess-empty (0.13.0) and sess-healed (0.14.0).
+    // sess-ok (claude) and sess-nondevin (claude, 0.1.0) are excluded by the
+    // `harness = 'devin'` predicate — non-devin sessions never emit this
+    // evidence.
+    expect(regen).toHaveBeenCalledTimes(2);
+    expect(regen).toHaveBeenCalledWith('sess-empty');
+    expect(regen).toHaveBeenCalledWith('sess-healed');
+    expect(regen).not.toHaveBeenCalledWith('sess-ok');
+    expect(regen).not.toHaveBeenCalledWith('sess-nondevin');
   });
 
   describe('stale component-data regeneration', () => {

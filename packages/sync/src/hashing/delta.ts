@@ -23,6 +23,7 @@ import {
   isArtifactPending,
   recordArtifactFailure,
   recordArtifactHashed,
+  recordArtifactState,
   recordArtifactUploaded,
   recordArtifactUploading,
   type SyncState,
@@ -169,7 +170,12 @@ function buildManifestArtifacts(hashed: HashResult[], state: SyncState): Manifes
         status = 'skipped';
       }
     }
-    return { ...item.artifact, size: item.size, status };
+    return {
+      ...item.artifact,
+      size: item.size,
+      status,
+      syncError: status === 'failed' ? record?.lastErrorMessage : undefined,
+    };
   });
 }
 
@@ -179,9 +185,13 @@ export function buildSessionManifest(
   artifacts: ManifestArtifact[],
   options?: { pluginVersion?: string; transcriptsCaptured?: boolean },
 ): SyncManifest {
-  // The main transcript is always the first session-scoped artifact discovered
-  // (discoverSession adds the exact transcriptPath before any subagents).
-  const mainTranscript = artifacts.find((a) => a.scope === 'session');
+  // The main transcript is stored at the session root ('transcript.jsonl'
+  // for both Claude and Devin); every other session-scoped artifact lives
+  // under a subdirectory (subagents/, plans/, native/). If the main
+  // transcript is absent (e.g. skipped by a discovery limit), report no
+  // main transcript rather than mislabeling a subagent transcript.
+  const sessionArtifacts = artifacts.filter((a) => a.scope === 'session');
+  const mainTranscript = sessionArtifacts.find((a) => !a.relativePath.includes('/'));
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     projectId: session.projectId,
@@ -197,6 +207,7 @@ export function buildSessionManifest(
     pluginVersion: options?.pluginVersion ?? DEFAULT_PLUGIN_VERSION,
     transcriptsCaptured: options?.transcriptsCaptured ?? true,
     mainTranscriptRelativePath: mainTranscript?.relativePath,
+    mainTranscriptError: mainTranscript?.syncError,
     artifacts,
     syncRunsCount: 1,
     updatedAt: new Date().toISOString(),
@@ -259,6 +270,34 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
     const record = getArtifactRecord(state, item.artifact);
     const pending = isArtifactPending(record, item.artifact.sha256);
     if (pending) {
+      // SYNC_FILE_TOO_LARGE is permanent for identical content — the
+      // adapter's compressed-size check would fail again on the same body.
+      // Skip the re-upload but keep the artifact counted as failed:
+      // recordArtifactHashed above reset the durable status to 'hashed',
+      // so restore it and surface the stored error in this run's result —
+      // otherwise manifests would resolve the artifact as 'pending' and
+      // drop its syncError. A changed hash clears lastError in
+      // recordArtifactHashed, so only unchanged content takes this branch.
+      if (record?.lastError === 'SYNC_FILE_TOO_LARGE') {
+        recordArtifactState(state, item.artifact, 'failed');
+        result.filesFailed += 1;
+        result.failed.push(item.artifact);
+        if (!result.errors.includes(record.lastError)) {
+          result.errors.push(record.lastError);
+        }
+        const message = record.lastErrorMessage;
+        if (message) {
+          result.errorDetails = result.errorDetails ?? [];
+          if (
+            !result.errorDetails.some(
+              (d) => d.code === 'SYNC_FILE_TOO_LARGE' && d.message === message,
+            )
+          ) {
+            result.errorDetails.push({ code: 'SYNC_FILE_TOO_LARGE', message });
+          }
+        }
+        continue;
+      }
       result.filesChanged += 1;
       result.bytesChanged += item.size;
       changed.push(item);
@@ -327,7 +366,7 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
       result.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveErrorCode(err);
       const message = err instanceof Error ? err.message : String(err);
-      recordArtifactFailure(state, item.artifact, code);
+      recordArtifactFailure(state, item.artifact, code, message);
       result.filesFailed += 1;
       result.failed.push(item.artifact);
       if (!result.errors.includes(code)) {
@@ -370,7 +409,7 @@ export async function processDelta(options: ProcessDeltaOptions): Promise<DeltaE
       result.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveErrorCode(err);
       const message = err instanceof Error ? err.message : String(err);
-      recordArtifactFailure(state, manifestArtifact, code);
+      recordArtifactFailure(state, manifestArtifact, code, message);
       result.filesFailed += 1;
       result.failed.push(manifestArtifact);
       if (!result.errors.includes(code)) {

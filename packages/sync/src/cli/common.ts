@@ -51,6 +51,7 @@ import {
   isArtifactPending,
   recordArtifactFailure,
   recordArtifactHashed,
+  recordArtifactState,
   recordArtifactUploaded,
   recordArtifactUploading,
   StateStore,
@@ -391,7 +392,10 @@ export function normalizeTrigger(value: unknown): SyncTrigger {
 }
 
 export function buildStorageAdapter(config: SyncConfig): StorageAdapter {
-  return buildStorageAdapterFromStorage(config.storage, { retries: config.retries });
+  return buildStorageAdapterFromStorage(config.storage, {
+    retries: config.retries,
+    maxTranscriptBytes: config.limits.maxTranscriptBytes,
+  });
 }
 
 export function buildStorageAdapterFromStorage(
@@ -761,6 +765,34 @@ export async function runSessionEndUploadLoop(options: {
       continue;
     }
 
+    // SYNC_FILE_TOO_LARGE is permanent for identical content — the
+    // adapter's compressed-size check would fail again on the same body.
+    // Skip the re-upload but keep the artifact counted as failed:
+    // recordArtifactHashed above reset the durable status to 'hashed',
+    // so restore it and surface the stored error in this run's result.
+    // A changed hash clears lastError in recordArtifactHashed, so only
+    // unchanged content takes this branch.
+    if (record?.lastError === 'SYNC_FILE_TOO_LARGE') {
+      recordArtifactState(state, artifact, 'failed');
+      run.filesFailed += 1;
+      run.errors = run.errors ?? [];
+      if (!run.errors.includes(record.lastError)) {
+        run.errors.push(record.lastError);
+      }
+      if (record.lastErrorMessage) {
+        run.errorDetails = run.errorDetails ?? [];
+        if (
+          !run.errorDetails.some(
+            (d) => d.code === 'SYNC_FILE_TOO_LARGE' && d.message === record.lastErrorMessage,
+          )
+        ) {
+          run.errorDetails.push({ code: 'SYNC_FILE_TOO_LARGE', message: record.lastErrorMessage });
+        }
+      }
+      failed.push(artifact);
+      continue;
+    }
+
     run.filesChanged += 1;
     run.bytesChanged += resultItem.size;
 
@@ -792,7 +824,7 @@ export async function runSessionEndUploadLoop(options: {
       run.uploadDurationMs += Date.now() - uploadStart;
       const code = resolveStorageError(err);
       const message = err instanceof Error ? err.message : String(err);
-      recordArtifactFailure(state, artifact, code);
+      recordArtifactFailure(state, artifact, code, message);
       run.filesFailed += 1;
       run.errors = run.errors ?? [];
       if (!run.errors.includes(code)) {

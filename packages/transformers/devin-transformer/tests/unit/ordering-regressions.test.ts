@@ -34,7 +34,11 @@ function messageLine(
   parentNodeId: number | null,
   role: string,
   content: string,
-  options?: { messageId?: string; metadata?: Record<string, unknown> | null },
+  options?: {
+    messageId?: string;
+    metadata?: Record<string, unknown> | null;
+    chatMetadata?: Record<string, unknown> | null;
+  },
 ): string {
   return devinJsonlLine('message', {
     ts: null,
@@ -47,6 +51,7 @@ function messageLine(
       message_id: options?.messageId ?? `msg-${nodeId}`,
       role,
       content,
+      ...(options?.chatMetadata !== undefined ? { metadata: options.chatMetadata } : {}),
     }),
     created_at: null,
     metadata: options?.metadata === undefined ? null : JSON.stringify(options.metadata),
@@ -120,6 +125,39 @@ describe('DS-B28 (#294) finding #4: duplicate message_nodes pairs must not doubl
     const child = parsed.orderedMessages.find((m) => m.nodeId === 5);
     // Redirected to the kept canonical (node 4), not left dangling on the dropped node 3.
     expect(child?.parentNodeId).toBe(4);
+  });
+
+  it('keeps the usage-bearing duplicate over a row-metadata-richer copy that lacks metrics', () => {
+    // A duplicate pair can carry DIFFERENT evidence: the lower-nodeId copy
+    // may have richer `message_nodes.metadata` while the higher-nodeId copy
+    // carries the real `chat_message.metadata.metrics`. Dedup must score
+    // both, or the per-request usage silently disappears from the
+    // context-growth chart.
+    const sessionId = 's1';
+    const transcript = [
+      sessionLine(sessionId, undefined),
+      messageLine(sessionId, 245, null, 'user', 'start'),
+      messageLine(sessionId, 249, 245, 'assistant', 'duplicated content', {
+        messageId: 'msg-shared-249-250',
+        metadata: { summarized_from: null, num_tokens_preceding: 500, is_system_prefix: true },
+      }),
+      messageLine(sessionId, 250, 245, 'assistant', 'duplicated content', {
+        messageId: 'msg-shared-249-250',
+        metadata: null,
+        chatMetadata: {
+          request_id: 'req-250',
+          generation_model: 'swe-2-high',
+          metrics: { input_tokens: 10, output_tokens: 2, cache_read_tokens: 1 },
+        },
+      }),
+    ].join('\n');
+
+    const parsed = parseDevinBundle(bundle(transcript));
+    expect(parsed.orderedMessages.map((m) => m.nodeId)).toEqual([245, 250]);
+    expect(parsed.orderedMessages.find((m) => m.nodeId === 250)?.chatUsage).toMatchObject({
+      requestId: 'req-250',
+      inputTokens: 10,
+    });
   });
 
   it('does not affect a session with no duplicates', () => {

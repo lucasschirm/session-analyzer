@@ -38,6 +38,7 @@ import type {
   Project,
   SessionFileRecord,
   SessionStub,
+  SessionSyncStatus,
 } from '../types';
 import { decryptField, isUnlocked } from './credential-crypto';
 import { fingerprintsEqual } from './manifest-fingerprint';
@@ -165,6 +166,10 @@ export interface StorageSessionItem {
   lastModified?: string;
   modifiedTimestamp: number;
   synced: boolean;
+  /** Local sync status from the control DB (undefined when no local session exists). */
+  syncStatus?: SessionSyncStatus;
+  /** Failure detail text from the control DB (set when syncStatus is 'failed'). */
+  syncDetails?: string;
 }
 
 interface SessionProgressState {
@@ -236,6 +241,11 @@ interface SyncRun {
   /** When set, overrides the connection's sync-only-new setting with the value
    * chosen by the user in the per-sync confirmation modal. */
   overrideSyncOnlyNew?: boolean;
+  /** When false, sessions with sync_status='failed' are excluded from this run.
+   * Set by the per-sync confirmation modal's "Include sessions failed importing"
+   * checkbox. Defaults to false (failed sessions are excluded). Cherry-pick
+   * runs (targetSessions) bypass this gate. */
+  includeFailed: boolean;
   /** When set, restricts sync to these specific projects and session ids. */
   targetSessions?: Map<string, string[]>;
 }
@@ -398,6 +408,7 @@ export class SyncManager extends EventTarget {
     connectionId: string,
     options?: {
       syncOnlyNew?: boolean;
+      includeFailed?: boolean;
       targetSessions?: Array<{ projectId: string; sessionId: string }>;
     },
   ): void {
@@ -406,6 +417,9 @@ export class SyncManager extends EventTarget {
     const run = this.createRun(connectionId);
     if (options?.syncOnlyNew !== undefined) {
       run.overrideSyncOnlyNew = options.syncOnlyNew;
+    }
+    if (options?.includeFailed !== undefined) {
+      run.includeFailed = options.includeFailed;
     }
     if (options?.targetSessions && options.targetSessions.length > 0) {
       this.applyTargetSessionsToRun(run, options.targetSessions);
@@ -559,6 +573,7 @@ export class SyncManager extends EventTarget {
       warnings: [],
       syncOnlyNew: false,
       cancelled: false,
+      includeFailed: false,
     };
   }
 
@@ -1011,9 +1026,16 @@ export class SyncManager extends EventTarget {
     worker: Worker,
     message: SessionFoundMessage,
   ): Promise<void> {
+    // Cherry-pick runs (targetSessions) bypass the failed-session exclusion
+    // gate — the user explicitly selected these sessions for retry.
+    const excludeFailed = !run.includeFailed && !run.bypassSyncOnlyNew;
     const shouldSync = run.syncOnlyNew
-      ? await this.resolveSessionShouldSync(project.localProjectId, message.sessionId)
-      : await this.resolveUnchangedSkip(project.localProjectId, message);
+      ? await this.resolveSessionShouldSync(
+          project.localProjectId,
+          message.sessionId,
+          excludeFailed,
+        )
+      : await this.resolveUnchangedSkip(project.localProjectId, message, excludeFailed);
     this.sendSessionContinue(
       worker,
       run.connectionId,
@@ -1027,15 +1049,16 @@ export class SyncManager extends EventTarget {
   private async resolveSessionShouldSync(
     localProjectId: string,
     sessionId: string,
+    excludeFailed: boolean,
   ): Promise<boolean> {
     try {
       const local = await this.db.getSessionBySyncId(localProjectId, sessionId);
-      return (
-        local === null ||
-        local.sync_status === 'failed' ||
-        local.sync_status === 'transcript_unavailable' ||
-        local.sync_status === 'pending'
-      );
+      if (local === null) return true;
+      // Treat both 'failed' and legacy 'transcript_unavailable' as failed.
+      const isFailed =
+        local.sync_status === 'failed' || local.sync_status === 'transcript_unavailable';
+      if (isFailed && excludeFailed) return false;
+      return isFailed || local.sync_status === 'pending';
     } catch (error) {
       console.error(`Error checking local session ${sessionId}:`, error);
       return true;
@@ -1046,10 +1069,16 @@ export class SyncManager extends EventTarget {
   private async resolveUnchangedSkip(
     localProjectId: string,
     message: SessionFoundMessage,
+    excludeFailed: boolean,
   ): Promise<boolean> {
     try {
       const local = await this.db.getSessionBySyncId(localProjectId, message.sessionId);
-      if (local === null || local.sync_status !== 'in_sync') return true;
+      if (local === null) return true;
+      // Treat both 'failed' and legacy 'transcript_unavailable' as failed.
+      const isFailed =
+        local.sync_status === 'failed' || local.sync_status === 'transcript_unavailable';
+      if (isFailed && excludeFailed) return false;
+      if (local.sync_status !== 'in_sync') return true;
       const localFingerprint: ManifestFingerprint = {
         etag: local.sync_manifest_etag,
         lastModified: local.sync_manifest_last_modified,
@@ -1079,13 +1108,14 @@ export class SyncManager extends EventTarget {
   }
 
   private async handleSessionManifestReady(
-    _run: SyncRun,
+    run: SyncRun,
     project: ProjectSyncState,
     worker: Worker,
     message: SessionManifestReadyMessage,
   ): Promise<void> {
     try {
       await this.processSessionManifest(
+        run,
         project,
         worker,
         message.sessionId,
@@ -1133,6 +1163,7 @@ export class SyncManager extends EventTarget {
   }
 
   private async processSessionManifest(
+    run: SyncRun,
     project: ProjectSyncState,
     worker: Worker,
     remoteSessionId: string,
@@ -1146,7 +1177,7 @@ export class SyncManager extends EventTarget {
       fingerprint,
     );
     const mainPath = manifest.mainTranscriptRelativePath ?? FALLBACK_MAIN_TRANSCRIPT;
-    await this.dispatchOrHandleMainArtifact(sessionState, project, localSession, worker, {
+    await this.dispatchOrHandleMainArtifact(sessionState, run, project, localSession, worker, {
       remoteSessionId,
       manifest,
       mainPath,
@@ -1173,6 +1204,7 @@ export class SyncManager extends EventTarget {
 
   private async dispatchOrHandleMainArtifact(
     sessionState: SessionSyncState,
+    run: SyncRun,
     project: ProjectSyncState,
     localSession: DashboardSession,
     worker: Worker,
@@ -1180,6 +1212,8 @@ export class SyncManager extends EventTarget {
   ): Promise<void> {
     if (!this.findMainArtifact(ctx.manifest, ctx.mainPath)) {
       return this.handleTranscriptUnavailable(
+        run,
+        project,
         sessionState,
         localSession,
         worker,
@@ -1309,17 +1343,21 @@ export class SyncManager extends EventTarget {
   }
 
   private async handleTranscriptUnavailable(
+    run: SyncRun,
+    project: ProjectSyncState,
     sessionState: SessionSyncState,
     localSession: DashboardSession,
     worker: Worker,
     remoteSessionId: string,
   ): Promise<void> {
-    sessionState.syncStatus = 'transcript_unavailable';
-    await this.db.setSessionSyncStatus(
-      localSession.id,
-      'transcript_unavailable',
-      'Main transcript not uploaded',
-    );
+    // A session with no main transcript is a sync failure: mark it 'failed'
+    // so the standard failed-session exclusion gate prevents auto-retry
+    // (unless the user explicitly opts in via includeFailed or cherry-pick).
+    this.markSessionFailed(project, sessionState);
+    await this.db
+      .setSessionSyncStatus(localSession.id, 'failed', 'Main transcript not uploaded')
+      .catch(() => undefined);
+    this.pushWarning(run, `${remoteSessionId}: no main transcript uploaded — session not synced`);
     worker.postMessage(this.buildSyncMessage(remoteSessionId, false, true));
     this.emitChange();
   }
@@ -2301,9 +2339,13 @@ export class SyncManager extends EventTarget {
   ): Promise<StorageSessionItem> {
     let synced = false;
     let title: string | undefined;
+    let syncStatus: SessionSyncStatus | undefined;
+    let syncDetails: string | undefined;
     if (localProj) {
       const localSess = await this.db.getSessionBySyncId(localProj.id, sessionId);
       synced = localSess?.sync_status === 'in_sync';
+      syncStatus = localSess?.sync_status;
+      syncDetails = localSess?.sync_details ?? undefined;
       title = localSess
         ? ((await this.resolveParsedSessionTitle(sessionId)) ??
           this.storedDisplayTitle(localSess, sessionId))
@@ -2317,6 +2359,8 @@ export class SyncManager extends EventTarget {
       lastModified: meta.lastModified,
       modifiedTimestamp: meta.timestamp,
       synced,
+      syncStatus,
+      syncDetails,
     };
   }
 
@@ -2349,13 +2393,22 @@ export class SyncManager extends EventTarget {
     if (!localProj) return item;
     const localSess = await this.db.getSessionBySyncId(localProj.id, item.sessionId);
     const synced = localSess?.sync_status === 'in_sync';
+    const syncStatus = localSess?.sync_status;
+    const syncDetails = localSess?.sync_details ?? undefined;
     const title = localSess
       ? ((await this.resolveParsedSessionTitle(item.sessionId)) ??
         this.storedDisplayTitle(localSess, item.sessionId) ??
         item.title)
       : item.title;
-    if (synced === item.synced && title === item.title) return item;
-    return { ...item, synced, title };
+    if (
+      synced === item.synced &&
+      title === item.title &&
+      syncStatus === item.syncStatus &&
+      syncDetails === item.syncDetails
+    ) {
+      return item;
+    }
+    return { ...item, synced, title, syncStatus, syncDetails };
   }
 
   /**

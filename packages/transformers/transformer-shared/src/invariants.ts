@@ -10,6 +10,11 @@ export const CANONICAL_INVARIANTS = {
   unavailableMetricsIncludeReason: 'unavailable metrics include a reason',
   outputIsDeterministic: 'output is deterministic for the same bundle and versions',
   everyAggregateRetainsProvenance: 'every aggregate retains evidence/provenance links',
+  turnOrdinalsAreSequential: 'turn and message evidence is delivered in conversation order',
+  sessionAggregateUsageIsNotTurnScoped:
+    'session-level usage aggregates are never attributed to a single turn',
+  turnContextDoesNotExceedSessionTotal:
+    'a turn-scoped context volume cannot exceed the session total',
 } as const;
 
 export type CanonicalInvariant = keyof typeof CANONICAL_INVARIANTS;

@@ -62,7 +62,11 @@ export function buildManifestArtifacts(
     }
     const record = getArtifactRecord(state, artifact);
     const status = resolveArtifactStatus(record, artifact.sha256);
-    result.push({ ...artifact, status });
+    result.push({
+      ...artifact,
+      status,
+      syncError: status === 'failed' ? record?.lastErrorMessage : undefined,
+    });
   }
 
   return result;
@@ -83,9 +87,15 @@ export function buildManifest(
   options?: BuildManifestOptions,
 ): SyncManifest {
   const artifacts = buildManifestArtifacts(candidates, state, options);
-  // The main transcript is always the first session-scoped artifact discovered
-  // (discoverSession adds the exact transcriptPath before any subagents).
-  const mainTranscript = artifacts.find((a) => a.scope === 'session');
+  // The main transcript is stored at the session root (the session layout's
+  // mainTranscriptStorageName — 'transcript.jsonl' for both Claude and
+  // Devin), while every other session-scoped artifact lives under a
+  // subdirectory (subagents/, plans/, native/). When the main transcript is
+  // absent from the artifact list (e.g. skipped by a discovery limit), the
+  // manifest reports no main transcript rather than mislabeling a subagent
+  // transcript as the main one.
+  const sessionArtifacts = artifacts.filter((a) => a.scope === 'session');
+  const mainTranscript = sessionArtifacts.find((a) => !a.relativePath.includes('/'));
 
   return {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
@@ -102,6 +112,7 @@ export function buildManifest(
     pluginVersion: options?.pluginVersion ?? DEFAULT_PLUGIN_VERSION,
     transcriptsCaptured: options?.captureTranscripts ?? true,
     mainTranscriptRelativePath: mainTranscript?.relativePath,
+    mainTranscriptError: mainTranscript?.syncError,
     artifacts,
     syncRunsCount: runs.length,
     updatedAt: new Date().toISOString(),

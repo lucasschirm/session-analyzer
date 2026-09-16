@@ -30,8 +30,27 @@ declare const console:
  * worker compares the stored version against this constant on boot and, when
  * the stored version is older, runs {@link rebuildAnalyticsDerivedData}
  * before serving queries.
+ *
+ * v15: `computeRawTimingPoints` now falls back to a message's
+ * `numTokensPreceding` checkpoint when no resolved model request carries
+ * context fields (transcript-only Devin sessions previously encoded all-null
+ * context series). Existing all-null series rows cannot be recomputed from
+ * skeleton normalized_events — the rebuild regenerates those sessions from
+ * their retained artifacts instead.
+ *
+ * v16: Devin context-growth correctness. Pre-0.15.0 generations carry either
+ * the flat chart (no per-message usage) or the misattributed session total
+ * (aggregate parented to the first turn, cache double-counted on the context
+ * sum). Those sessions re-ingest from their retained artifacts so the new
+ * per-message `model_request` tier and cache-exclusive payload materialize;
+ * the v15 empty-series heal is subsumed by this broader pre-0.15.0 floor.
+ *
+ * v17: Devin subagent decomposition into canonical child sessions.
+ * Subagents are now decomposed into child SessionSummary rows and scoped
+ * evidence records, rather than keeping them inline. Inclusive metrics
+ * aggregate across root and child sessions.
  */
-export const ANALYTICS_PROCESSING_VERSION = 14;
+export const ANALYTICS_PROCESSING_VERSION = 17;
 
 /**
  * `schema_metadata` row key used to persist the analytics processing version.
@@ -69,7 +88,7 @@ export interface AnalyticsRebuildDeps {
   readonly regenerateSession?: (sessionId: string) => Promise<boolean>;
 }
 
-const REBUILD_PHASES = 5;
+const REBUILD_PHASES = 6;
 
 /**
  * Reads the stored analytics processing version, or `0` when no row exists
@@ -391,7 +410,7 @@ async function backfillContextSeries(
     step: 'Backfilling context series',
     completed: 0,
     total,
-    phase: 3,
+    phase: 4,
     totalPhases: REBUILD_PHASES,
     unit: 'sessions processed',
   });
@@ -429,11 +448,98 @@ async function backfillContextSeries(
         step: 'Backfilling context series',
         completed,
         total,
-        phase: 3,
+        phase: 4,
         totalPhases: REBUILD_PHASES,
         unit: 'sessions processed',
       });
     }
+  }
+}
+
+/**
+ * The Devin transformer version that first emits per-message `model_request`
+ * records from `chat_message.metadata.metrics`, drops the session-level
+ * aggregate's first-turn `parentId`/`requestOrder`, and writes cache-exclusive
+ * `inputTokens` (see `DEVIN_TRANSFORMER_VERSION` 0.15.0). Sessions on an older
+ * generation keep the old context-growth evidence — a flat chart, or the
+ * whole-session total attributed to message #1 with cache double-counted — so
+ * they re-ingest from their retained artifacts. This subsumes the v15
+ * empty-series heal: a pre-0.14.0 all-null series is also below this floor.
+ */
+const PER_MESSAGE_CONTEXT_TRANSFORMER_VERSION = '0.15.0';
+
+function semverBelow(version: string, floor: string): boolean {
+  const parse = (v: string) => v.split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const a = parse(version);
+  const b = parse(floor);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) < (b[i] ?? 0);
+  }
+  return false;
+}
+
+/**
+ * Devin sessions whose current generation predates the per-message context
+ * evidence contract (transformer < 0.15.0). Non-devin sessions are excluded
+ * — this evidence shape is Devin-specific.
+ */
+async function listSessionsWithOutdatedContextEvidence(
+  executor: SqliteExecutor,
+): Promise<readonly string[]> {
+  const { rows } = await executor.exec(
+    `SELECT s.id, g.transformer_version
+     FROM sessions s
+     JOIN transformation_generations g
+       ON g.id = s.current_generation_id
+     WHERE s.current_generation_id IS NOT NULL
+       AND s.harness = 'devin'
+     ORDER BY s.id`,
+    [],
+  );
+  return rows
+    .filter((row) =>
+      semverBelow(String(row.transformer_version), PER_MESSAGE_CONTEXT_TRANSFORMER_VERSION),
+    )
+    .map((row) => String(row.id));
+}
+
+/**
+ * Re-ingests pre-0.15.0 Devin sessions so their context-growth evidence is
+ * rebuilt from retained artifacts. Per-session failures are isolated — a
+ * session that cannot be regenerated keeps its existing evidence.
+ *
+ * Runs BEFORE {@link listSessionsForRebuild}, alongside the other
+ * regeneration steps, so the rebuild snapshot picks up the fresh
+ * `current_generation_id` produced by re-ingest — regenerating after the
+ * snapshot would make the rollup pass re-apply contributions under the
+ * superseded generation and double-count those sessions.
+ */
+async function regenerateOutdatedContextEvidence(
+  executor: SqliteExecutor,
+  onProgress: RebuildProgressCallback | undefined,
+  deps?: AnalyticsRebuildDeps,
+): Promise<void> {
+  const stale = await listSessionsWithOutdatedContextEvidence(executor);
+  const total = stale.length;
+  let completed = 0;
+  for (const sessionId of stale) {
+    try {
+      await deps?.regenerateSession?.(sessionId);
+    } catch (err) {
+      console?.warn?.(
+        `[rebuildAnalyticsDerivedData] Failed to regenerate context evidence for session ${sessionId}:`,
+        err,
+      );
+    }
+    completed += 1;
+    onProgress?.({
+      step: 'Regenerating context evidence',
+      completed,
+      total,
+      phase: 3,
+      totalPhases: REBUILD_PHASES,
+      unit: 'sessions',
+    });
   }
 }
 
@@ -467,13 +573,19 @@ export async function rebuildAnalyticsDerivedData(
   // touched — ingestion only fills empty title fields.
   await regenerateUntitledSessionTitles(executor, onProgress, deps);
 
+  // Step 3: regenerate pre-0.15.0 Devin sessions so per-message context
+  // evidence (and the cache-exclusive aggregate) is rebuilt from retained
+  // artifacts. Like steps 1-2 this runs before the rebuild snapshot below so
+  // the rollup pass sees the fresh current_generation_id.
+  await regenerateOutdatedContextEvidence(executor, onProgress, deps);
+
   const sessions = await listSessionsForRebuild(executor);
   if (sessions.length === 0) {
     await setStoredProcessingVersion(executor, ANALYTICS_PROCESSING_VERSION);
     return;
   }
 
-  // Step 3: materialize context-growth series for sessions whose current
+  // Step 4: materialize context-growth series for sessions whose current
   // generation predates the table, so the context chart reads
   // session_context_series instead of normalized_events.
   await backfillContextSeries(executor, onProgress);
@@ -501,9 +613,9 @@ export async function rebuildAnalyticsDerivedData(
     return policy;
   }
 
-  // Step 4: re-apply rollup contributions per session. This repopulates the
+  // Step 5: re-apply rollup contributions per session. This repopulates the
   // model dimension from model_requests and is the bulk of the work.
-  // We pass skipBucketRecompute: true because Step 3 recomputes all project and
+  // We pass skipBucketRecompute: true because Step 6 recomputes all project and
   // portfolio rollups in bulk in a single efficient pass.
   // Sessions are processed in batches per transaction to eliminate thousands of
   // intermediate OPFS disk sync flushes while preserving Session Failure Isolation.
@@ -513,7 +625,7 @@ export async function rebuildAnalyticsDerivedData(
     step: 'Rebuilding session rollups',
     completed: 0,
     total: totalSessions,
-    phase: 4,
+    phase: 5,
     totalPhases: REBUILD_PHASES,
     unit: 'sessions processed',
   });
@@ -527,13 +639,13 @@ export async function rebuildAnalyticsDerivedData(
       step: 'Rebuilding session rollups',
       completed,
       total: totalSessions,
-      phase: 4,
+      phase: 5,
       totalPhases: REBUILD_PHASES,
       unit: 'sessions processed',
     });
   }
 
-  // Step 5: recompute daily/dimension rollup buckets per project+portfolio.
+  // Step 6: recompute daily/dimension rollup buckets per project+portfolio.
   const groupList = [...projectGroups.values()];
   const totalGroups = groupList.length;
   let groupsCompleted = 0;
@@ -541,7 +653,7 @@ export async function rebuildAnalyticsDerivedData(
     step: 'Recomputing project rollups',
     completed: 0,
     total: totalGroups,
-    phase: 5,
+    phase: 6,
     totalPhases: REBUILD_PHASES,
     unit: 'analytics calculations',
   });
@@ -569,13 +681,13 @@ export async function rebuildAnalyticsDerivedData(
       step: 'Recomputing project rollups',
       completed: groupsCompleted,
       total: totalGroups,
-      phase: 5,
+      phase: 6,
       totalPhases: REBUILD_PHASES,
       unit: 'analytics calculations',
     });
   }
 
-  // Step 6: persist the new processing version so the rebuild does not run
+  // Step 7: persist the new processing version so the rebuild does not run
   // again on the next boot.
   await setStoredProcessingVersion(executor, ANALYTICS_PROCESSING_VERSION);
 }

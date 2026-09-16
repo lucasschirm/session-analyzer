@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DevinTransformer } from '../../src/index.js';
 import {
   authoritativeChainBundle,
+  compactionBoundaryBundle,
   completeSessionBundle,
   defaultContext,
   linearBundle,
@@ -124,11 +125,22 @@ describe('DevinTransformer.transform', () => {
     );
     expect(findMetric(result, 'devin:tokens:prompt:root_only')?.exact).toBe(true);
     // The non-cumulative `model` dimension is skipped, and the session-level
-    // model_usage record carries the aggregate.
+    // model_usage record carries the aggregate. Its `inputTokens` is
+    // cache-EXCLUSIVE (the shared payload contract), so it holds just the
+    // `input_tokens` uid — the cached subset lives in `cacheReadTokens`;
+    // summing input + cacheRead + cacheCreate must not double-count it.
     const usage = result.evidence.filter((r) => r.recordType === 'model_usage');
     expect(usage.length).toBe(1);
-    const usagePayload = usage[0]?.payload as { inputTokens?: number | null } | undefined;
-    expect(usagePayload?.inputTokens).toBe(3265287 + 37556736);
+    const usagePayload = usage[0]?.payload as
+      | {
+          inputTokens?: number | null;
+          cacheReadTokens?: number | null;
+        }
+      | undefined;
+    expect(usagePayload?.inputTokens).toBe(3265287);
+    expect(usagePayload?.cacheReadTokens).toBe(37556736);
+    // Session-level aggregate is never turn-scoped.
+    expect(usage[0]?.parentId).toBeUndefined();
   });
 
   it('anchors the main chain on the INTEGER main_chain_id, beating a larger orphan tree (#324)', () => {
@@ -271,6 +283,25 @@ describe('DevinTransformer.transform', () => {
       rev.sessionSummaries.map((s) => s.sessionId),
     );
     expect(normal.evidence.map((r) => r.recordId)).toEqual(rev.evidence.map((r) => r.recordId));
+  });
+
+  it('emits numTokensPreceding on message payloads when metadata.num_tokens_preceding is populated', () => {
+    const result = DevinTransformer.transform(compactionBoundaryBundle, defaultContext);
+    const messages = result.evidence.filter((r) => r.recordType === 'message');
+    const node57 = messages.find((m) => (m.payload as { nodeId?: number }).nodeId === 57);
+    expect(
+      (node57?.payload as { numTokensPreceding?: number } | undefined)?.numTokensPreceding,
+    ).toBe(17033);
+  });
+
+  it('leaves numTokensPreceding absent (never a fabricated 0) when metadata does not populate it', () => {
+    const result = DevinTransformer.transform(linearBundle, defaultContext);
+    const messages = result.evidence.filter((r) => r.recordType === 'message');
+    expect(messages.length).toBeGreaterThan(0);
+    for (const msg of messages) {
+      const payload = msg.payload as Record<string, unknown>;
+      expect('numTokensPreceding' in payload).toBe(false);
+    }
   });
 
   it('emits message evidence with artifact-blob storage pointer and chat_message content', () => {

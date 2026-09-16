@@ -1069,13 +1069,13 @@ export class ConnectModal extends ModalBase {
   }
 
   private handleSyncConfirmed(
-    event: CustomEvent<{ connectionId: string; syncOnlyNew: boolean }>,
+    event: CustomEvent<{ connectionId: string; syncOnlyNew: boolean; includeFailed: boolean }>,
   ): void {
-    const { connectionId, syncOnlyNew } = event.detail;
+    const { connectionId, syncOnlyNew, includeFailed } = event.detail;
     this.syncConfirmConnectionId = '';
     this.syncConfirmConnectionName = '';
     this.registerEphemeralIfNeeded(connectionId);
-    syncManager.requestRun(connectionId, { syncOnlyNew });
+    syncManager.requestRun(connectionId, { syncOnlyNew, includeFailed });
     this.close();
   }
 

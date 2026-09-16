@@ -3,6 +3,7 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { formatDateTime } from '../lib/format';
+import '../components/session-error-modal';
 import { type StorageSessionItem, syncManager } from '../sync/sync-manager';
 import type { Connection } from '../types';
 import { PageLitElement, pageHostStyles } from './page-lit-element';
@@ -279,6 +280,34 @@ export class StorageSessionsPage extends PageLitElement {
         border: 1px solid var(--md-sys-color-outline, #2a303c);
       }
 
+      .badge-failed {
+        background: rgba(237, 78, 80, 0.15);
+        color: #f28b82;
+        border: 1px solid rgba(237, 78, 80, 0.3);
+      }
+
+      .badge-transcript-unavailable {
+        background: rgba(251, 188, 5, 0.15);
+        color: #fdd663;
+        border: 1px solid rgba(251, 188, 5, 0.3);
+      }
+
+      tbody tr.row-failed {
+        background: rgba(237, 78, 80, 0.08);
+      }
+
+      tbody tr.row-failed:hover {
+        background: rgba(237, 78, 80, 0.14);
+      }
+
+      tbody tr.row-failed.selected {
+        background: rgba(237, 78, 80, 0.16);
+      }
+
+      .error-viewer-btn {
+        color: #f28b82;
+      }
+
       .col-actions {
         width: 300px;
         white-space: nowrap;
@@ -387,6 +416,9 @@ export class StorageSessionsPage extends PageLitElement {
 
   @state() private syncFeedback: string | null = null;
   @state() private processingSessionIds: Set<string> = new Set();
+
+  /** Error modal state: the failed session whose sync_details to display. */
+  @state() private errorModalSession: StorageSessionItem | null = null;
 
   private loadGeneration: number = 0;
   private isRefreshingStatuses: boolean = false;
@@ -602,6 +634,23 @@ export class StorageSessionsPage extends PageLitElement {
     const btn = (event.currentTarget as HTMLElement).closest('button');
     const sessionId = btn?.getAttribute('data-session-id');
     if (sessionId) window.location.hash = `#/sessions/${sessionId}`;
+  }
+
+  private handleViewErrorClick(event: MouseEvent): void {
+    event.stopPropagation();
+    const btn = (event.currentTarget as HTMLElement).closest('button');
+    const sessionId = btn?.getAttribute('data-session-id');
+    const projectId = btn?.getAttribute('data-project-id');
+    if (!sessionId || !projectId) return;
+    const session = this.sessions.find(
+      (s) => s.projectId === projectId && s.sessionId === sessionId,
+    );
+    if (!session) return;
+    this.errorModalSession = session;
+  }
+
+  private closeErrorModal(): void {
+    this.errorModalSession = null;
   }
 
   private handleReprocessClick(event: MouseEvent): void {
@@ -841,16 +890,28 @@ export class StorageSessionsPage extends PageLitElement {
     `;
   }
 
-  private renderStatusBadge(synced: boolean): TemplateResult {
+  private renderStatusBadge(session: StorageSessionItem): TemplateResult {
+    const failed = session.syncStatus === 'failed';
+    const noTranscript = session.syncStatus === 'transcript_unavailable';
     return html`
       <span
         class=${classMap({
           badge: true,
-          'badge-synced': synced,
-          'badge-unsynced': !synced,
+          'badge-synced': session.synced,
+          'badge-unsynced': !session.synced && !failed && !noTranscript,
+          'badge-failed': failed,
+          'badge-transcript-unavailable': noTranscript,
         })}
       >
-        ${synced ? 'Synced' : 'Not synced'}
+        ${
+          session.synced
+            ? 'Synced'
+            : failed
+              ? 'Failed'
+              : noTranscript
+                ? 'No transcript'
+                : 'Not synced'
+        }
       </span>
     `;
   }
@@ -935,6 +996,8 @@ export class StorageSessionsPage extends PageLitElement {
   }
 
   private renderRowActions(session: StorageSessionItem): TemplateResult {
+    const failed = session.syncStatus === 'failed';
+    const noTranscript = session.syncStatus === 'transcript_unavailable';
     return html`
       <div class="row-actions">
         ${
@@ -942,9 +1005,24 @@ export class StorageSessionsPage extends PageLitElement {
             ? html`${this.renderViewButton(session.sessionId)}${this.renderReprocessButton(session.projectId, session.sessionId)}`
             : nothing
         }
+        ${failed || noTranscript ? this.renderViewErrorButton(session) : nothing}
         ${this.renderViewRawButton(session.projectId, session.sessionId)}
         ${this.renderDownloadButton(session.projectId, session.sessionId)}
       </div>
+    `;
+  }
+
+  private renderViewErrorButton(session: StorageSessionItem): TemplateResult {
+    return html`
+      <button
+        class="action-btn error-viewer-btn"
+        data-project-id=${session.projectId}
+        data-session-id=${session.sessionId}
+        type="button"
+        @click=${this.handleViewErrorClick}
+      >
+        View error
+      </button>
     `;
   }
 
@@ -964,14 +1042,19 @@ export class StorageSessionsPage extends PageLitElement {
   private renderRow(session: StorageSessionItem): TemplateResult {
     const key = `${session.projectId}:${session.sessionId}`;
     const selected = this.selectedSessionKeys.has(key);
+    const failed = session.syncStatus === 'failed';
     const title = this.formatSessionTitle(session);
     return html`
-      <tr class=${classMap({ selected })} data-key=${key} @click=${this.handleRowClick}>
+      <tr
+        class=${classMap({ selected, 'row-failed': failed })}
+        data-key=${key}
+        @click=${this.handleRowClick}
+      >
         ${this.renderSessionCheckbox(key, selected, title)}
         ${this.renderSessionTitleCell(session, title)}
         <td class="col-project"><span class="project-badge">${session.projectName}</span></td>
         <td class="col-date">${formatDateTime(session.lastModified)}</td>
-        <td class="col-status">${this.renderStatusBadge(session.synced)}</td>
+        <td class="col-status">${this.renderStatusBadge(session)}</td>
         <td class="col-actions" @click=${this.handleCellClick}>
           ${this.renderRowActions(session)}
         </td>
@@ -1084,12 +1167,25 @@ export class StorageSessionsPage extends PageLitElement {
     `;
   }
 
+  private renderErrorModal(): TemplateResult {
+    const session = this.errorModalSession;
+    return html`
+      <session-error-modal
+        ?open=${session !== null}
+        .sessionTitle=${session ? this.formatSessionTitle(session) : ''}
+        .errorDetails=${session?.syncDetails ?? 'No error details available.'}
+        @modal-close=${this.closeErrorModal}
+      ></session-error-modal>
+    `;
+  }
+
   render(): TemplateResult {
     return html`
       <div class="storage-sessions-page">
         ${this.renderHeader()}
         ${this.syncFeedback ? html`<div class="feedback-banner">${this.syncFeedback}</div>` : ''}
         ${this.renderContent()}
+        ${this.renderErrorModal()}
       </div>
     `;
   }

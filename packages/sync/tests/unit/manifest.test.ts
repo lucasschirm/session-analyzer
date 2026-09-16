@@ -180,6 +180,52 @@ describe('buildManifest', () => {
     expect(manifest.artifacts).toHaveLength(2);
   });
 
+  it('reports no main transcript when the top-level transcript is absent — a subdirectory artifact is not the main transcript', () => {
+    // If the main transcript was skipped by a discovery limit, the first
+    // session-scoped artifact is a subagent transcript — mislabeling it as
+    // the main transcript would surface subagent content where the session
+    // transcript is expected.
+    const state = createEmptySyncState();
+    const subagentArtifact = makeArtifact({
+      scope: 'session',
+      relativePath: 'subagents/agent-1.jsonl',
+      sha256: 'agent-hash',
+    });
+
+    const manifest = buildManifest(makeSession(), [subagentArtifact], state, []);
+
+    expect(manifest.mainTranscriptRelativePath).toBeUndefined();
+    expect(manifest.artifacts).toHaveLength(1);
+  });
+
+  it('includes syncError on failed artifacts and mainTranscriptError on the manifest', () => {
+    const state = createEmptySyncState();
+    const sessionArtifact = makeArtifact({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      sha256: 'session-hash',
+    });
+
+    recordArtifactDiscovered(state, sessionArtifact);
+    recordArtifactFailure(
+      state,
+      sessionArtifact,
+      'SYNC_FILE_TOO_LARGE',
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+    );
+
+    const manifest = buildManifest(makeSession(), [sessionArtifact], state, []);
+
+    expect(manifest.mainTranscriptRelativePath).toBe('transcript.jsonl');
+    expect(manifest.mainTranscriptError).toBe(
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+    );
+    expect(manifest.artifacts[0]?.status).toBe('failed');
+    expect(manifest.artifacts[0]?.syncError).toBe(
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+    );
+  });
+
   it('aggregates per-trigger sync-run metrics', () => {
     const runs: SyncRun[] = [
       makeRun('session-start', { filesDiscovered: 10, filesUploaded: 10 }),
@@ -320,6 +366,8 @@ describe('ManifestGenerator', () => {
     expect(manifestRecord).toBeDefined();
     expect(manifestRecord?.status).toBe('failed');
     expect(manifestRecord?.lastUploadedHash).toBeUndefined();
+    expect(manifestRecord?.lastError).toBe('SYNC_STORAGE_ERROR');
+    expect(manifestRecord?.lastErrorMessage).toBe('simulated manifest upload failure');
 
     // Recovery: a later manual or SessionStart sync can regenerate and re-upload.
     const successAdapter = new InMemoryStorageAdapter();

@@ -19,6 +19,7 @@ import {
   getArtifactRecord,
   hashCandidate,
   processDelta,
+  recordArtifactFailure,
   recordArtifactUploaded,
   runSessionEndUploadLoop,
   sha256Hex,
@@ -496,5 +497,156 @@ describe('runSessionEndUploadLoop HEAD skip', () => {
     const record = getArtifactRecord(state, result.uploaded[0]);
     expect(record?.status).toBe('uploaded');
     expect(record?.lastUploadedHash).toBe(result.uploaded[0].sha256);
+  });
+
+  it('persists lastErrorMessage when an upload fails', async () => {
+    const state = createEmptySyncState();
+    const failingAdapter: StorageAdapter = {
+      headObject: async () => undefined,
+      putObject: async () => {
+        throw new StorageError('SYNC_STORAGE_ERROR', 'upload failed', true);
+      },
+    };
+    const candidate = makeCandidate();
+    const hashed = hashCandidate(candidate);
+    const candidateResults: CandidateResult[] = [
+      { candidate, sha256: hashed.artifact.sha256, size: hashed.size },
+    ];
+
+    const result = await runSessionEndUploadLoop({
+      state,
+      candidateResults,
+      storageAdapter: failingAdapter,
+      config: {
+        timeouts: { syncTimeoutMs: 5000, hookUploadTimeoutMs: 5000, sessionEndBudgetMs: 30000 },
+      } as unknown as SyncConfig,
+      deadline: Date.now() + 10000,
+      start: Date.now(),
+    });
+
+    expect(result.failed).toHaveLength(1);
+    const record = getArtifactRecord(state, result.failed[0]);
+    expect(record?.status).toBe('failed');
+    expect(record?.lastError).toBe('SYNC_STORAGE_ERROR');
+    expect(record?.lastErrorMessage).toBe('upload failed');
+  });
+});
+
+describe('SYNC_FILE_TOO_LARGE skip', () => {
+  it('does not re-upload an unchanged artifact that permanently failed the size check, and keeps it failed', async () => {
+    const state = createEmptySyncState();
+    const { adapter, putObject } = makeStorage({ headResult: undefined });
+    const candidate = makeCandidate({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      content: '{"type":"message"}\n',
+    });
+    const identity = { ...candidate, sha256: sha256Hex(candidate.content) };
+    // Simulate a prior run that failed the compressed-size check durably.
+    recordArtifactFailure(state, identity, 'SYNC_FILE_TOO_LARGE', 'compressed body over limit');
+
+    const result = await processDelta({
+      state,
+      trigger: 'file-changed',
+      candidates: [candidate],
+      uploader: makeUploader(adapter),
+      storageAdapter: adapter,
+      targetRelativePath: 'transcript.jsonl',
+    });
+
+    // No re-upload attempted — the same content always fails the check.
+    expect(putObject).not.toHaveBeenCalled();
+    // But the artifact is still counted as failed (not silently skipped):
+    // the run result and durable state must keep surfacing the stored error
+    // so manifests resolve the artifact as 'failed' with its syncError.
+    expect(result.filesFailed).toBe(1);
+    expect(result.failed).toHaveLength(1);
+    expect(result.errors).toContain('SYNC_FILE_TOO_LARGE');
+    expect(result.errorDetails).toContainEqual({
+      code: 'SYNC_FILE_TOO_LARGE',
+      message: 'compressed body over limit',
+    });
+
+    const record = getArtifactRecord(state, identity);
+    expect(record?.status).toBe('failed');
+    expect(record?.lastError).toBe('SYNC_FILE_TOO_LARGE');
+    expect(record?.lastErrorMessage).toBe('compressed body over limit');
+  });
+
+  it('retries the upload when the content hash changes after a SYNC_FILE_TOO_LARGE failure', async () => {
+    const state = createEmptySyncState();
+    const { adapter, putObject } = makeStorage({ headResult: undefined });
+    // Prior failure recorded against the OLD content hash.
+    recordArtifactFailure(
+      state,
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        scope: 'session',
+        relativePath: 'transcript.jsonl',
+        sha256: sha256Hex('old oversized content'),
+      },
+      'SYNC_FILE_TOO_LARGE',
+      'compressed body over limit',
+    );
+
+    const candidate = makeCandidate({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      content: '{"type":"message"}\n',
+    });
+
+    const result = await processDelta({
+      state,
+      trigger: 'file-changed',
+      candidates: [candidate],
+      uploader: makeUploader(adapter),
+      storageAdapter: adapter,
+      targetRelativePath: 'transcript.jsonl',
+    });
+
+    // New content → the permanent failure no longer applies; upload retried.
+    expect(putObject).toHaveBeenCalledTimes(1);
+    expect(result.filesUploaded).toBe(1);
+  });
+
+  it('runSessionEndUploadLoop keeps a SYNC_FILE_TOO_LARGE artifact failed without re-uploading', async () => {
+    const state = createEmptySyncState();
+    const { adapter, putObject } = makeStorage({ headResult: undefined });
+    const candidate = makeCandidate({
+      scope: 'session',
+      relativePath: 'transcript.jsonl',
+      content: '{"type":"message"}\n',
+    });
+    const hashed = hashCandidate(candidate);
+    recordArtifactFailure(
+      state,
+      hashed.artifact,
+      'SYNC_FILE_TOO_LARGE',
+      'compressed body over limit',
+    );
+    const candidateResults: CandidateResult[] = [
+      { candidate, sha256: hashed.artifact.sha256, size: hashed.size },
+    ];
+
+    const result = await runSessionEndUploadLoop({
+      state,
+      candidateResults,
+      storageAdapter: adapter,
+      config: {
+        timeouts: { syncTimeoutMs: 5000, hookUploadTimeoutMs: 5000, sessionEndBudgetMs: 30000 },
+      } as unknown as SyncConfig,
+      deadline: Date.now() + 10000,
+      start: Date.now(),
+    });
+
+    expect(putObject).not.toHaveBeenCalled();
+    expect(result.failed).toHaveLength(1);
+    expect(result.run.filesFailed).toBe(1);
+    expect(result.run.errors).toContain('SYNC_FILE_TOO_LARGE');
+
+    const record = getArtifactRecord(state, result.failed[0]);
+    expect(record?.status).toBe('failed');
+    expect(record?.lastErrorMessage).toBe('compressed body over limit');
   });
 });

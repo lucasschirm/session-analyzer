@@ -142,6 +142,7 @@ export class S3StorageAdapter implements StorageAdapter {
   private readonly bucket: string;
   private readonly retryOptions: RetryPolicyOptions;
   private readonly gzip: boolean;
+  private readonly maxTranscriptBytes: number | undefined;
 
   constructor(config: StorageConfig, options?: StorageAdapterOptions) {
     if (!config.bucket) {
@@ -155,6 +156,7 @@ export class S3StorageAdapter implements StorageAdapter {
     this.bucket = config.bucket;
     this.retryOptions = resolveRetryOptions(options);
     this.gzip = config.gzip !== false;
+    this.maxTranscriptBytes = options?.maxTranscriptBytes;
 
     const credentials =
       config.accessKeyId && config.secretAccessKey
@@ -206,8 +208,28 @@ export class S3StorageAdapter implements StorageAdapter {
    * compressed and marked via `ContentEncoding` plus the
    * `sal-content-encoding` user metadata; the sha256 metadata always covers
    * the UNCOMPRESSED body so content addressing is unaffected by compression.
+   *
+   * When `maxTranscriptBytes` is configured and the artifact is session-scoped,
+   * the wire body (compressed when gzip is enabled) is checked against the
+   * limit. A body exceeding the limit throws `SYNC_FILE_TOO_LARGE` so the delta
+   * engine records a proper failed-artifact with the error message rather than
+   * silently dropping the file at discovery time.
    */
   private buildPutCommand(key: string, input: PutObjectInput): PutObjectCommand {
+    const body = this.gzip ? gzipSync(input.body) : input.body;
+    if (
+      this.maxTranscriptBytes !== undefined &&
+      input.scope === 'session' &&
+      body.length > this.maxTranscriptBytes
+    ) {
+      const sizeMb = (body.length / (1024 * 1024)).toFixed(1);
+      const limitMb = (this.maxTranscriptBytes / (1024 * 1024)).toFixed(0);
+      throw new StorageError(
+        'SYNC_FILE_TOO_LARGE',
+        `Session artifact ${input.relativePath}: ${this.gzip ? 'compressed' : 'uncompressed'} size ${body.length} bytes (${sizeMb} MB) exceeds the ${limitMb} MB limit`,
+        false,
+      );
+    }
     const metadata: Record<string, string> = {
       sha256: input.contentSha256 ?? sha256Hex(input.body),
       ...(input.metadata ?? {}),
@@ -216,7 +238,7 @@ export class S3StorageAdapter implements StorageAdapter {
     return new PutObjectCommand({
       Bucket: this.bucket,
       Key: key,
-      Body: this.gzip ? gzipSync(input.body) : input.body,
+      Body: body,
       ...(input.contentType ? { ContentType: input.contentType } : {}),
       ...(this.gzip ? { ContentEncoding: GZIP_METADATA_VALUE } : {}),
       Metadata: metadata,

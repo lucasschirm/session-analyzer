@@ -171,8 +171,53 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // `response_dimensions` aggregate fields, byte-identical per tier), and
 // `model_usage`/`model_requests` are still not yet ingested by
 // `packages/db`. Forces a fresh generation on reprocess so no analysis
-// mixes pre-/post-fix `model_usage`/`message` evidence shapes.
-// Bumped 0.12.0 -> 0.13.0: subagents are now decomposed into canonical
+// Bumped 0.12.0 -> 0.13.0: `sessionId` is now assigned directly from the
+// native session id produced by the parser rather than serialized as a
+// JSON stableId string. Forces a fresh generation on reprocess.
+// Bumped 0.13.0 -> 0.14.0: two context-growth evidence fixes (real session
+// `lucky-squid`, transcript-only bundle: no ATIF, null
+// `sessions.metadata.response_dimensions`). (1) `buildSessionSpine`'s
+// `message` payload now carries `numTokensPreceding` (the per-node
+// `message_nodes.metadata.num_tokens_preceding` checkpoint) when populated —
+// previously the ONLY context signal on such sessions was a single
+// session-level `model_usage` record with every token field null, so
+// `session_context_series` encoded all-null context and the chart rendered
+// 0 for every message. (2) `buildDevinCompactionRecords` now scans
+// `orderedMessages` + `detachedMessages` — a `/compact` can restart the
+// main conversation under a new node-forest root, landing `summarized_from`
+// output nodes in `detachedMessages` and silently dropping those
+// boundaries (3 of 5 emitted before). No `DEVIN_METRIC_DEFINITION_VERSION`
+// bump: no metric's formula, population, or comparability group changed.
+// Forces a fresh generation on reprocess.
+// Bumped 0.14.0 -> 0.15.0: context-growth correctness for transcript-only
+// sessions (`brassy-humor`). (1) `buildTokenUsageRecords` gained tier 2:
+// per-message `model_request` records sourced from
+// `chat_message.metadata.metrics` (+ `request_id`/`generation_model`,
+// parsed onto `DevinMessageLine.chatUsage`), each parented to its own turn
+// and carrying that request's real input/output/cache counts. They are
+// typed `model_request` (not `model_usage`) because their sums do not equal
+// the harness-reported cumulative session total, so they must not enter the
+// `devin:tokens:total` reconciliation set; the single session `model_usage`
+// aggregate is still emitted alongside them. Previously such bundles fell
+// straight through to that aggregate alone, so the context chart showed one
+// flat checkpoint value for every message. (2) The session aggregate is no
+// longer parented to the first turn and no longer carries `requestOrder` —
+// that binding (directly, or via the context-timing `byOrder` fallback)
+// dumped the whole-session cumulative total (~50.2M tokens) onto message #1
+// and fabricated a matching "compaction" on message #2. It now stays
+// session-scoped (metrics still cite it by id); messages fall back to
+// `numTokensPreceding`. (3) `model_usage.inputTokens` is now cache-EXCLUSIVE
+// for every tier (ATIF's `promptTokens` had its cached subset subtracted;
+// the metadata/ATIF aggregates previously wrote prompt = input + cached into
+// `inputTokens` while also setting `cacheReadTokens`), so the generic
+// context sum (input + cacheRead + cacheCreation) no longer double-counts
+// cache reads. `DEVIN_METRIC_DEFINITION_VERSION` is unchanged:
+// `devin:tokens:prompt` still means cache-inclusive input
+// (`TokenUsageResult.prompt`), and `devin:tokens:total` is still prompt +
+// completion — only the evidence-record payload contract changed. Forces a
+// fresh generation on reprocess so no analysis mixes pre-/post-fix
+// `model_usage` shapes.
+// Bumped 0.15.0 -> 0.16.0: subagents are now decomposed into canonical
 // child sessions (`session`, `session_relation`, turns, messages,
 // invocations) mirroring the Claude Code convention, instead of inline
 // `subagent_turn`/`detached_conversation` normalized events. The
@@ -183,7 +228,7 @@ export const DEVIN_TRANSFORMER_ID = 'devin';
 // Accompanied by `DEVIN_METRIC_DEFINITION_VERSION` bump 0.4.0 -> 0.5.0 (see
 // comparability.ts) because inclusive metric populations now encompass
 // child sessions. Forces a fresh generation on reprocess.
-export const DEVIN_TRANSFORMER_VERSION = '0.13.0';
+export const DEVIN_TRANSFORMER_VERSION = '0.16.0';
 export const DEVIN_ONTOLOGY_VERSION = '0.1.0';
 // `DEVIN_METRIC_DEFINITION_VERSION` is NOT declared here: it is imported
 // from `./metrics/comparability.js` (re-exported below) so there is exactly
@@ -464,7 +509,11 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       };
     }
 
-    const nativeSessionId = parsed.sessionLine?.id ?? 'unknown';
+    const nativeSessionId =
+      parsed.sessionLine?.id ??
+      parsed.orderedMessages[0]?.sessionId ??
+      bundle.sourceIdentity?.sessionId ??
+      'unknown';
     const sessionId = deriveSessionId(context, bundle.sourceIdentity, nativeSessionId);
 
     const spine = buildSessionSpine(
@@ -516,9 +565,15 @@ export const DevinTransformer: SessionTransformer<UnknownArtifactBundle> = {
       rootArtifactId,
       parsed.orderedMessages,
     );
+    // Boundary detection scans ordered AND detached messages: a `/compact`
+    // can restart the main conversation under a NEW node-forest root
+    // (`parent_node_id: null`), landing the `summarized_from` output nodes in
+    // `detachedMessages` (real session `lucky-squid`: anchors 777/1075's
+    // outputs 823/1118 under roots 787/1085). Scanning only `orderedMessages`
+    // silently dropped those boundaries — 3 of 5 compactions emitted.
     const compactionRecords = buildDevinCompactionRecords(
       sessionId,
-      parsed.orderedMessages,
+      [...parsed.orderedMessages, ...parsed.detachedMessages],
       parsed.prompts,
       rootArtifactId,
     );
