@@ -330,6 +330,53 @@ describe('TranscriptWatcher', () => {
     expect(agentCalls[0]?.content).toBe('{"type":"subagent"}\n');
   });
 
+  it('bounds each poll read to maxTranscriptBytes of new data and converges over successive polls', async () => {
+    // A file larger than the per-poll read bound must still be fully captured:
+    // the watcher reads at most maxTranscriptBytes of NEW bytes per poll and
+    // advances the offset after each successful upload, so large transcripts
+    // converge incrementally instead of buffering the whole remainder.
+    const storage = new InMemoryStorageAdapter();
+    const watcher = new TranscriptWatcher({
+      dataDir,
+      sessionId: 'sess-1',
+      transcriptPath,
+      env: baseEnv({ SAL_MAX_TRANSCRIPT_BYTES: '40' }),
+      storageAdapter: storage,
+      debounceMs: 30,
+      pollIntervalMs: 15,
+      livenessIntervalMs: 10_000,
+    });
+
+    const startPromise = watcher.start();
+    await sleep(150);
+
+    // 100 bytes appended at once — three 40-byte bounded reads must follow.
+    const payload = `${'x'.repeat(39)}\n` + `${'y'.repeat(39)}\n` + `${'z'.repeat(20)}\n`;
+    await appendFile(transcriptPath, payload);
+    await sleep(800);
+
+    await watcher.stop();
+    await startPromise.catch(() => {});
+
+    const transcriptCalls = storage.calls.filter(
+      (call) => call.scope === 'session' && call.relativePath === 'transcript.jsonl',
+    );
+    // Every uploaded delta body stays within the per-poll bound and the
+    // concatenation of deltas equals the appended payload — full coverage,
+    // no truncation.
+    expect(transcriptCalls.length).toBeGreaterThanOrEqual(3);
+    for (const call of transcriptCalls) {
+      expect(Buffer.byteLength(call.content, 'utf8')).toBeLessThanOrEqual(40);
+    }
+    expect(transcriptCalls.map((c) => c.content).join('')).toBe(payload);
+
+    const offsetsPath = path.join(dataDir, 'watcher', `${encodeURIComponent('sess-1')}.state.json`);
+    const offsets = JSON.parse(await fsp.readFile(offsetsPath, 'utf8')) as {
+      offsets: Record<string, { offset: number; lastProcessedSize: number }>;
+    };
+    expect(offsets.offsets['sess-1.jsonl'].offset).toBe(Buffer.byteLength(payload, 'utf8'));
+  });
+
   it('self-terminates when the owning process is gone', async () => {
     const watcher = new TranscriptWatcher({
       dataDir,

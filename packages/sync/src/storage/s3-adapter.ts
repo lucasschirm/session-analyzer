@@ -226,7 +226,7 @@ export class S3StorageAdapter implements StorageAdapter {
       const limitMb = (this.maxTranscriptBytes / (1024 * 1024)).toFixed(0);
       throw new StorageError(
         'SYNC_FILE_TOO_LARGE',
-        `Transcript ${input.relativePath}: ${this.gzip ? 'compressed' : 'uncompressed'} size ${body.length} bytes (${sizeMb} MB) exceeds the ${limitMb} MB limit`,
+        `Session artifact ${input.relativePath}: ${this.gzip ? 'compressed' : 'uncompressed'} size ${body.length} bytes (${sizeMb} MB) exceeds the ${limitMb} MB limit`,
         false,
       );
     }

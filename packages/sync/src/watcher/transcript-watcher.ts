@@ -616,7 +616,13 @@ export class TranscriptWatcher {
       this.offsets[relativePath] = { offset: 0, lastProcessedSize: stat.size };
     }
     const fileState = this.offsets[relativePath] as WatcherFileOffset;
-    const targetSize = Math.min(stat.size, maxTranscriptBytes);
+    // Bound each poll's read window to maxTranscriptBytes of NEW data so the
+    // detached watcher never buffers an unbounded delta in memory. The
+    // offset advances after each successful upload, so files larger than the
+    // limit still converge over successive polls — and each uploaded delta
+    // body is itself checked against the compressed-size limit in the
+    // storage adapter.
+    const targetSize = Math.min(stat.size, fileState.offset + maxTranscriptBytes);
 
     if (fileState.offset >= targetSize) {
       fileState.lastProcessedSize = stat.size;
@@ -673,13 +679,17 @@ export class TranscriptWatcher {
 
       if (uploaded) {
         fileState.offset = targetSize;
-        fileState.lastProcessedSize = stat.size;
+        // lastProcessedSize tracks how far we've uploaded, not the file size
+        // — with a bounded read window (targetSize < stat.size) the scanner
+        // must see remaining bytes as unprocessed so the next poll re-pends
+        // the file and the read window advances until it converges.
+        fileState.lastProcessedSize = targetSize;
       } else if (failed) {
         fileState.lastProcessedSize = stat.size;
       } else {
         // skipped because hash matches; nothing changed from last upload
         fileState.offset = targetSize;
-        fileState.lastProcessedSize = stat.size;
+        fileState.lastProcessedSize = targetSize;
       }
 
       await this.saveOffsets();

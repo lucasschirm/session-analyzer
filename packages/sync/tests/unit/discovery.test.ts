@@ -581,6 +581,76 @@ describe('discoverSession', () => {
     expect(result.artifacts).toHaveLength(0);
     expect(result.errors[0]?.code).toBe('SYNC_JSON_PARSE_FAILED');
   });
+
+  it('does not gate session artifacts on the cumulative uncompressed size budget', async () => {
+    // maxTotalBytes is a workspace/global capture budget measured on
+    // uncompressed bytes. Session artifacts bypass it — their authoritative
+    // size limit is the compressed-wire-body check in the storage adapter,
+    // so a compressible transcript must reach upload rather than being
+    // dropped here on raw bytes.
+    const transcriptPath = path.join(transcriptDir, 'transcript.jsonl');
+    await writeFile(transcriptPath, Buffer.alloc(200));
+    const subagentDir = path.join(transcriptDir, 'sess-1', 'subagents');
+    await writeFile(path.join(subagentDir, 'agent-1.jsonl'), '{"type":"message"}\n');
+
+    const result = await discoverSession(
+      {
+        projectId: 'proj-1',
+        sessionId: 'sess-1',
+        transcriptPath,
+        limits: makeLimits({ maxTotalBytes: 50 }),
+      },
+      DEFAULT_HARNESS_PROFILE,
+    );
+
+    expect(result.errors).toHaveLength(0);
+    const relativePaths = result.artifacts.map((a) => a.relativePath).sort();
+    expect(relativePaths).toEqual(['subagents/agent-1.jsonl', 'transcript.jsonl']);
+    // Reported totalBytes still includes session bytes for observability.
+    expect(result.totalBytes).toBeGreaterThanOrEqual(200);
+  });
+
+  it('skips a session artifact that trips the file-count limit without halting remaining session discovery', async () => {
+    // Workspace files consume the count budget first; the main transcript
+    // then trips the limit and is skipped with an error — but subagent
+    // discovery must continue rather than halting (failure isolation).
+    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-workspace-'));
+    const homeDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-home-'));
+    const configDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sal-claude-'));
+    try {
+      await writeFile(path.join(workspaceDir, 'CLAUDE.md'), 'a');
+      const transcriptPath = path.join(transcriptDir, 'sess-1.jsonl');
+      const subagentDir = path.join(transcriptDir, 'sess-1', 'subagents');
+      await writeFile(transcriptPath, '{"type":"message"}\n');
+      await writeFile(path.join(subagentDir, 'agent-1.jsonl'), '{"type":"message"}\n');
+
+      const result = await discover(
+        {
+          projectId: 'proj-1',
+          sessionId: 'sess-1',
+          workspaceRoot: workspaceDir,
+          configDir: configDir2,
+          homeDir: homeDir2,
+          transcriptPath,
+          limits: makeLimits({ maxFiles: 1 }),
+        },
+        DEFAULT_HARNESS_PROFILE,
+      );
+
+      // The count limit was hit inside session scope: the transcript and the
+      // subagent are each skipped with an error rather than stopping the run
+      // — a global stop would have produced a single SYNC_FILE_COUNT_EXCEEDED
+      // entry and never evaluated the subagent file at all.
+      const countErrors = result.errors.filter((e) => e.code === 'SYNC_FILE_COUNT_EXCEEDED');
+      expect(countErrors.length).toBeGreaterThanOrEqual(2);
+      // Workspace artifact still captured; discovery did not stop globally.
+      expect(result.artifacts.some((a) => a.scope === 'workspace')).toBe(true);
+    } finally {
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      fs.rmSync(homeDir2, { recursive: true, force: true });
+      fs.rmSync(configDir2, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('discover', () => {

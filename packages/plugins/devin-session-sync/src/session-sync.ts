@@ -690,17 +690,26 @@ async function uploadSessionArtifacts(
     skipped: deltaResult.skipped,
     failed: deltaResult.failed,
   });
-  const errors = await uploadManifestSafely(options, session, deltaResult, manifestArtifacts);
 
   // Propagate discovery errors (e.g. SYNC_FILE_TOO_LARGE for oversized
-  // workspace/global artifacts) to the outcome so they are visible in
-  // telemetry and CLI output — matching the Claude plugin's runFullSync
-  // path, which merges discovery.errors into deltaResult.errors.
+  // workspace/global artifacts) into deltaResult before the manifest upload
+  // so the persisted SyncRun includes the discovery error codes — matching
+  // the Claude plugin's runFullSync path, which merges discovery.errors
+  // into deltaResult.errors before generating the manifest. DiscoveryError
+  // carries the failing path separately, so fold it into the message —
+  // SyncRun.errorDetails has no path field.
   for (const error of discoveryErrors) {
-    if (!errors.includes(error.code)) {
-      errors.push(error.code);
+    if (!deltaResult.errors.includes(error.code)) {
+      deltaResult.errors.push(error.code);
+    }
+    const message = error.path ? `${error.message} (path: ${error.path})` : error.message;
+    deltaResult.errorDetails = deltaResult.errorDetails ?? [];
+    if (!deltaResult.errorDetails.some((d) => d.code === error.code && d.message === message)) {
+      deltaResult.errorDetails.push({ code: error.code, message });
     }
   }
+
+  const errors = await uploadManifestSafely(options, session, deltaResult, manifestArtifacts);
 
   return {
     sessionId: options.sessionId,

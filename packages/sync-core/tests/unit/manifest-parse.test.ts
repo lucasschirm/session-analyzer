@@ -264,14 +264,14 @@ describe('parseSyncManifest', () => {
         {
           mainTranscriptRelativePath: 'transcript.jsonl',
           mainTranscriptError:
-            'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+            'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
           artifacts: [
             makeArtifact({
               scope: 'session',
               relativePath: 'transcript.jsonl',
               status: 'failed',
               syncError:
-                'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+                'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
             }),
           ],
         },
@@ -281,10 +281,10 @@ describe('parseSyncManifest', () => {
 
     expect(manifest.mainTranscriptRelativePath).toBe('transcript.jsonl');
     expect(manifest.mainTranscriptError).toBe(
-      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
     );
     expect(manifest.artifacts[0]?.syncError).toBe(
-      'Transcript transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
+      'Session artifact transcript.jsonl: compressed size 104857600 bytes exceeds the 100 MB limit',
     );
   });
 
