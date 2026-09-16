@@ -84,7 +84,7 @@ function toolStatus(
   return 'unknown';
 }
 
-function byteLength(value: unknown): number {
+export function byteLength(value: unknown): number {
   if (typeof value === 'string') return value.length;
   try {
     return JSON.stringify(value).length;

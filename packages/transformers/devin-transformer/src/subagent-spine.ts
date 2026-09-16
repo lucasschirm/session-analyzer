@@ -24,7 +24,14 @@ import type {
   DevinToolCallLine,
 } from '@lucasschirm/sal-devin-session-parser';
 import type { NormalizedEvidenceRecord, SessionSummary } from '@lucasschirm/sal-transformer-shared';
-import { chatMessageText, messageId, provenanceForArtifact, stableId } from './session-spine.js';
+import {
+  chatMessageText,
+  messageId,
+  messageRole,
+  provenanceForArtifact,
+  stableId,
+} from './session-spine.js';
+import { byteLength } from './tool-invocations.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,6 +117,29 @@ function taskDescriptionForToolCall(
   return null;
 }
 
+function registerSubagentIdentity(
+  byAgentId: Map<string, SubagentIdentity>,
+  m: DevinMessageLine,
+  toolCalls: readonly DevinToolCallLine[],
+): void {
+  if (!m.subagent?.agentId || !m.toolCallId) return;
+  const agentId = m.subagent.agentId;
+  const toolCallId = m.toolCallId;
+  const identity: SubagentIdentity = {
+    agentId,
+    profileName: m.subagent.profileName,
+    model: m.subagent.model,
+    chainNodeId: m.subagent.chainNodeId,
+    toolCallId,
+    rawInputProfile: rawInputProfileForToolCall(toolCalls, toolCallId),
+    taskDescription: taskDescriptionForToolCall(toolCalls, toolCallId),
+  };
+  const existing = byAgentId.get(agentId);
+  if (!existing || (existing.chainNodeId === null && identity.chainNodeId !== null)) {
+    byAgentId.set(agentId, identity);
+  }
+}
+
 /** Identifies all subagent groups from main-chain tool results, deduplicated by agentId. */
 export function identifySubagents(
   orderedMessages: readonly DevinMessageLine[],
@@ -117,30 +147,9 @@ export function identifySubagents(
 ): SubagentIdentity[] {
   const resultMsgs = findSubagentResultMessages(orderedMessages);
   const byAgentId = new Map<string, SubagentIdentity>();
-
   for (const m of resultMsgs) {
-    if (!m.subagent?.agentId || !m.toolCallId) continue;
-    const agentId = m.subagent.agentId;
-    const toolCallId = m.toolCallId;
-    const identity: SubagentIdentity = {
-      agentId,
-      profileName: m.subagent.profileName,
-      model: m.subagent.model,
-      chainNodeId: m.subagent.chainNodeId,
-      toolCallId,
-      rawInputProfile: rawInputProfileForToolCall(toolCalls, toolCallId),
-      taskDescription: taskDescriptionForToolCall(toolCalls, toolCallId),
-    };
-
-    const existing = byAgentId.get(agentId);
-    if (!existing) {
-      byAgentId.set(agentId, identity);
-    } else if (existing.chainNodeId === null && identity.chainNodeId !== null) {
-      // Prefer entry with resolved chainNodeId
-      byAgentId.set(agentId, identity);
-    }
+    registerSubagentIdentity(byAgentId, m, toolCalls);
   }
-
   return Array.from(byAgentId.values());
 }
 
@@ -208,16 +217,46 @@ function buildChildrenIndex(messages: readonly DevinMessageLine[]): Map<number, 
 // ---------------------------------------------------------------------------
 
 /** Builds session + session_relation records for a child session. */
-function buildChildSessionRecords(
-  childSessionId: string,
-  rootSessionId: string,
-  identity: SubagentIdentity,
-  _childMessages: readonly DevinMessageLine[],
-  rootArtifactId: string,
-): NormalizedEvidenceRecord[] {
-  const records: NormalizedEvidenceRecord[] = [];
+export function childSessionTimestamps(messages: readonly DevinMessageLine[]): {
+  start?: string;
+  end?: string;
+} {
+  const values: number[] = [];
+  for (const m of messages) {
+    if (typeof m.createdAt === 'number' && Number.isFinite(m.createdAt)) {
+      values.push(m.createdAt * 1000);
+    }
+  }
+  if (values.length === 0) return {};
+  values.sort((a, b) => a - b);
+  return {
+    start: new Date(values[0]).toISOString(),
+    end: new Date(values[values.length - 1]).toISOString(),
+  };
+}
 
-  records.push({
+function childSessionTitles(identity: SubagentIdentity): {
+  title: string;
+  aiTitle?: string;
+  fallbackTitle?: string;
+} {
+  const shortId = identity.agentId.slice(0, 8);
+  const fallback = `Subagent ${identity.profileName ?? shortId}`;
+  if (identity.taskDescription) {
+    const ai = `[${identity.profileName ?? 'Subagent'}] ${identity.taskDescription}`;
+    return { title: ai, aiTitle: ai, fallbackTitle: fallback };
+  }
+  return { title: fallback, fallbackTitle: fallback };
+}
+
+function buildChildSessionRecord(
+  childSessionId: string,
+  identity: SubagentIdentity,
+  timestamps: { start?: string; end?: string },
+  rootArtifactId: string,
+): NormalizedEvidenceRecord {
+  const titles = childSessionTitles(identity);
+  return {
     recordId: stableId('session', { session: childSessionId }),
     recordType: 'session',
     sessionId: childSessionId,
@@ -226,18 +265,24 @@ function buildChildSessionRecords(
     payload: {
       harness: 'devin',
       nativeSessionId: identity.agentId,
-      title: identity.taskDescription
-        ? `[${identity.profileName ?? 'Subagent'}] ${identity.taskDescription}`
-        : `Subagent ${identity.profileName ?? identity.agentId}`,
-      aiTitle: identity.taskDescription
-        ? `[${identity.profileName ?? 'Subagent'}] ${identity.taskDescription}`
-        : undefined,
+      title: titles.title,
+      aiTitle: titles.aiTitle,
+      fallbackTitle: titles.fallbackTitle,
       model: identity.model,
+      startTime: timestamps.start,
+      endTime: timestamps.end,
       finality: 'partial' as const,
     },
-  });
+  };
+}
 
-  records.push({
+function buildChildRelationRecord(
+  childSessionId: string,
+  rootSessionId: string,
+  identity: SubagentIdentity,
+  rootArtifactId: string,
+): NormalizedEvidenceRecord {
+  return {
     recordId: stableId('session_relation', { child: childSessionId }),
     recordType: 'session_relation',
     sessionId: childSessionId,
@@ -251,12 +296,73 @@ function buildChildSessionRecords(
       depth: 1,
       nativeInclusionSemantics: 'subagent',
     },
-  });
-
-  return records;
+  };
 }
 
-/** Builds turn + message records for a child session's messages. */
+function buildChildSessionRecords(
+  childSessionId: string,
+  rootSessionId: string,
+  identity: SubagentIdentity,
+  timestamps: { start?: string; end?: string },
+  rootArtifactId: string,
+): NormalizedEvidenceRecord[] {
+  return [
+    buildChildSessionRecord(childSessionId, identity, timestamps, rootArtifactId),
+    buildChildRelationRecord(childSessionId, rootSessionId, identity, rootArtifactId),
+  ];
+}
+
+function buildSingleTurnRecord(
+  childSessionId: string,
+  eventId: string,
+  role: string,
+  ordinal: number,
+  nodeId: number,
+  rootArtifactId: string,
+): NormalizedEvidenceRecord {
+  return {
+    recordId: stableId('turn', { session: childSessionId, nodeId }),
+    recordType: 'turn',
+    sessionId: childSessionId,
+    parentId: stableId('session', { session: childSessionId }),
+    sourceEventId: eventId,
+    sourceField: 'node_id',
+    provenance: provenanceForArtifact(rootArtifactId, eventId, 'node_id'),
+    payload: { role, ordinal, nodeId },
+  };
+}
+
+function buildSingleMessageRecord(
+  childSessionId: string,
+  eventId: string,
+  role: string,
+  message: DevinMessageLine,
+  rootArtifactId: string,
+): NormalizedEvidenceRecord {
+  const timestamp =
+    typeof message.createdAt === 'number' && Number.isFinite(message.createdAt)
+      ? new Date(message.createdAt * 1000).toISOString()
+      : undefined;
+  return {
+    recordId: stableId('message', { session: childSessionId, nodeId: message.nodeId }),
+    recordType: 'message',
+    sessionId: childSessionId,
+    parentId: stableId('turn', { session: childSessionId, nodeId: message.nodeId }),
+    sourceEventId: eventId,
+    sourceField: 'chat_message',
+    provenance: provenanceForArtifact(rootArtifactId, eventId, 'chat_message'),
+    payload: {
+      role,
+      messageId: eventId,
+      nodeId: message.nodeId,
+      content: chatMessageText(message.chatMessage),
+      ...(timestamp ? { timestamp } : {}),
+      storage: 'artifact-blob',
+      path: rootArtifactId,
+    },
+  };
+}
+
 function buildChildTurnAndMessageRecords(
   childSessionId: string,
   childMessages: readonly DevinMessageLine[],
@@ -264,59 +370,31 @@ function buildChildTurnAndMessageRecords(
 ): NormalizedEvidenceRecord[] {
   const records: NormalizedEvidenceRecord[] = [];
   let turnOrdinal = 0;
-
   for (const message of childMessages) {
     turnOrdinal++;
     const eventId = messageId(message);
-    const role = chatMessageRole(message);
-
-    records.push({
-      recordId: stableId('turn', { session: childSessionId, nodeId: message.nodeId }),
-      recordType: 'turn',
-      sessionId: childSessionId,
-      parentId: stableId('session', { session: childSessionId }),
-      sourceEventId: eventId,
-      sourceField: 'node_id',
-      provenance: provenanceForArtifact(rootArtifactId, eventId, 'node_id'),
-      payload: { role, ordinal: turnOrdinal, nodeId: message.nodeId },
-    });
-
-    const timestamp =
-      typeof message.createdAt === 'number' && Number.isFinite(message.createdAt)
-        ? new Date(message.createdAt * 1000).toISOString()
-        : undefined;
-
-    records.push({
-      recordId: stableId('message', { session: childSessionId, nodeId: message.nodeId }),
-      recordType: 'message',
-      sessionId: childSessionId,
-      parentId: stableId('turn', { session: childSessionId, nodeId: message.nodeId }),
-      sourceEventId: eventId,
-      sourceField: 'chat_message',
-      provenance: provenanceForArtifact(rootArtifactId, eventId, 'chat_message'),
-      payload: {
+    const role = messageRole(message.chatMessage, message.role);
+    records.push(
+      buildSingleTurnRecord(
+        childSessionId,
+        eventId,
         role,
-        messageId: eventId,
-        nodeId: message.nodeId,
-        content: chatMessageText(message.chatMessage),
-        ...(timestamp ? { timestamp } : {}),
-        storage: 'artifact-blob',
-        path: rootArtifactId,
-      },
-    });
+        turnOrdinal,
+        message.nodeId,
+        rootArtifactId,
+      ),
+      buildSingleMessageRecord(childSessionId, eventId, role, message, rootArtifactId),
+    );
   }
-
   return records;
 }
 
-/** Extracts the role string from a message's chatMessage. */
-function chatMessageRole(message: DevinMessageLine): string {
-  const cm = message.chatMessage;
-  if (cm && typeof cm === 'object') {
-    const raw = (cm as { role?: unknown }).role;
-    if (typeof raw === 'string') return raw;
+function mapToolResults(messages: readonly DevinMessageLine[]): Map<string, DevinMessageLine> {
+  const results = new Map<string, DevinMessageLine>();
+  for (const m of messages) {
+    if (m.toolCallId) results.set(m.toolCallId, m);
   }
-  return message.role;
+  return results;
 }
 
 /** Builds invocation + payload records for embedded tool calls. */
@@ -328,45 +406,71 @@ function buildChildInvocationRecords(
 ): NormalizedEvidenceRecord[] {
   const records: NormalizedEvidenceRecord[] = [];
   const seen = new Set<string>();
-
-  // Map toolCallId -> tool result message for correlation
-  const resultMessageByToolCallId = new Map<string, DevinMessageLine>();
-  for (const message of childMessages) {
-    if (message.toolCallId) {
-      resultMessageByToolCallId.set(message.toolCallId, message);
-    }
-  }
+  const resultsByToolCallId = mapToolResults(childMessages);
 
   for (const message of childMessages) {
     if (!message.toolCalls) continue;
     for (const tc of message.toolCalls) {
       if (seen.has(tc.id)) continue;
       seen.add(tc.id);
-      const resultMessage = resultMessageByToolCallId.get(tc.id);
+      const resultMessage = resultsByToolCallId.get(tc.id);
       records.push(
         ...buildSingleInvocation(childSessionId, rootSessionId, tc, resultMessage, rootArtifactId),
       );
     }
   }
-
   return records;
 }
 
-/** Builds invocation + input (and optional result) payload for one embedded tool call. */
-function buildSingleInvocation(
+/** Resolves a file path target from tool call arguments when available. */
+function resolveToolTarget(tc: DevinChatMessageToolCall): string | undefined {
+  if (!tc.arguments || typeof tc.arguments !== 'object') return undefined;
+  const args = tc.arguments as Record<string, unknown>;
+  const path = args.file_path ?? args.path ?? args.filename ?? args.pattern;
+  return typeof path === 'string' ? path : undefined;
+}
+
+function classifyEmbeddedToolCall(tc: DevinChatMessageToolCall): {
+  kind: 'tool' | 'skill' | 'agent';
+  name: string;
+  target?: string;
+} {
+  const args =
+    typeof tc.arguments === 'object' && tc.arguments !== null
+      ? (tc.arguments as Record<string, unknown>)
+      : null;
+  const rawKind = tc.kind?.toLowerCase();
+  const nameLower = tc.name.toLowerCase();
+
+  if (rawKind === 'skill' || nameLower === 'skill' || nameLower === 'run_skill') {
+    const skillName = args && typeof args.skill === 'string' ? args.skill : tc.name;
+    const target = args && typeof args.target === 'string' ? args.target : undefined;
+    return { kind: 'skill', name: skillName, target };
+  }
+  if (rawKind === 'agent' || nameLower === 'run_subagent' || nameLower === 'subagent') {
+    const profile = args && typeof args.profile === 'string' ? args.profile : tc.name;
+    const target =
+      args && typeof args.title === 'string'
+        ? args.title
+        : typeof args?.task === 'string'
+          ? args.task
+          : undefined;
+    return { kind: 'agent', name: profile, target };
+  }
+  return { kind: 'tool', name: tc.name, target: resolveToolTarget(tc) };
+}
+
+function buildInvocationRecord(
+  invocationId: string,
   childSessionId: string,
   rootSessionId: string,
   tc: DevinChatMessageToolCall,
   resultMessage: DevinMessageLine | undefined,
   rootArtifactId: string,
-): NormalizedEvidenceRecord[] {
-  const invocationId = stableId('invocation', { session: childSessionId, tool: tc.id });
-  const records: NormalizedEvidenceRecord[] = [];
+): NormalizedEvidenceRecord {
   const hasResult = resultMessage !== undefined;
-  const resultId = hasResult ? tc.id : undefined;
-  const status = hasResult ? 'success' : 'unknown';
-
-  records.push({
+  const { kind, name, target } = classifyEmbeddedToolCall(tc);
+  return {
     recordId: invocationId,
     recordType: 'invocation',
     sessionId: childSessionId,
@@ -374,18 +478,25 @@ function buildSingleInvocation(
     sourceField: 'chat_message.tool_calls',
     provenance: provenanceForArtifact(rootArtifactId, tc.id, 'chat_message.tool_calls'),
     payload: {
-      kind: 'tool',
-      name: tc.name,
-      target: resolveToolTarget(tc),
+      kind,
+      name,
+      target,
       startId: tc.id,
-      resultId,
-      status,
+      resultId: hasResult ? tc.id : undefined,
+      status: hasResult ? 'success' : 'unknown',
       origin: 'subagent',
       rootSessionId,
     },
-  });
+  };
+}
 
-  records.push({
+function buildInputPayloadRecord(
+  invocationId: string,
+  childSessionId: string,
+  tc: DevinChatMessageToolCall,
+  rootArtifactId: string,
+): NormalizedEvidenceRecord {
+  return {
     recordId: stableId('payload', { session: childSessionId, tool: tc.id, type: 'input' }),
     recordType: 'payload',
     sessionId: childSessionId,
@@ -404,66 +515,173 @@ function buildSingleInvocation(
       structureCount: 0,
       contentKind: 'unknown',
     },
-  });
+  };
+}
 
-  if (hasResult) {
-    const resultEventId = messageId(resultMessage);
-    records.push({
-      recordId: stableId('payload', { session: childSessionId, tool: tc.id, type: 'result' }),
-      recordType: 'payload',
-      sessionId: childSessionId,
-      parentId: invocationId,
+function buildResultPayloadRecord(
+  invocationId: string,
+  childSessionId: string,
+  tc: DevinChatMessageToolCall,
+  resultMessage: DevinMessageLine,
+  rootArtifactId: string,
+): NormalizedEvidenceRecord {
+  const resultEventId = messageId(resultMessage);
+  return {
+    recordId: stableId('payload', { session: childSessionId, tool: tc.id, type: 'result' }),
+    recordType: 'payload',
+    sessionId: childSessionId,
+    parentId: invocationId,
+    sourceEventId: tc.id,
+    sourceField: 'chat_message.tool_call_id',
+    provenance: provenanceForArtifact(rootArtifactId, resultEventId, 'chat_message'),
+    payload: {
+      payloadType: 'result',
+      toolUseId: tc.id,
       sourceEventId: tc.id,
-      sourceField: 'chat_message.tool_call_id',
-      provenance: provenanceForArtifact(rootArtifactId, resultEventId, 'chat_message'),
-      payload: {
-        payloadType: 'result',
-        toolUseId: tc.id,
-        sourceEventId: tc.id,
-        bytes: byteLength(resultMessage.chatMessage),
-        tokens: 0,
-        tokenSource: 'estimated',
-        mediaCount: 0,
-        structureCount: 0,
-        contentKind: 'unknown',
-      },
-    });
-  }
+      bytes: byteLength(resultMessage.chatMessage),
+      tokens: 0,
+      tokenSource: 'estimated',
+      mediaCount: 0,
+      structureCount: 0,
+      contentKind: 'unknown',
+    },
+  };
+}
 
+/** Builds invocation + input (and optional result) payload for one embedded tool call. */
+function buildSingleInvocation(
+  childSessionId: string,
+  rootSessionId: string,
+  tc: DevinChatMessageToolCall,
+  resultMessage: DevinMessageLine | undefined,
+  rootArtifactId: string,
+): NormalizedEvidenceRecord[] {
+  const invocationId = stableId('invocation', { session: childSessionId, tool: tc.id });
+  const records: NormalizedEvidenceRecord[] = [
+    buildInvocationRecord(
+      invocationId,
+      childSessionId,
+      rootSessionId,
+      tc,
+      resultMessage,
+      rootArtifactId,
+    ),
+    buildInputPayloadRecord(invocationId, childSessionId, tc, rootArtifactId),
+  ];
+  if (resultMessage !== undefined) {
+    records.push(
+      buildResultPayloadRecord(invocationId, childSessionId, tc, resultMessage, rootArtifactId),
+    );
+  }
   return records;
-}
-
-/** Resolves a file path target from tool call arguments when available. */
-function resolveToolTarget(tc: DevinChatMessageToolCall): string | undefined {
-  if (!tc.arguments || typeof tc.arguments !== 'object') return undefined;
-  const args = tc.arguments as Record<string, unknown>;
-  const path = args.file_path ?? args.path ?? args.filename ?? args.pattern;
-  return typeof path === 'string' ? path : undefined;
-}
-
-function byteLength(value: unknown): number {
-  if (typeof value === 'string') return value.length;
-  try {
-    return JSON.stringify(value).length;
-  } catch {
-    return 0;
-  }
 }
 
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
-/**
- * Decomposes subagent detached trees into canonical child sessions.
- *
- * For each identified subagent (from main-chain tool results):
- * 1. Locates the detached subtree via `chain_node_id`.
- * 2. Generates `SessionSummary`, `session`, `session_relation` records.
- * 3. Generates `turn`, `message` records scoped to the child session.
- * 4. Generates `invocation`, `payload` records from embedded tool calls.
- * 5. Returns consumed node ids so `subagent-evidence.ts` can skip them.
- */
+interface ChildSessionContext {
+  readonly rootSessionId: string;
+  readonly sourceId: string;
+  readonly environmentId: string;
+  readonly projectId: string;
+  readonly rootArtifactId: string;
+}
+
+interface OneSubagentResult {
+  readonly summary: SessionSummary;
+  readonly records: readonly NormalizedEvidenceRecord[];
+  readonly nodeIds: readonly number[];
+}
+
+function assembleSubagentRecords(
+  childSessionId: string,
+  ctx: ChildSessionContext,
+  identity: SubagentIdentity,
+  childMessages: readonly DevinMessageLine[],
+  timestamps: { start?: string; end?: string },
+): NormalizedEvidenceRecord[] {
+  const sessionRecs = buildChildSessionRecords(
+    childSessionId,
+    ctx.rootSessionId,
+    identity,
+    timestamps,
+    ctx.rootArtifactId,
+  );
+  const turnRecs = buildChildTurnAndMessageRecords(
+    childSessionId,
+    childMessages,
+    ctx.rootArtifactId,
+  );
+  const invRecs = buildChildInvocationRecords(
+    childSessionId,
+    ctx.rootSessionId,
+    childMessages,
+    ctx.rootArtifactId,
+  );
+  return [...sessionRecs, ...turnRecs, ...invRecs];
+}
+
+function buildSubagentSummary(
+  childSessionId: string,
+  rootSessionId: string,
+  timestamps: { start?: string; end?: string },
+): SessionSummary {
+  return {
+    sessionId: childSessionId,
+    rootSessionId,
+    parentSessionId: rootSessionId,
+    harness: 'devin',
+    finality: 'partial',
+    startTime: timestamps.start,
+    endTime: timestamps.end,
+  };
+}
+
+function buildOneSubagentSession(
+  ctx: ChildSessionContext,
+  identity: SubagentIdentity,
+  nodeMap: ReadonlyMap<number, DevinMessageLine>,
+  childrenIndex: ReadonlyMap<number, number[]>,
+): OneSubagentResult {
+  const childSessionId = deriveChildSessionId(
+    ctx.rootSessionId,
+    ctx.sourceId,
+    ctx.environmentId,
+    ctx.projectId,
+    identity.agentId,
+  );
+  const childMessages = resolveSubtreeMessages(identity.chainNodeId, nodeMap, childrenIndex);
+  const timestamps = childSessionTimestamps(childMessages);
+  const records = assembleSubagentRecords(childSessionId, ctx, identity, childMessages, timestamps);
+  const summary = buildSubagentSummary(childSessionId, ctx.rootSessionId, timestamps);
+
+  return {
+    summary,
+    records,
+    nodeIds: childMessages.map((m) => m.nodeId),
+  };
+}
+
+function collectSubagentSessions(
+  subagents: readonly SubagentIdentity[],
+  ctx: ChildSessionContext,
+  nodeMap: ReadonlyMap<number, DevinMessageLine>,
+  childrenIndex: ReadonlyMap<number, number[]>,
+): SubagentSpineResult {
+  const consumedNodeIds = new Set<number>();
+  const summaries: SessionSummary[] = [];
+  const records: NormalizedEvidenceRecord[] = [];
+
+  for (const identity of subagents) {
+    const res = buildOneSubagentSession(ctx, identity, nodeMap, childrenIndex);
+    summaries.push(res.summary);
+    records.push(...res.records);
+    for (const id of res.nodeIds) consumedNodeIds.add(id);
+  }
+  return { summaries, records, consumedNodeIds };
+}
+
 export function buildSubagentChildSessions(
   rootSessionId: string,
   sourceId: string,
@@ -476,86 +694,16 @@ export function buildSubagentChildSessions(
   if (subagents.length === 0) {
     return { summaries: [], records: [], consumedNodeIds: new Set() };
   }
-
   const nodeMap = new Map(detachedMessages.map((m) => [m.nodeId, m]));
   const childrenIndex = buildChildrenIndex(detachedMessages);
-  const consumedNodeIds = new Set<number>();
-  const summaries: SessionSummary[] = [];
-  const records: NormalizedEvidenceRecord[] = [];
-
-  for (const identity of subagents) {
-    const result = buildOneSubagentSession(
-      rootSessionId,
-      sourceId,
-      environmentId,
-      projectId,
-      identity,
-      nodeMap,
-      childrenIndex,
-      rootArtifactId,
-    );
-    summaries.push(result.summary);
-    records.push(...result.records);
-    for (const id of result.nodeIds) consumedNodeIds.add(id);
-  }
-
-  return { summaries, records, consumedNodeIds };
-}
-
-/** Builds a single child session from one identified subagent. */
-function buildOneSubagentSession(
-  rootSessionId: string,
-  sourceId: string,
-  environmentId: string,
-  projectId: string,
-  identity: SubagentIdentity,
-  nodeMap: ReadonlyMap<number, DevinMessageLine>,
-  childrenIndex: ReadonlyMap<number, number[]>,
-  rootArtifactId: string,
-): { summary: SessionSummary; records: NormalizedEvidenceRecord[]; nodeIds: number[] } {
-  const childSessionId = deriveChildSessionId(
+  const ctx: ChildSessionContext = {
     rootSessionId,
     sourceId,
     environmentId,
     projectId,
-    identity.agentId,
-  );
-
-  // Locate the subtree: walk up from chain_node_id to find root, then collect
-  const childMessages = resolveSubtreeMessages(identity.chainNodeId, nodeMap, childrenIndex);
-
-  const sessionRecords = buildChildSessionRecords(
-    childSessionId,
-    rootSessionId,
-    identity,
-    childMessages,
     rootArtifactId,
-  );
-  const turnRecords = buildChildTurnAndMessageRecords(
-    childSessionId,
-    childMessages,
-    rootArtifactId,
-  );
-  const invocationRecords = buildChildInvocationRecords(
-    childSessionId,
-    rootSessionId,
-    childMessages,
-    rootArtifactId,
-  );
-
-  const summary: SessionSummary = {
-    sessionId: childSessionId,
-    rootSessionId,
-    parentSessionId: rootSessionId,
-    harness: 'devin',
-    finality: 'partial',
   };
-
-  return {
-    summary,
-    records: [...sessionRecords, ...turnRecords, ...invocationRecords],
-    nodeIds: childMessages.map((m) => m.nodeId),
-  };
+  return collectSubagentSessions(subagents, ctx, nodeMap, childrenIndex);
 }
 
 /** Resolves the subtree messages for a subagent given its chain_node_id. */

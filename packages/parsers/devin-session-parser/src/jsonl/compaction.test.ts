@@ -34,8 +34,6 @@ function node(
     chatUsage: null,
     toolCalls: null,
     toolCallId: null,
-    generationModel: null,
-    generationMetrics: null,
   };
 }
 

@@ -722,14 +722,13 @@ describe('parseDevinJsonlLine — embedded tool_calls and metrics', () => {
       index: 0,
       kind: 'function',
     });
-    expect(result.line.generationModel).toBe('swe-1-7-medium');
-    expect(result.line.generationMetrics).toEqual({
+    expect(result.line.chatUsage).toEqual({
+      requestId: null,
+      generationModel: 'swe-1-7-medium',
       inputTokens: 100,
       outputTokens: 20,
       cacheReadTokens: 5,
       cacheCreationTokens: null,
-      totalTimeMs: 500,
-      ttftMs: 150,
     });
   });
 

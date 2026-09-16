@@ -133,16 +133,6 @@ export interface DevinChatMessageToolCall {
   kind: string | null;
 }
 
-/** Generation timing and token metrics from `chat_message.metadata.metrics`. */
-export interface DevinGenerationMetrics {
-  ttftMs: number | null;
-  totalTimeMs: number | null;
-  inputTokens: number | null;
-  outputTokens: number | null;
-  cacheReadTokens: number | null;
-  cacheCreationTokens: number | null;
-}
-
 /**
  * Parsed shape of the per-request usage Devin CLI stamps on a message's own
  * `chat_message.metadata` object: `request_id`, `generation_model`, and the
@@ -217,10 +207,6 @@ export interface DevinMessageLine {
   toolCalls: DevinChatMessageToolCall[] | null;
   /** Tool call id embedded in `chat_message.tool_call_id` (e.g. role: 'tool'). */
   toolCallId: string | null;
-  /** Generation model from `chat_message.metadata.generation_model`. */
-  generationModel: string | null;
-  /** Generation metrics from `chat_message.metadata.metrics`. */
-  generationMetrics: DevinGenerationMetrics | null;
 }
 
 /** A parsed `tool_call_state` row line: no timestamp column exists upstream. */

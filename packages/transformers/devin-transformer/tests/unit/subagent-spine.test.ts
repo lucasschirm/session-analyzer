@@ -35,8 +35,6 @@ function makeMessage(
     chatUsage: null,
     toolCalls: null,
     toolCallId: null,
-    generationModel: null,
-    generationMetrics: null,
     ...overrides,
   };
 }
@@ -538,5 +536,127 @@ describe('buildSubagentChildSessions', () => {
 
     expect(result.summaries).toHaveLength(1);
     expect(result.consumedNodeIds.size).toBe(2);
+  });
+
+  it('populates startTime, endTime, aiTitle, and fallbackTitle on child session', () => {
+    const subagents = [
+      {
+        agentId: 'agent-timing-12345678',
+        profileName: 'Explore',
+        model: null,
+        chainNodeId: 10,
+        toolCallId: 'tc-timing',
+        rawInputProfile: null,
+        taskDescription: null,
+      },
+    ];
+
+    const detachedMessages = [
+      makeMessage(10, null, 'user', 'Prompt 10', { createdAt: 1722520800 }),
+      makeMessage(11, 10, 'assistant', 'Response 11', { createdAt: 1722520860 }),
+    ];
+
+    const result = buildSubagentChildSessions(
+      rootSessionId,
+      sourceId,
+      envId,
+      projectId,
+      subagents,
+      detachedMessages,
+      rootArtifactId,
+    );
+
+    const startIso = new Date(1722520800 * 1000).toISOString();
+    const endIso = new Date(1722520860 * 1000).toISOString();
+
+    expect(result.summaries[0]?.startTime).toBe(startIso);
+    expect(result.summaries[0]?.endTime).toBe(endIso);
+
+    const sessionRec = result.records.find((r) => r.recordType === 'session');
+    expect(sessionRec).toBeDefined();
+    const payload = sessionRec?.payload as Record<string, unknown>;
+    expect(payload.startTime).toBe(startIso);
+    expect(payload.endTime).toBe(endIso);
+    expect(payload.aiTitle).toBeUndefined();
+    expect(payload.fallbackTitle).toBe('Subagent Explore');
+  });
+
+  it('classifies embedded tool calls into skill, agent, and tool kinds', () => {
+    const subagents = [
+      {
+        agentId: 'agent-kinds',
+        profileName: 'Generalist',
+        model: null,
+        chainNodeId: 20,
+        toolCallId: 'tc-kinds',
+        rawInputProfile: null,
+        taskDescription: 'Testing tool classification',
+      },
+    ];
+
+    const detachedMessages = [
+      makeMessage(20, null, 'assistant', 'Invoking tools', {
+        toolCalls: [
+          {
+            id: 'tc-embed-1',
+            name: 'read_file',
+            arguments: { file_path: 'src/main.ts' },
+            index: 0,
+            kind: 'function',
+          },
+          {
+            id: 'tc-embed-2',
+            name: 'Skill',
+            arguments: { skill: 'lint-check' },
+            index: 1,
+            kind: 'skill',
+          },
+          {
+            id: 'tc-embed-3',
+            name: 'run_subagent',
+            arguments: { profile: 'deep-search', task: 'find error' },
+            index: 2,
+            kind: 'agent',
+          },
+        ],
+      }),
+      makeMessage(21, 20, 'tool', 'file content', { toolCallId: 'tc-embed-1' }),
+    ];
+
+    const result = buildSubagentChildSessions(
+      rootSessionId,
+      sourceId,
+      envId,
+      projectId,
+      subagents,
+      detachedMessages,
+      rootArtifactId,
+    );
+
+    const invocations = result.records.filter((r) => r.recordType === 'invocation');
+    expect(invocations).toHaveLength(3);
+
+    const toolInv = invocations.find((i) => i.sourceEventId === 'tc-embed-1');
+    expect(toolInv?.payload).toMatchObject({
+      kind: 'tool',
+      name: 'read_file',
+      target: 'src/main.ts',
+      status: 'success',
+    });
+
+    const skillInv = invocations.find((i) => i.sourceEventId === 'tc-embed-2');
+    expect(skillInv?.payload).toMatchObject({
+      kind: 'skill',
+      name: 'lint-check',
+      status: 'unknown',
+    });
+
+    const agentInv = invocations.find((i) => i.sourceEventId === 'tc-embed-3');
+    expect(agentInv?.payload).toMatchObject({
+      kind: 'agent',
+      name: 'deep-search',
+      target: 'find error',
+      status: 'unknown',
+    });
   });
 });

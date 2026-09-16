@@ -78,7 +78,7 @@ function sessionTimestamps(
   };
 }
 
-function messageRole(chatMessage: unknown, normalizedRole: string): string {
+export function messageRole(chatMessage: unknown, normalizedRole: string): string {
   if (chatMessage && typeof chatMessage === 'object') {
     const raw = (chatMessage as { role?: unknown }).role;
     if (typeof raw === 'string') return raw;

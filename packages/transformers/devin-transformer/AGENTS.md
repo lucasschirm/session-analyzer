@@ -50,8 +50,7 @@ tests/
   no remote storage, no project history queries, no lifecycle event emission.
 - **Canonical Subsession Decomposition**: Subagents executed via `run_subagent`
   are decomposed into canonical child sessions (`sessions`, `session_summaries`,
-  `session_relations`) with their own lifecycle, messages, tool invocations,
-  and token usage.
+  `session_relations`) with their own lifecycle, messages, and tool invocations.
 - **Metric Disjointness**: Root-only metrics (`root_only`) measure strictly root-agent
   activity (excluding child tool calls and subagent tokens). Child sessions
   measure strictly their own activity. Inclusive metrics (`inclusive`) sum across

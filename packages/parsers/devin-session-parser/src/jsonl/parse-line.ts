@@ -11,7 +11,6 @@ import { parseAcpToolCall, parseAcpToolCallUpdate } from '../tool-call/acp-parse
 import type {
   DevinChatMessageToolCall,
   DevinChatMessageUsage,
-  DevinGenerationMetrics,
   DevinJsonlParseResult,
   DevinJsonlParseWarning,
   DevinMessageLine,
@@ -208,34 +207,6 @@ function parseEmbeddedToolCallId(chatMessage: unknown): string | null {
   return typeof id === 'string' ? id : null;
 }
 
-function parseGenerationModel(chatMessage: unknown): string | null {
-  if (typeof chatMessage !== 'object' || chatMessage === null) return null;
-  const meta = (chatMessage as Record<string, unknown>).metadata;
-  if (typeof meta !== 'object' || meta === null) return null;
-  const model = (meta as Record<string, unknown>).generation_model;
-  return typeof model === 'string' ? model : null;
-}
-
-function parseGenerationMetrics(chatMessage: unknown): DevinGenerationMetrics | null {
-  if (typeof chatMessage !== 'object' || chatMessage === null) return null;
-  const meta = (chatMessage as Record<string, unknown>).metadata;
-  if (typeof meta !== 'object' || meta === null) return null;
-  const m = (meta as Record<string, unknown>).metrics;
-  if (typeof m !== 'object' || m === null) return null;
-  const rec = m as Record<string, unknown>;
-  const ttftMs = typeof rec.ttft_ms === 'number' ? rec.ttft_ms : null;
-  const totalTimeMs = typeof rec.total_time_ms === 'number' ? rec.total_time_ms : null;
-  const inputTokens = typeof rec.input_tokens === 'number' ? rec.input_tokens : null;
-  const outputTokens = typeof rec.output_tokens === 'number' ? rec.output_tokens : null;
-  const cacheReadTokens = typeof rec.cache_read_tokens === 'number' ? rec.cache_read_tokens : null;
-  const cacheCreationTokens =
-    typeof rec.cache_creation_tokens === 'number' ? rec.cache_creation_tokens : null;
-  if (ttftMs === null && totalTimeMs === null && inputTokens === null && outputTokens === null) {
-    return null;
-  }
-  return { ttftMs, totalTimeMs, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
-}
-
 /**
  * Parses `chat_message.metadata`'s per-request usage keys: `request_id`,
  * `generation_model`, and the nested `metrics` bag. Never throws: a
@@ -286,8 +257,6 @@ function messageFields(row: RawDevinJsonlLine): MessageFields {
     chatUsage: parseChatMessageUsage(chatMessage),
     toolCalls: parseEmbeddedToolCalls(chatMessage),
     toolCallId: parseEmbeddedToolCallId(chatMessage),
-    generationModel: parseGenerationModel(chatMessage),
-    generationMetrics: parseGenerationMetrics(chatMessage),
   };
 }
 
